@@ -1,6 +1,7 @@
 import {
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -31,7 +32,10 @@ describe('resolveWritableLibraryParent (Serpent-sq4i)', () => {
       selectedParentPath: missing,
       createIfMissing: true,
     });
-    expect(resolved).toBe(path.resolve(missing));
+    // macOS exposes the temporary directory through both /var and
+    // /private/var. The implementation returns the canonical real path;
+    // compare canonical identities rather than the symlink spelling.
+    expect(realpathSync(resolved)).toBe(realpathSync(path.resolve(missing)));
   });
 
   it('accepts a trailing separator from a folder picker', () => {
@@ -41,7 +45,7 @@ describe('resolveWritableLibraryParent (Serpent-sq4i)', () => {
       selectedParentPath: `${root}${path.sep}`,
       createIfMissing: false,
     });
-    expect(resolved).toBe(path.resolve(root));
+    expect(realpathSync(resolved)).toBe(realpathSync(path.resolve(root)));
   });
 
   it('rejects a destination inside the source library', () => {

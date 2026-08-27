@@ -68,6 +68,7 @@ import {
   NavigationSidebar,
 } from "./NavigationSidebar";
 import { LibrarySwitcher, buildRecentLibraryMenuEntries, type RecentLibraryMenuEntry } from "./LibrarySwitcher";
+import { activeLibrarySwitchActivity } from "./library-switch-safety";
 import { MainMenu } from "./MainMenu";
 import {
   buildMainMenuSections,
@@ -183,6 +184,7 @@ import {
 import { shouldRefreshContentForLibraryChange } from "./library-change-refresh";
 import { AboutDialog } from "./AboutDialog";
 import { OpenSourceLicensesDialog } from "./OpenSourceLicensesDialog";
+import { playTaskCompletionSound } from "./task-completion-sound";
 import type {
   AppUpdateCheckResult,
   AppUpdateInstallResult,
@@ -1156,6 +1158,21 @@ function AppInner() {
   const [appLogErrorCode, setAppLogErrorCode] = useState<
     Extract<ReadAppLogResult, { ok: false }>["code"] | null
   >(null);
+
+  function confirmLibrarySwitch(): boolean {
+    const activity = activeLibrarySwitchActivity({
+      uiState,
+      importProgress,
+      exportProgress,
+      syncProgress,
+    });
+    return activity === null || window.confirm(t("shell.librarySwitchWarning"));
+  }
+
+  function openLibraryChooserFromError(): void {
+    dismissFatalAlert();
+    setOpenLibraryChooserOpen(true);
+  }
 
   const appUpdateApi = (window as RendererWindow).serpent?.appUpdate;
 
@@ -3152,6 +3169,7 @@ function AppInner() {
     setSelectedAssetIds,
     setAssetSelectionAnchor,
     setBrowserSessionReady,
+    resetImportTargetFolderRef: managedImportTargetFolderIdRef,
     pendingRestoredFocusRef,
     navHistoryRef,
     setNavHistoryUi,
@@ -3824,6 +3842,7 @@ function AppInner() {
     failureMessage: string,
   ) {
     if (!api) return;
+    if (!confirmLibrarySwitch()) return;
     setError(null);
     setUiState(busyState);
     const previousLibraryId = library?.libraryId;
@@ -3871,10 +3890,14 @@ function AppInner() {
       setImportProgress(null);
       setLibraryTransferKind("import");
       setLibraryTransferName("");
+      playTaskCompletionSound();
     } catch (caught) {
       setImportProgress(null);
       setLibraryTransferKind("import");
       setLibraryTransferName("");
+      if (!(caught instanceof LibraryOperationError && caught.code === "CANCELLED")) {
+        playTaskCompletionSound();
+      }
       showBlockingError(
         busyState === "creating"
           ? t("dialog.blockingError.libraryCreateFailed")
@@ -4042,8 +4065,14 @@ function AppInner() {
         // window, an extension, or the test bridge. Folder-to-folder
         // navigation remains cheap for giant libraries, while returning to a
         // top-level scope cannot leave a newly-created collection hidden.
+        // Re-entering the current folder is also a mutation refresh boundary.
+        // This matters after creating a child folder: the create request may
+        // still be hydrating the sidebar, and a same-scope click must not start
+        // the cheap navigation path that would cancel that refresh and leave
+        // the new folder invisible until a later navigation.
         refreshSidebar:
-          options?.refreshSidebar ?? (scope === "all" || scope === "root"),
+          options?.refreshSidebar ??
+          (scope === "all" || scope === "root" || scope === assetScope),
       });
       recordNavigation(
         scope === "all"
@@ -6047,12 +6076,12 @@ function AppInner() {
         kind === "files"
           ? await api.importFiles({
               libraryId: library.libraryId,
-              targetFolderId: selectedFolderId,
+              targetFolderId: managedImportTargetFolderIdRef.current,
               autoDetectImageSequences: imageSequencePrefs.autoDetectOnImport,
             })
           : await api.importFolder({
               libraryId: library.libraryId,
-              targetFolderId: selectedFolderId,
+              targetFolderId: managedImportTargetFolderIdRef.current,
               autoDetectImageSequences: imageSequencePrefs.autoDetectOnImport,
             });
       if (!result.ok) {
@@ -6069,7 +6098,11 @@ function AppInner() {
       }
       setNotice(importSummaryMessage(result.value, locale));
       await revealAfterImport(result.value);
+      playTaskCompletionSound();
     } catch (caught) {
+      if (!(caught instanceof LibraryOperationError && caught.code === "CANCELLED")) {
+        playTaskCompletionSound();
+      }
       showBlockingError(
         t("dialog.blockingError.importFailed"),
         toMessage(caught, t("toast.importFailed"), locale),
@@ -6102,7 +6135,11 @@ function AppInner() {
       }
       setNotice(importSummaryMessage(result.value, locale));
       await reloadCurrentContent();
+      playTaskCompletionSound();
     } catch (caught) {
+      if (!(caught instanceof LibraryOperationError && caught.code === "CANCELLED")) {
+        playTaskCompletionSound();
+      }
       showBlockingError(
         t("dialog.blockingError.importFailed"),
         toMessage(caught, t("toast.importFailed"), locale),
@@ -6135,7 +6172,11 @@ function AppInner() {
       }
       setNotice(importSummaryMessage(result.value, locale));
       await reloadCurrentContent();
+      playTaskCompletionSound();
     } catch (caught) {
+      if (!(caught instanceof LibraryOperationError && caught.code === "CANCELLED")) {
+        playTaskCompletionSound();
+      }
       showBlockingError(
         t("dialog.blockingError.importFailed"),
         toMessage(caught, t("toast.importFailed"), locale),
@@ -6184,8 +6225,12 @@ function AppInner() {
         setImageSequenceImportIndex(nextSequenceIndex);
       } else {
         setImageSequenceImportOffer(null);
+        playTaskCompletionSound();
       }
     } catch (caught) {
+      if (!(caught instanceof LibraryOperationError && caught.code === "CANCELLED")) {
+        playTaskCompletionSound();
+      }
       setImageSequenceImportError(
         toMessage(caught, t("toast.importFailed"), locale),
       );
@@ -6212,7 +6257,11 @@ function AppInner() {
       clearImportConflictsUi();
       setNotice(importSummaryMessage(result.value, locale));
       await revealAfterImport(result.value);
+      playTaskCompletionSound();
     } catch (caught) {
+      if (!(caught instanceof LibraryOperationError && caught.code === "CANCELLED")) {
+        playTaskCompletionSound();
+      }
       showBlockingError(
         t("dialog.blockingError.importContinueFailed"),
         toMessage(caught, t("toast.continueImportFailed"), locale),
@@ -6277,7 +6326,11 @@ function AppInner() {
           ? t("toast.diskSynced", { count: result.value.changedCount })
           : t("toast.diskUpToDate"),
       );
+      playTaskCompletionSound();
     } catch (caught) {
+      if (!(caught instanceof LibraryOperationError && caught.code === "CANCELLED")) {
+        playTaskCompletionSound();
+      }
       setError(toMessage(caught, t("toast.refreshFailed"), locale));
     } finally {
       setUiState("ready");
@@ -6300,7 +6353,11 @@ function AppInner() {
       }
       setNotice(t("toast.linkedFolderCreated", { name: result.value.displayName }));
       await reloadCurrentContent();
+      playTaskCompletionSound();
     } catch (caught) {
+      if (!(caught instanceof LibraryOperationError && caught.code === "CANCELLED")) {
+        playTaskCompletionSound();
+      }
       setError(toMessage(caught, t("toast.linkFolderFailed"), locale));
     } finally {
       setUiState("ready");
@@ -6402,6 +6459,7 @@ function AppInner() {
 
   async function closeLibrary() {
     if (!api || !library) return;
+    if (!confirmLibrarySwitch()) return;
     setUiState("closing");
     let closed = false;
     try {
@@ -6411,7 +6469,11 @@ function AppInner() {
       closed = true;
       applyClosedLibraryUi();
       await refreshRecentLibraries(null);
+      playTaskCompletionSound();
     } catch (caught) {
+      if (!(caught instanceof LibraryOperationError && caught.code === "CANCELLED")) {
+        playTaskCompletionSound();
+      }
       setError(toMessage(caught, t("toast.closeFailed"), locale));
     } finally {
       setUiState(closed ? "idle" : "ready");
@@ -6420,6 +6482,7 @@ function AppInner() {
 
   async function removeLibrary() {
     if (!api || !library) return;
+    if (!confirmLibrarySwitch()) return;
     const removedName = library.displayName;
     const removedPath = library.displayPath;
     setUiState("closing");
@@ -6434,7 +6497,11 @@ function AppInner() {
       applyClosedLibraryUi();
       await refreshRecentLibraries(null);
       setNotice(t("toast.libraryRemoved", { name: removedName }));
+      playTaskCompletionSound();
     } catch (caught) {
+      if (!(caught instanceof LibraryOperationError && caught.code === "CANCELLED")) {
+        playTaskCompletionSound();
+      }
       setError(toMessage(caught, t("toast.libraryRemoveFailed"), locale));
     } finally {
       setUiState(removed ? "idle" : "ready");
@@ -6487,6 +6554,7 @@ function AppInner() {
 
   async function confirmDeleteLibraryFromDisk() {
     if (!api || !library) return;
+    if (!confirmLibrarySwitch()) return;
     const deletedName = library.displayName;
     const openLibrary = library;
     const openScope = assetScope;
@@ -6522,6 +6590,7 @@ function AppInner() {
       applyClosedLibraryUi();
       await refreshRecentLibraries(null);
       setNotice(t("toast.libraryDeletedFromDisk", { name: deletedName }));
+      playTaskCompletionSound();
     } catch (caught) {
       // Serpent-qgm1: a failed disk deletion must NOT masquerade as success.
       // The worker reopens a still-valid library; a half-deleted tree comes
@@ -6532,6 +6601,7 @@ function AppInner() {
         caught instanceof LibraryOperationError &&
         (caught.code === "LIBRARY_NOT_FOUND" || caught.code === "NOT_A_LIBRARY");
       if (!cancelled) {
+        playTaskCompletionSound();
         setError(toMessage(caught, t("toast.libraryDeleteFailed"), locale));
       }
       if (gone) {
@@ -7174,7 +7244,11 @@ function AppInner() {
           missing: result.value.unchangedMissingCount,
         }),
       );
+      playTaskCompletionSound();
     } catch (caught) {
+      if (!(caught instanceof LibraryOperationError && caught.code === "CANCELLED")) {
+        playTaskCompletionSound();
+      }
       setBatchRelinkPreview(null);
       setError(toMessage(caught, t("toast.batchRelinkFailed"), locale));
     } finally {
@@ -7232,6 +7306,9 @@ function AppInner() {
       }
     } catch (caught) {
       setExportProgress(null);
+      if (!(caught instanceof LibraryOperationError && caught.code === "CANCELLED")) {
+        playTaskCompletionSound();
+      }
       setError(toMessage(caught, t("toast.exportFailed"), locale));
     } finally {
       setTimeout(() => {
@@ -7337,7 +7414,11 @@ function AppInner() {
       }
       setImportProgress(null);
       await activateImportedLibrary(result.value);
+      playTaskCompletionSound();
     } catch (caught) {
+      if (!(caught instanceof LibraryOperationError && caught.code === "CANCELLED")) {
+        playTaskCompletionSound();
+      }
       showBlockingError(
         t("dialog.blockingError.libraryImportFailed"),
         toMessage(caught, t("toast.zipImportFailed"), locale),
@@ -7415,7 +7496,11 @@ function AppInner() {
       }
       setImportProgress(null);
       await activateImportedLibrary(result.value);
+      playTaskCompletionSound();
     } catch (caught) {
+      if (!(caught instanceof LibraryOperationError && caught.code === "CANCELLED")) {
+        playTaskCompletionSound();
+      }
       showBlockingError(
         t("dialog.blockingError.libraryImportFailed"),
         toMessage(caught, t("toast.importFailed"), locale),
@@ -7454,7 +7539,11 @@ function AppInner() {
       }
       setImportProgress(null);
       await activateImportedLibrary(result.value);
+      playTaskCompletionSound();
     } catch (caught) {
+      if (!(caught instanceof LibraryOperationError && caught.code === "CANCELLED")) {
+        playTaskCompletionSound();
+      }
       showBlockingError(
         t("dialog.blockingError.libraryImportFailed"),
         toMessage(caught, t("toast.importFailed"), locale),
@@ -7618,12 +7707,15 @@ function AppInner() {
       if (event.type === "export.progress") {
         setExportProgress(event);
         if (event.phase === "complete") {
+          playTaskCompletionSound();
           setNotice(
             t("toast.exportComplete", {
               files: event.totalFiles,
               bytes: formatBytes(event.totalBytes),
             }),
           );
+        } else if (event.phase === "failed") {
+          playTaskCompletionSound();
         } else if (event.phase === "cancelled") {
           setNotice(t("toast.exportCancelled"));
         }
@@ -7641,6 +7733,7 @@ function AppInner() {
           // 显示 filesTotal>0）才提示，空跑同步不打扰。
           if (syncRunNotifiedRef.current) {
             syncRunNotifiedRef.current = false;
+            playTaskCompletionSound();
             setNotice(t("settings.sync.statusSynced"));
           }
         } else {
@@ -9095,7 +9188,7 @@ function AppInner() {
             )}
             <LibrarySwitcher
               busy={busy}
-              disabled={busy}
+              disabled={!api}
               syncStatus={syncBindingStatus}
               importMenuCopy={importMenuCopy}
               libraryName={library?.displayName ?? null}
@@ -10776,7 +10869,6 @@ function AppInner() {
             api={api}
             asset={previewAsset}
             chromeIdle={viewerChromeIdle}
-            key={previewAsset.assetId}
             libraryId={library.libraryId}
             onChromeActivity={onViewerChromeActivity}
             onSetColorSpace={(assetId, colorSpace) => {
@@ -11176,7 +11268,10 @@ function AppInner() {
           async syncRun(input) {
             if (!api) return { ok: false, message: t("common.unavailable") };
             const result = await api.syncRun(input);
-            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
+            if (!result.ok) {
+              playTaskCompletionSound();
+              return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
+            }
             return { ok: true, value: result.value };
           },
           async syncSaveBinding(input) {
@@ -11285,6 +11380,11 @@ function AppInner() {
           const bridge = (window as RendererWindow).serpent?.shell;
           if (!bridge?.openExternalUrl) return;
           void bridge.openExternalUrl("https://github.com/dolag233/Serpent");
+        }}
+        onOpenReleaseNotes={(url) => {
+          const bridge = (window as RendererWindow).serpent?.shell;
+          if (!bridge?.openExternalUrl) return;
+          void bridge.openExternalUrl(url);
         }}
       />
       <OpenSourceLicensesDialog
@@ -11505,6 +11605,7 @@ function AppInner() {
         message={fatalAlertMessage}
         title={fatalDialogTitle}
         onDismiss={dismissFatalAlert}
+        onSwitchLibrary={openLibraryChooserFromError}
       />
       <MediaJobsDialog
         open={mediaJobsOpen && library !== null}

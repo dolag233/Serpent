@@ -4,7 +4,10 @@ import path from "node:path";
 
 import { _electron as electron, expect, test } from "@playwright/test";
 
-import { resolveElectronExecutablePath } from "./electron-test-helpers";
+import {
+  clickNativeApplicationMenuItem,
+  resolveElectronExecutablePath,
+} from "./electron-test-helpers";
 
 const packageVersion = (JSON.parse(
   readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
@@ -132,6 +135,16 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       await window.keyboard.press("Escape");
       await expect(window.getByRole("dialog")).toHaveCount(0);
 
+      // The macOS native About menu must expose the same diagnostics route as
+      // the Windows renderer menu; exercise the actual native command rather
+      // than only checking the template shape.
+      await clickNativeApplicationMenuItem(application, "about.diagnostics");
+      await expect(
+        window.getByRole("dialog", { name: "诊断日志" }),
+      ).toBeVisible();
+      await window.keyboard.press("Escape");
+      await expect(window.getByRole("dialog")).toHaveCount(0);
+
       await settingsButton.click();
       await window.getByRole("menuitem", { name: "关于", exact: true }).hover();
       await expect(window.locator(".main-menu-submenu")).toBeVisible();
@@ -165,11 +178,7 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       await window.keyboard.press("Escape");
       await expect(window.getByRole("dialog")).toHaveCount(0);
     } else {
-      await application.evaluate(({ BrowserWindow, Menu }) => {
-        const item = Menu.getApplicationMenu()?.getMenuItemById("about.serpent");
-        if (!item?.click) throw new Error("The native About Serpent menu item is unavailable.");
-        item.click(item, BrowserWindow.getFocusedWindow() ?? undefined);
-      });
+      await clickNativeApplicationMenuItem(application, "about.serpent");
       const aboutDialog = window.getByRole("dialog", { name: "Serpent" });
       await expect(aboutDialog).toBeVisible();
       const refreshButton = aboutDialog.getByRole("button", { name: "检查更新" });

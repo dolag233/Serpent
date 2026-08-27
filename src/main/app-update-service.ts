@@ -24,7 +24,9 @@ import type {
   AppUpdateDistribution,
   AppUpdateInstallResult,
   AppUpdateProgress,
+  AppUpdateReleaseMeta,
 } from '../shared/app-update';
+import { appUpdateReleaseMetaSchema } from '../shared/app-update';
 
 export const SERPENT_GITHUB_REPOSITORY = 'dolag233/Serpent';
 export const SERPENT_GITHUB_RELEASES_URL =
@@ -33,6 +35,8 @@ export const SERPENT_GITHUB_RELEASES_URL =
 const GITHUB_RELEASE_API_URL =
   `https://api.github.com/repos/${SERPENT_GITHUB_REPOSITORY}/releases/latest`;
 const MAX_RELEASE_NOTES_LENGTH = 12_000;
+const MAX_RELEASE_META_LENGTH = 64 * 1024;
+const RELEASE_META_ASSET_NAME = 'release-meta.json';
 const MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 const SAFE_ASSET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/u;
 const SHA256_PATTERN = /\b([a-f0-9]{64})\b/iu;
@@ -461,6 +465,33 @@ function validateDownloadUrl(input: string): void {
   if (!isSafeGitHubAssetUrl(input)) throw new Error('The update asset URL is not a GitHub HTTPS URL.');
 }
 
+function isSafeReleaseMetaUrl(input: string): boolean {
+  try {
+    const url = new URL(input);
+    return (url.protocol === 'https:' || url.protocol === 'http:')
+      && url.username === ''
+      && url.password === '';
+  } catch {
+    return false;
+  }
+}
+
+/** Validate the optional release metadata without allowing it to affect the selected asset. */
+export function parseGitHubReleaseMeta(
+  input: unknown,
+  expectedVersion: string,
+): AppUpdateReleaseMeta | undefined {
+  const parsed = appUpdateReleaseMetaSchema.safeParse(input);
+  if (!parsed.success || parsed.data.version !== expectedVersion) return undefined;
+  if (
+    (parsed.data.changelogUrl !== undefined && !isSafeReleaseMetaUrl(parsed.data.changelogUrl))
+    || (parsed.data.downloadUrl !== undefined && !isSafeReleaseMetaUrl(parsed.data.downloadUrl))
+  ) {
+    return undefined;
+  }
+  return parsed.data;
+}
+
 export class AppUpdateService {
   readonly #options: AppUpdateServiceOptions;
   readonly #fetch: AppUpdateFetch;
@@ -475,6 +506,29 @@ export class AppUpdateService {
 
   cancelDownload(): void {
     this.#downloadAbort?.abort();
+  }
+
+  async #fetchReleaseMeta(release: GitHubRelease): Promise<AppUpdateReleaseMeta | undefined> {
+    const metadataAsset = release.assets.find((asset) => asset.name === RELEASE_META_ASSET_NAME);
+    if (metadataAsset === undefined) return undefined;
+    try {
+      validateDownloadUrl(metadataAsset.browserDownloadUrl);
+      const response = await this.#fetch(metadataAsset.browserDownloadUrl, {
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': `Serpent/${this.#options.currentVersion}`,
+        },
+      });
+      if (!response.ok) return undefined;
+      const text = await response.text();
+      if (text.length > MAX_RELEASE_META_LENGTH) return undefined;
+      return parseGitHubReleaseMeta(JSON.parse(text), release.version);
+    } catch (error) {
+      this.#options.logger?.info('app-update.metadata', 'Release metadata is unavailable.', {
+        reason: error instanceof Error ? error.name : 'invalid-response',
+      });
+      return undefined;
+    }
   }
 
   async checkForUpdates(): Promise<AppUpdateCheckResult> {
@@ -558,6 +612,7 @@ export class AppUpdateService {
         });
         return resultError('asset-missing');
       }
+      const releaseMeta = await this.#fetchReleaseMeta(release);
       this.#cachedUpdate = { release, target, selected };
       return {
         ok: true,
@@ -569,6 +624,7 @@ export class AppUpdateService {
         assetName: selected.asset.name,
         assetSize: selected.asset.size,
         releaseNotes: release.notes,
+        ...(releaseMeta === undefined ? {} : { releaseMeta }),
       };
     } catch (error) {
       this.#options.logger?.error('app-update.check', error, { code: 'network' });

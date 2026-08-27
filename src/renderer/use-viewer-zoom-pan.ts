@@ -30,6 +30,7 @@ export interface ViewerViewState {
 }
 
 interface UseViewerZoomPanOptions {
+  keyboardShortcutsDisabled?: boolean;
   onSwipeNext?: () => void;
   onSwipePrevious?: () => void;
 }
@@ -46,6 +47,7 @@ interface UseViewerZoomPanOptions {
  * media's intrinsic size becomes known.
  */
 export function useViewerZoomPan({
+  keyboardShortcutsDisabled = false,
   onSwipeNext,
   onSwipePrevious,
 }: UseViewerZoomPanOptions) {
@@ -177,6 +179,7 @@ export function useViewerZoomPan({
 
   // Cmd/Ctrl+=|-|0: zoom at viewport center; 0 = fit (Serpent-46i9).
   useEffect(() => {
+    if (keyboardShortcutsDisabled) return;
     const platform = isMacPlatform(navigator.userAgent) ? "mac" : "windows";
     const onKeyDown = (event: KeyboardEvent) => {
       if (shouldIgnoreGlobalZoomShortcut(event.target)) return;
@@ -198,7 +201,7 @@ export function useViewerZoomPan({
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [fitToWindow, zoomAt]);
+  }, [fitToWindow, keyboardShortcutsDisabled, zoomAt]);
 
   // Wheel: mouse wheel zooms at the pointer; trackpad two-finger scroll
   // pans; pinch (ctrlKey) zooms; at-fit horizontal flick → prev/next

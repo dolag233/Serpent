@@ -271,6 +271,7 @@ import {
 import { pickIsolatedWindowPlacement } from "./e2e-isolated-window";
 import {
   clearActiveRecentLibrary,
+  recentLibraryAutoOpenEnabled,
   readActiveLibraryPath,
   readRecentLibraryEntries,
   rememberRecentLibrary,
@@ -6973,9 +6974,15 @@ async function startApplication(): Promise<void> {
   });
   syncAutoScheduler.start();
 
-  const recentPath = readActiveLibraryPath(recentLibraryPath(), (error) => {
-    logger?.error("recent-library.read", error);
-  });
+  // Production startup intentionally leaves the library closed. A missing,
+  // disconnected, or incompatible active library must not hold the app before
+  // the user can choose another one from the always-available switcher. The
+  // explicit opt-in is reserved for isolated full-restart E2E coverage.
+  const recentPath = recentLibraryAutoOpenEnabled()
+    ? readActiveLibraryPath(recentLibraryPath(), (error) => {
+        logger?.error("recent-library.read", error);
+      })
+    : null;
   if (recentPath) {
     const restored = await workerClient.request({
       type: "library.open",

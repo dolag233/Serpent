@@ -16,8 +16,11 @@ export interface ImageSequencePlayerProps {
   api: SerpentLibraryApi;
   displayTransform: ViewerDisplayTransform;
   isFullscreen: boolean;
+  /** Keep preloaded navigation surfaces from capturing global shortcuts. */
+  keyboardShortcutsDisabled?: boolean;
   libraryId: string;
   onFullscreen(): void;
+  onPresentationReady?: () => void;
   onRotate?(): void;
   fitRequestToken?: number;
   onSwipeNext?: () => void;
@@ -34,8 +37,10 @@ export function ImageSequencePlayer({
   api,
   displayTransform,
   isFullscreen,
+  keyboardShortcutsDisabled = false,
   libraryId,
   onFullscreen,
+  onPresentationReady,
   onRotate,
   fitRequestToken,
   onSwipeNext,
@@ -110,6 +115,7 @@ export function ImageSequencePlayer({
   }, [api, currentFrame.assetId, libraryId, playing]);
 
   useEffect(() => {
+    if (keyboardShortcutsDisabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.repeat) return;
       if (event.key !== " " && event.code !== "Space") return;
@@ -128,7 +134,7 @@ export function ImageSequencePlayer({
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, []);
+  }, [keyboardShortcutsDisabled]);
 
   const pausedUrl =
     resolvedUrls.get(currentFrame.assetId) ??
@@ -147,6 +153,7 @@ export function ImageSequencePlayer({
               frameIndex={frameIndex}
               frames={sequence.frames}
               libraryId={libraryId}
+              onPresentationReady={onPresentationReady}
             />
           ) : (
             <div
@@ -163,6 +170,8 @@ export function ImageSequencePlayer({
           fitRequestToken={fitRequestToken}
           fitKeybinds="f-only"
           isFullscreen={isFullscreen}
+          keyboardShortcutsDisabled={keyboardShortcutsDisabled}
+          onPresentationReady={onPresentationReady}
           onFullscreen={onFullscreen}
           onRotate={onRotate}
           onSwipeNext={onSwipeNext}

@@ -367,6 +367,27 @@ describe('Linked folder import', () => {
     service.closeAll();
   });
 
+  it('rejects a NAS library when a linked root belongs to another computer', () => {
+    const root = temporaryRoot();
+    const sourceRoot = path.join(root, 'computer-a-assets');
+    mkdirSync(sourceRoot);
+    writeFileSync(path.join(sourceRoot, 'a.png'), 'aaa');
+
+    const service = newService({ storageKindOverrideForTests: 'network' });
+    const created = service.createLibrary({ displayName: 'NasLinked', selectedParentPath: root });
+    service.importFolderAsLinked({
+      libraryId: created.libraryId,
+      sourceRootPath: sourceRoot,
+    });
+    service.closeAll();
+    rmSync(sourceRoot, { recursive: true, force: true });
+
+    expect(() => service.openLibrary(created.libraryPath)).toThrowError(
+      expect.objectContaining({ code: 'LINKED_FOLDER_UNAVAILABLE' }),
+    );
+    service.closeAll();
+  });
+
   it('relinks an offline linked folder to a new root and restores assets that exist there', () => {
     const root = temporaryRoot();
     const sourceRoot = path.join(root, 'source');

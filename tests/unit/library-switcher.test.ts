@@ -56,6 +56,54 @@ describe("LibrarySwitcher external library action", () => {
     expect(onOpenLibrary).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps open and close available while another operation is running", async () => {
+    const onOpenLibrary = vi.fn();
+    const onCloseLibrary = vi.fn();
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        createElement(
+          LocaleProvider,
+          { children: null, initialPreference: "zh-CN" },
+          createElement(LibrarySwitcher, {
+            busy: true,
+            libraryName: "Current",
+            libraryOpen: true,
+            onCreateLibrary: vi.fn(),
+            onOpenLibrary,
+            onCloseLibrary,
+          }),
+        ),
+      );
+    });
+    await act(async () => {
+      container?.querySelector<HTMLButtonElement>(".library-switcher-trigger")?.click();
+    });
+    const items = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
+    const openItem = items.find((button) => button.textContent?.includes("打开资源库"));
+    const closeItem = items.find((button) => button.textContent?.includes("关闭资源库"));
+    expect(openItem?.disabled).toBe(false);
+    expect(closeItem?.disabled).toBe(false);
+
+    await act(async () => {
+      openItem?.click();
+    });
+    expect(onOpenLibrary).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      container?.querySelector<HTMLButtonElement>(".library-switcher-trigger")?.click();
+    });
+    const closeItemAfterReopen = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+      .find((button) => button.textContent?.includes("关闭资源库"));
+    await act(async () => {
+      closeItemAfterReopen?.click();
+    });
+    expect(onCloseLibrary).toHaveBeenCalledTimes(1);
+  });
+
   it("does not keep separate open-external or import-external menu rows", async () => {
     container = document.createElement("div");
     document.body.append(container);

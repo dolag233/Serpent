@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
 
-import type { Locator, Page } from '@playwright/test';
+import type { ElectronApplication, Locator, Page } from '@playwright/test';
 
 const require = createRequire(path.resolve('package.json'));
 
@@ -44,6 +44,73 @@ export function resolveElectronExecutablePath(): string {
 export function assetCard(window: Page, displayName: string): Locator {
   const escaped = displayName.replaceAll('"', '\\"');
   return window.locator(`.asset-card[title="${escaped}"]`);
+}
+
+/**
+ * Invoke a native Electron application-menu item against the active app
+ * window. On macOS/Linux the native menu is outside the renderer Page's
+ * accessibility tree, and an E2E run can briefly have no focused window after
+ * a dialog or menu closes. Falling back to the first live window keeps the
+ * test on the same command route without depending on that transient focus.
+ */
+export async function clickNativeApplicationMenuItem(
+  application: ElectronApplication,
+  menuItemId: string,
+): Promise<void> {
+  await application.evaluate(({ BrowserWindow, Menu }, targetMenuItemId) => {
+    const menu = Menu.getApplicationMenu();
+    const findItem = (items: Electron.MenuItem[]): Electron.MenuItem | undefined => {
+      for (const item of items) {
+        if (item.id === targetMenuItemId) return item;
+        const nested = findItem(item.submenu?.items ?? []);
+        if (nested) return nested;
+      }
+      return undefined;
+    };
+    const item = findItem(menu?.items ?? []);
+    const target =
+      BrowserWindow.getFocusedWindow()
+      ?? BrowserWindow.getAllWindows().find(
+        (candidate) => !candidate.isDestroyed() && candidate.isVisible(),
+      )
+      ?? BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+    if (!item || !target) {
+      throw new Error(`Expected native menu item ${targetMenuItemId} and a live window.`);
+    }
+    item.click(item, target, undefined);
+  }, menuItemId);
+}
+
+/**
+ * Open the linked-folder import action through the platform's real menu path.
+ * Windows renders the canonical menu in the app shell; macOS/Linux keep the
+ * native Electron menu.
+ */
+export async function openLinkedFolderImportMenu(
+  application: ElectronApplication,
+  window: Page,
+): Promise<void> {
+  if (process.platform === 'win32') {
+    await window.getByRole('button', { name: '主菜单' }).click();
+    await window.getByRole('menuitem', { name: '文件', exact: true }).hover();
+    await window.getByRole('menuitem', { name: '导入链接文件夹' }).click();
+    return;
+  }
+  await clickNativeApplicationMenuItem(application, 'file.import-linked-folder');
+}
+
+/** Open the folder import action through the platform's real menu path. */
+export async function openFolderImportMenu(
+  application: ElectronApplication,
+  window: Page,
+): Promise<void> {
+  if (process.platform === 'win32') {
+    await window.getByRole('button', { name: '主菜单' }).click();
+    await window.getByRole('menuitem', { name: '文件', exact: true }).hover();
+    await window.getByRole('menuitem', { name: '导入文件夹', exact: true }).click();
+    return;
+  }
+  await clickNativeApplicationMenuItem(application, 'file.import-folder');
 }
 
 /** Run the E2E-selected file import through the typed preload contract. */

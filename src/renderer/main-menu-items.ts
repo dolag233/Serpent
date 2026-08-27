@@ -276,6 +276,11 @@ export function buildMainMenuSections({
           onSelect: actions.openOpenSourceLicenses,
         },
         {
+          id: "about.diagnostics",
+          label: label(locale, "settings.viewDiagnostics"),
+          onSelect: actions.openAppLog,
+        },
+        {
           // Serpent-0fe8b4: 菜单里不再显示版本号（无用的 disabled 项），
           // 改为「检查更新」——点击打开关于 Serpent 页面，该页面负责
           // 自动更新流程（检查/下载/安装/进度）。

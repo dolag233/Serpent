@@ -15,7 +15,12 @@ import path from 'node:path';
 
 import { _electron as electron, expect, test, type Page } from '@playwright/test';
 
-import { closeLibraryViaSwitcher, resolveElectronExecutablePath, resolveSessionLogPath } from './electron-test-helpers';
+import {
+  closeLibraryViaSwitcher,
+  openFolderImportMenu,
+  resolveElectronExecutablePath,
+  resolveSessionLogPath,
+} from './electron-test-helpers';
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -117,9 +122,13 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     expect(assetsAfterCopy.filter((asset) => asset.displayName.startsWith('notes')).length).toBe(2);
 
     await sidebarFolderRow(window, '角色').click();
-    await window.getByRole('button', { name: '主菜单' }).click();
-    await window.getByRole('menuitem', { name: '文件', exact: true }).hover();
-    await window.getByRole('menuitem', { name: '导入文件夹', exact: true }).click();
+    // Folder navigation keeps the shell's transfer actions disabled until the
+    // new scope finishes loading; the native macOS menu mirrors that same
+    // disabled state in the renderer command router.
+    await expect(
+      window.getByRole('button', { name: '导入文件夹', exact: true }).first(),
+    ).toBeEnabled();
+    await openFolderImportMenu(application, window);
     await expect(sidebarFolderRow(window, '正面')).toBeVisible();
     await sidebarFolderRow(window, '正面').click();
     await expect(window.getByText('pose.webp', { exact: true })).toBeVisible();

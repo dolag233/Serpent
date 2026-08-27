@@ -35,9 +35,12 @@ import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
 import { applyViewerVolumeToMedia } from "./viewer-volume-preferences";
 
 export interface AudioPlayerControlsProps {
+  /** Keep preloaded navigation surfaces from capturing global shortcuts. */
+  keyboardShortcutsDisabled?: boolean;
   muted: boolean;
   onError(event: SyntheticEvent<HTMLAudioElement>): void;
   onMutedChange(muted: boolean): void;
+  onPresentationReady?(): void;
   onReady?(): void;
   onUserActivity?: () => void;
   onVolumeChange(volume: number): void;
@@ -56,9 +59,11 @@ const SCRUB_STEP_SECONDS = 5;
  * faster rate → longer trail span).
  */
 export function AudioPlayerControls({
+  keyboardShortcutsDisabled = false,
   muted,
   onError,
   onMutedChange,
+  onPresentationReady,
   onReady,
   onUserActivity,
   onVolumeChange,
@@ -110,6 +115,7 @@ export function AudioPlayerControls({
   }, []);
 
   useEffect(() => {
+    if (keyboardShortcutsDisabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (!shouldHandleVideoSpaceKey(event)) return;
       event.preventDefault();
@@ -118,7 +124,7 @@ export function AudioPlayerControls({
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [togglePlayback]);
+  }, [keyboardShortcutsDisabled, togglePlayback]);
 
   // Parent remounts with key={src}; only cancel in-flight seek on unmount/src change.
   useEffect(() => {
@@ -321,6 +327,7 @@ export function AudioPlayerControls({
         onLoadedMetadata={(event) => {
           setDuration(event.currentTarget.duration || 0);
           onReady?.();
+          onPresentationReady?.();
         }}
         onPause={() => setPaused(true)}
         onPlay={() => setPaused(false)}

@@ -20,14 +20,14 @@ import {
  *
  * Schema v2: `{ version: 2, activePath, libraries: [{ path, name, lastOpenedAt }] }`.
  * - `libraries` is most-recent-first, deduped by path, capped at 8 entries.
- * - `activePath` is the library to restore on next launch (LIB-002). It is set
- *   on every successful open and cleared on explicit close, so closing a
- *   library keeps it in the list without restoring it after a restart.
+ * - `activePath` records the last successful open for diagnostics and the
+ *   explicit restore path used by isolated E2E runs. Production startup does
+ *   not open it automatically: the user always gets a live library switcher.
  *
  * Schema v1 files (`{ version: 1, libraryPath, updatedAt }`) are migrated
  * transparently on read: the single library becomes the first entry (name from
  * the path basename until the next open re-stamps it with the display name) and
- * stays the active restore target, because a v1 file only existed while that
+ * stays the active-path hint, because a v1 file only existed while that
  * library was open at quit.
  *
  * This module is Electron-free so vitest can exercise it directly; callers pass
@@ -55,6 +55,15 @@ export function recentLibraryPersistenceEnabled(): boolean {
     process.env.SERPENT_E2E !== '1' ||
     process.env.SERPENT_E2E_RESTORE_RECENT === '1'
   );
+}
+
+/**
+ * Automatic restore is deliberately opt-in for isolated lifecycle tests. A
+ * broken, disconnected, or incompatible library must never block the normal
+ * startup surface before the user can choose another library.
+ */
+export function recentLibraryAutoOpenEnabled(): boolean {
+  return process.env.SERPENT_E2E === '1' && process.env.SERPENT_E2E_RESTORE_RECENT === '1';
 }
 
 function isNotFound(error: unknown): boolean {
@@ -163,7 +172,7 @@ export function readRecentLibraryEntries(
   return readRecentLibraryFile(filePath, onError)?.libraries ?? [];
 }
 
-/** Returns the library path to restore on launch, or null (LIB-002). */
+/** Returns the stored active-path hint, or null. */
 export function readActiveLibraryPath(
   filePath: string,
   onError?: ErrorSink,
@@ -175,8 +184,8 @@ export function readActiveLibraryPath(
 /**
  * Records a successful library open: bumps the entry to the front (deduped by
  * path, re-stamped name + timestamp), caps the list, and marks it as the
- * restore target. Returns the persisted list (empty when persistence is gated
- * off or the write failed).
+ * active-path hint. Returns the persisted list (empty when persistence is
+ * gated off or the write failed).
  */
 export function rememberRecentLibrary(
   filePath: string,

@@ -73,6 +73,16 @@ Windows 安装器（Inno Setup，2026-08-08 决策替代 WiX MSI）：
 - 资产名是运行时选择器的一部分，不能只改 Release 上传名而不改客户端。每个平台和分发形态必须同时上传目标资产与 `.sha256`。
 - GitHub Release 必须是公开、稳定、已发布的 SemVer Release；`/releases/latest` 不会返回 draft/prerelease。当前 `v0.1.2` 已验证包含 macOS DMG/portable ZIP、Windows setup/portable ZIP 及对应校验文件，但没有 `latest*.yml`、`RELEASES` 或 `RELEASES.json`。
 
+#### 更新日志元信息
+
+可在每个 GitHub Release 附加名为 `release-meta.json` 的 JSON 资产。客户端会校验
+`version` 与 Release tag 一致后，在关于窗口提供「查看更新日志」；该资产缺失、网络失败、
+格式错误或版本不匹配时，仍使用 Release body，不能阻塞更新检查。字段契约示例见
+[`release-meta.example.json`](../../../release-meta.example.json)：`date` 为发布日期，
+`changelog` 是中英文条目数组，`changelogUrl`/`downloadUrl` 为可选 HTTP(S) 链接，
+`mandatory` 表示产品是否要求更新。`downloadUrl` 只作元信息展示，实际安装包仍按已校验的
+平台资产和 `.sha256` sidecar 选择，不能由 JSON 绕过资产校验。
+
 若未来要改为静默原生更新，需要另行迁移打包协议：Forge 原生路线使用签名 macOS ZIP + `RELEASES.json` 和 Squirrel.Windows；`electron-updater` 路线则完整迁移到 electron-builder，使用 macOS DMG/ZIP、Windows NSIS 与 `latest-mac.yml`/`latest.yml`。不能仅添加一个 updater 依赖或把普通 ZIP 当作可原地覆盖包。
 
 ## 5. Changelog 规范
@@ -101,6 +111,9 @@ gh release upload v<ver> \
 gh release upload v<ver> \
   Serpent-win-x86-64-<ver>-portable.zip Serpent-win-x86-64-<ver>-portable.zip.sha256 \
   Serpent-win-x86-64-<ver>-setup.zip Serpent-win-x86-64-<ver>-setup.zip.sha256
+
+# 可选：上传与 tag 版本一致的更新日志元信息
+gh release upload v<ver> release-meta.json
 ```
 
 发布后核对 release 页：标题、notes、资产齐全、`--target main` 正确。

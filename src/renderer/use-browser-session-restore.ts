@@ -57,6 +57,9 @@ export type UseBrowserSessionRestoreArgs = {
   setAssetSelectionAnchor: (assetId: string | null) => void;
   /** Blocks the persistence effect while the saved session is being hydrated. */
   setBrowserSessionReady: (ready: boolean) => void;
+  /** Importing after a relaunch starts at the library root even when the last
+   * browse scope is restored to a nested folder. */
+  resetImportTargetFolderRef: MutableRefObject<string | undefined>;
   pendingRestoredFocusRef: MutableRefObject<string | null>;
   navHistoryRef: MutableRefObject<WorkspaceNavHistory>;
   setNavHistoryUi: Dispatch<
@@ -108,6 +111,7 @@ export function useBrowserSessionRestore(
     setSelectedAssetIds,
     setAssetSelectionAnchor,
     setBrowserSessionReady,
+    resetImportTargetFolderRef,
     pendingRestoredFocusRef,
     navHistoryRef,
     setNavHistoryUi,
@@ -184,6 +188,10 @@ export function useBrowserSessionRestore(
             await loadContent(activeLibrary, "all");
           }
         }
+        // Browse scope is a navigation preference; it is not an implicit
+        // import destination. A relaunch must never silently direct a new
+        // import into the last folder the user happened to browse.
+        resetImportTargetFolderRef.current = undefined;
         navHistoryRef.current.clear(restoredLocation);
         setNavHistoryUi({ canBack: false, canForward: false });
       } else {
@@ -226,6 +234,7 @@ export function useBrowserSessionRestore(
     setTagFilter,
     setTrashedAssets,
     setUiState,
+    resetImportTargetFolderRef,
     t,
   ]);
 

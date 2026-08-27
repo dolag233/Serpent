@@ -226,9 +226,9 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
     });
     await expect(preview).toBeVisible();
     await expect(preview).toBeAttached({ attached: true });
-    await expect(window.locator(".workspace > .workspace-viewer")).toHaveCount(
-      1,
-    );
+    await expect(
+      window.locator(".workspace > .workspace-viewer-transition > .workspace-viewer"),
+    ).toHaveCount(1);
     await expect(
       window.locator(".workspace-canvas").locator(".workspace-viewer"),
     ).toHaveCount(0);
@@ -320,7 +320,69 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
     await expect
       .poll(async () => (await imageLocator.boundingBox())?.width ?? 0)
       .toBeCloseTo(fitBox!.width, 0);
+    await window.evaluate(() => {
+      type ViewerTraceSample = {
+        visibleRoots: number;
+        visibleDecodedImages: number;
+      };
+      type ViewerTrace = { done: boolean; samples: ViewerTraceSample[] };
+      const trace: ViewerTrace = { done: false, samples: [] };
+      (globalThis as typeof globalThis & { __serpentViewerTrace?: ViewerTrace }).__serpentViewerTrace = trace;
+      let frame = 0;
+      const sample = () => {
+        const roots = [...document.querySelectorAll<HTMLElement>(
+          ".workspace-viewer-transition > .workspace-viewer",
+        )];
+        const visible = (element: HTMLElement) => {
+          const style = getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          return style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+        };
+        const visibleRoots = roots.filter(visible);
+        trace.samples.push({
+          visibleRoots: visibleRoots.length,
+          visibleDecodedImages: visibleRoots.reduce(
+            (count, root) =>
+              count +
+              [...root.querySelectorAll<HTMLImageElement>(
+                "img.preview-image:not(.is-hidden)",
+              )].filter(
+                (image) =>
+                  image.complete &&
+                  image.naturalWidth > 0 &&
+                  image.naturalHeight > 0,
+              ).length,
+            0,
+          ),
+        });
+        frame += 1;
+        if (frame < 45) globalThis.requestAnimationFrame(sample);
+        else trace.done = true;
+      };
+      globalThis.requestAnimationFrame(sample);
+    });
     await window.keyboard.press("ArrowRight");
+    await expect
+      .poll(() =>
+        window.evaluate(
+          () => (globalThis as typeof globalThis & { __serpentViewerTrace?: { done: boolean } }).__serpentViewerTrace?.done ?? false,
+        ),
+      )
+      .toBe(true);
+    const viewerTrace = await window.evaluate(() => {
+      const trace = (globalThis as typeof globalThis & {
+        __serpentViewerTrace?: { done: boolean; samples: Array<{ visibleRoots: number; visibleDecodedImages: number }> };
+      }).__serpentViewerTrace;
+      delete (globalThis as typeof globalThis & { __serpentViewerTrace?: unknown }).__serpentViewerTrace;
+      return trace?.samples ?? [];
+    });
+    expect(viewerTrace.length).toBeGreaterThan(0);
+    expect(
+      viewerTrace.every(
+        (sample) => sample.visibleRoots > 0 && sample.visibleDecodedImages > 0,
+      ),
+    ).toBe(true);
+    expect(viewerTrace.every((sample) => sample.visibleDecodedImages > 0)).toBe(true);
     const nextPreview = window.getByRole("region", {
       name: "next-automatic.png 查看页面",
     });

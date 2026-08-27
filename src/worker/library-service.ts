@@ -15635,6 +15635,9 @@ export class LibraryService {
     newRootPath: string;
   }): LinkedFolderSummary {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    // The explicit relink is authoritative for the new root. Fence any
+    // in-flight watcher/open snapshot before changing the path it describes.
+    this.cancelReconciliationForClientMutation(input.libraryId);
     const folder = openLibrary.connection
       .prepare(
         'SELECT folder_id, display_name FROM linked_folders WHERE folder_id = ?',
@@ -26446,6 +26449,29 @@ export class LibraryService {
   /** Request the current open-generation owner to stop at its next safe point. */
   cancelOpenBackgroundReconciliation(libraryId: string): void {
     this.reconciliationByLibrary.get(libraryId)?.controller.abort();
+  }
+
+  /**
+   * Fence a pending filesystem reconciliation before an explicit source-root
+   * mutation. A watcher can have already captured the old root while the user
+   * is choosing a replacement; allowing that stale snapshot to commit after
+   * relink would immediately mark the restored assets missing again.
+   */
+  private cancelReconciliationForClientMutation(libraryId: string): void {
+    this.cancelDeferredOpenMaintenance(libraryId);
+    this.cancelOpenBackgroundReconciliation(libraryId);
+    const state = this.watchRefreshByLibrary.get(libraryId);
+    if (!state) return;
+    if (state.timer !== undefined) {
+      try {
+        (this.options.scheduler ?? DEFAULT_DEBOUNCE_SCHEDULER).cancel(state.timer);
+      } catch (error) {
+        this.diagnose('asset-watcher.cancel-before-mutation', error, { libraryId });
+      }
+      state.timer = undefined;
+    }
+    state.dirty = false;
+    state.reason = 'watcher';
   }
 
   /**
@@ -41002,6 +41028,15 @@ export class LibraryService {
     } catch (error) {
       throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
     }
+    // A NAS library can be moved between computers, but an absolute linked
+    // folder path cannot. Do not silently open a catalog whose linked source
+    // points at computer A while this process is running on computer B; the
+    // resulting empty/offline view looks like data loss and is hard to recover
+    // from. Local libraries retain their existing offline/relink semantics.
+    this.assertNetworkLinkedFoldersAvailable(
+      input.connection,
+      input.networkStorage === true,
+    );
     if (this.openById.get(input.library.library_id)) {
       closeIgnoringFailure(input.connection);
       throw new LibraryServiceError('LIBRARY_CORRUPT');
@@ -41190,6 +41225,19 @@ export class LibraryService {
     return summary;
   }
 
+  private assertNetworkLinkedFoldersAvailable(
+    connection: DatabaseConnection,
+    networkStorage: boolean,
+  ): void {
+    if (!networkStorage) return;
+    const linkedFolders = connection
+      .prepare('SELECT absolute_root_path FROM linked_folders')
+      .all() as Array<{ absolute_root_path: string }>;
+    if (linkedFolders.some((folder) => this.linkedRootIsGone(folder.absolute_root_path))) {
+      throw new LibraryServiceError('LINKED_FOLDER_UNAVAILABLE');
+    }
+  }
+
   private openLibraryPrimary(selectedLibraryPath: string): InternalLibrarySummary {
     // Serpent-4bdd26：开库阶段计时（SERPENT_OPEN_STAGE_LOG=1），用于大库打开
     // 的归因。生产默认关闭。
@@ -41331,7 +41379,8 @@ export class LibraryService {
       // history is not retryable; the recovery ladder repairs it).
       if (
         migrationAttempted &&
-        !(error instanceof LibraryServiceError && error.code === 'LIBRARY_CORRUPT')
+        !(error instanceof LibraryServiceError &&
+          (error.code === 'LIBRARY_CORRUPT' || error.code === 'LINKED_FOLDER_UNAVAILABLE'))
       ) {
         try {
           recordMigrationFailure(

@@ -84,6 +84,7 @@ export interface ModelViewerSurfaceProps {
   readonly sourceUrl: string;
   readonly isFullscreen: boolean;
   onFullscreen(): void;
+  onPresentationReady?(): void;
   /** Emit non-blocking load notices into the shell Info stack (MODEL-004). */
   onInfoNotice?(message: string): void;
 }
@@ -98,6 +99,7 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
   const { locale, t } = useLocale();
   const { resolved: themeMode, themeRevision } = useTheme();
   const onInfoNotice = props.onInfoNotice;
+  const onPresentationReady = props.onPresentationReady;
   const containerRef = useRef<HTMLDivElement>(null);
   const [phase, setPhase] = useState<ViewPhase>('loading');
   const [viewError, setViewError] = useState<ViewError | null>(null);
@@ -493,6 +495,12 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
     : { code: openLimit.code };
   const effectivePhase: ViewPhase = refusalError ? 'error' : phase;
   const effectiveError = viewError ?? refusalError;
+
+  useEffect(() => {
+    if (effectivePhase === 'ready' || effectivePhase === 'error') {
+      onPresentationReady?.();
+    }
+  }, [effectivePhase, onPresentationReady]);
 
   const errorMessage = effectiveError
     ? t(

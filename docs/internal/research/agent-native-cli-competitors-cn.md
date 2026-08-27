@@ -13,7 +13,7 @@
 2. Agent-native 的基础是稳定协议，不是自然语言包装：默认 JSON、stdout/stderr 分离、稳定退出码、结构化错误、分页、幂等与批处理部分失败语义。
 3. 人类确认和 Agent 自动化不能二选一：高风险命令默认拒绝非交互执行，明确提供 `--dry-run`、`--yes`/确认令牌和可审计日志。
 4. Skills 适合作为“如何正确编排 CLI”的说明层，不应成为唯一能力层；CLI 自身必须可以被任意 shell、脚本和 Agent 调用。
-5. Serpent 是本地优先产品，不能照搬云产品的薄 API 客户端。CLI 与 GUI 应复用同一应用服务和 Library Worker，不应各自直接写 SQLite 或实现两套业务规则。
+5. Serpent 面向创作者提供统一的资源库与资产管理能力，不能照搬云产品的薄 API 客户端。CLI 与 GUI 应复用同一应用服务和 Library Worker，不应各自直接写 SQLite 或实现两套业务规则。
 
 ## 先澄清：“飞书 CLI”不是一个产品
 

@@ -66,6 +66,9 @@ export const ZoomableImage = forwardRef<
      * enabled. */
     fitKeybinds?: "space-and-f" | "f-only";
     isFullscreen?: boolean;
+    /** Suppress global viewer shortcuts while this surface is preloading. */
+    keyboardShortcutsDisabled?: boolean;
+    onPresentationReady?: () => void;
     onFullscreen?: () => void;
     onSwipeNext?: () => void;
     onSwipePrevious?: () => void;
@@ -89,6 +92,8 @@ export const ZoomableImage = forwardRef<
     alt,
     fitKeybinds = "space-and-f",
     isFullscreen = false,
+    keyboardShortcutsDisabled = false,
+    onPresentationReady,
     onFullscreen,
     onSwipeNext,
     onSwipePrevious,
@@ -119,7 +124,15 @@ export const ZoomableImage = forwardRef<
     viewportPointerHandlers,
     viewportRef,
     zoomAt,
-  } = useViewerZoomPan({ onSwipeNext, onSwipePrevious });
+  } = useViewerZoomPan({
+    keyboardShortcutsDisabled,
+    onSwipeNext,
+    onSwipePrevious,
+  });
+
+  const notifyPresentationReady = useCallback(() => {
+    onPresentationReady?.();
+  }, [onPresentationReady]);
 
   const measureFromImage = useCallback(
     (image: HTMLImageElement) => {
@@ -176,7 +189,8 @@ export const ZoomableImage = forwardRef<
     setFullDecoded(false);
     setSourceNatural({ w: 0, h: 0 });
     sourceNaturalRef.current = { w: 0, h: 0 };
-  }, []);
+    notifyPresentationReady();
+  }, [notifyPresentationReady]);
 
   const display = resolveViewerImageDisplay({
     placeholderUrl: placeholderSrc ?? null,
@@ -200,10 +214,14 @@ export const ZoomableImage = forwardRef<
 
   useLayoutEffect(() => {
     const image = imageRef.current;
-    if (image && image.naturalWidth > 0) measureFromImage(image);
-  }, [display.layer, fullDecoded, measureFromImage]);
+    if (image && image.naturalWidth > 0) {
+      measureFromImage(image);
+      notifyPresentationReady();
+    }
+  }, [display.layer, fullDecoded, measureFromImage, notifyPresentationReady]);
 
   useEffect(() => {
+    if (keyboardShortcutsDisabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (isTypingTarget(event.target)) return;
       const key = event.key;
@@ -220,7 +238,7 @@ export const ZoomableImage = forwardRef<
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [fitKeybinds, fitToWindow]);
+  }, [fitKeybinds, fitToWindow, keyboardShortcutsDisabled]);
 
   const sliderMax = Math.max((fitScale || 1) * 4, 2);
   // Keep the element itself in source orientation. CSS rotation swaps the
@@ -262,6 +280,7 @@ export const ZoomableImage = forwardRef<
               onLoad={(event) => {
                 setImageError(false);
                 measureFromImage(event.currentTarget);
+                notifyPresentationReady();
               }}
               ref={fullDecoded ? undefined : imageRef}
               src={placeholderSrc}
@@ -284,7 +303,10 @@ export const ZoomableImage = forwardRef<
               onLoad={(event) => {
                 setImageError(false);
                 measureFromImage(event.currentTarget);
-                if (isDecodedImage(event.currentTarget)) setFullDecoded(true);
+                if (isDecodedImage(event.currentTarget)) {
+                  setFullDecoded(true);
+                  notifyPresentationReady();
+                }
               }}
               ref={fullDecoded ? imageRef : undefined}
               src={src}
@@ -307,7 +329,10 @@ export const ZoomableImage = forwardRef<
             onLoad={(event) => {
               setImageError(false);
               measureFromImage(event.currentTarget);
-              if (isDecodedImage(event.currentTarget)) setFullDecoded(true);
+              if (isDecodedImage(event.currentTarget)) {
+                setFullDecoded(true);
+                notifyPresentationReady();
+              }
             }}
             ref={imageRef}
             src={display.displayUrl ?? src}

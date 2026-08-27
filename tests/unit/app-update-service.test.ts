@@ -9,6 +9,7 @@ import AdmZip from 'adm-zip';
 import {
   createAppUpdateService,
   detectAppDistribution,
+  parseGitHubReleaseMeta,
   parseGitHubRelease,
   parseSha256,
   resolveAppUpdateTarget,
@@ -167,6 +168,59 @@ describe('Serpent app update release contract', () => {
       assetName: 'Serpent-darwin-arm64-0.1.3-package.dmg',
     });
     expect(JSON.stringify(result)).not.toContain('/tmp');
+  });
+
+  it('loads an optional release-meta.json asset without making it required', async () => {
+    const metadata = {
+      version: '0.1.3',
+      date: '2026-08-28',
+      changelog: [
+        { zhCN: '修复资源库打开稳定性。', en: 'Improve library-open stability.' },
+      ],
+      changelogUrl: 'https://github.com/dolag233/Serpent/releases/tag/v0.1.3',
+      downloadUrl: 'https://github.com/dolag233/Serpent/releases/tag/v0.1.3',
+      mandatory: false,
+    };
+    const release = releasePayload({
+      assets: [
+        ...((releasePayload().assets as unknown[]) ?? []),
+        {
+          name: 'release-meta.json',
+          browser_download_url: 'https://github.com/dolag233/Serpent/releases/download/v0.1.3/release-meta.json',
+          size: JSON.stringify(metadata).length,
+        },
+      ],
+    });
+    const service = createAppUpdateService({
+      currentVersion: '0.1.1',
+      isPackaged: true,
+      platform: 'darwin',
+      arch: 'arm64',
+      executablePath: '/Applications/Serpent.app/Contents/MacOS/Serpent',
+      tempDirectory: '/tmp',
+      downloadsDirectory: '/tmp',
+      environment: { SERPENT_DISTRIBUTION: 'installed' },
+      fetchImpl: async (url) => url.endsWith('release-meta.json')
+        ? new Response(JSON.stringify(metadata), { status: 200 })
+        : new Response(JSON.stringify(release), { status: 200 }),
+    });
+
+    const result = await service.checkForUpdates();
+    expect(result).toMatchObject({
+      ok: true,
+      status: 'available',
+      releaseMeta: metadata,
+    });
+  });
+
+  it('ignores malformed or mismatched release metadata while keeping update checks usable', async () => {
+    expect(parseGitHubReleaseMeta({ version: '0.1.2', date: '2026-08-28' }, '0.1.3')).toBeUndefined();
+    expect(parseGitHubReleaseMeta({
+      version: '0.1.3',
+      date: '2026-08-28',
+      changelog: ['ok'],
+      changelogUrl: 'javascript:alert(1)',
+    }, '0.1.3')).toBeUndefined();
   });
 
   it('checks updates from an unpackaged dev build by default', async () => {

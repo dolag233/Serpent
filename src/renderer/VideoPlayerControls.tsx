@@ -44,10 +44,13 @@ export interface VideoPlayerControlsProps {
   frameRateFps?: number | null;
   isFullscreen?: boolean;
   muted: boolean;
+  /** Keep preloaded navigation surfaces from capturing global shortcuts. */
+  keyboardShortcutsDisabled?: boolean;
   onError(event: SyntheticEvent<HTMLVideoElement>): void;
   onFullscreen(): void;
   onRotate?(): void;
   onMutedChange(muted: boolean): void;
+  onPresentationReady?(): void;
   onReady?(): void;
   onPlaying?(video: HTMLVideoElement): void;
   onSwipeNext?: () => void;
@@ -94,9 +97,11 @@ export function VideoPlayerControls({
   frameRateFps = null,
   isFullscreen = false,
   muted,
+  keyboardShortcutsDisabled = false,
   onError,
   onFullscreen,
   onMutedChange,
+  onPresentationReady,
   onReady,
   onPlaying,
   onSwipeNext,
@@ -121,7 +126,11 @@ export function VideoPlayerControls({
     view,
     viewportPointerHandlers,
     viewportRef,
-  } = useViewerZoomPan({ onSwipeNext, onSwipePrevious });
+  } = useViewerZoomPan({
+    keyboardShortcutsDisabled,
+    onSwipeNext,
+    onSwipePrevious,
+  });
   const scrubbingPointerId = useRef<number | null>(null);
   // Create the seek session in an effect (not render) so react-hooks/refs
   // doesn't flag the ref-reading closures. createMediaSeekSession stores
@@ -216,6 +225,7 @@ export function VideoPlayerControls({
   }, []);
 
   useEffect(() => {
+    if (keyboardShortcutsDisabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) {
         return;
@@ -269,11 +279,18 @@ export function VideoPlayerControls({
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [applyPlaybackRate, fitToWindow, stepFrame, togglePlayback]);
+  }, [
+    applyPlaybackRate,
+    fitToWindow,
+    keyboardShortcutsDisabled,
+    stepFrame,
+    togglePlayback,
+  ]);
 
   // Main path: Windows Menu accelerators + IMM32 IME suspend while armed;
   // before-input remains a fallback. Ctrl+Arrow still arrives via the listener above.
   useEffect(() => {
+    if (keyboardShortcutsDisabled) return;
     const shell = (window as RendererWindow).serpent?.shell;
     if (!shell?.setViewerVideoShortcutsActive || !shell.onViewerVideoShortcut) {
       return;
@@ -324,7 +341,13 @@ export function VideoPlayerControls({
       window.removeEventListener("keyup", syncArmed, true);
       unsubscribe();
     };
-  }, [applyPlaybackRate, fitToWindow, onUserActivity, stepFrame]);
+  }, [
+    applyPlaybackRate,
+    fitToWindow,
+    keyboardShortcutsDisabled,
+    onUserActivity,
+    stepFrame,
+  ]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -448,6 +471,7 @@ export function VideoPlayerControls({
             // playable, so only then clear a retained retry error.
             if (video.videoWidth > 0 && video.videoHeight > 0 && !video.error) {
               onReady?.();
+              onPresentationReady?.();
             }
           }}
           onPause={() => setPaused(true)}

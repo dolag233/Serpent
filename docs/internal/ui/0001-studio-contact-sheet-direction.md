@@ -78,7 +78,7 @@ No literal snake motifs are required.
 ### No library
 
 - Full application shell remains visible.
-- Central workspace contains a compact local-first explanation.
+- Central workspace contains a compact product explanation.
 - Create Library is primary; Open Library is secondary.
 - Navigation and inspector show honest inactive states, not fake sample assets.
 

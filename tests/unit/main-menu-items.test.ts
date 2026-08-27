@@ -133,6 +133,10 @@ describe("main-menu-items (Serpent-bnah)", () => {
         expect.objectContaining({ id: "window.diagnostics" }),
       ]),
     );
+    const about = sections.find((section) => section.id === "about");
+    const diagnostics = about?.items?.find((item) => item.id === "about.diagnostics");
+    diagnostics?.onSelect?.();
+    expect(actions.openAppLog).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the Library menu aligned with the library switcher", () => {

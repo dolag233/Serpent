@@ -79,6 +79,10 @@ interface AssetPreviewModalProps {
   onInfoNotice?: (message: string) => void;
   pluginApi?: SerpentPluginManagerApi;
   pluginContributionRefreshKey?: string | null;
+  /** Keep this viewer mounted off-screen while the next asset becomes ready. */
+  preloadOnly?: boolean;
+  /** Called once when the current asset has a presentable surface. */
+  onPresentationReady?: () => void;
 }
 
 export type AssetPreviewModalHandle = {
@@ -149,7 +153,7 @@ function safeRendererDiagnostic(value: string): string {
     .slice(0, 500);
 }
 
-export const AssetPreviewModal = forwardRef<
+const AssetPreviewModalContent = forwardRef<
   AssetPreviewModalHandle,
   AssetPreviewModalProps
 >(function AssetPreviewModal(
@@ -166,6 +170,8 @@ export const AssetPreviewModal = forwardRef<
     onInfoNotice,
     pluginApi,
     pluginContributionRefreshKey = null,
+    preloadOnly = false,
+    onPresentationReady,
   },
   ref,
 ) {
@@ -176,6 +182,12 @@ export const AssetPreviewModal = forwardRef<
     viewerSessionControllerRef.current = new ViewerSessionController();
   }
   const viewerSessionController = viewerSessionControllerRef.current;
+  const presentationReadyRef = useRef(false);
+  const notifyPresentationReady = useCallback(() => {
+    if (presentationReadyRef.current) return;
+    presentationReadyRef.current = true;
+    onPresentationReady?.();
+  }, [onPresentationReady]);
   const viewerIdentity = useMemo<ViewerSessionIdentity>(() => ({
     libraryId,
     assetId: asset.assetId,
@@ -556,8 +568,9 @@ export const AssetPreviewModal = forwardRef<
   }, [resolvePreview, viewerIdentity, viewerSessionController]);
 
   useEffect(() => {
+    if (preloadOnly) return;
     modalRef.current?.focus({ preventScroll: true });
-  }, []);
+  }, [preloadOnly]);
 
   async function retry() {
     viewerSessionController.cancelTask("proxy-fallback");
@@ -794,6 +807,22 @@ export const AssetPreviewModal = forwardRef<
   const fitShortcut = viewerTransformable ? "Numpad ." : undefined;
   const copyShortcut = isMacPlatform(navigator.userAgent) ? "⌘C" : "Ctrl+C";
 
+  // A preloading viewer must not leave the old viewer waiting forever when
+  // the target is unsupported or its preview request has failed. In those
+  // cases the error surface is the honest presentation to swap to.
+  useEffect(() => {
+    if (!preloadOnly) return;
+    if (unsupported || viewerError || primarySurface === "unavailable") {
+      notifyPresentationReady();
+    }
+  }, [
+    notifyPresentationReady,
+    preloadOnly,
+    primarySurface,
+    unsupported,
+    viewerError,
+  ]);
+
   const rotateViewer = useCallback(() => {
     setDisplayTransform((current) =>
       applyViewerDisplayTransformAction(current, "rotate-clockwise"),
@@ -832,7 +861,7 @@ export const AssetPreviewModal = forwardRef<
   useImperativeHandle(ref, () => ({ requestClose }), [requestClose]);
 
   useEffect(() => {
-    if (!isTextViewer) return;
+    if (preloadOnly || !isTextViewer) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
@@ -841,7 +870,7 @@ export const AssetPreviewModal = forwardRef<
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handleTextSave, isTextViewer]);
+  }, [handleTextSave, isTextViewer, preloadOnly]);
 
   const copyViewerAsset = useCallback(async () => {
     // Serpent-f8e175: 与右键「复制」一致，把当前资产源文件复制到剪贴板。
@@ -856,6 +885,7 @@ export const AssetPreviewModal = forwardRef<
   }, [api, libraryId, asset.assetId, setError, t]);
 
   useEffect(() => {
+    if (preloadOnly) return;
     // Serpent-f8e175: 图片/视频/PDF/音频等非文本查看器聚焦时 Ctrl/Cmd+C
     // 复制当前资产；文本查看器让渡给原生（复制选中文本），输入框/可编辑
     // 元素聚焦时不抢键（判定见 shouldCopyAssetOnShortcut）。
@@ -877,7 +907,7 @@ export const AssetPreviewModal = forwardRef<
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isTextViewer, copyViewerAsset]);
+  }, [copyViewerAsset, isTextViewer, preloadOnly]);
 
   useEffect(() => {
     setViewerContextMenu(null);
@@ -901,16 +931,21 @@ export const AssetPreviewModal = forwardRef<
   return (
     <ViewerSurface
       aria-label={t("preview.viewPage", { name: asset.displayName })}
-      className={`workspace-viewer${chromeIdle ? " is-chrome-idle" : ""}${isTextViewer ? " is-text-viewer" : ""}${isDocumentViewer ? " is-document-viewer" : ""}`}
+      aria-hidden={preloadOnly || undefined}
+      className={`workspace-viewer${chromeIdle ? " is-chrome-idle" : ""}${isTextViewer ? " is-text-viewer" : ""}${isDocumentViewer ? " is-document-viewer" : ""}${preloadOnly ? " is-preview-preloading" : ""}`}
       onContextMenu={(event) => {
-        if (!viewerContextMenuAvailable) return;
+        if (preloadOnly || !viewerContextMenuAvailable) return;
         event.preventDefault();
         event.stopPropagation();
         onChromeActivity("pointerdownOrClick");
         setViewerContextMenu({ x: event.clientX, y: event.clientY });
       }}
-      onPointerDown={() => onChromeActivity("pointerdownOrClick")}
-      onPointerMove={() => onChromeActivity("pointermove")}
+      onPointerDown={() => {
+        if (!preloadOnly) onChromeActivity("pointerdownOrClick");
+      }}
+      onPointerMove={() => {
+        if (!preloadOnly) onChromeActivity("pointermove");
+      }}
       ref={modalRef}
       role="region"
       tabIndex={-1}
@@ -931,8 +966,10 @@ export const AssetPreviewModal = forwardRef<
               displayTransform={displayTransform}
               fitRequestToken={fitRequestToken}
               isFullscreen={isFullscreen}
+              keyboardShortcutsDisabled={preloadOnly}
               libraryId={libraryId}
               onFullscreen={() => void toggleFullscreen()}
+              onPresentationReady={notifyPresentationReady}
               onRotate={rotateViewer}
               onSwipeNext={onNext}
               onSwipePrevious={onPrevious}
@@ -944,10 +981,12 @@ export const AssetPreviewModal = forwardRef<
               displayTransform={displayTransform}
               fitRequestToken={fitRequestToken}
               isFullscreen={isFullscreen}
+              keyboardShortcutsDisabled={preloadOnly}
               muted={viewerMuted}
               onError={handlePlaybackError}
               onFullscreen={() => void toggleFullscreen()}
               onMutedChange={setViewerMuted}
+              onPresentationReady={notifyPresentationReady}
               onReady={() => {
                 setDirectApproved(true);
                 setProxyFallbackState("idle");
@@ -1000,9 +1039,11 @@ export const AssetPreviewModal = forwardRef<
           ) : ready && resolution?.mediaType === "audio" && resolution.url ? (
             <AudioPlayerControls
               key={resolution.url}
+              keyboardShortcutsDisabled={preloadOnly}
               muted={viewerMuted}
               onError={handlePlaybackError}
               onMutedChange={setViewerMuted}
+              onPresentationReady={notifyPresentationReady}
               onReady={() => setDirectApproved(true)}
               onUserActivity={() => onChromeActivity("pointerdownOrClick")}
               onVolumeChange={setViewerVolume}
@@ -1022,6 +1063,7 @@ export const AssetPreviewModal = forwardRef<
               libraryId={libraryId}
               onFullscreen={() => void toggleFullscreen()}
               onInfoNotice={onInfoNotice}
+              onPresentationReady={notifyPresentationReady}
               sourceUrl={resolution.url}
             />
           ) : ready && resolution?.mediaType === "document" && resolution.url ? (
@@ -1032,6 +1074,7 @@ export const AssetPreviewModal = forwardRef<
                 isFullscreen={isFullscreen}
                 key={`${libraryId}:${asset.assetId}`}
                 libraryId={libraryId}
+                onPresentationReady={notifyPresentationReady}
                 placeholderUrl={placeholderUrl}
                 sessionSignal={viewerSessionSignal}
                 sourceUrl={resolution.url}
@@ -1040,6 +1083,7 @@ export const AssetPreviewModal = forwardRef<
               <HtmlViewerSurface
                 isFullscreen={isFullscreen}
                 key={`${libraryId}:${asset.assetId}`}
+                onPresentationReady={notifyPresentationReady}
                 sourceUrl={resolution.url}
               />
             )
@@ -1050,6 +1094,7 @@ export const AssetPreviewModal = forwardRef<
               isFullscreen={isFullscreen}
               key={`${libraryId}:${asset.assetId}`}
               libraryId={libraryId}
+              onPresentationReady={notifyPresentationReady}
               placeholderUrl={placeholderUrl}
               sessionSignal={viewerSessionSignal}
               sourceUrl={null}
@@ -1062,6 +1107,7 @@ export const AssetPreviewModal = forwardRef<
               assetId={asset.assetId}
               libraryId={libraryId}
               onClose={onClose}
+              onPresentationReady={notifyPresentationReady}
               onSaved={() => setDirectApproved(true)}
             />
           ) : showImage && imageSrc ? (
@@ -1074,6 +1120,7 @@ export const AssetPreviewModal = forwardRef<
                 selectedColorSpace ?? resolution?.colorSpace?.id
               }
               isFullscreen={isFullscreen}
+              keyboardShortcutsDisabled={preloadOnly}
               key={asset.assetId}
               onColorSpaceChange={selectColorSpace}
               onFullscreen={() => void toggleFullscreen()}
@@ -1082,6 +1129,7 @@ export const AssetPreviewModal = forwardRef<
               onSwipePrevious={onPrevious}
               pbrChannel={pbrChannel}
               placeholderSrc={placeholderUrl ?? undefined}
+              onPresentationReady={notifyPresentationReady}
               src={imageSrc}
             />
           ) : unsupported ? (            <div className="preview-state" role="status">
@@ -1243,5 +1291,59 @@ export const AssetPreviewModal = forwardRef<
         ) : null}
       </ShellSurface>
     </ViewerSurface>
+  );
+});
+
+/**
+ * Keep the current surface visible while the next asset resolves and decodes.
+ * App-level asset navigation used to key the whole modal, so React removed
+ * the decoded thumbnail before the replacement could paint. The transition
+ * host keeps both keyed surfaces alive and only promotes the target after it
+ * has a presentable frame (or an actionable error surface).
+ */
+export const AssetPreviewModal = forwardRef<
+  AssetPreviewModalHandle,
+  AssetPreviewModalProps
+>(function AssetPreviewModal(props, ref) {
+  const { asset, ...contentProps } = props;
+  const [activeAsset, setActiveAsset] = useState(asset);
+  const latestAssetIdRef = useRef(asset.assetId);
+  latestAssetIdRef.current = asset.assetId;
+
+  // Metadata/revision updates for the currently displayed asset should not
+  // wait for a navigation transition. A different asset still preloads.
+  useEffect(() => {
+    if (activeAsset.assetId !== asset.assetId) return;
+    setActiveAsset(asset);
+  }, [activeAsset.assetId, asset]);
+
+  const transitioning = activeAsset.assetId !== asset.assetId;
+  const promoteTarget = useCallback(() => {
+    if (latestAssetIdRef.current !== asset.assetId) return;
+    setActiveAsset((current) =>
+      current.assetId === asset.assetId ? current : asset,
+    );
+  }, [asset]);
+
+  return (
+    <div className="workspace-viewer-transition">
+      <AssetPreviewModalContent
+        {...contentProps}
+        asset={activeAsset}
+        key={activeAsset.assetId}
+        onPresentationReady={undefined}
+        preloadOnly={false}
+        ref={ref}
+      />
+      {transitioning ? (
+        <AssetPreviewModalContent
+          {...contentProps}
+          asset={asset}
+          key={asset.assetId}
+          onPresentationReady={promoteTarget}
+          preloadOnly
+        />
+      ) : null}
+    </div>
   );
 });

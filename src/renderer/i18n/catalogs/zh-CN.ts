@@ -62,6 +62,8 @@ export const zhCN = {
     libraryMenu: "资源库菜单",
     chooseLibrary: "选择资源库",
     noLibraryOpen: "尚未打开资源库",
+    switchLibrary: "切换资源库…",
+    librarySwitchWarning: "当前有一项操作正在进行。切换资源库会中断当前操作，未提交的更改可能丢失。确定要继续吗？",
     otherLibraries: "其他资源库",
     createLibrary: "创建资源库",
     createLibraryEllipsis: "新建资源库…",
@@ -807,8 +809,8 @@ export const zhCN = {
       fps: "帧率（FPS）",
       help: "默认 30 FPS。仅分辨率一致的帧会进入同一序列。",
       applyToRest: "将当前设置应用到后面的序列",
-      importSelected: "只导入所选文件",
-      importSequence: "作为序列导入 {count} 帧",
+      importSelected: "导入单独文件",
+      importSequence: "导入序列帧",
       importing: "正在导入…"
     },
     pluginTrustPrompt: {
@@ -838,6 +840,7 @@ export const zhCN = {
       automationNotice: "提示",
       automationWarning: "注意",
       automationError: "自动化操作未能完成",
+      switchLibrary: "切换资源库",
       confirm: "知道了"
     },
     rename: {
@@ -979,7 +982,12 @@ export const zhCN = {
       updateAssetMissing: "此版本没有适用于当前构建的更新资产。",
       updateVerificationFailed: "下载的更新未通过完整性校验。",
       updateDownloadFailed: "更新下载失败，请重试。",
-      updateOpenFailed: "无法打开安装器。"
+      updateOpenFailed: "无法打开安装器。",
+      viewReleaseNotes: "查看更新日志",
+      hideReleaseNotes: "收起更新日志",
+      releaseDate: "发布日期：{date}",
+      mandatoryUpdate: "此更新为必需更新。",
+      openReleaseNotes: "在浏览器中打开完整更新日志"
     },
     openSource: {
       title: "开源组件与许可",
@@ -2002,6 +2010,7 @@ export const zhCN = {
       LIBRARY_STRUCTURE_MISMATCH: "该资源库的数据库结构与当前 Serpent 版本不匹配。请升级到最新版 Serpent 后重新打开。",
       LIBRARY_NOT_WRITABLE: "无法在所选文件夹写入文件。可能是没有写权限、磁盘已满或只读，或文件被其他程序占用。请检查文件夹和 NAS 连接后重试。",
       LIBRARY_NETWORK_SHARE: "无法在此网络共享（NAS/SMB）上打开或写入资源库数据库。NAS 资源库会使用回滚日志，文件锁和断线恢复取决于共享盘。请检查 NAS 连接和权限；若仍失败，请把资源库复制到本机磁盘，或改用 WebDAV 同步。",
+      LINKED_FOLDER_UNAVAILABLE: "该 NAS 资源库包含一个在此电脑上不可用的链接文件夹。资源库数据库没有损坏。请重新连接该文件夹，或在此电脑上重新指定链接文件夹后再打开资源库。",
       LIBRARY_IO_ERROR: "资源库操作未完成：磁盘或文件系统报告了 I/O 错误。请检查磁盘连接、可用空间和权限；若仍失败，请把资源库复制到本机磁盘，并查看「诊断日志」。",
       LIBRARY_BUSY: "该资源库正被另一个 Serpent 窗口占用，或数据库暂时锁定。请等待几秒后重试；不要在两台电脑上同时打开同一资源库。",
       LIBRARY_CLEANUP_FAILED: "创建资源库失败，且临时文件无法自动清理。请删除所选位置旁的 `.serpent-create-*.partial` 文件夹，然后换一个可写文件夹重试。",

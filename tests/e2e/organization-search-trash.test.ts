@@ -299,7 +299,25 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
       { timeout: 10_000 },
     ).catch(() => undefined);
     await locateAssetCard(window, 'hero.png').click({ button: 'right' });
+    // Serpent-a711e8: make the durable mutation deliberately slow so this
+    // assertion proves the visible card is removed optimistically, rather
+    // than merely benefiting from a fast local Worker round trip.
+    await window.evaluate(() => {
+      const library = (globalThis as typeof globalThis & {
+        serpent: { library: {
+          trashAssets: (input: { libraryId: string; assetIds: string[] }) => Promise<unknown>;
+        } };
+      }).serpent.library;
+      const original = library.trashAssets;
+      library.trashAssets = async (input) => {
+        await new Promise((resolve) => globalThis.setTimeout(resolve, 750));
+        return original(input);
+      };
+    });
+    const deletionStartedAt = Date.now();
     await window.getByRole('menuitem', { name: '移入回收站' }).click();
+    await expect(locateAssetCard(window, 'hero.png')).toHaveCount(0, { timeout: 600 });
+    expect(Date.now() - deletionStartedAt).toBeLessThan(600);
     await expect(window.locator('.workspace-notice')).toContainText('1 项资产已移入回收站');
     await window.getByRole('button', { name: /回收站/ }).click();
     await locateAssetCard(window, 'hero.png').click({ button: 'right' });

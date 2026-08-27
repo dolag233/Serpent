@@ -4,7 +4,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: 'Serpent',
-  tagline: '本地优先的数字资产管理器',
+  tagline: '跨平台数字资产管理器',
   url: 'https://dolag233.github.io',
   baseUrl: '/Serpent/',
   organizationName: 'dolag233',

@@ -297,7 +297,17 @@ export function useBatchActions({
 
   async function trashManagedAssets(assetIds: string[]) {
     if (!api || !library) return undefined;
+    // Serpent-a711e8: the Worker must still finish the durable trash/history
+    // transaction before we report success, but the visible cards do not need
+    // to wait for that round trip.  Remove them optimistically and reconcile
+    // immediately if the mutation fails; otherwise large-library deletes can
+    // leave the user staring at cards for several seconds.
+    const optimisticallyRemoved = assetIds.length > 0;
     setUiState("loading");
+    if (optimisticallyRemoved) {
+      clearAssetSelection();
+      applyLocalAssetRemoval(assetIds);
+    }
     try {
       const result = await api.trashAssets({
         libraryId: library.libraryId,
@@ -311,12 +321,20 @@ export function useBatchActions({
         result.value.historyEntryId,
       );
       await refreshCollections();
-      clearAssetSelection();
-      applyLocalAssetRemoval(assetIds, {
-        removedCount: result.value.trashedCount,
-      });
+      // A concurrent mutation can make the durable count smaller than the
+      // optimistic selection.  Re-read the current scope in that uncommon
+      // case instead of leaving an under-counted view until navigation.
+      if (result.value.trashedCount !== assetIds.length) {
+        await reloadCurrentContent();
+      }
       return result.value.historyEntryId;
     } catch (caught) {
+      if (optimisticallyRemoved) {
+        // Restore cards/counts when the durable operation failed.  The
+        // background reconcile scheduled by applyLocalAssetRemoval is safe to
+        // leave in place and will converge the view once more.
+        await reloadCurrentContent().catch(() => undefined);
+      }
       setError(
         toMessage(
           caught,
