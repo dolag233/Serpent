@@ -3,7 +3,7 @@
 > 更新时间：2026-08-27
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
-- **2026-08-27 `Serpent-79b839` 同 ID 不同路径开库**：本机已打开资源库 A 时，再打开复制到 NAS 的同一目录，Worker 只按 `library_id` 判重并抛 `LIBRARY_CORRUPT`（文案像数据库坏了，还会从最近列表删掉）。未修。应按路径+ID 判断；至少确认提示，禁止当损坏抢救。关联 `Serpent-f863df` / `Serpent-6c5c65`。
+- **2026-08-27 `Serpent-79b839` 同 ID 开库**：本机已打开 A 时再打开复制到 NAS 的副本，当前只按 `library_id` 判重并抛 `LIBRARY_CORRUPT`。路径不能当身份（盘符挂载 vs UNC 可能是同一份远端库）。未修。同 ID 应确认提示，禁止当损坏抢救。关联 `Serpent-f863df` / `Serpent-6c5c65`。
 
 - **2026-08-27 P0 导入 ZIP 后全部卡片损坏（`Serpent-e04fbc` / LIB-ZIP-001）**：从硬盘删除资源库会按 `libraryId` 拦住 `serpent://` 读取；成功删除后未释放。ZIP 导入保留同一 `library_id`，重导入后每张卡 410。删除请求结束后释放 fence。用户 Windows 真机验收通过。详见
   [开发日志](development/2026-08-27-zip-reimport-media-fence-development-log.md)。
