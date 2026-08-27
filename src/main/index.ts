@@ -56,7 +56,9 @@ import {
   type NativeDialogHost,
 } from "./native-dialogs";
 import {
+  ExternalLibraryArchiveError,
   materializeExternalLibrarySource,
+  sweepOrphanExternalLibraryStaging,
   type MaterializedExternalLibrarySource,
 } from "./external-library-archive";
 import {
@@ -280,6 +282,10 @@ import {
   readPendingCleanupAsidePaths,
   writePendingCleanupAsidePaths,
 } from "./pending-cleanup-store";
+import {
+  readExternalLibraryStagingRoots,
+  writeExternalLibraryStagingRoots,
+} from "./external-library-staging-store";
 import { AiQueueScheduler } from "./ai-queue-scheduler";
 import { aiSearchFailureReason, planAiSearch } from "./ai-search-planner";
 import {
@@ -313,7 +319,8 @@ import { createArtifactResponse } from "./artifact-response";
 import { PreviewCache } from "./preview-cache";
 import {
   bindLibraryMediaReadSignal,
-  blockLibraryMediaReads,
+  beginLibraryDeleteMediaFence,
+  endLibraryDeleteMediaFence,
   isLibraryMediaReadBlocked,
   unblockLibraryMediaReads,
 } from "./library-media-reads";
@@ -762,6 +769,35 @@ let pendingBillfishOpenSourcePath: string | undefined;
 // directories. The Worker only receives the extracted root; these callbacks
 // ensure the archive contents do not remain on disk after the operation.
 const externalSourceCleanups = new Map<string, () => Promise<void>>();
+const liveExternalLibraryStagingRoots = new Set<string>();
+
+function externalLibraryStagingStorePath(): string {
+  return path.join(app.getPath("userData"), "external-library-staging.json");
+}
+
+function persistExternalLibraryStagingRoot(root: string): void {
+  const storePath = externalLibraryStagingStorePath();
+  const current = readExternalLibraryStagingRoots(storePath, (error) => {
+    logger?.error("external-library.staging-store.read", error);
+  });
+  writeExternalLibraryStagingRoots(storePath, [...current, root], (error) => {
+    logger?.error("external-library.staging-store.write", error);
+  });
+}
+
+function forgetExternalLibraryStagingRoot(root: string): void {
+  const storePath = externalLibraryStagingStorePath();
+  const current = readExternalLibraryStagingRoots(storePath, (error) => {
+    logger?.error("external-library.staging-store.read", error);
+  });
+  writeExternalLibraryStagingRoots(
+    storePath,
+    current.filter((value) => value !== root),
+    (error) => {
+      logger?.error("external-library.staging-store.write", error);
+    },
+  );
+}
 
 function rememberExternalSource(materialized: MaterializedExternalLibrarySource): string {
   externalSourceCleanups.set(materialized.sourceRootPath, materialized.cleanup);
@@ -772,17 +808,81 @@ async function cleanupExternalSource(sourceRootPath: string | undefined): Promis
   if (!sourceRootPath) return;
   const cleanup = externalSourceCleanups.get(sourceRootPath);
   if (!cleanup) return;
-  externalSourceCleanups.delete(sourceRootPath);
   try {
     await cleanup();
+    externalSourceCleanups.delete(sourceRootPath);
   } catch (error) {
-    logger?.error("external-library.archive-cleanup", error, { sourceRootPath });
+    logger?.error("external-library.archive-cleanup", error);
   }
 }
 
 async function cleanupAllExternalSources(): Promise<void> {
   const sourceRoots = [...externalSourceCleanups.keys()];
   await Promise.all(sourceRoots.map((sourceRootPath) => cleanupExternalSource(sourceRootPath)));
+}
+
+async function materializeSelectedExternalLibrary(input: {
+  readonly sourcePath: string;
+  readonly kind: "eagle" | "billfish";
+  readonly fallbackDirectory?: string;
+}): Promise<MaterializedExternalLibrarySource> {
+  return materializeExternalLibrarySource({
+    sourcePath: input.sourcePath,
+    kind: input.kind,
+    preferredTempDirectory: tmpdir(),
+    fallbackTempDirectory: input.fallbackDirectory,
+    registerStagingRoot: (root) => {
+      liveExternalLibraryStagingRoots.add(root);
+      persistExternalLibraryStagingRoot(root);
+    },
+    unregisterStagingRoot: (root) => {
+      liveExternalLibraryStagingRoots.delete(root);
+      forgetExternalLibraryStagingRoot(root);
+    },
+  });
+}
+
+function fallbackDirectoryForLibraryId(libraryId: string): string | undefined {
+  const entries = readRecentLibraryEntries(recentLibraryPath(), (error) => {
+    logger?.error("recent-library.read", error);
+  });
+  const match = entries.find((entry) => entry.libraryId === libraryId);
+  if (match?.path) return path.dirname(path.resolve(match.path));
+  const active = readActiveLibraryPath(recentLibraryPath(), (error) => {
+    logger?.error("recent-library.read", error);
+  });
+  return active ? path.dirname(path.resolve(active)) : undefined;
+}
+
+async function sweepOrphanExternalLibraryStagingOnStartup(): Promise<void> {
+  const storePath = externalLibraryStagingStorePath();
+  const registered = readExternalLibraryStagingRoots(storePath, (error) => {
+    logger?.error("external-library.staging-store.read", error);
+  });
+  try {
+    const result = await sweepOrphanExternalLibraryStaging({
+      registeredRoots: registered,
+      searchParents: [tmpdir()],
+      liveRoots: liveExternalLibraryStagingRoots,
+    });
+    writeExternalLibraryStagingRoots(storePath, result.remaining, (error) => {
+      logger?.error("external-library.staging-store.write", error);
+    });
+    if (result.removed.length > 0) {
+      logger?.info("external-library.staging-sweep", "Removed leftover extract directories.", {
+        removedCount: result.removed.length,
+      });
+    }
+    if (result.failed.length > 0) {
+      logger?.error(
+        "external-library.staging-sweep",
+        new Error("Could not remove leftover extract directories."),
+        { failedCount: result.failed.length },
+      );
+    }
+  } catch (error) {
+    logger?.error("external-library.staging-sweep", error);
+  }
 }
 
 // Pending import libraryId (importId -> libraryId), for auto-analyze after import.
@@ -2271,10 +2371,10 @@ async function commandFor(
         ["zip", "eaglepack", "rar", "7z", "tar", "gz", "tgz", "bz2", "tbz", "tbz2", "xz", "txz"],
       );
       if (!selectedSourcePath) return undefined;
-      const materialized = await materializeExternalLibrarySource({
+      const materialized = await materializeSelectedExternalLibrary({
         sourcePath: selectedSourcePath,
         kind: "eagle",
-        tempDirectory: tmpdir(),
+        fallbackDirectory: path.dirname(path.resolve(selectedSourcePath)),
       });
       const sourceRootPath = rememberExternalSource(materialized);
       return sourceRootPath
@@ -2294,10 +2394,10 @@ async function commandFor(
       );
       if (!selectedSourcePath) return undefined;
       callbacks?.onBillfishSourceSelected?.();
-      const materialized = await materializeExternalLibrarySource({
+      const materialized = await materializeSelectedExternalLibrary({
         sourcePath: selectedSourcePath,
         kind: "billfish",
-        tempDirectory: tmpdir(),
+        fallbackDirectory: path.dirname(path.resolve(selectedSourcePath)),
       });
       const sourceRootPath = rememberExternalSource(materialized);
       return sourceRootPath
@@ -2553,10 +2653,10 @@ async function commandFor(
         ["zip", "eaglepack", "rar", "7z", "tar", "gz", "tgz", "bz2", "tbz", "tbz2", "xz", "txz"],
       );
       if (!selectedSourcePath) return undefined;
-      const materialized = await materializeExternalLibrarySource({
+      const materialized = await materializeSelectedExternalLibrary({
         sourcePath: selectedSourcePath,
         kind: "eagle",
-        tempDirectory: tmpdir(),
+        fallbackDirectory: fallbackDirectoryForLibraryId(request.libraryId),
       });
       const sourceRootPath = rememberExternalSource(materialized);
       return sourceRootPath
@@ -2575,10 +2675,10 @@ async function commandFor(
         [{ name: "Billfish Pack", extensions: ["billfishpack"] }],
       );
       if (!selectedSourcePath) return undefined;
-      const materialized = await materializeExternalLibrarySource({
+      const materialized = await materializeSelectedExternalLibrary({
         sourcePath: selectedSourcePath,
         kind: "billfish",
-        tempDirectory: tmpdir(),
+        fallbackDirectory: fallbackDirectoryForLibraryId(request.libraryId),
       });
       const sourceRootPath = rememberExternalSource(materialized);
       return sourceRootPath
@@ -3654,8 +3754,9 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
 
     if (request.type === "library.delete-from-disk.request") {
       // Drop serpent:// file handles before the Worker tries to rm the root.
+      // Always end this fence in `finally`; ZIP import preserves library_id.
       deleteFromDiskLibraryId = request.libraryId;
-      blockLibraryMediaReads(request.libraryId);
+      beginLibraryDeleteMediaFence(request.libraryId);
       clearNativeAssetDragCache(request.libraryId);
     }
 
@@ -4689,15 +4790,6 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
 
     if (
-      request.type === "library.delete-from-disk.request" &&
-      !workerResult.ok &&
-      workerResult.error.code !== "LIBRARY_NOT_FOUND" &&
-      workerResult.error.code !== "NOT_A_LIBRARY"
-    ) {
-      unblockLibraryMediaReads(request.libraryId);
-    }
-
-    if (
       command.type === "library.open-eagle" ||
       command.type === "library.open-billfish" ||
       command.type === "asset.import-eagle" ||
@@ -5515,8 +5607,10 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       return result;
     }
     if (result.type === "library.opened") {
+      unblockLibraryMediaReads(result.library.libraryId);
       publishLifecycle({ type: "library.opened", library: result.library });
     } else if (workerResult.ok && workerResult.type === "library.imported") {
+      unblockLibraryMediaReads(workerResult.libraryId);
       publishLifecycle({
         type: "library.opened",
         library: {
@@ -5537,9 +5631,6 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
     return result;
   } catch (error) {
-    if (deleteFromDiskLibraryId) {
-      unblockLibraryMediaReads(deleteFromDiskLibraryId);
-    }
     if (relinkPreviewContext) {
       pendingRelinkPreviews.cancel(
         relinkPreviewContext.libraryId,
@@ -5550,11 +5641,13 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     if (previousLibraryPaths.length > 0) {
       await reopenLibrariesAfterFailedReplacement(previousLibraryPaths);
     }
-    const publicError = error instanceof LibraryParentError
-      ? createPublicError(error.code, error.reason)
-      : error instanceof WorkerRequestTimeoutError
-        ? createPublicError("INTERNAL_ERROR", "LIBRARY_TRANSFER_TIMEOUT")
-        : toPublicError(error);
+    const publicError = error instanceof ExternalLibraryArchiveError
+      ? createPublicError(error.publicCode, error.reason)
+      : error instanceof LibraryParentError
+        ? createPublicError(error.code, error.reason)
+        : error instanceof WorkerRequestTimeoutError
+          ? createPublicError("INTERNAL_ERROR", "LIBRARY_TRANSFER_TIMEOUT")
+          : toPublicError(error);
     if (operation) {
       publishLifecycle({
         type: "library.open-failed",
@@ -5564,6 +5657,9 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
     return { ok: false, error: publicError };
   } finally {
+    if (deleteFromDiskLibraryId) {
+      endLibraryDeleteMediaFence(deleteFromDiskLibraryId);
+    }
     if (!retainExternalSource) {
       const sourceRootPath =
         command?.type === "library.inspect-eagle" ||
@@ -5959,6 +6055,7 @@ async function startApplication(): Promise<void> {
   }
   appLogPath = chooseUniqueSessionLogPath(app.getPath("logs"), new Date());
   logger = new AppLogger(appLogPath);
+  void sweepOrphanExternalLibraryStagingOnStartup();
   appUpdateService = createAppUpdateService({
     currentVersion: app.getVersion(),
     isPackaged: app.isPackaged,

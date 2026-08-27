@@ -26,6 +26,20 @@ export function unblockLibraryMediaReads(libraryId: string): void {
   blockedLibraryIds.delete(libraryId);
 }
 
+/**
+ * Delete-from-disk must drop Chromium file handles before Worker `rm`.
+ * The fence is request-scoped: Serpent ZIP import keeps the same
+ * `library_id`, so a leaked block 410s every `serpent://` URL after the
+ * user re-imports that library.
+ */
+export function beginLibraryDeleteMediaFence(libraryId: string): void {
+  blockLibraryMediaReads(libraryId);
+}
+
+export function endLibraryDeleteMediaFence(libraryId: string): void {
+  unblockLibraryMediaReads(libraryId);
+}
+
 export function bindLibraryMediaReadSignal(
   libraryId: string,
   requestSignal?: AbortSignal | null,

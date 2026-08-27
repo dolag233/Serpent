@@ -40,6 +40,14 @@
 
 ## 当前待人类验收队列
 
+> 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
+
+### 2026-08-27 导入 ZIP 后卡片损坏
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| LIB-ZIP-001 / `Serpent-e04fbc` | 从硬盘删除后再导入同一份 Serpent ZIP，卡片可解码 | 人类验收通过 | **完全退出 Serpent 后再 `npm start`**。准备一份本机导出的 Serpent ZIP。打开该库 → 菜单「从硬盘删除资源库」确认删掉 → 再「导入资源库」选这份 ZIP 保存到新目录。观察网格卡片，再双击打开一张图 | 导入后卡片显示真实可解码预览，不是裂开/「数据损坏」占位；查看器能打开原图。磁盘上的 Assets 与缩略图文件本身完好 | [开发日志](../development/2026-08-27-zip-reimport-media-fence-development-log.md) / `src/main/library-media-reads.ts` / `src/main/index.ts` / `tests/unit/library-media-reads.test.ts` | 2026-08-27 用户 Windows 真机确认通过：删除后再导入同一 ZIP，卡片可解码。 |
+
 > 2026-07-16 校准：0014 新增模块已进入 `f1330a7`；静态检查、相关 Electron E2E 和
 > Computer Use 已完成，因此 H 节中仍符合目标产品的项目进入“待人类验收”。随后产品反馈
 > 取消左侧标签菜单并新增完整文件菜单要求，受影响条目已单独撤回。最终集中
@@ -107,11 +115,12 @@
 | EXTLIB-006 / `Serpent-qn6k` | 名称面板无父文件夹说明；允许保存到磁盘根 | 人类验收通过 | 打开 Eagle 资源库，看设置名称那一步；确认后再选本机某个盘符根作为保存位置。须完全退出 Electron 后重新 `npm start` | 名称输入框下方没有「下一步选择的是父文件夹…不能选磁盘根目录」那段说明。选磁盘根后应在该盘根下创建以名称为文件夹的新库；若该盘根没有写权限，提示权限不足即可 | [名称面板](../../../src/renderer/CreateDialog.tsx) / [单测](../../../tests/unit/create-dialog-eagle-open.test.ts) / [路径规则](../../../src/worker/library-rules.ts) / [开发日志](../development/2026-08-17-eagle-open-progress-and-performance-development-log.md) | 2026-08-17 用户确认通过。 |
 | EXTLIB-004 / `Serpent-4s8b` | 大库打开/转换不得因超时或体积上限失败 | 待人类验收 | 用本机大型 Eagle `.library`（可超过 30 分钟、体积不限）打开并转换到新 Serpent 库；转换中可观察进度，需要时点取消。不要把该路径写进仓库 | 不得弹出「打开或转换资源库超时」；慢机器跑完即可；完成后进度消失并进入新库。取消后应停下且可再试。不得因「资源库超过 xxGB」拒绝打开文件夹来源 | [Worker 超时](../../../src/main/worker-client.ts) / [单测](../../../tests/unit/worker-client.test.ts) / [开发日志](../development/2026-08-17-eagle-open-progress-and-performance-development-log.md) | 已去掉打开/转换墙钟超时与归档/ZIP 导入 GB 产品门。真实大库、packaged 未执行 |
 | EXTLIB-002 / `Serpent-ot5r` / `Serpent-vv45` | Billfish 外部库打开与导入 | 待人类验收 | 有库时：菜单「打开资源库」展开「打开外部资源库」点「打开 Billfish 资源库」；再从「导入资源库」展开后点「导入 Billfish 资源库」。无库时：起始页同样展开后选择。Billfish 只能选择 `.BillfishPack` 文件；Eagle 另测文件夹、ZIP、RAR 等归档。 | Billfish 按钮可用；选择 `.BillfishPack` 后安全解压并完成名称/保存位置或合并导入；开始打开后立即停用旧库并显示打开进度；默认名称与 BillfishPack 文件名一致（内部名称存在时优先）；UTF-8 文件名不乱码；成功、取消、失败和退出后临时解压目录均被清理；Eagle 文件夹/ZIP/RAR 等来源可正确探测并导入/打开；源归档不被修改 | [归档物化单测](../../../tests/unit/external-library-archive.test.ts) / [ZIP 流式与 UTF-8 单测](../../../tests/worker/zip-import-stream.test.ts) / [Billfish Worker 测试](../../../tests/worker/billfish-import.test.ts) / [选择面板单测](../../../tests/unit/import-library-chooser.test.ts) / [名称面板单测](../../../tests/unit/create-dialog-eagle-open.test.ts) / [开发日志](../development/2026-08-16-billfish-library-import-development-log.md) | 2026-08-16：入口置灰已验收；归档选择、解压清理及 Eagle 归档来源新增。当前已按 Eagle 的切库/命名流程对齐，等待真实 BillfishPack 与 Windows 验收。 |
+| EXTLIB-007 / `Serpent-342ba9` | 外部库归档解压预检空间并清理临时目录 | 待人类验收 | 用隔离的小 `.BillfishPack` / Eagle ZIP 走打开与导入；完成后在系统临时目录确认没有残留的 `serpent-external-library-*`。若本机系统盘空间紧张，再试一次较大归档，确认会改用归档所在盘或当前资源库所在盘，而不是把系统盘写满。空间确实不够时应出现磁盘空间不足提示，且源归档仍在 | 默认可用系统临时目录；空间不够才换到另一块盘；成功/取消/失败后临时目录消失；不够时阻止并提示，不留下半包解压 | [空间策略单测](../../../tests/unit/disk-free-space.test.ts) / [归档物化单测](../../../tests/unit/external-library-archive.test.ts) / [开发日志](../development/2026-08-27-external-library-staging-disk-space-development-log.md) / [调研](../research/2026-08-27-external-import-temp-directory.md) | 自动化覆盖预检、换盘、DISK_FULL、残留扫描；`npx vitest run --config vitest.config.ts tests/unit/disk-free-space.test.ts tests/unit/external-library-staging-store.test.ts tests/unit/external-library-archive.test.ts tests/worker/zip-import-stream.test.ts` → 4 files / 32 passed。真实大包、故意填满系统盘、Windows 句柄占用删除、packaged、Computer Use 未执行 |
 | VIEWER-CLJB-001 / `Serpent-cljb` | 视频原始播放优先与失败后按需 proxy | 待人类验收 | 打开可直接播放的 MP4，确认首次查看与导入期间无 proxy 任务；再打开一个当前播放器不能解码的视频，等待切到代理；观察提示，分别点隐藏和恢复 | MP4 使用原始视频且不生成/排队 proxy；只有真实播放错误的单个视频生成或复用 proxy；代理成功显示准确提示“原视频无法播放，当前播放的是代理视频”；提示可隐藏并恢复；失败不循环重试 | [视频 E2E](../../../tests/e2e/media-video-playback.test.ts) / [proxy 提示单测](../../../tests/unit/proxy-playback-notice.test.ts) / [视频 Worker 测试](../../../tests/worker/video-exr.test.ts) / [开发日志](../development/2026-08-16-dw9a-768x-cljb-development-log.md) | 当前 macOS 开发态 MP4 source-first 已检查；自动化覆盖实际错误回退与提示组件；真实播放器不支持编码、packaged、Windows 未执行 |
 
 ### 2026-08-16 资源库兼容与切库
 
-> 归档来源补充：EXTLIB-001 的 Eagle 旅程还需分别验证文件夹、ZIP、RAR（以及可用的 7z/TAR）。归档会先在 Main 临时目录解压并探测 `metadata.json + images/` 根目录，成功、取消、失败和退出后都应清理临时目录；旧条目的人工验收结论不覆盖这部分新增范围。
+> 归档来源补充：EXTLIB-001 的 Eagle 旅程还需分别验证文件夹、ZIP、RAR（以及可用的 7z/TAR）。归档默认先解压到系统临时目录，空间不够时改到归档或资源库所在盘；成功、取消、失败和退出后都应清理临时目录。空间预检见 EXTLIB-007。旧条目的人工验收结论不覆盖这部分新增范围。
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -837,7 +846,7 @@
 | LIB-017 | Worker 缩略图请求失败不应阻断资源库打开 | 待人类验收 | 完全退出并用 `npm start` 重启；分别从资源库切换器打开两个隔离测试库；再观察切换后状态与资产数量 | 两个资源库均能打开并显示资产；单个模型缩略图失败只影响该缩略图，不导致资源库变成不可用 | [P0 开发日志](../development/2026-08-10-library-open-p0-development-log.md) / [Worker 回归](../../../tests/unit/worker-client.test.ts) / 工单 `Serpent-o2qe` | 2026-08-10 Computer Use 已验证当前 npm start 实例可打开两个隔离测试库（61 项与 2731 项）；创建/导入与 Windows 仍未单独验证。 |
 | LIB-018 | 打开资源库约 1 秒可交互（禁止同步阻塞） | 待人类验收 | 完全退出后打开一个中大型库（含需迁移或大量未就绪缩略图的库）；从点击「打开」起计时；观察首屏是否可滚动/选择；未就绪卡片是否为默认缩略图占位 | 约 1 秒内进入可交互界面；不得空等数分钟；未就绪内容用 placeholder，就绪后安静替换。原则见 [0006](../ui/0006-progressive-loading-ux-principles.md) | `Serpent-tumv` / `2cf0265` 仅把 `library.open` 超时延到 5 分钟，不是本条实现 | 2026-08-14 用户立为 UX 准则；尚未实现渐进打开。 |
 | EXT-005 | 扩展设置：通知与保存后行为开关 | 人类验收通过 | ① 打开扩展选项页（仅设置项，无长说明）。② 取消勾选「保存后显示系统通知」并保存网页图片。③ 确认另两项「保存后显示 Serpent 窗口」「保存后跳转到目标文件夹并选中文件」存在且可切换 | 选项页文案简洁；通知可关；保存后聚焦/跳转各有独立开关（详见 EXT-006/007） | [preferences](../../../extension/preferences.ts) / [options](../../../extension/options.html) | 2026-07-24 用户验收通过；2026-07-24 晚精简选项页并新增聚焦/跳转开关。 |
-| LIB-011 | 导入资源库后缩略图正常可解码 | 人类验收通过 | 导入资源库文件夹或 ZIP；观察网格预览 | 缩略图正常显示（可解码），无破损图占位 | `Serpent-pxd` / [证据](evidence/2026-07-19-acceptance/import-library-thumbnail-missing.png) | 2026-07-19 用户确认通过。 |
+| LIB-011 | 导入资源库后缩略图正常可解码 | 人类验收通过 | 导入资源库文件夹或 ZIP；观察网格预览 | 缩略图正常显示（可解码），无破损图占位 | `Serpent-pxd` / [证据](evidence/2026-07-19-acceptance/import-library-thumbnail-missing.png) / [ZIP 重导入 fence](../development/2026-08-27-zip-reimport-media-fence-development-log.md) | 2026-07-19 用户确认通过。2026-08-27 删除后再导入 ZIP 全裂开，已按 LIB-ZIP-001 修复；同日用户确认通过。 |
 | LIB-012 | 导入资源库后立刻切换到该库 | 人类验收通过 | 导入资源库成功后观察当前库与画布 | 无需手动打开；活动库即为刚导入的库 | `Serpent-rgp` | 2026-07-19 用户确认通过。 |
 | LIB-013 | 库菜单导入/导出各一项，格式在二级选 | 已撤回 | — | — | [transfer 单测](../../../tests/unit/library-transfer-menu.test.ts) / `Serpent-qm6w` / `Serpent-cq2` | 2026-08-16：资源库菜单已按新的统一顺序收敛，原「添加与传输」分组入口撤回；当前验收以 LIB-014 为准。 |
 | LIB-014 | 资源库菜单统一顺序与打开/导入面板 | 人类验收通过 | 打开左上角资源库名称菜单，依次检查顶层项；再分别点「打开资源库」和「导入资源库」看面板；从菜单点「新建资源库…」 | 顶层曾为：新建 → 打开 → 导入 → 移除 → 从硬盘删除 → 重命名 → 资源库设置；菜单不再出现「打开外部资源库」「导入外部资源库」行；打开/导入各进一块面板。后续菜单微调见 LIB-020 | `Serpent-pte2` / [LibrarySwitcher](../../../src/renderer/LibrarySwitcher.tsx) / [打开/导入选择面板](../../../src/renderer/LibraryChooserDialog.tsx) / [菜单单测](../../../tests/unit/library-switcher.test.ts) / [主菜单单测](../../../tests/unit/main-menu-items.test.ts) | 2026-08-16 用户确认 `Serpent-pte2` 通过。同日 EXTLIB-002 / `Serpent-ot5r` 用户确认 Billfish 打开/导入通过。同日用户要求同步入口改到打开面板并去掉重命名菜单，见 LIB-020。 |
@@ -1030,6 +1039,7 @@
 | 2026-08-16 | LIB-020 / LIB-019 / `Serpent-7zp0` | 人类验收通过 / 已撤回 | 打开同步改到打开面板；去掉重命名菜单 | 资源库菜单不再列出同步与重命名 | `Serpent-7zp0` | 2026-08-16 用户确认「验证通过，清爽多了」。 |
 | 2026-08-16 | LIB-021 / `Serpent-dfgg` | 人类验收通过 | Windows 从硬盘删除资源库 | 不因自身缩略图占用失败；无 `.del-*` 静默残留（后台重试+启动自动清理+用户提示） | `Serpent-dfgg` / `Serpent-65d837` | 2026-08-16 用户点名 P0：FILE_BUSY / ENOTEMPTY；2026-08-26 用户确认删除通过（65d837 收口残留语义）。 |
 | 2026-08-27 | UI-MODAL-001 / `Serpent-52a9b4` | 人类验收通过 / mac 未执行 | 模态面板打开时窗口控制按钮可点 | 创建资源库等模糊面板打开时，缩小/最大化/关闭可点（30+ dialog-backdrop 面板统一生效） | `Serpent-52a9b4` / [ui/0007](../ui/0007-modal-caption-interactivity.md) | 2026-08-27 用户 Windows 真机确认通过；macOS 红绿灯为窗口级层（代码无平台分支），mac 真机未执行。 |
+| 2026-08-27 | LIB-ZIP-001 / LIB-011 / `Serpent-e04fbc` | 人类验收通过 | 从硬盘删除后再导入同一份 Serpent ZIP | 卡片可解码，不是裂开占位 | `Serpent-e04fbc` | 2026-08-27 用户 Windows 真机确认通过。 |
 | 2026-08-17 | EXTLIB-006 / PERF-004 / PERF-005 | 通过 / 通过 / 不通过 | 名称面板与磁盘根；占位卡布局与去扫光；Eagle 2w+ 转换 | 占位标题中间省略另开 TITLE-002；转换必须先插桩 | `Serpent-qn6k` / `qc7v` / `o4id` / `n485` / `7tjg` / `onch` / `tz35` | 2026-08-17 用户确认。 |
 
 

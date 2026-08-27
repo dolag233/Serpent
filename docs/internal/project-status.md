@@ -3,6 +3,13 @@
 > 更新时间：2026-08-27
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
+- **2026-08-27 P0 导入 ZIP 后全部卡片损坏（`Serpent-e04fbc` / LIB-ZIP-001）**：从硬盘删除资源库会按 `libraryId` 拦住 `serpent://` 读取；成功删除后未释放。ZIP 导入保留同一 `library_id`，重导入后每张卡 410。删除请求结束后释放 fence。用户 Windows 真机验收通过。详见
+  [开发日志](development/2026-08-27-zip-reimport-media-fence-development-log.md)。
+
+- **2026-08-27 `Serpent-342ba9` 外部库解压空间预检**：Eagle/Billfish 归档默认仍解压到系统临时目录；解压前按未压缩体积预检；系统盘不够时改到归档盘或已打开资源库所在盘；成功/失败/取消/启动均主动清理 `serpent-external-library-*`。空间不足返回 `DISK_FULL`。真实大包与故意填满系统盘的旅程未执行。详见
+  [开发日志](development/2026-08-27-external-library-staging-disk-space-development-log.md) /
+  [调研](research/2026-08-27-external-import-temp-directory.md)。
+
 - **2026-08-24 `Serpent-29125f` 资源库/查看器性能优化**：按基线研究完成开库对账异步
  发现与 generation 取消、关闭顺序、真实 idle-window 避让、visible-window 幂等与异步
   header probe、Main artifact path LRU、查看器单 full-image 解码及可见卡片请求优先级；

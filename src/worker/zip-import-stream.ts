@@ -620,3 +620,30 @@ export async function extractZipStream(
     try { zipFile.close(); } catch { /* Preserve the primary operation result. */ }
   }
 }
+
+/**
+ * Sum uncompressed sizes from the ZIP central directory without writing files.
+ * Used to preflight staging-disk space before Eagle/Billfish archive extract.
+ */
+export async function inspectZipUncompressedBytes(sourceZipPath: string): Promise<number> {
+  let zipFile: yauzl.ZipFile;
+  try {
+    zipFile = await yauzl.openPromise(sourceZipPath, {
+      autoClose: false,
+      lazyEntries: true,
+      decodeStrings: false,
+      validateEntrySizes: true,
+      strictFileNames: false,
+    });
+  } catch (error) {
+    throw extractionError(error);
+  }
+  try {
+    const plan = await planArchive(zipFile, resolvedLimits(zipBombProtectionLimits()), undefined);
+    return plan.totalBytes;
+  } catch (error) {
+    throw archiveError(error);
+  } finally {
+    try { zipFile.close(); } catch { /* Preserve the primary operation result. */ }
+  }
+}
