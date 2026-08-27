@@ -1,6 +1,6 @@
 # Serpent 项目状态
 
-> 更新时间：2026-08-24
+> 更新时间：2026-08-27
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
 - **2026-08-24 `Serpent-29125f` 资源库/查看器性能优化**：按基线研究完成开库对账异步
@@ -10,6 +10,152 @@
   APFS 夹具连续七轮独立 10/10（P50 110.5/100.0/95.7/109.0/103.1/111.1/90.4ms，P95/Max 350.0/463.5/316.7/420.2/222.6/224.6/395.8ms），
   Worker 对账并发 viewer P95 1.3ms（event-loop lag P95 2.1ms / max 83.0ms）；真实 SMB/NAS、Windows、packaged、Computer Use 与人类验收仍未执行。详见
   [开发日志](development/2026-08-24-resource-library-viewer-performance.md)。
+
+- **2026-08-26 0032 阶段 A 性能架构收口**：Main/Worker 请求信封、lane admission、
+  library/interaction generation、旧请求取消和性能 span 已接入；开库对账的文件 hash
+  已移出 SQLite transaction，完整 quick_check 与 open backup 改为按 generation 延后维护。10k 混合媒体冷
+代理基准最终稳定复测 event-loop P95/max = 1.2/55.7ms，viewer resolve P95 = 0.6ms；重复运行中记录过 165.3/155.5ms 单次尖峰，不能宣称稳定跨平台通过；20k、真实 Windows/NAS、packaged 和 Computer Use 仍未验证。详见
+[阶段 A 开发日志](development/2026-08-26-library-performance-architecture-stage-a-development-log.md)。
+
+- **2026-08-26 0032 阶段 B 首个增量**：查看器已接入统一
+  `ViewerSessionController`，preview/latest request、代理回退、轮询、PDF Range 与页面渲染
+  共享 `libraryId + assetId + revisionId` session fence；revision 变化会清除旧 resolution，关闭时
+  先取消 session。Main artifact path 已抽为带 generation fence 的有界 LRU，旧库批次完成不能回写新
+  generation，协议读失败只精确失效对应 artifact。macOS 隔离 Electron 的 document/media 定向套件
+  6 passed、1 skipped，controller/artifact/source cache 定向 11 passed；真实 NAS/Windows/packaged、
+  快速切换人工视觉和 Computer Use 未验证。详见
+  [阶段 B 开发日志](development/2026-08-26-library-performance-architecture-stage-b-viewer-development-log.md)。
+
+- **2026-08-26 0032 阶段 D.1 产物策略与准入**：新增纯策略模块统一 artifact role、durable
+  job/kind 映射、revision/generator/settings 幂等键和 source-direct 规则；缩略图、视频 metadata、
+  palette 入队前过滤，claim 前再核对 revision、忽略/删除、ready 产物和同类在飞任务。原生视频/音频
+  playback proxy 仍只在真实播放失败的显式回退中生成，非视觉资产不进入色卡。验证：完整 Worker
+  83 files / 1209 passed / 20 skipped，资源库可用性 9 files / 199 passed，document/media Electron
+  首次运行出现 1 个 SVG 卡片解码超时，重复 3 次及随后完整重跑为 6 passed / 1 skipped；真实 NAS/SMB、Windows、packaged、20k 夹具与 Computer Use 未验证。详见
+  [阶段 D.1 开发日志](development/2026-08-26-library-performance-architecture-stage-d-artifact-policy-development-log.md)。
+
+- **2026-08-26 0032 阶段 D.2 artifact identity 与缓存观测**：schema v44 将 artifact role、
+  generator、settings token 和长度前缀 identity 持久化；当前唯一边界从 revision+kind 收紧为
+  revision+artifact key。Worker descriptor cache 以 library/asset/revision/kind/generator
+  和 change sequence 做局部一致性 fence，生成器升级只失效选中资产的旧 primary artifact；
+  Main PreviewCache 增加 hit/miss/store/error/eviction 与字节计数。验证：资源库可用性 9 files /
+  201 passed，Worker 83 files / 1213 passed / 20 skipped，D.2 定向 3 files / 75 passed，
+  document/media Electron 7 passed / 1 skipped；完整 unit 仍有 4 个既有 macOS/FFmpeg/packaged
+  环境失败，真实 20k/NAS/SMB、Windows、packaged 性能、Computer Use 与人类验收未验证。详见
+  [阶段 D.2 开发日志](development/2026-08-26-library-performance-architecture-stage-d2-artifact-identity-cache-development-log.md)。
+
+- **2026-08-26 0032 阶段 C.1–C.3 浏览链路**：BrowseSession 稳定快照、窗口摘要/几何块、
+  局部计数与导航 summary 已接入；C.2 对 20k 以上布局使用稀疏 masonry/justified 几何、
+  128 槽位 block offset 和逻辑滚动锚点，摘要 patch 复用稳定的 geometry/asset ID 身份。
+  C.3 的文件夹/合集/回收站导航复用同一 summary session，并在首屏后的 1 秒滚动静默窗口
+  hydration；Worker 摘要阶段用窄 COUNT 和 timer checkpoint 避免阻塞分页。当前 HEAD 本地
+  APFS 20k 真实 Electron 基准以独立 userData 连续两次 10/10，通过 P50 162.3/156.6ms、
+  P95/Max 315.9/308.4ms、长任务 0；但 100k、Windows、NAS/SMB、packaged、真实合集人工
+  锚点验收仍未验证，`Serpent-sa65` 不关闭。详见 [C.1 日志](development/2026-08-26-library-performance-architecture-stage-c1-browse-session-development-log.md)、
+  [C.2 日志](development/2026-08-26-library-performance-architecture-stage-c2-geometry-development-log.md)、
+  [C.3 日志](development/2026-08-26-library-performance-architecture-stage-c3-navigation-summary-development-log.md)。
+
+- **2026-08-27 0032 阶段 D.3 小型源图直出**：JPG/JPEG/PNG/WebP/GIF 在尺寸已知、长边
+  ≤2048 px、源文件 ≤2 MiB 且解码像素 ≤2,000,000 时直接使用受 revision 鉴权的 source
+  通道，跳过 primary thumbnail；大图、复杂格式和视频仍走 artifact。卡片、BrowseLayout、
+  hover、Inspector 与查看器已统一 `previewKind/previewRevisionId`；source-direct 图像的
+  色卡改为独立的 bounded 64×64 secondary path，不重新把 thumbnail 当作首帧门禁；序列帧
+  也按 artifact 优先、revision-pinned source-direct 回退处理，并排除缺失/删除帧。验证：
+  Worker 定向新增 1.5 MiB 边界为 2 files / 72 tests passed；完整 Worker 86 files /
+  1,252 passed / 22 skipped，fixture 回归 5 files / 99 passed / 1 skipped，
+  library-availability 9 files / 207 tests passed，`npm run lint` 与 `npm run typecheck` 通过。
+  选择性真实 Electron 回归 10 passed / 1 skipped / 1 failed；失败是视频海报首个 350 ms
+  采样点偶发单图未解码，随后同一用例独立重复 10/10 passed，不能把整组回归写成全绿。
+  当前 HEAD 本地 20k 基准独立两次 10/10（P50 162.3/156.6ms、P95/Max 315.9/308.4ms、
+  长任务 0），该旧证据因 benchmark 漏计未挂载 `<img>` 的可见图片卡片而撤回，不再作为门禁通过依据；
+  2 MiB 新鲜严格基准 3/10，不能宣称 500 ms 门禁通过。
+  详见 [阶段 D.3 开发日志](development/2026-08-26-library-performance-architecture-stage-d3-source-direct-development-log.md)。
+
+- **2026-08-27 0032 阶段 D.4 RAW 内嵌预览**：卡片缩略图对 TIFF/IFD 形态的 RAW 先做有界结构扫描，
+  精确读取并复用内嵌 JPEG；读取上限 8 MiB、解码像素上限 16 MP，格式不明确或超限才回退 OIIO。
+  RAW 卡片路径不再先启动无效的 OIIO `--info` 色彩空间探测；本轮进一步把 EXIF/IPTC/XMP
+  解析移到独立低优先级 `extract_metadata` job，队列卡片不会等待 Inspector 元数据；查看器
+  仍保留完整 RAW 解码路径。
+  验证：RAW helper 5/5；定向组合回归 4 files / 144 passed；资源库可用性 9 files / 207 passed；
+  完整 Worker 86 files / 1,257 passed / 22 skipped；`npm run test` 记录 484 passed / 15 skipped，
+  另有 4 个既有环境失败，不能记作全绿；真实 Electron `all-images` 基准 10/10（live 19,965，
+  全部图片 p50/p95/max 159.7/228.1/228.1ms，首波 p50/p95/max 159.1/199.6/199.6ms，最终完成 10/10）。
+  真实 RAW 矩阵因未配置样本跳过；packaged/Windows/NAS/SMB/Computer Use 尚未执行。详见
+  [阶段 D.4 开发日志](development/2026-08-26-library-performance-architecture-stage-d4-raw-embedded-thumbnail-development-log.md)。
+
+- **2026-08-27 0032 阶段 D.5 外部库缩略图归一化**：Eagle/Billfish 导入仍先原样复制并立即
+  提供 ready 预览；每个外部预览（包括看似已经 ≤512、≤256 KiB 的副本）都进入专用低优先级
+  job，后台先逐页实际解码验证，超出 512 边长或 256 KiB 的才以 Sharp 有界重编码；输出为
+  不透明 JPEG/透明 WebP，视频 poster 也走同一替换事务。损坏/失败、取消、资源耗尽、lease
+  丢失或 revision 竞争时旧 artifact 保持 ready，归一化 marker 在重试和启动恢复中不丢失；
+  存量库 backfill 默认最多 256，visible wave 明确不抢占。验证：定向 6 files / 47 passed（含
+  截断、129 页动画、资源耗尽、lease/revision 竞争和重开恢复）；3 轮 × 64 合成混合预览均
+  64/64，导入 P50/P95/Max 232.1/285.7/285.7ms，归一化波次 973.5/980.4/980.4ms（P95
+  15.3ms/asset），单 job P50/P95/Max 18.9/21.9/24.5ms，峰值/累计 RSS 增量 21.7/79.7MiB，
+  导入/归一化 Worker event-loop lag 266.4/1.8ms；可见波 0 个归一化任务，候选缩减 98.05%。
+  另有 32MP 单页压力档位 8/8 成功，单 job P50/P95/Max 17.5/21.9/21.9ms，峰值/累计 RSS
+  6.6/13.4MiB。完整 Worker 串行 86 files passed / 14 skipped，1,269 passed /
+  22 skipped；资源库可用性 9 files / 207 passed；完整 `npm run test` 仍有 4 个既有环境失败，
+  不能记作全绿。真实 Eagle 用户库、20k 外部缩略图分组、NAS/SMB、Windows、packaged 尚未
+  验证；Luna High 最终复核未发现 P0/P1，独立进程崩溃恢复、真实平台/大库基准仍按未验证处理，
+  `Serpent-688714` 保持 open。详见
+  [阶段 D.5 开发日志](development/2026-08-26-library-performance-architecture-stage-d5-imported-thumbnail-normalization-development-log.md)。
+
+- **2026-08-26 性能基准口径更正**：旧版 20k 两次 10/10 只统计已经挂载 `<img>` 的图片卡片，
+  会漏掉仍是 `data-media-type="image"` 但尚未挂载图片元素的可见卡片，不能证明“全部可见图片 500ms 内解码”。
+  修正后的默认严格模式在同一 20k APFS 库一次跳转为 0/1（观察 5000.9ms 仍有 13 张未解码）；
+  明确标记的 first-wave 渐进模式十次跳转为 9/10，P50 167.1ms、P95/Max 555.9ms，只有 4/10
+  在观察窗口内完成全部图片。首批一次 439.7ms 不能代表稳定通过。`Serpent-sa65`、`Serpent-90ff52`、
+  `Serpent-3kfe` 等相关工单继续保持未关闭，详见阶段 C.2/D.3 日志与 `PERF-003`。
+
+- **2026-08-26 0032 阶段 D.6 可见媒体队列稳定化**：远距离可见窗口按重叠率抢占旧波次，
+  viewport-only 波不再触发全局补队列/尺寸回填，连续媒体 claim 之间让出 Worker event loop；
+  Renderer 只上报实际与视口相交的卡片，避免 overscan 占用首屏高优先级波次；可见波次按最新
+  asset scope 动态收窄，已知 ≤32MiB/≤16MP 普通图像使用有界交互 Sharp 槽位，TIFF 按有界
+  IFD/源大小在 Sharp 与 OIIO 间分流；`filterIgnoredAssetIds` 使用每 500 个 ID 一次的批量
+  SQL；被抢占的 Sharp 任务清理临时输出并保留 queued，不再伪造失败 artifact。Sharp/OIIO/FFmpeg
+  解码路径进一步共用每个 Library Worker 384 MiB 估算 native 内存准入，已知超大 OIIO 输入在
+  spawn 前拒绝，关键尺寸探针改为异步。同时修复了派生 artifact 写入触发 Main artifact-path
+  cache generation、导致已生成缩略图被 stale 协议错误遮蔽的竞态。当前严格真实 Electron
+  `all-images` 基准使用本地 APFS 夹具（目录名 20k，SQLite 实际 live 19,965）和 10 个随机跳转：
+  取消清理修正前的当前源码冷跑曾为 6/10；加入取消等待器竞态修正后，从同一夹具重新清理
+  artifact/job 的最新当前源码冷跑为 5/10 在 500ms 内完成全部可见图片，全部解码 p50 496.6ms、
+  p95/max 557.7ms，first visual wave p50 122.6ms、p95/max 161.7ms，最终完成 10/10，
+  Main long-task max 0ms；
+  批量过滤合入后的两次先行冷跑合计 16/20（p50 477.4ms、p95 527.9ms、max 544.4ms）。
+  架构定义的“500ms 内开始出现首屏”满足，但 `Serpent-sa65` 的全部可见图片 500ms 硬门禁
+  仍未稳定通过，不能把 D.6 或整体 0032 标记完成。另有当前 HEAD 混合媒体基准 3×100 任务
+  全部完成、资源失败 0，峰值进程树 RSS 增量 88.3MiB、最大事件循环延迟 73.7ms。100k、
+  Windows、真实 NAS/SMB、Eagle/Billfish 用户库、packaged、Computer Use 和人类验收仍未执行，
+  相关工单保持 in_progress。详见 [D.6 开发日志](development/2026-08-26-library-performance-architecture-stage-d6-visible-media-queue-development-log.md)。
+
+- **2026-08-26 0032 阶段 D.7 远程元数据快照缓存**：远程库接入用户目录级可丢弃 SQLite
+  snapshot；命中时普通读查询走本地只读连接，写入、事务、租约、volatile 表与歧义 SQL
+  继续走远端真相源。Online Backup、manifest 原子轮换、身份/schema/quick-check 校验、
+  512 MiB 默认缓存预算、窄 `browse_change_sequence` 与当前打开代次 size/mtime 校验、外部
+  变更失效和 backup 竞态重建均已接线；本地库不受影响。增加 mount-missing 时合法快照的
+  明确只读 degraded open，禁止伪造可写离线库；schema v46/v47 只新增忽略规则与序列帧
+  cursor trigger，保留 v45 checksum；快照采用不可变 generation + manifest 指针和 SHA-256/size，
+  发布、最终状态门禁、回滚与全目录预算清理由同一目录级跨进程锁串行化。合成 4ms/语句机制
+  对照最新结果为远端 browse 2 条查询、缓存 0 条，20.5ms → 8.5ms；这只证明路由，不是 NAS
+  实测。真实 macOS arm64 APFS 20k 夹具完整 3/3 通过：目标 20,000、当前 live 19,965；snapshot
+  build 3,986.5ms、cached open 576.1ms，browse 主库查询每次 2 条 → 0 条，remote/cached p50
+  为 9.3/9.1ms（本地没有 SMB RTT，墙钟不宣称加速）。验证：定向 3 files / 22 passed，完整
+  Worker 86 files / 1,245 passed / 22 skipped，资源库可用性 9 files / 207 passed，开库生命周期
+  Electron E2E 3 passed（10.8s），typecheck/lint/diff check 通过。真实 SMB/NAS 多机/断线、Windows、packaged、100k 和人类验收仍未执行，
+  完整 `npm run test` 仍有 4 个既有环境失败；Luna High 最终双轴复核 P0/P1=0，保留真实
+  stale-lock/Windows/SMB 证据缺口，`Serpent-08a344` 保持 open。详见
+  [D.7 开发日志](development/2026-08-26-library-performance-architecture-stage-d7-network-metadata-cache-development-log.md)。
+
+- **2026-08-26 0032 阶段 E 监听与恢复**：本地 watcher 事件按库合并、复制中的文件经过
+  size/mtime 稳定窗口，网络库改为低频目录 fingerprint/checkpoint；忽略目录在进入前剪枝。
+  新增真实进程终止后的文件操作恢复 E2E：父/子 Electron 进程在文件已放置但提交前退出，
+  完整等待 lease window 后重启，对账确认 DB、磁盘和 manifest 回滚收敛。watcher/对账与
+  library-availability 自动化证据通过，进程恢复 E2E 1 passed / 22.4s；真实 SMB/NAS、
+  Windows、断线恢复和 packaged 仍未验证。详见 [阶段 E 开发日志](development/2026-08-26-library-performance-architecture-stage-e-watcher-development-log.md)。
+
+以上增量均属于 0032 的实现进展，不代表整体性能架构完成：20k/100k 目标基准尚未稳定
+达标，跨平台/网络盘/打包与人类验收证据缺失，`Serpent-3kfe` 保持 in_progress。
 
 - **2026-08-23 `Serpent-a6f74d` RAW/ARW 预览与 Inspector 元信息**：已实现 RAW
   OIIO 默认 sRGB 路由、`.raw` 注册、受控 EXIF/IPTC/XMP artifact 提取和 Inspector

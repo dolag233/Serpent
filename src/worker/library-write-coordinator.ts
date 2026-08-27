@@ -60,6 +60,8 @@ export interface LibraryWriteLeaseHeartbeat {
 
 export interface LibraryChangeSubscription {
   readonly lastSequence: number;
+  /** Refresh the in-memory fence synchronously before a cache lookup. */
+  readonly refresh?: () => number;
   stop(): void;
 }
 
@@ -453,11 +455,19 @@ export class LibraryWriteCoordinator {
     const intervalMs = positiveInteger(options.intervalMs ?? 250, 250);
     let lastSequence = this.currentChangeSequence();
     let stopped = false;
+    const refresh = (): number => {
+      if (stopped) return lastSequence;
+      const sequence = this.currentChangeSequence();
+      if (sequence !== lastSequence) {
+        lastSequence = sequence;
+        options.onChange(sequence);
+      }
+      return lastSequence;
+    };
     const timer = setInterval(() => {
       if (stopped) return;
-      let sequence: number;
       try {
-        sequence = this.currentChangeSequence();
+        refresh();
       } catch {
         // A test or crash-recovery path may close the SQLite connection before
         // the owner has a chance to stop its polling subscription.
@@ -465,15 +475,13 @@ export class LibraryWriteCoordinator {
         clearInterval(timer);
         return;
       }
-      if (sequence === lastSequence) return;
-      lastSequence = sequence;
-      options.onChange(sequence);
     }, intervalMs);
     timer.unref?.();
     return {
       get lastSequence(): number {
         return lastSequence;
       },
+      refresh,
       stop: () => {
         if (stopped) return;
         stopped = true;

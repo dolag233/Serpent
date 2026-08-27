@@ -24,6 +24,7 @@ import type {
   SortDefinition,
 } from "../shared/asset-types";
 import type { SerpentLibraryApi } from "../shared/library-api";
+import type { VirtualBrowseLayout } from "./browse/virtual-browse-layout";
 import {
   browseLoadMoreObserverRoot,
   excludeLocallyDeletedAssets,
@@ -33,6 +34,9 @@ import {
   contiguousBrowsePageRuns,
   mergeLoadedBrowsePage,
 } from "./browse-window-slots";
+import {
+  useVirtualBrowseSession,
+} from "./browse/use-virtual-browse-session";
 
 const browseDiagnosticsEnabled = Boolean(
   (globalThis as typeof globalThis & {
@@ -74,12 +78,14 @@ export type BrowsePageDefinition =
       scope?: SearchScope | null;
       sort?: SortDefinition | null;
       showIgnored: boolean;
+      sessionId?: string;
       target: "assets" | "trash";
     }
   | {
       kind: "smart-collection";
       libraryId: string;
       collectionId: string;
+      sessionId?: string;
       target: "assets";
     };
 
@@ -87,6 +93,8 @@ export type BrowseFirstPage = {
   items: AssetSummary[];
   total: number;
   offset: number;
+  sessionId?: string;
+  snippets?: Array<{ assetId: string; text: string }>;
 };
 
 export type BeginBrowsePage = (
@@ -103,6 +111,15 @@ export async function fetchBrowseScopeIds(options: {
   definition: BrowsePageDefinition;
 }): Promise<string[] | null> {
   const { api, definition } = options;
+  if (definition.sessionId) {
+    const result = await api.fetchBrowseSessionAssetIds({
+      libraryId: definition.libraryId,
+      sessionId: definition.sessionId,
+    });
+    return result.ok && Array.isArray(result.value)
+      ? result.value
+      : null;
+  }
   if (definition.kind === "smart-collection") {
     const result = await api.executeSmartCollection({
       libraryId: definition.libraryId,
@@ -187,10 +204,12 @@ export type BrowseSearchPageRegistration = {
   scope?: SearchScope | null;
   sort?: SortDefinition | null;
   showIgnored: boolean;
+  sessionId?: string;
   target?: "assets" | "trash";
   items: AssetSummary[];
   total: number;
   offset: number;
+  snippets?: Array<{ assetId: string; text: string }>;
 };
 
 /** Shared registration for every search-shaped first page (Serpent-ws4k). */
@@ -207,18 +226,27 @@ export function registerBrowseSearchPage(
       scope: input.scope ?? null,
       sort: input.sort ?? null,
       showIgnored: input.showIgnored,
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
       target: input.target ?? "assets",
     },
-    { items: input.items, total: input.total, offset: input.offset },
+    {
+      items: input.items,
+      total: input.total,
+      offset: input.offset,
+      sessionId: input.sessionId,
+      snippets: input.snippets,
+    },
   );
 }
 
 export type BrowseSmartCollectionPageRegistration = {
   libraryId: string;
   collectionId: string;
+  sessionId?: string;
   items: AssetSummary[];
   total: number;
   offset: number;
+  snippets?: Array<{ assetId: string; text: string }>;
 };
 
 /** Shared registration for smart-collection first pages (Serpent-ws4k). */
@@ -231,9 +259,16 @@ export function registerBrowseSmartCollectionPage(
       kind: "smart-collection",
       libraryId: input.libraryId,
       collectionId: input.collectionId,
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
       target: "assets",
     },
-    { items: input.items, total: input.total, offset: input.offset },
+    {
+      items: input.items,
+      total: input.total,
+      offset: input.offset,
+      sessionId: input.sessionId,
+      snippets: input.snippets,
+    },
   );
 }
 
@@ -242,6 +277,7 @@ export type UseBrowsePaginationArgs = {
   setAssets: Dispatch<SetStateAction<AssetSummary[]>>;
   setTrashedAssets: Dispatch<SetStateAction<AssetSummary[]>>;
   setBrowseLayout: Dispatch<SetStateAction<BrowseLayoutEntry[]>>;
+  setVirtualBrowseLayout: Dispatch<SetStateAction<VirtualBrowseLayout | null>>;
   setSearchTotal: Dispatch<SetStateAction<number | null>>;
   setSearchOffset: Dispatch<SetStateAction<number>>;
   setSearchSnippets: Dispatch<SetStateAction<Map<string, string>>>;
@@ -301,11 +337,26 @@ export function useBrowsePagination(
     setAssets,
     setTrashedAssets,
     setBrowseLayout,
+    setVirtualBrowseLayout,
     setSearchTotal,
     setSearchOffset,
     setSearchSnippets,
     onLoadMoreFailed,
   } = args;
+
+  const {
+    begin: beginVirtualBrowseSession,
+    applySummaryPage: applyVirtualSummaryPage,
+    ensureRange: ensureVirtualGeometryRange,
+    getLayout: getLoadedBrowseLayout,
+    getLoadedSummaryAssetIds,
+    removeEntries: removeVirtualLayoutEntries,
+    reset: resetVirtualBrowseSession,
+  } = useVirtualBrowseSession({
+    api,
+    setBrowseLayout,
+    setVirtualBrowseLayout,
+  });
 
   const definitionRef = useRef<BrowsePageDefinition | null>(null);
   const generationRef = useRef(0);
@@ -345,26 +396,42 @@ export function useBrowsePagination(
       inFlightOffsetsRef.current = new Set();
       deletedIdsRef.current = new Set();
       totalRef.current = firstPage.total;
-      const initialLayout = firstPage.items.map((asset) => ({
-        assetId: asset.assetId,
-        width: asset.width,
-        height: asset.height,
-        previewArtifactId: asset.thumbnailArtifactId,
-      }));
-      layoutRef.current = initialLayout;
-      layoutHydrationCompleteRef.current = firstPage.items.length >= firstPage.total;
+      const generation = generationRef.current;
+      const virtualized = beginVirtualBrowseSession({
+        libraryId: definition.libraryId,
+        sessionId: definition.sessionId,
+        total: firstPage.total,
+        generation,
+        firstPage,
+      });
+      layoutRef.current = getLoadedBrowseLayout();
+      layoutHydrationCompleteRef.current =
+        virtualized || firstPage.items.length >= firstPage.total;
       setLayoutHydrationVersion((version) => version + 1);
-      setBrowseLayout(initialLayout);
       const filled = new Set<number>();
       filled.add(browsePageOffset(firstPage.offset, BROWSE_PAGE_SIZE));
       filledOffsetsRef.current = filled;
       setLoadingMore(false);
       setSearchOffset(firstPage.offset + firstPage.items.length);
       setSearchTotal(firstPage.total);
+      setSearchSnippets(
+        new Map(
+          (firstPage.snippets ?? []).map((snippet) => [snippet.assetId, snippet.text]),
+        ),
+      );
       refreshHasMore(firstPage.total, filled);
       applyTarget(definition)([...firstPage.items]);
-      const generation = generationRef.current;
-      if (api) {
+      if (api && virtualized) {
+        void ensureVirtualGeometryRange({
+          startIndex: firstPage.offset,
+          endIndex: firstPage.offset + Math.max(0, firstPage.items.length - 1),
+          generation,
+        }).then(() => {
+          if (generation === generationRef.current) {
+            layoutRef.current = getLoadedBrowseLayout();
+          }
+        });
+      } else if (api) {
         void fetchBrowseLayout({ api, definition }).then((layout) => {
           if (generation !== generationRef.current) return;
           // Whether the full layout succeeded or failed, the sentinel may now
@@ -385,7 +452,18 @@ export function useBrowsePagination(
         });
       }
     },
-    [api, applyTarget, refreshHasMore, setBrowseLayout, setSearchOffset, setSearchTotal],
+    [
+      api,
+      applyTarget,
+      refreshHasMore,
+      setSearchOffset,
+      setSearchSnippets,
+      setSearchTotal,
+      beginVirtualBrowseSession,
+      ensureVirtualGeometryRange,
+      getLoadedBrowseLayout,
+      setBrowseLayout,
+    ],
   );
 
   const fetchPageAt = useCallback(
@@ -417,14 +495,20 @@ export function useBrowsePagination(
       }
       setLoadingMore(true);
       try {
-        const result =
-          definition.kind === "smart-collection"
-            ? await api.executeSmartCollection({
+        const result = definition.sessionId
+            ? await api.fetchBrowseSessionPage({
                 libraryId: definition.libraryId,
-                collectionId: definition.collectionId,
+                sessionId: definition.sessionId,
                 limit,
                 offset,
               })
+            : definition.kind === "smart-collection"
+              ? await api.executeSmartCollection({
+                  libraryId: definition.libraryId,
+                  collectionId: definition.collectionId,
+                  limit,
+                  offset,
+                })
             : await api.searchAssets({
                 libraryId: definition.libraryId,
                 query: definition.query,
@@ -454,6 +538,10 @@ export function useBrowsePagination(
           onLoadMoreFailed?.();
           return;
         }
+        if ('stale' in result.value) {
+          setHasMorePages(false);
+          return;
+        }
         const page = result.value as {
           items: AssetSummary[];
           total: number;
@@ -477,6 +565,11 @@ export function useBrowsePagination(
           page.items,
           deletedIdsRef.current,
         );
+        const evictedSummaryPages = applyVirtualSummaryPage({ offset, items: liveItems });
+        for (const evictedOffset of evictedSummaryPages) {
+          filledOffsetsRef.current.delete(evictedOffset);
+        }
+        layoutRef.current = getLoadedBrowseLayout();
         if (offset === 0 && page.total > 0) {
           totalRef.current = page.total;
         } else if (page.total > totalRef.current) {
@@ -498,13 +591,14 @@ export function useBrowsePagination(
             return next;
           });
         }
-        applyTarget(definition)((current) =>
-          mergeLoadedBrowsePage({
-            current,
-            items: liveItems,
-            layout: layoutRef.current,
-          }),
-        );
+        const loadedSummaryIds = getLoadedSummaryAssetIds();
+        applyTarget(definition)((current) => mergeLoadedBrowsePage({
+          current: loadedSummaryIds === null
+            ? current
+            : current.filter((asset) => loadedSummaryIds.has(asset.assetId)),
+          items: liveItems,
+          layout: layoutRef.current,
+        }));
       } finally {
         for (const covered of coveredOffsets) {
           inFlightOffsetsRef.current.delete(covered);
@@ -520,6 +614,9 @@ export function useBrowsePagination(
       setSearchOffset,
       setSearchSnippets,
       setSearchTotal,
+      applyVirtualSummaryPage,
+      getLoadedBrowseLayout,
+      getLoadedSummaryAssetIds,
     ],
   );
 
@@ -528,6 +625,11 @@ export function useBrowsePagination(
       const definition = definitionRef.current;
       if (!definition || !api) return;
       const generation = generationRef.current;
+      const geometryPromise = ensureVirtualGeometryRange({
+        startIndex: Math.max(0, Math.min(startIndex, endIndex)),
+        endIndex: Math.max(startIndex, endIndex),
+        generation,
+      });
       const firstOffset = browsePageOffset(
         Math.max(0, Math.min(startIndex, endIndex)),
         BROWSE_PAGE_SIZE,
@@ -543,7 +645,11 @@ export function useBrowsePagination(
           && !inFlightOffsetsRef.current.has(offset)
         ) offsets.push(offset);
       }
-      if (offsets.length === 0) return;
+      if (offsets.length === 0) {
+        await geometryPromise;
+        layoutRef.current = getLoadedBrowseLayout();
+        return;
+      }
       // Do not let an older in-flight page block a new destination. Split the
       // missing pages around in-flight gaps, then request the contiguous run
       // nearest the viewport center. This keeps the latest search lane
@@ -562,9 +668,13 @@ export function useBrowsePagination(
         500,
         selectedRun.at(-1)! - requestOffset + BROWSE_PAGE_SIZE,
       );
-      await fetchPageAt(requestOffset, generation, requestLimit);
+      await Promise.all([
+        geometryPromise,
+        fetchPageAt(requestOffset, generation, requestLimit),
+      ]);
+      layoutRef.current = getLoadedBrowseLayout();
     },
-    [api, fetchPageAt],
+    [api, ensureVirtualGeometryRange, fetchPageAt, getLoadedBrowseLayout],
   );
 
   const appendNextPage = useCallback(async () => {
@@ -597,15 +707,25 @@ export function useBrowsePagination(
       layoutRef.current = layoutRef.current.filter(
         (entry) => !removed.has(entry.assetId),
       );
+      removeVirtualLayoutEntries(assetIds, removedCount);
+      layoutRef.current = getLoadedBrowseLayout();
       setBrowseLayout(layoutRef.current);
       refreshHasMore(totalRef.current, filledOffsetsRef.current);
     },
-    [refreshHasMore, setBrowseLayout],
+    [getLoadedBrowseLayout, refreshHasMore, removeVirtualLayoutEntries, setBrowseLayout],
   );
 
   const reset = useCallback(() => {
+    const previous = definitionRef.current;
+    if (api && previous?.kind === "search" && previous.sessionId) {
+      void api.closeBrowseSession({
+        libraryId: previous.libraryId,
+        sessionId: previous.sessionId,
+      });
+    }
     definitionRef.current = null;
     generationRef.current += 1;
+    resetVirtualBrowseSession();
     totalRef.current = 0;
     layoutRef.current = [];
     layoutHydrationCompleteRef.current = false;
@@ -615,7 +735,7 @@ export function useBrowsePagination(
     inFlightOffsetsRef.current = new Set();
     setLoadingMore(false);
     setHasMorePages(false);
-  }, [setBrowseLayout]);
+  }, [api, resetVirtualBrowseSession, setBrowseLayout]);
 
   const sentinelRef = useCallback((node: HTMLDivElement | null) => {
     setSentinelNode(node);

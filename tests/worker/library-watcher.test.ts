@@ -29,7 +29,7 @@ function temporaryRoot(): string {
 
 class ManualScheduler implements DebounceScheduler {
   private nextId = 1;
-  private readonly tasks = new Map<number, () => void>();
+  private readonly tasks = new Map<number, () => void | Promise<void>>();
   readonly cancelled: number[] = [];
   readonly scheduled: number[] = [];
 
@@ -39,17 +39,17 @@ class ManualScheduler implements DebounceScheduler {
     this.tasks.delete(id);
   }
 
-  flush(): void {
+  async flush(): Promise<void> {
     const tasks = [...this.tasks.values()];
     this.tasks.clear();
-    for (const task of tasks) task();
+    for (const task of tasks) await task();
   }
 
   pendingCount(): number {
     return this.tasks.size;
   }
 
-  schedule(callback: () => void): unknown {
+  schedule(callback: () => void | Promise<void>): unknown {
     const id = this.nextId++;
     this.scheduled.push(id);
     this.tasks.set(id, callback);
@@ -120,7 +120,7 @@ describe('managed asset watcher', () => {
     expect(observers.closed).toEqual([0, 1]);
   });
 
-  it('coalesces event storms and derives deletion from a debounced stat refresh', () => {
+  it('coalesces event storms and derives deletion from a debounced stat refresh', async () => {
     const root = temporaryRoot();
     const source = path.join(root, 'watched.png');
     writeFileSync(source, 'watched');
@@ -138,13 +138,107 @@ describe('managed asset watcher', () => {
     expect(scheduler.scheduled).toHaveLength(3);
     expect(scheduler.cancelled).toHaveLength(2);
     expect(scheduler.pendingCount()).toBe(1);
-    scheduler.flush();
+    await scheduler.flush();
 
     expect(service.listAssets({ libraryId: library.libraryId, recursive: true })[0]?.availability).toBe('missing');
     service.closeAll();
   });
 
-  it('ignores event payload meaning and derives overwrite from current stat', () => {
+  it('keeps one trailing refresh when a new event arrives during reconciliation', async () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'watched.png');
+    writeFileSync(source, 'watched');
+    const observers = observerHarness();
+    const scheduler = new ManualScheduler();
+    let fingerprintStarted!: () => void;
+    const fingerprintReady = new Promise<void>((resolve) => {
+      fingerprintStarted = resolve;
+    });
+    let releaseFingerprint!: () => void;
+    const fingerprintGate = new Promise<void>((resolve) => {
+      releaseFingerprint = resolve;
+    });
+    const service = newService({
+      observerFactory: observers.factory,
+      scheduler,
+      watcherStableFileWindowMs: 0,
+      contentFingerprintAsync: async () => {
+        fingerprintStarted();
+        await fingerprintGate;
+        return 'watcher-fingerprint';
+      },
+    });
+    const library = service.createLibrary({ displayName: 'Trailing refresh', selectedParentPath: root });
+    const plan = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [source],
+    });
+    service.resolveImport({ importId: plan.importId, suspectedDuplicate: 'skip', nameConflict: 'keep-both' });
+    const managedPath = path.join(library.libraryPath, 'Assets', 'watched.png');
+    writeFileSync(managedPath, 'changed');
+    const changedTime = new Date(Date.now() + 20_000);
+    utimesSync(managedPath, changedTime, changedTime);
+
+    observers.callbacks[0]!();
+    const firstRefresh = scheduler.flush();
+    await fingerprintReady;
+    observers.callbacks[0]!();
+    expect(scheduler.pendingCount()).toBe(0);
+
+    releaseFingerprint();
+    await firstRefresh;
+    expect(scheduler.pendingCount()).toBe(1);
+    await scheduler.flush();
+    service.closeAll();
+  });
+
+  it('settles an async close when a watcher refresh is cancelled', async () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'closing.png');
+    writeFileSync(source, 'closing');
+    const observers = observerHarness();
+    const scheduler = new ManualScheduler();
+    let fingerprintStarted!: () => void;
+    const fingerprintReady = new Promise<void>((resolve) => {
+      fingerprintStarted = resolve;
+    });
+    let releaseFingerprint!: () => void;
+    const fingerprintGate = new Promise<void>((resolve) => {
+      releaseFingerprint = resolve;
+    });
+    const service = newService({
+      observerFactory: observers.factory,
+      scheduler,
+      watcherStableFileWindowMs: 0,
+      contentFingerprintAsync: async () => {
+        fingerprintStarted();
+        await fingerprintGate;
+        return 'closing-fingerprint';
+      },
+    });
+    const library = service.createLibrary({ displayName: 'Close watcher', selectedParentPath: root });
+    const plan = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [source],
+    });
+    service.resolveImport({ importId: plan.importId, suspectedDuplicate: 'skip', nameConflict: 'keep-both' });
+    const managedPath = path.join(library.libraryPath, 'Assets', 'closing.png');
+    writeFileSync(managedPath, 'changed');
+    const changedTime = new Date(Date.now() + 20_000);
+    utimesSync(managedPath, changedTime, changedTime);
+    observers.callbacks[0]!();
+
+    const refresh = scheduler.flush();
+    await fingerprintReady;
+    const closing = service.closeLibraryAsync(library.libraryId);
+    releaseFingerprint();
+    await refresh;
+    await expect(closing).resolves.toBeUndefined();
+  });
+
+  it('ignores event payload meaning and derives overwrite from current stat', async () => {
     const root = temporaryRoot();
     const source = path.join(root, 'watched.png');
     writeFileSync(source, 'first');
@@ -171,7 +265,7 @@ describe('managed asset watcher', () => {
     advance(10_000);
 
     observers.callbacks[0]!();
-    scheduler.flush();
+    await scheduler.flush();
 
     const after = service.listAssets({ libraryId: library.libraryId, recursive: true })[0]!;
     expect(after.assetId).toBe(before.assetId);
@@ -180,7 +274,7 @@ describe('managed asset watcher', () => {
       { type: 'asset.changed', libraryId: library.libraryId, changedCount: 1, missingCount: 0, source: 'watcher' },
     ]);
     observers.callbacks[0]!();
-    scheduler.flush();
+    await scheduler.flush();
     expect(events).toHaveLength(1);
     service.closeAll();
   });
@@ -210,7 +304,7 @@ describe('managed asset watcher', () => {
     // diagnostic scope.
     await service.runOpenBackgroundReconciliation(library.libraryId);
     observers.callbacks[0]!();
-    expect(() => scheduler.flush()).not.toThrow();
+    await expect(scheduler.flush()).resolves.not.toThrow();
     expect(diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -283,7 +377,7 @@ describe('managed asset watcher', () => {
     service.closeAll();
   });
 
-  it('discovers new files in a managed folder after a debounced event', () => {
+  it('discovers new files in a managed folder after a debounced event', async () => {
     const root = temporaryRoot();
     const observers = observerHarness();
     const scheduler = new ManualScheduler();
@@ -304,7 +398,7 @@ describe('managed asset watcher', () => {
     observers.callbacks[0]!();
     observers.callbacks[0]!();
     expect(scheduler.pendingCount()).toBe(1);
-    scheduler.flush();
+    await scheduler.flush();
 
     expect(service.listAssets({
       libraryId: library.libraryId,
@@ -319,10 +413,54 @@ describe('managed asset watcher', () => {
     ]);
     service.closeAll();
   });
+
+  it('uses a low-frequency network scan checkpoint instead of a managed-root watcher', async () => {
+    const root = temporaryRoot();
+    const observers = observerHarness();
+    const scheduler = new ManualScheduler();
+    const events: unknown[] = [];
+    const service = newService({
+      observerFactory: observers.factory,
+      scheduler,
+      storageKindOverrideForTests: 'network',
+      networkScanIntervalMs: 1,
+      watcherStableFileWindowMs: 0,
+      onAssetsChanged: (event) => events.push(event),
+    });
+    const library = service.createLibrary({ displayName: 'Network scan', selectedParentPath: root });
+
+    // A network-backed managed root has no high-frequency fs.watch observer.
+    expect(observers.roots).toEqual([]);
+    expect(scheduler.pendingCount()).toBe(1);
+
+    // First tick records the empty-tree checkpoint. The next tick sees the
+    // same fingerprint and must not emit a synthetic asset change.
+    await scheduler.flush();
+    await scheduler.flush();
+    expect(events).toEqual([]);
+
+    writeFileSync(path.join(library.libraryPath, 'Assets', 'remote.png'), 'remote');
+    await scheduler.flush();
+    await scheduler.flush();
+    expect(service.listAssets({ libraryId: library.libraryId, recursive: true })
+      .map((asset) => asset.relativeFilePath)).toEqual(['remote.png']);
+    expect(events).toEqual([
+      {
+        type: 'asset.changed',
+        libraryId: library.libraryId,
+        changedCount: 1,
+        missingCount: 0,
+        source: 'watcher',
+      },
+    ]);
+
+    service.closeLibrary(library.libraryId);
+    expect(scheduler.pendingCount()).toBe(0);
+  });
 });
 
 describe('linked folder watcher', () => {
-  it('starts one observer per available root and discovers new files after a debounced event', () => {
+  it('starts one observer per available root and discovers new files after a debounced event', async () => {
     const root = temporaryRoot();
     const linkedRoot = path.join(root, 'linked');
     mkdirSync(linkedRoot);
@@ -352,7 +490,7 @@ describe('linked folder watcher', () => {
     observers.callbacks[1]!();
     observers.callbacks[1]!();
     expect(scheduler.pendingCount()).toBe(1);
-    scheduler.flush();
+    await scheduler.flush();
 
     expect(service.listAssets({
       libraryId: library.libraryId,
@@ -418,7 +556,7 @@ describe('linked folder watcher', () => {
     expect(observers.closed).toContain(observers.roots.length - 1);
   });
 
-  it('ignores default entries and symlinks discovered after import and emits a diagnostic', () => {
+  it('ignores default entries and symlinks discovered after import and emits a diagnostic', async () => {
     const root = temporaryRoot();
     const linkedRoot = path.join(root, 'linked');
     mkdirSync(linkedRoot);
@@ -440,7 +578,7 @@ describe('linked folder watcher', () => {
     writeFileSync(path.join(root, 'outside.png'), 'outside');
     symlinkSync(path.join(root, 'outside.png'), path.join(linkedRoot, 'link.png'));
     observers.callbacks[1]!();
-    scheduler.flush();
+    await scheduler.flush();
 
     expect(service.listAssets({
       libraryId: library.libraryId,

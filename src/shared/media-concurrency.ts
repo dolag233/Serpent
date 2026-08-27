@@ -6,10 +6,25 @@
  * per-decoder lanes apply their stricter limits.
  */
 export const MEDIA_QUEUE_CONCURRENCY = 2;
+/**
+ * Interactive image cards get two extra bounded slots. The regular/background
+ * queue remains capped at MEDIA_QUEUE_CONCURRENCY; this is only used for a
+ * current viewport and is still restricted to small, pixel-bounded sources
+ * by the Worker decoder admission gate.
+ */
+export const MEDIA_INTERACTIVE_QUEUE_CONCURRENCY = 4;
 
 export function mediaDecodeConcurrency(physicalCpus: number): number {
   if (!Number.isFinite(physicalCpus) || physicalCpus < 1) return 1;
   return Math.min(MEDIA_QUEUE_CONCURRENCY, Math.max(1, Math.trunc(physicalCpus)));
+}
+
+export function mediaInteractiveDecodeConcurrency(physicalCpus: number): number {
+  if (!Number.isFinite(physicalCpus) || physicalCpus < 1) return 1;
+  return Math.min(
+    MEDIA_INTERACTIVE_QUEUE_CONCURRENCY,
+    Math.max(1, Math.trunc(physicalCpus)),
+  );
 }
 
 /** Keep the claim wave larger than the live pool so workers do not idle. */

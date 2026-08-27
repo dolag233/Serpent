@@ -55,8 +55,11 @@ import {
 import { PluginViewerActionButtons } from "./plugin-viewer-actions";
 import { PluginViewerOverlays } from "./plugin-viewer-overlays";
 import { ProxyPlaybackNotice } from "./ProxyPlaybackNotice";
-import { createProxyFallbackRunGuard } from "./proxy-fallback-run";
 import { shouldCopyAssetOnShortcut } from "./viewer-copy-shortcut";
+import {
+  ViewerSessionController,
+  type ViewerSessionIdentity,
+} from "./viewer/viewer-session-controller";
 import { ShellSurface, ViewerSurface } from "./ui/surfaces";
 import { ModelViewerSurface } from "./3d-viewer/viewer-surface";
 import { isMacPlatform } from "./commands/command-types";
@@ -168,8 +171,27 @@ export const AssetPreviewModal = forwardRef<
 ) {
   const t = useT();
   const modalRef = useRef<HTMLElement>(null);
-  const requestSequence = useRef(0);
-  const initialPreviewAssetRef = useRef<string | null>(null);
+  const viewerSessionControllerRef = useRef<ViewerSessionController | null>(null);
+  if (viewerSessionControllerRef.current === null) {
+    viewerSessionControllerRef.current = new ViewerSessionController();
+  }
+  const viewerSessionController = viewerSessionControllerRef.current;
+  const viewerIdentity = useMemo<ViewerSessionIdentity>(() => ({
+    libraryId,
+    assetId: asset.assetId,
+    revisionId: asset.currentRevisionId,
+  }), [asset.assetId, asset.currentRevisionId, libraryId]);
+  const viewerSessionSignal =
+    viewerSessionController.current(viewerIdentity)?.signal ?? null;
+
+  // The controller is the lifetime owner for every async viewer producer.
+  // Keeping session creation ahead of the request effects also makes the
+  // zero-delay initial resolve safe under React StrictMode.
+  useEffect(() => {
+    viewerSessionController.start(viewerIdentity);
+    return () => viewerSessionController.invalidate();
+  }, [viewerIdentity, viewerSessionController]);
+
   const [resolution, setResolution] = useState<PreviewResolution | null>(null);
   const chromeContrast = useViewerChromeContrast(
     modalRef,
@@ -215,10 +237,6 @@ export const AssetPreviewModal = forwardRef<
   const resolutionRef = useRef<PreviewResolution | null>(null);
   const playbackErrorRef = useRef<string | null>(null);
   const requestedProxyFallbackRef = useRef<string | null>(null);
-  // An explicit proxy fallback can outlive the media element that requested
-  // it (asset navigation, manual retry, or viewer unmount). Invalidate the
-  // run so its polling loop cannot paint an error into a newer viewer.
-  const proxyFallbackRunGuardRef = useRef(createProxyFallbackRunGuard());
   const directApprovedRef = useRef(false);
   const directGateIdentityRef = useRef<string | null>(null);
   const textViewerRef = useRef<TextViewerControlsHandle>(null);
@@ -241,7 +259,10 @@ export const AssetPreviewModal = forwardRef<
       isCurrentRun?: () => boolean,
     ) => {
       if (isCurrentRun && !isCurrentRun()) return undefined;
-      const sequence = ++requestSequence.current;
+      const session = viewerSessionController.current(viewerIdentity);
+      if (!session) return undefined;
+      const request = viewerSessionController.beginRequest(session);
+      if (!request) return undefined;
       if (!quiet) setLoading(true);
       try {
         const result = await api.requestPreview({
@@ -258,7 +279,7 @@ export const AssetPreviewModal = forwardRef<
           ...(asset.mediaType === "image" ? { exrPlane } : {}),
           ...(colorSpace ? { colorSpace } : {}),
         });
-        if (sequence !== requestSequence.current) return result;
+        if (!request.isCurrent()) return result;
         if (isCurrentRun && !isCurrentRun()) return result;
         if (!result.ok) {
           setError(
@@ -327,7 +348,7 @@ export const AssetPreviewModal = forwardRef<
         return result;
       } catch {
         if (
-          sequence === requestSequence.current &&
+          request.isCurrent() &&
           (!isCurrentRun || isCurrentRun())
         ) {
           setError(t("preview.cannotOpenNoResponse"));
@@ -336,39 +357,59 @@ export const AssetPreviewModal = forwardRef<
       } finally {
         if (
           !quiet &&
-          sequence === requestSequence.current &&
+          request.isCurrent() &&
           (!isCurrentRun || isCurrentRun())
         ) {
           setLoading(false);
         }
       }
     },
-    [api, asset.assetId, asset.mediaType, libraryId, selectedColorSpace, selectedExrPlane, t],
+    [
+      api,
+      asset.assetId,
+      asset.mediaType,
+      libraryId,
+      selectedColorSpace,
+      selectedExrPlane,
+      t,
+      viewerIdentity,
+      viewerSessionController,
+    ],
   );
 
   useEffect(() => {
-    const runGuard = proxyFallbackRunGuardRef.current;
-    runGuard.invalidate();
+    viewerSessionController.cancelTask("proxy-fallback");
+    setResolution(null);
+    setLoading(true);
     setSelectedExrPlane(0);
     setSelectedColorSpace(undefined);
     setDisplayTransform(IDENTITY_VIEWER_DISPLAY_TRANSFORM);
     playbackErrorRef.current = null;
+    resolutionRef.current = null;
     requestedProxyFallbackRef.current = null;
+    directApprovedRef.current = false;
+    directGateIdentityRef.current = null;
+    setDirectApproved(false);
     setProxyNoticeAvailable(false);
     setProxyNoticeVisible(false);
     setProxyFallbackState("idle");
     setManualRetryError(null);
     return () => {
-      runGuard.invalidate();
+      viewerSessionController.cancelTask("proxy-fallback");
     };
-  }, [asset.assetId]);
+  }, [asset.assetId, asset.currentRevisionId, viewerSessionController]);
 
   const ensureProxyFallback = useCallback(
     async (errorCode: string) => {
       const playbackToken = resolution?.playbackToken;
       if (!playbackToken || requestedProxyFallbackRef.current === playbackToken) return;
       requestedProxyFallbackRef.current = playbackToken;
-      const isCurrentRun = proxyFallbackRunGuardRef.current.begin();
+      const session = viewerSessionController.current(viewerIdentity);
+      const task = session
+        ? viewerSessionController.beginTask(session, "proxy-fallback")
+        : null;
+      if (!task) return;
+      const isCurrentRun = task.isCurrent;
       const proxyKind = asset.mediaType === "audio" ? "audio_proxy" : "webm_proxy";
       // REQ-VIEW-002: keep the current source/URL mounted. Proxy generation is a
       // quiet background upgrade — do not wipe into a blocking "generating" gate.
@@ -440,22 +481,33 @@ export const AssetPreviewModal = forwardRef<
       selectedColorSpace,
       selectedExrPlane,
       t,
+      viewerIdentity,
+      viewerSessionController,
     ],
   );
 
   useEffect(() => {
-    const viewerIdentity = `${libraryId}:${asset.assetId}`;
     const timer = window.setTimeout(() => {
       // React StrictMode mounts effects twice in development. The first
       // effect may be cleaned up before its zero-delay timer runs; guard in
       // the timer (rather than the effect body) so exactly one real request
       // survives that remount while asset navigation still gets a new one.
-      if (initialPreviewAssetRef.current === viewerIdentity) return;
-      initialPreviewAssetRef.current = viewerIdentity;
+      const session = viewerSessionController.current({
+        libraryId,
+        assetId: asset.assetId,
+        revisionId: asset.currentRevisionId,
+      });
+      if (!session || !viewerSessionController.claimInitialRequest(session)) return;
       void resolvePreview();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [asset.assetId, libraryId, resolvePreview]);
+  }, [
+    asset.assetId,
+    asset.currentRevisionId,
+    libraryId,
+    resolvePreview,
+    viewerSessionController,
+  ]);
 
   useEffect(
     () =>
@@ -476,9 +528,10 @@ export const AssetPreviewModal = forwardRef<
   }, [directApproved]);
 
   useEffect(() => {
-    let cancelled = false;
-    let timer = 0;
+    const session = viewerSessionController.current(viewerIdentity);
+    if (!session) return;
     const poll = async () => {
+      if (!viewerSessionController.isCurrent(session)) return;
       if (
         !shouldContinuePreviewPolling(
           resolutionRef.current,
@@ -489,35 +542,25 @@ export const AssetPreviewModal = forwardRef<
       }
       await resolvePreview(true);
       if (
-        !cancelled &&
+        viewerSessionController.isCurrent(session) &&
         shouldContinuePreviewPolling(
           resolutionRef.current,
           directApprovedRef.current,
         )
       ) {
-        timer = window.setTimeout(() => void poll(), 1_500);
+        viewerSessionController.schedule(session, () => void poll(), 1_500);
       }
     };
-    timer = window.setTimeout(() => void poll(), 1_500);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [resolvePreview]);
-
-  useEffect(
-    () => () => {
-      requestSequence.current += 1;
-    },
-    [],
-  );
+    const timer = viewerSessionController.schedule(session, () => void poll(), 1_500);
+    return () => viewerSessionController.cancelScheduled(timer);
+  }, [resolvePreview, viewerIdentity, viewerSessionController]);
 
   useEffect(() => {
     modalRef.current?.focus({ preventScroll: true });
   }, []);
 
   async function retry() {
-    proxyFallbackRunGuardRef.current.invalidate();
+    viewerSessionController.cancelTask("proxy-fallback");
     requestedProxyFallbackRef.current = null;
     setRetrying(true);
     // Serpent-e56a1f: 手动重试同样进入生成中状态，失败前不显示警告。
@@ -782,8 +825,9 @@ export const AssetPreviewModal = forwardRef<
       const ok = await textViewerRef.current.flushBeforeClose();
       if (!ok) return;
     }
+    viewerSessionController.invalidate();
     onClose();
-  }, [onClose]);
+  }, [onClose, viewerSessionController]);
 
   useImperativeHandle(ref, () => ({ requestClose }), [requestClose]);
 
@@ -989,6 +1033,7 @@ export const AssetPreviewModal = forwardRef<
                 key={`${libraryId}:${asset.assetId}`}
                 libraryId={libraryId}
                 placeholderUrl={placeholderUrl}
+                sessionSignal={viewerSessionSignal}
                 sourceUrl={resolution.url}
               />
             ) : (
@@ -1006,6 +1051,7 @@ export const AssetPreviewModal = forwardRef<
               key={`${libraryId}:${asset.assetId}`}
               libraryId={libraryId}
               placeholderUrl={placeholderUrl}
+              sessionSignal={viewerSessionSignal}
               sourceUrl={null}
             />
           ) : ready && resolution?.mediaType === "text" ? (

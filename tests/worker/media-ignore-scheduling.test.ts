@@ -13,8 +13,10 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { force: true, recursive: true });
 });
 
+// Keep the image outside the source-direct policy: this suite verifies that
+// ignored folders suppress the derived-thumbnail queue.
 const VALID_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==',
+  'iVBORw0KGgoAAAANSUhEUgAACAEAAAABCAIAAAAqtLKbAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAOklEQVRYhe3YQQ0AAAgDMeRMImInBh+kySno8yZbESBAgAABAgQIECBAgAABAgQIECBAgAABAnk3zA9mXOIiDxU7WQAAAABJRU5ErkJggg==',
   'base64',
 );
 
@@ -162,8 +164,11 @@ describe('media scheduling respects ignore rules', () => {
     const kept = fixture.service.filterIgnoredAssetIds(fixture.created.libraryId, [
       fixture.rootAssetId,
       fixture.nestedAssetId,
+      fixture.rootAssetId,
     ]);
-    expect(kept).toEqual([fixture.rootAssetId]);
+    // The implementation batches the SQL lookup, but the public result keeps
+    // the caller's order and duplicate ids for queue/reporting semantics.
+    expect(kept).toEqual([fixture.rootAssetId, fixture.rootAssetId]);
   });
 
   it('does not enqueue secondary video or AI work for ignored assets', () => {

@@ -148,7 +148,10 @@ describe.runIf(hasRealBundle || requireRealMedia)('installed media bundle real-f
 
     const assets = service.listAssets({ libraryId: library.libraryId, recursive: true });
     expect(assets).toHaveLength(sourcePaths.length);
-    expect(service.enqueueThumbnailJobs(library.libraryId)).toBe(sourcePaths.length);
+    const derivedThumbnailAssets = assets.filter((asset) => asset.previewKind !== 'source');
+    // Native raster images within the bounded source-direct policy have no
+    // primary thumbnail job; complex formats and videos still do.
+    expect(service.enqueueThumbnailJobs(library.libraryId)).toBe(derivedThumbnailAssets.length);
     while (service.listMediaJobs(library.libraryId).queued > 0) {
       const processed = await service.processThumbnailQueue(library.libraryId);
       expect(
@@ -159,7 +162,9 @@ describe.runIf(hasRealBundle || requireRealMedia)('installed media bundle real-f
 
     const refreshed = service.listAssets({ libraryId: library.libraryId, recursive: true });
     expect(
-      refreshed.every((asset) => asset.thumbnailStatus === 'ready'),
+      refreshed.every((asset) => asset.previewKind === 'source'
+        ? asset.thumbnailStatus === null && asset.thumbnailArtifactId === null
+        : asset.thumbnailStatus === 'ready'),
       JSON.stringify(refreshed.map((asset) => ({
         name: asset.displayName,
         mediaType: asset.mediaType,

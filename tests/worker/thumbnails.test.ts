@@ -52,9 +52,16 @@ const VALID_1X1_PNG = Buffer.from(
   'base64',
 );
 
+// Thumbnail queue tests need a source that intentionally exceeds the
+// source-direct card policy. Small native images now skip derived thumbnails.
+const THUMBNAIL_REQUIRED_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAACAEAAAABCAIAAAAqtLKbAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAOklEQVRYhe3YQQ0AAAgDMeRMImInBh+kySno8yZbESBAgAABAgQIECBAgAABAgQIECBAgAABAnk3zA9mXOIiDxU7WQAAAABJRU5ErkJggg==',
+  'base64',
+);
+
 function createTestImage(destPath: string): void {
   mkdirSync(path.dirname(destPath), { recursive: true });
-  writeFileSync(destPath, VALID_1X1_PNG);
+  writeFileSync(destPath, THUMBNAIL_REQUIRED_PNG);
 }
 
 function createCorruptImage(destPath: string): void {
@@ -113,6 +120,10 @@ describe('schema v9 migration', () => {
     expect(revArtifactCols).toContain('duration_ms');
     expect(revArtifactCols).toContain('dominant_hue');
     expect(revArtifactCols).toContain('dominant_lightness');
+    expect(revArtifactCols).toContain('artifact_role');
+    expect(revArtifactCols).toContain('generator_id');
+    expect(revArtifactCols).toContain('settings_hash');
+    expect(revArtifactCols).toContain('artifact_key');
 
     const jobsCols = (db.prepare("PRAGMA table_info('jobs')").all() as Array<{ name: string }>).map((c) => c.name);
     expect(jobsCols).toContain('job_id');
@@ -417,6 +428,13 @@ describe('generateThumbnail (sharp)', () => {
     const result = (await service.generateThumbnail({ libraryId: created.libraryId, assetId: assets[0]!.assetId }))!;
     expect(result.artifactId).toBeTruthy();
     expect(existsSync(path.join(created.libraryPath, '.serpent', 'artifacts', `${result.artifactId}.jpg`))).toBe(true);
+    expect(service.getCurrentArtifact(created.libraryId, assets[0]!.assetId, 'thumbnail'))
+      .toMatchObject({
+        artifactRole: 'card-thumbnail',
+        generatorId: expect.stringContaining('sharp@'),
+        settingsHash: 'default',
+        artifactKey: expect.stringContaining('card-thumbnail'),
+      });
 
     service.closeAll();
   });
@@ -656,16 +674,45 @@ describe('getThumbnailArtifact', () => {
 });
 
 describe('preview availability while derivatives are generated', () => {
-  it('serves a native image source immediately while its thumbnail job is queued', () => {
+  it('serves a low-pixel source just above 1 MiB without queuing a thumbnail', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'ImmediateLosslessImagePreview', selectedParentPath: root });
+    const sourcePath = path.join(root, 'moderately-large.png');
+    const encoded = await createPngBytes(1024, 768);
+    const targetBytes = Math.floor(1.5 * 1024 * 1024);
+    expect(encoded.byteLength).toBeLessThan(targetBytes);
+    writeFileSync(sourcePath, Buffer.concat([encoded, Buffer.alloc(targetBytes - encoded.byteLength)]));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    expect(asset.byteSize).toBe(targetBytes);
+    expect(asset.previewKind).toBe('source');
+    expect(asset.previewRevisionId).toBe(asset.currentRevisionId);
+    expect(service.enqueueThumbnailJobs(created.libraryId)).toBe(0);
+    expect(service.getPreviewArtifact(created.libraryId, asset.assetId)).toMatchObject({
+      mediaType: 'image',
+      status: 'ready',
+      playbackMode: 'source',
+      sourceRevisionId: asset.currentRevisionId,
+      sourceMimeType: 'image/png',
+    });
+
+    service.closeAll();
+  });
+
+  it('serves a bounded native image source and skips its thumbnail job', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'ImmediateImagePreview', selectedParentPath: root });
     const sourcePath = path.join(root, 'portrait.png');
-    createTestImage(sourcePath);
+    writeFileSync(sourcePath, VALID_1X1_PNG);
     importNoConflict(service, created.libraryId, sourcePath);
     const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
 
-    expect(service.enqueueThumbnailJobs(created.libraryId)).toBe(1);
+    expect(asset.previewKind).toBe('source');
+    expect(asset.previewRevisionId).toBe(asset.currentRevisionId);
+    expect(service.enqueueThumbnailJobs(created.libraryId)).toBe(0);
     expect(service.getPreviewArtifact(created.libraryId, asset.assetId)).toMatchObject({
       mediaType: 'image',
       status: 'ready',
@@ -851,6 +898,78 @@ describe('enqueueThumbnailJobs', () => {
     service.closeAll();
   });
 
+  it('locally invalidates a visible artifact from an older generator before enqueueing', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'StaleGenerator', selectedParentPath: root });
+    const source = path.join(root, 'stale.png');
+    createTestImage(source);
+    importNoConflict(service, created.libraryId, source);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId });
+
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    db.prepare(
+      `UPDATE revision_artifacts
+          SET generator_version = 'sharp@legacy'
+        WHERE revision_id = ? AND kind = 'thumbnail' AND invalidated_at IS NULL`,
+    ).run(asset.currentRevisionId);
+    db.close();
+
+    expect(service.enqueueThumbnailJobs(created.libraryId, { assetIds: [asset.assetId] })).toBe(1);
+    const check = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const rows = check.prepare(
+      `SELECT invalidated_at FROM revision_artifacts
+        WHERE revision_id = ? AND kind = 'thumbnail'
+        ORDER BY generated_at DESC`,
+    ).all(asset.currentRevisionId) as Array<{ invalidated_at: string | null }>;
+    expect(rows.some((row) => row.invalidated_at !== null)).toBe(true);
+    check.close();
+    service.closeAll();
+  });
+
+  it('caches ready and failed descriptors until the library sequence changes', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'DescriptorCache', selectedParentPath: root });
+    const source = path.join(root, 'descriptor-cache.png');
+    createTestImage(source);
+    importNoConflict(service, created.libraryId, source);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId });
+
+    service.resetArtifactDescriptorCacheMetrics();
+    const readyFirst = service.getCurrentArtifact(created.libraryId, asset.assetId, 'thumbnail');
+    const readySecond = service.getCurrentArtifact(created.libraryId, asset.assetId, 'thumbnail');
+    expect(readyFirst).toMatchObject({ status: 'ready', artifactRole: 'card-thumbnail' });
+    expect(readySecond).toMatchObject({ status: 'ready', artifactRole: 'card-thumbnail' });
+    expect(service.getArtifactDescriptorCacheMetrics()).toMatchObject({
+      misses: 1,
+      hits: 1,
+      stores: 1,
+    });
+
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    db.prepare(
+      `UPDATE revision_artifacts
+          SET status = 'failed', error_code = 'CACHE_PROBE_FAILED'
+        WHERE revision_id = ? AND kind = 'thumbnail' AND invalidated_at IS NULL`,
+    ).run(asset.currentRevisionId);
+    db.close();
+
+    const failedFirst = service.getCurrentArtifact(created.libraryId, asset.assetId, 'thumbnail');
+    const failedSecond = service.getCurrentArtifact(created.libraryId, asset.assetId, 'thumbnail');
+    expect(failedFirst).toMatchObject({ status: 'failed', errorCode: 'CACHE_PROBE_FAILED' });
+    expect(failedSecond).toMatchObject({ status: 'failed', errorCode: 'CACHE_PROBE_FAILED' });
+    expect(service.getArtifactDescriptorCacheMetrics()).toMatchObject({
+      misses: 2,
+      hits: 2,
+      stores: 2,
+      invalidations: 1,
+    });
+    service.closeAll();
+  });
+
   it('limits startup work, skips unsupported assets, and prioritizes an explicit visible range', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
@@ -938,6 +1057,60 @@ describe('enqueueThumbnailJobs', () => {
 });
 
 describe('processThumbnailQueue', () => {
+  it('prunes legacy source-direct and already-ready thumbnail rows in one SQL pass', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'LegacyAdmissionPrune', selectedParentPath: root });
+
+    const sourceDirectPath = path.join(root, 'source-direct.png');
+    writeFileSync(sourceDirectPath, VALID_1X1_PNG);
+    importNoConflict(service, created.libraryId, sourceDirectPath);
+
+    const derivedPath = path.join(root, 'derived.png');
+    createTestImage(derivedPath);
+    importNoConflict(service, created.libraryId, derivedPath);
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    const sourceDirect = assets.find((asset) => asset.displayName === 'source-direct.png')!;
+    const derived = assets.find((asset) => asset.displayName === 'derived.png')!;
+    await service.generateThumbnail({ libraryId: created.libraryId, assetId: derived.assetId });
+    expect(service.getCurrentArtifact(created.libraryId, derived.assetId, 'thumbnail'))
+      .toMatchObject({ status: 'ready' });
+
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    db.prepare('DELETE FROM jobs').run();
+    const now = new Date().toISOString();
+    const insert = db.prepare(
+      `INSERT INTO jobs
+         (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+          attempt_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', 100, 0.0, 0, ?, ?)`,
+    );
+    insert.run(
+      'legacy-source-direct', created.libraryId, sourceDirect.assetId,
+      sourceDirect.currentRevisionId, now, now,
+    );
+    insert.run(
+      'legacy-ready-thumbnail', created.libraryId, derived.assetId,
+      derived.currentRevisionId, now, now,
+    );
+    db.close();
+
+    expect(await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['generate_thumbnail'],
+    })).toBe(0);
+
+    const verify = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(verify.prepare(
+      'SELECT job_id, status, error_code FROM jobs ORDER BY job_id',
+    ).all()).toEqual([
+      { job_id: 'legacy-ready-thumbnail', status: 'cancelled', error_code: 'ARTIFACT_READY' },
+      { job_id: 'legacy-source-direct', status: 'cancelled', error_code: 'SOURCE_DIRECT' },
+    ]);
+    verify.close();
+    service.closeAll();
+  });
+
   it('processes queued jobs', async () => {
     const root = temporaryRoot();
     const service = new LibraryService();
@@ -958,6 +1131,75 @@ describe('processThumbnailQueue', () => {
     expect(job!.status).toBe('succeeded');
     db.close();
 
+    service.closeAll();
+  });
+
+  it('re-checks the revision at claim and cancels stale work before decoding', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'StaleAdmission', selectedParentPath: root });
+    const firstPath = path.join(root, 'first.png');
+    const secondPath = path.join(root, 'second.png');
+    createTestImage(firstPath);
+    createTestImage(secondPath);
+    importNoConflict(service, created.libraryId, firstPath);
+    importNoConflict(service, created.libraryId, secondPath);
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    const first = assets.find((asset) => asset.displayName === 'first.png')!;
+    const second = assets.find((asset) => asset.displayName === 'second.png')!;
+
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    db.prepare('DELETE FROM jobs').run();
+    db.prepare(
+      `INSERT INTO jobs
+         (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+          attempt_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', 100, 0.0, 0, ?, ?)`,
+    ).run(
+      'stale-thumbnail-job',
+      created.libraryId,
+      first.assetId,
+      second.currentRevisionId,
+      new Date().toISOString(),
+      new Date().toISOString(),
+    );
+    db.close();
+
+    expect(await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['generate_thumbnail'],
+      assetIds: [first.assetId],
+    })).toBe(1);
+
+    const verify = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(verify.prepare(
+      'SELECT status, error_code FROM jobs WHERE job_id = ?',
+    ).get('stale-thumbnail-job')).toEqual({ status: 'cancelled', error_code: 'STALE_REVISION' });
+    verify.close();
+    service.closeAll();
+  });
+
+  it('does not enter a non-visual asset into the palette lane after a thumbnail completes', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'NoAudioPalette', selectedParentPath: root });
+    const audioPath = path.join(root, 'voice.wav');
+    writeFileSync(audioPath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, audioPath);
+    const audio = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    expect(service.enqueueThumbnailJobs(created.libraryId)).toBe(1);
+    await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['generate_thumbnail'],
+      assetIds: [audio.assetId],
+    });
+
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(db.prepare(
+      "SELECT COUNT(*) AS count FROM jobs WHERE asset_id = ? AND kind = 'extract_palette'",
+    ).get(audio.assetId)).toEqual({ count: 0 });
+    db.close();
     service.closeAll();
   });
 
@@ -1078,6 +1320,36 @@ describe('processThumbnailQueue', () => {
     reopened.closeAll();
   });
 
+  it('preserves an explicit playback-fallback intent across process recovery', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'RecoverExplicitProxy', selectedParentPath: root });
+    const source = path.join(root, 'recover.mp4');
+    writeFileSync(source, Buffer.alloc(1024));
+    importNoConflict(service, created.libraryId, source);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    const jobId = service.enqueueArtifactRetry({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+      kind: 'webm_proxy',
+    });
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(db.prepare('SELECT error_code FROM jobs WHERE job_id = ?').get(jobId))
+      .toEqual({ error_code: 'EXPLICIT_PROXY_FALLBACK' });
+    db.prepare("UPDATE jobs SET status = 'running' WHERE job_id = ?").run(jobId);
+    db.close();
+    service.closeAll();
+
+    const reopened = new LibraryService();
+    reopened.openLibrary(created.libraryPath);
+    const recoveredDb = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(recoveredDb.prepare(
+      'SELECT status, error_code FROM jobs WHERE job_id = ?',
+    ).get(jobId)).toEqual({ status: 'queued', error_code: 'EXPLICIT_PROXY_FALLBACK' });
+    recoveredDb.close();
+    reopened.closeAll();
+  });
+
   it('does not retain artifacts completed after an in-flight cancellation', async () => {
     const root = temporaryRoot();
     let releaseDecode!: () => void;
@@ -1120,6 +1392,54 @@ describe('processThumbnailQueue', () => {
     expect(db.prepare("SELECT COUNT(*) AS count FROM revision_artifacts WHERE kind = 'thumbnail'").get())
       .toMatchObject({ count: 0 });
     db.close();
+    service.closeAll();
+  });
+
+  it('requeues and aborts the active wave when its queue signal is cancelled', async () => {
+    const root = temporaryRoot();
+    let releaseDecode!: () => void;
+    let decodeStarted!: () => void;
+    const started = new Promise<void>((resolve) => { decodeStarted = resolve; });
+    const blocked = new Promise<void>((resolve) => { releaseDecode = resolve; });
+    const pipeline = {
+      metadata: async () => ({ width: 2049, height: 1, format: 'png' }),
+      rotate() { return this; },
+      toColourspace() { return this; },
+      resize() { return this; },
+      composite() { return this; },
+      webp() { return this; },
+      jpeg() { return this; },
+      async toFile(outputPath: string) {
+        decodeStarted();
+        await blocked;
+        writeFileSync(outputPath, VALID_1X1_PNG);
+      },
+    };
+    const service = new LibraryService({ sharpFn: () => pipeline });
+    const created = service.createLibrary({ displayName: 'QueueAbort', selectedParentPath: root });
+    const source = path.join(root, 'queued-abort.png');
+    createTestImage(source);
+    importNoConflict(service, created.libraryId, source);
+    service.enqueueThumbnailJobs(created.libraryId);
+    const jobId = service.listMediaJobs(created.libraryId).jobs[0]!.jobId;
+    const queueController = new AbortController();
+
+    const processing = service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      signal: queueController.signal,
+    });
+    await started;
+    queueController.abort();
+    releaseDecode();
+    await processing;
+
+    expect(service.listMediaJobs(created.libraryId).jobs.find((job) => job.jobId === jobId))
+      .toMatchObject({ status: 'queued' });
+    expect(service.getCurrentArtifact(
+      created.libraryId,
+      service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!.assetId,
+      'thumbnail',
+    )).toBeNull();
     service.closeAll();
   });
 
@@ -1721,7 +2041,7 @@ describe('visible page window covers the whole browse page (Serpent-x9xu)', () =
       const uniqueTrailer = Buffer.from([
         (index >> 24) & 0xff, (index >> 16) & 0xff, (index >> 8) & 0xff, index & 0xff,
       ]);
-      writeFileSync(path.join(sourceDir, name), Buffer.concat([VALID_1X1_PNG, uniqueTrailer]));
+      writeFileSync(path.join(sourceDir, name), Buffer.concat([THUMBNAIL_REQUIRED_PNG, uniqueTrailer]));
     }
     const prepared = service.prepareOrExecuteImport({
       libraryId: created.libraryId,

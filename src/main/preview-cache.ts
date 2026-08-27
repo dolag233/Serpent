@@ -3,10 +3,20 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 export interface PreviewCacheEvent {
-  kind: 'hit' | 'store' | 'evicted' | 'error';
+  kind: 'hit' | 'miss' | 'store' | 'evicted' | 'error';
   libraryId: string;
   artifactId: string;
   detail?: string;
+}
+
+export interface PreviewCacheMetrics {
+  hits: number;
+  misses: number;
+  stores: number;
+  evictions: number;
+  errors: number;
+  bytesStored: number;
+  bytesEvicted: number;
 }
 
 export interface PreviewCacheOptions {
@@ -39,6 +49,15 @@ export class PreviewCache {
   private readonly onEvent?: (event: PreviewCacheEvent) => void;
   private unflushedStoredBytes = 0;
   private evicting = false;
+  private readonly metrics: PreviewCacheMetrics = {
+    hits: 0,
+    misses: 0,
+    stores: 0,
+    evictions: 0,
+    errors: 0,
+    bytesStored: 0,
+    bytesEvicted: 0,
+  };
 
   constructor(options: PreviewCacheOptions) {
     this.rootDir = options.rootDir;
@@ -51,9 +70,14 @@ export class PreviewCache {
   locateSync(libraryId: string, artifactId: string, extension: string): string | null {
     if (!this.isValidSegment(libraryId) || !this.isValidSegment(artifactId)) return null;
     const absolutePath = this.mirrorPath(libraryId, artifactId, extension);
-    if (!existsSync(absolutePath)) return null;
+    if (!existsSync(absolutePath)) {
+      this.metrics.misses += 1;
+      this.onEvent?.({ kind: 'miss', libraryId, artifactId });
+      return null;
+    }
     // Fire-and-forget touch so LRU reflects reads, not just writes.
     void utimes(absolutePath, new Date(), new Date()).catch(() => undefined);
+    this.metrics.hits += 1;
     this.onEvent?.({ kind: 'hit', libraryId, artifactId });
     return absolutePath;
   }
@@ -79,6 +103,8 @@ export class PreviewCache {
       await rename(tempPath, finalPath);
       const stored = await stat(finalPath);
       this.unflushedStoredBytes += stored.size;
+      this.metrics.stores += 1;
+      this.metrics.bytesStored += stored.size;
       this.onEvent?.({ kind: 'store', libraryId, artifactId });
       if (this.unflushedStoredBytes >= this.evictAfterBytes && !this.evicting) {
         this.unflushedStoredBytes = 0;
@@ -86,6 +112,7 @@ export class PreviewCache {
       }
     } catch (error) {
       await rm(tempPath, { force: true }).catch(() => undefined);
+      this.metrics.errors += 1;
       this.onEvent?.({
         kind: 'error',
         libraryId,
@@ -114,6 +141,8 @@ export class PreviewCache {
         try {
           await unlink(entry.path);
           total -= entry.size;
+          this.metrics.evictions += 1;
+          this.metrics.bytesEvicted += entry.size;
           this.onEvent?.({
             kind: 'evicted',
             libraryId: path.basename(path.dirname(entry.path)),
@@ -146,6 +175,21 @@ export class PreviewCache {
   async countFiles(): Promise<number> {
     const entries = await this.collectEntries();
     return entries.length;
+  }
+
+  /** Snapshot counters for performance diagnostics and benchmark assertions. */
+  getMetrics(): PreviewCacheMetrics {
+    return { ...this.metrics };
+  }
+
+  resetMetrics(): void {
+    this.metrics.hits = 0;
+    this.metrics.misses = 0;
+    this.metrics.stores = 0;
+    this.metrics.evictions = 0;
+    this.metrics.errors = 0;
+    this.metrics.bytesStored = 0;
+    this.metrics.bytesEvicted = 0;
   }
 
   private mirrorPath(libraryId: string, artifactId: string, extension: string): string {

@@ -221,9 +221,24 @@ describe("image sequence persistence", () => {
       fps: 30,
       frameCount: 3,
       frames: [
-        { frameNumber: 1, displayName: "shot_001.png" },
-        { frameNumber: 2, displayName: "shot_002.png" },
-        { frameNumber: 3, displayName: "shot_003.png" },
+        {
+          frameNumber: 1,
+          displayName: "shot_001.png",
+          previewKind: "source",
+          previewRevisionId: expect.any(String),
+        },
+        {
+          frameNumber: 2,
+          displayName: "shot_002.png",
+          previewKind: "source",
+          previewRevisionId: expect.any(String),
+        },
+        {
+          frameNumber: 3,
+          displayName: "shot_003.png",
+          previewKind: "source",
+          previewRevisionId: expect.any(String),
+        },
       ],
     });
   });

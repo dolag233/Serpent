@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   mediaDecodeConcurrency,
   mediaDecodeWaveSize,
+  mediaInteractiveDecodeConcurrency,
 } from "../../src/shared/media-concurrency";
 import { physicalCpuCountFromProcCpuInfo } from "../../src/worker/media-concurrency";
 import {
@@ -30,6 +31,20 @@ describe("mediaDecodeWaveSize", () => {
   it("keeps the claim wave at twice the live pool", () => {
     expect(mediaDecodeWaveSize(21)).toBe(42);
     expect(mediaDecodeWaveSize(1)).toBe(2);
+  });
+});
+
+describe("mediaInteractiveDecodeConcurrency", () => {
+  it("adds bounded slots for a visible image wave", () => {
+    expect(mediaInteractiveDecodeConcurrency(16)).toBe(4);
+    expect(mediaInteractiveDecodeConcurrency(4)).toBe(4);
+    expect(mediaInteractiveDecodeConcurrency(2)).toBe(2);
+  });
+
+  it("never drops below one worker", () => {
+    expect(mediaInteractiveDecodeConcurrency(1)).toBe(1);
+    expect(mediaInteractiveDecodeConcurrency(0)).toBe(1);
+    expect(mediaInteractiveDecodeConcurrency(Number.NaN)).toBe(1);
   });
 });
 

@@ -17,4 +17,45 @@ describe("resolveInspectorPreviewSrc", () => {
       null,
     )).toBeNull();
   });
+
+  it("uses the bounded source-direct fallback for eligible images", () => {
+    expect(resolveInspectorPreviewSrc(
+      {
+        assetId: "asset-1",
+        availability: "available",
+        deletedAt: null,
+        mediaType: "image",
+        previewKind: "source",
+        previewRevisionId: "revision-1",
+        thumbnailArtifactId: null,
+        thumbnailStatus: "pending",
+      },
+      { libraryId: "library-1" },
+    )).toBe(
+      "serpent://source/library-1/asset-1?revision=revision-1",
+    );
+    expect(resolveInspectorPreviewSrc(
+      {
+        assetId: "asset-1",
+        mediaType: "image",
+        previewKind: "source",
+        previewRevisionId: "revision-1",
+        thumbnailArtifactId: null,
+        thumbnailStatus: "pending",
+      },
+      { libraryId: "library-1" },
+    )).toBe("serpent://source/library-1/asset-1?revision=revision-1");
+    expect(resolveInspectorPreviewSrc(
+      {
+        assetId: "asset-1",
+        availability: "missing",
+        mediaType: "image",
+        previewKind: "source",
+        previewRevisionId: "revision-1",
+        thumbnailArtifactId: null,
+        thumbnailStatus: "pending",
+      },
+      { libraryId: "library-1" },
+    )).toBeNull();
+  });
 });

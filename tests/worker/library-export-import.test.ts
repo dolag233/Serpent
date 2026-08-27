@@ -17,6 +17,7 @@ import {
   LibraryService,
   LibraryServiceError,
 } from '../../src/worker/library-service';
+import { removePathWithSyncRetry } from '../../src/worker/windows-fs-retry';
 
 const temporaryRoots: string[] = [];
 
@@ -60,10 +61,10 @@ async function expectServiceErrorAsync(
   await expect(operation()).rejects.toMatchObject({ code });
 }
 
-afterEach(() => {
-  for (const service of services.splice(0)) service.closeAll();
+afterEach(async () => {
+  await Promise.all(services.splice(0).map((service) => service.closeAllAsync()));
   for (const root of temporaryRoots.splice(0)) {
-    rmSync(root, { force: true, recursive: true });
+    removePathWithSyncRetry(root);
   }
 });
 

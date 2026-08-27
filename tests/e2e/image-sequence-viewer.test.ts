@@ -205,9 +205,8 @@ test("auto-detects, manually rebuilds, persists, plays, rotates and mirrors an i
     expect(sourceMetrics.boxWidth / sourceMetrics.boxHeight).toBeCloseTo(16 / 9, 1);
 
     await viewer.hover({ position: { x: 40, y: 80 } });
-    const transformControls = viewer.locator(".preview-transform-controls");
-    await window
-      .locator(".preview-transform-controls")
+    const transformControls = viewer.locator(".preview-zoom-controls");
+    await transformControls
       .getByRole("button", { name: "顺时针旋转 90°" })
       .click();
     await expect(previewImage).toHaveAttribute(
@@ -228,16 +227,33 @@ test("auto-detects, manually rebuilds, persists, plays, rotates and mirrors an i
     expect(rotatedMetrics.cssWidth / rotatedMetrics.cssHeight).toBeCloseTo(16 / 9, 1);
     expect(rotatedMetrics.boxWidth / rotatedMetrics.boxHeight).toBeCloseTo(9 / 16, 1);
 
-    const horizontalMirror = transformControls.getByRole("button", { name: "水平镜像" });
-    const verticalMirror = transformControls.getByRole("button", { name: "垂直镜像" });
-    await horizontalMirror.click();
-    await verticalMirror.click();
-    await expect(horizontalMirror).toHaveClass(/is-active/);
-    await expect(verticalMirror).toHaveClass(/is-active/);
+    // Rotation is in the persistent zoom chrome; mirror actions intentionally
+    // live in the viewer context menu so the bottom bar stays compact.
+    await viewer.click({ button: "right", position: { x: 40, y: 80 } });
+    const viewerMenu = window.getByRole("menu", { name: "查看器操作" });
+    await expect(viewerMenu).toBeVisible();
+    await viewerMenu
+      .getByRole("button", { name: "水平镜像" })
+      .click();
+    await viewer.click({ button: "right", position: { x: 40, y: 80 } });
+    await expect(
+      viewerMenu.getByRole("button", { name: "水平镜像" }),
+    ).toHaveClass(/is-active/);
+    await viewerMenu
+      .getByRole("button", { name: "垂直镜像" })
+      .click();
+    await viewer.click({ button: "right", position: { x: 40, y: 80 } });
+    await expect(
+      viewerMenu.getByRole("button", { name: "水平镜像" }),
+    ).toHaveClass(/is-active/);
+    await expect(
+      viewerMenu.getByRole("button", { name: "垂直镜像" }),
+    ).toHaveClass(/is-active/);
     await expect(previewImage).toHaveAttribute(
       "style",
       /scale\(-1, -1\).*rotate\(90deg\)/,
     );
+    await window.keyboard.press("Escape");
 
     const screenshotPath = testInfo.outputPath("sequence-viewer-transforms.png");
     await window.screenshot({ path: screenshotPath });

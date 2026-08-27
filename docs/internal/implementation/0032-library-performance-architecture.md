@@ -131,7 +131,8 @@ Renderer 只发送领域语义和必要的 `interactionGeneration`，不自行�
 - `libraryGeneration` 不匹配：请求在进入业务 handler 前取消。
 - `interactionGeneration` 已被同 lane 的新请求替代：返回 typed cancelled，不进入 SQLite 或文件系统。
 - source/artifact 请求对应的 revision 不再是当前 revision：返回 stale，不解析旧文件。
-- 请求超过 deadline：只有尚未开始的可取消请求被丢弃；已经开始的文件写入必须完成到安全提交点再取消。
+- 请求超过 deadline：只有尚未进入 scheduler admission boundary 的可取消请求被丢弃；`onAdmitted`
+  开始后即视为已开始，已经开始的文件写入必须完成到安全提交点再取消。
 
 ### 5.3 统一计时
 
@@ -227,7 +228,15 @@ type ReconciliationOwner = {
 
 关闭或重新打开同一资源库时：先 abort，等待 Promise 到达安全点，再关闭数据库。旧 owner 无权发送事件、写缓存或触碰新 generation。
 
-### 7.3 文件系统与事务分离
+### 7.3 startup burst gate
+
+开库后的对账与全库媒体回填共享一个按 `libraryId + libraryGeneration` 隔离的
+startup burst gate。gate 在 `library.opened` 响应投递前保留一个 opening sentinel；只有
+首个成功的 `asset.search`/`folder.browse-entries` 响应已经投递且该库的在飞命令归零后，
+才允许维护任务进入 scheduler。不同资源库的 browse 不能释放彼此的 gate；关闭、重新打开
+代际替换和 Worker shutdown 只取消对应 gate。15 秒上限是降级逃生阀，不是首屏成功证明。
+
+### 7.4 文件系统与事务分离
 
 对账分成两阶段：
 
@@ -323,6 +332,9 @@ Renderer 只请求视口附近和滚动目标附近的块。长距离拖动滚�
 ### 9.3 媒体节点预算
 
 - DOM 只保留可见区域和约 1–2 屏 overscan。
+- 当前实现为快速滚动保留约 5 个 viewport 的结构化 runway，但只有与真实 viewport 相交
+  的卡片获得立即加载优先级并挂载媒体 URL；overscan 卡片只保留几何/图标，不触发源图或
+  artifact 解码。这是为避免白区的结构预算，不等于 5 个 viewport 的媒体解码预算。
 - 不可见卡片释放 `<video>`、canvas、PDF page 和大图解码资源；普通 `<img>` 是否保留由内存预算决定。
 - 同一帧收到多个 `thumbnail.ready` 时批量 patch，并在一次布局提交中完成。
 - 可见窗口上报由统一 viewport controller 产生，不依赖任意 `assets` 字段变化。
@@ -368,6 +380,9 @@ ready 和确定性 failed 都需要缓存。只有源 revision、生成器版本
 | 3D | 单视图 card render | 源模型 viewer | AI 四视图与卡片图分开 |
 
 source-direct 由文件体积、像素总量、动画/多页属性、平台能力共同决定，不能只看扩展名。
+当前卡片策略的明确 admission 为：原生 JPG/JPEG/PNG/WebP/GIF、尺寸已知、长边不超过
+2048 px、源文件不超过 2 MiB、总像素不超过 2,000,000；这只约束卡片/布局预览，查看器
+显式 source 路径仍可按 revision 鉴权读取完整源文件。
 
 ### 10.3 路径和字节缓存
 
@@ -442,6 +457,24 @@ PDF 额外要求：
 
 - 网络盘不承诺高频 watcher 可靠性；使用低频目录 fingerprint/mtime 扫描。
 - 远端扫描按目录 checkpoint 恢复，断线立即停止新的写入和解码读取。
+- SQLite 元数据目录使用用户目录下的可丢弃本地快照：缓存键只由 canonical library path
+  的 hash 构成，manifest 记录 library、schema、窄化后的 `browse_change_sequence` 和源文件
+  指纹；快照通过 Online Backup API 生成并以只读连接打开，不改变远端 schema。
+- 命中快照时普通 SELECT/EXPLAIN 和只读 CTE 走本地快照；写入、事务、租约/变更游标、PRAGMA
+  与无法证明为只读的 SQL 仍走远端可写连接；jobs、artifact、lease 和搜索索引等 volatile
+  表不能由目录快照回答。远端库是唯一真相源，缓存不能回写或替代写入。
+- 跨重开以持久化 `browse_change_sequence` 作为语义 freshness key，避免 journal/checkpoint
+  的文件维护造成无意义冷启动；同一打开代次仍校验 size/mtime，backup 前后变化则放弃该快照
+  并重试。忽略规则表由 schema v46、序列帧表由 v47 的窄 cursor trigger 纳入同一 freshness
+  边界，v45 checksum 保持不变。
+- 首次命中后的 snapshot refresh、远端变更订阅失效和低频 network scan 都由当前 open generation
+  持有；临时校验失败保留最后一份已验证快照，下一次开库在远端路径不可用时只允许进入明确
+  的 read-only degraded snapshot；断线不制造“可写的离线旧数据”。用户目录缓存默认上限
+  512 MiB，超限按 manifest 时间淘汰旧派生快照；generation 文件只由当前 manifest 引用，
+  manifest 还校验 snapshot 的 SHA-256/size。
+- generation 发布、最终远端状态门禁、服务接管、回滚和跨库预算 prune 共享缓存目录级独占锁；
+  接管时重新校验 manifest/generation 指针，若另一进程已发布更新 generation，则关闭未接管
+  连接并按最新源状态重试。锁带 owner token 和存活进程检查，陈旧锁只在安全条件下回收。
 - ready preview 可以从 Main 本地镜像缓存读取；源文件打开仍需重新验证远端可用性。
 - UI 显示后台校验或离线状态，但保持已有缓存内容可浏览。
 
@@ -540,10 +573,67 @@ type PerformanceSpan = {
 
 - `src/worker/artifact-policy.ts`：格式能力、source-direct、artifact role 和幂等键。
 - durable job claim 前 admission control。
+- Sharp、OIIO、FFmpeg 共用进程级 native 内存准入预算；已知超大 OIIO 输入在 spawn 前拒绝，
+  估算预算不替代操作系统 cgroup。
 - RAW 内嵌预览、复杂图像 viewer-image、原生视频直放和代理 fallback 分开。
+- RAW 卡片只负责尽快发布内嵌 JPEG/OIIO 预览；EXIF/IPTC/XMP 技术元数据必须作为独立、低优先级
+  `extract_metadata` job 渐进完成，不能重新阻塞 card-thumbnail 的首屏路径。header-only
+  尺寸 artifact 不是完整元数据终态，metadata-less 文件则以成功 job 终态去重，避免每次刷新
+  无限重排。
+- Eagle/Billfish 导入保留 copy-first 首屏；每个外部预览都在后台先做有界实际像素验证，
+  超出 512 边长或字节预算的预览再做有界归一化。验证通过后才记录 durable marker，
+  旧 artifact 在验证/新 artifact 事务提交前保持可用，损坏或失败可重试；验证/归一化
+  成功后 artifact 的 width/height 写入预览实际尺寸，源图几何保留在独立 metadata artifact。
 - PreviewCache 增加观测与按库预算；生成器版本变更只失效相关 artifact。
+- 可见媒体波次使用重叠率和 generation 做抢占；轻量 viewport wave 不得顺手触发全局补队列
+  或尺寸回填；连续 claim 之间让出 Worker event loop，并保持 bounded wave 的 primary/
+  secondary 边界。
 
-完成条件：同一 revision 不重复生成；原生支持格式不无条件生成代理；非视觉资产不进入色卡。
+完成条件：同一 revision 不重复生成；原生支持格式不无条件生成代理；非视觉资产不进入色卡；
+外部库大尺寸预览不会成为可见窗口的长期原样解码负担，归一化失败不丢失旧预览。
+
+本阶段的可见媒体队列稳定化记录在
+[D.6 开发日志](../development/2026-08-26-library-performance-architecture-stage-d6-visible-media-queue-development-log.md)。
+它解决了严格 20k 基准中“数据库 artifact 已 ready 但真实卡片没有 `src`”的摘要/布局快照
+竞态。随后冷路径对账发现 `library.changed` 在派生 artifact 写入时推进 Main 的 artifact-path
+cache generation，使已经解析出新文件的 `serpent://preview` 请求被错误判为 stale；该竞态现已
+修复，资产/源文件变化和 close/reopen 仍按原有边界失效路径缓存。随后又将 Renderer 的可见
+窗口上报收紧为实际视口相交卡片，将 `filterIgnoredAssetIds` 改为每 500 个 ID 一次的有界
+批量 SQL，并让被可见波次抢占的 Sharp 任务只清理临时输出、保留 queued 状态。当前源码在
+同一份实际 live 19,965（目录名为 20k）的本地 APFS 夹具上，真实 Electron `all-images`、
+10 次跳转、5 秒观察窗的取消清理修正前独立冷跑曾为严格 6/10，全部解码 p50 476.5ms、
+p95/max 597.9ms、最终完成 10/10；first visual wave p50 128.7ms、p95/max 151.8ms，
+Main long-task max 0ms。加入取消等待器竞态修正后，从同一夹具重新清理 artifact/job 并冷启动
+的最新独立冷跑为严格 5/10，全部解码 p50 496.6ms、p95/max 557.7ms、最终完成 10/10；
+first visual wave p50 122.6ms、p95/max 161.7ms，Main long-task max 0ms。
+此前批量过滤合入后的两次独立冷跑为 9/10 与 7/10，合计 16/20、合并 p50 477.4ms、p95
+527.9ms、max 544.4ms。首屏开始出现仍满足架构目标，但“全部可见图片 500ms 内完成”受冷
+启动尾延迟影响尚未稳定通过，不能用合并或单次样本替代硬门禁。当前只对已知源大小 ≤32MiB
+且解码像素 ≤16MP 的可见普通图像启用最多 4 个进程内 Sharp 交互槽位；后台图像仍为 2，
+进程级总 Sharp 上限仍为 4，未知/大型源不进入交互槽位。LibraryService 中的 Sharp、OIIO、
+FFmpeg 解码路径统一受每个 Library Worker 384 MiB 的估算 native admission budget 约束；
+已知超过 64 MP 的 OIIO 输入和未知尺寸且超过 512 MiB 的 OIIO 输入在 spawn 前拒绝。关键
+TIFF/图像尺寸探针为异步；普通 TIFF 在源 ≤16MiB、≤16MP 且有界 IFD 时走 Sharp，超限或未知
+TIFF 走 OIIO。该结果不覆盖 100k、Windows、NAS/SMB、packaged 或人工验收，D.6 仍不可标记
+为 accepted。
+
+D.4 后续收口还将 RAW 卡片与技术元数据解析拆成两个 lane：队列 primary 明确关闭 RAW
+`exifr`，卡片成功后由有界 secondary `extract_metadata` 任务补齐 Inspector 字段；直接调用
+仍保留兼容的同步元数据行为。metadata-less 文件会持久化规范化空 artifact，header-only artifact
+只供布局使用，不会阻止后续补齐；取消只保证队列等待者立即释放，不能中断已经进入 exifr 的
+同步内部解析。这样“内嵌 JPEG 很快”不再被大 EXIF/IPTC/XMP 块抵消。当前只用 crafted ARW
+注入阻塞 parser 证明时序，真实相机格式矩阵和跨平台/packaged 仍未验证。
+
+阶段 D.7 已接入远程 SQLite 元数据本地快照读写分离、cache-first 的窄 browse cursor/size/mtime
+校验、不可变 generation + manifest 指针、SHA-256/size、`quick_check`、缓存预算、失效重建和
+mount-missing 的只读 degraded 打开；schema v46/v47 以新增忽略规则与序列帧 cursor trigger
+保持 v45 checksum 不变。详见
+[D.7 开发日志](../development/2026-08-26-library-performance-architecture-stage-d7-network-metadata-cache-development-log.md)。
+当前 macOS arm64 本地 APFS 20k 夹具已完成 Worker/SQLite 结构性冷/热对照：命中缓存时每次
+browse 的主库查询由 2 条降为 0 条，最新一次快照构建 3.99s、缓存开库 576.1ms；但本地没有
+SMB 往返，因此墙钟 p50 9.3ms 对 9.1ms 不是网络收益证明。发布、最终状态门禁、回滚和全
+目录预算清理由同一目录级跨进程锁串行化；真实 SMB/NAS、Windows、packaged、100k 和人工验收
+仍未验证。结果详见 D.7 开发日志。
 
 ### 阶段 E：扫描、监听与文件操作（P1/P2）
 
@@ -569,6 +659,10 @@ type PerformanceSpan = {
 8. 文件夹/合集递归计数正确，合集资产去重，标签/MCP 更新触发局部失效。
 9. 本地 watcher 事件合并、网络盘轮询、忽略目录剪枝。
 10. 操作中断后完整进程重启，对账 DB、文件、manifest 和 artifact。
+11. Eagle/Billfish 预览的 copy-first、后台实际解码验证/归一化、损坏保护、失败保留旧
+    artifact、资源/lease/重启恢复和不可丢失的重试标记。
+12. 远程资源库的本地 SQLite 元数据快照命中、读写分离、外部变更失效、backup 竞态、损坏回退、
+    cache-only degraded 打开和缓存预算淘汰。
 
 任何触及资源库打开、关闭、schema、`library-service` 或 Worker 生命周期的实现都必须完整运行：
 
@@ -588,6 +682,8 @@ npm run test:library-availability
 - 可见缩略图首张、全部首屏和 cache hit。
 - 查看器 placeholder、首帧、高清升级和取消。
 - 后台任务吞吐、队列深度、峰值内存与子进程数。
+- 外部库预览归一化的原样复制字节、归一化耗时/吞吐、输出字节、峰值内存和可见窗口解码
+  尾延迟；合成基准不能替代真实 Eagle/Billfish、Windows 与 NAS/SMB 证据。
 - 本地 SSD、Windows/macOS、SMB/NAS 分开记录，不能互相替代证据。
 
 ### 17.3 人工验收

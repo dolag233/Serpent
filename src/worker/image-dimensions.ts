@@ -68,6 +68,14 @@ function parseTiff(buffer: Buffer): ImageDimensions | null {
   if (u16(buffer, 2, littleEndian) !== 42) return null;
   const ifdOffset = u32(buffer, 4, littleEndian);
   if (ifdOffset === null) return null;
+  return parseTiffIfd(buffer, ifdOffset, littleEndian);
+}
+
+function parseTiffIfd(
+  buffer: Buffer,
+  ifdOffset: number,
+  littleEndian: boolean,
+): ImageDimensions | null {
   const entryCount = u16(buffer, ifdOffset, littleEndian);
   if (entryCount === null) return null;
   let width: number | null = null;
@@ -88,6 +96,65 @@ function parseTiff(buffer: Buffer): ImageDimensions | null {
     if (tag === 257) height = value;
   }
   return dimensions(width, height);
+}
+
+/**
+ * TIFF permits the first IFD to live anywhere in the file. Camera/scanner
+ * writers commonly place the pixel strip before it, which means the compact
+ * header probe above cannot see the dimensions without reading the whole
+ * source. Read only the bounded IFD instead; an oversized or truncated IFD
+ * remains unknown and is handled by the decoder's normal safety fallback.
+ */
+const TIFF_IFD_MAX_BYTES = 256 * 1024;
+
+function readTiffDimensionsSync(
+  fd: number,
+  fileSize: number,
+  header: Buffer,
+): ImageDimensions | null {
+  const littleEndian = header.toString("ascii", 0, 2) === "II";
+  if (!littleEndian && header.toString("ascii", 0, 2) !== "MM") return null;
+  if (u16(header, 2, littleEndian) !== 42) return null;
+  const ifdOffset = u32(header, 4, littleEndian);
+  if (ifdOffset === null || ifdOffset > fileSize - 2) return null;
+
+  const countBuffer = Buffer.allocUnsafe(2);
+  if (readSync(fd, countBuffer, 0, countBuffer.length, ifdOffset) !== countBuffer.length) {
+    return null;
+  }
+  const entryCount = u16(countBuffer, 0, littleEndian);
+  if (entryCount === null) return null;
+  const ifdBytes = 2 + entryCount * 12;
+  if (ifdBytes > TIFF_IFD_MAX_BYTES || ifdOffset > fileSize - ifdBytes) return null;
+
+  const ifd = Buffer.allocUnsafe(ifdBytes);
+  if (readSync(fd, ifd, 0, ifd.length, ifdOffset) !== ifd.length) return null;
+  return parseTiffIfd(ifd, 0, littleEndian);
+}
+
+async function readTiffDimensions(
+  handle: Awaited<ReturnType<typeof openAsync>>,
+  fileSize: number,
+  header: Buffer,
+): Promise<ImageDimensions | null> {
+  const littleEndian = header.toString("ascii", 0, 2) === "II";
+  if (!littleEndian && header.toString("ascii", 0, 2) !== "MM") return null;
+  if (u16(header, 2, littleEndian) !== 42) return null;
+  const ifdOffset = u32(header, 4, littleEndian);
+  if (ifdOffset === null || ifdOffset > fileSize - 2) return null;
+
+  const countBuffer = Buffer.allocUnsafe(2);
+  const countRead = await handle.read(countBuffer, 0, countBuffer.length, ifdOffset);
+  if (countRead.bytesRead !== countBuffer.length) return null;
+  const entryCount = u16(countBuffer, 0, littleEndian);
+  if (entryCount === null) return null;
+  const ifdBytes = 2 + entryCount * 12;
+  if (ifdBytes > TIFF_IFD_MAX_BYTES || ifdOffset > fileSize - ifdBytes) return null;
+
+  const ifd = Buffer.allocUnsafe(ifdBytes);
+  const ifdRead = await handle.read(ifd, 0, ifd.length, ifdOffset);
+  if (ifdRead.bytesRead !== ifd.length) return null;
+  return parseTiffIfd(ifd, 0, littleEndian);
 }
 
 function parseWebp(buffer: Buffer): ImageDimensions | null {
@@ -111,11 +178,18 @@ export function readImageDimensionsSync(filePath: string): ImageDimensions | nul
   let fd: number | undefined;
   try {
     fd = openSync(filePath, "r");
-    const size = Math.min(HEADER_BYTES, Number(fstatSync(fd).size));
+    const fileSize = Number(fstatSync(fd).size);
+    const size = Math.min(HEADER_BYTES, fileSize);
     if (size <= 0) return null;
     const buffer = Buffer.allocUnsafe(size);
     const bytesRead = readSync(fd, buffer, 0, size, 0);
-    return parseImageDimensions(buffer.subarray(0, bytesRead));
+    const header = buffer.subarray(0, bytesRead);
+    const parsed = parseImageDimensions(header);
+    if (parsed) return parsed;
+    if (header.toString("ascii", 0, 2) === "II" || header.toString("ascii", 0, 2) === "MM") {
+      return readTiffDimensionsSync(fd, fileSize, header);
+    }
+    return null;
   } catch {
     return null;
   } finally {
@@ -158,7 +232,13 @@ export async function readImageDimensions(filePath: string): Promise<ImageDimens
     if (size <= 0) return null;
     const buffer = Buffer.allocUnsafe(size);
     const { bytesRead } = await handle.read(buffer, 0, size, 0);
-    return parseImageDimensions(buffer.subarray(0, bytesRead));
+    const header = buffer.subarray(0, bytesRead);
+    const parsed = parseImageDimensions(header);
+    if (parsed) return parsed;
+    if (header.toString("ascii", 0, 2) === "II" || header.toString("ascii", 0, 2) === "MM") {
+      return await readTiffDimensions(handle, Number(fileSize), header);
+    }
+    return null;
   } catch {
     return null;
   } finally {

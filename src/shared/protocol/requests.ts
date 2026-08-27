@@ -15,6 +15,7 @@ import {
   CONTENT_REPLACE_MAX_BASE64_LENGTH,
   CONTENT_REPLACE_STAGE_CHUNK_MAX_BASE64_LENGTH,
 } from '../content-replace';
+import { performanceRequestEnvelopeSchema } from '../performance-contract';
 
 const nonBlankString = z.string().min(1).refine((value) => value.trim().length > 0, {
   message: 'Value must not be blank.',
@@ -697,6 +698,55 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     limit: z.number().int().positive().max(500).optional(),
     offset: z.number().int().nonnegative().optional(),
     showIgnored: z.boolean().optional(),
+  }),
+  z.strictObject({
+    // Stage C.1: materialize one ordered Worker-owned browse snapshot. Pages
+    // reuse its opaque session instead of rebuilding scope SQL and COUNT.
+    type: z.literal('browse.session.open.request'),
+    libraryId: identifierSchema,
+    query: searchQuerySchema,
+    filters: z.array(filterClauseSchema).max(16).optional(),
+    scope: searchScopeSchema.optional(),
+    sort: sortDefinitionSchema.optional(),
+    smartCollectionId: identifierSchema.optional(),
+    limit: z.number().int().positive().max(500).optional(),
+    showIgnored: z.boolean().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('browse.session.page.request'),
+    libraryId: identifierSchema,
+    sessionId: identifierSchema,
+    limit: z.number().int().positive().max(500).optional(),
+    offset: z.number().int().nonnegative().optional(),
+  }),
+  z.strictObject({
+    // Stage C.2: geometry is fetched in bounded blocks from the same
+    // BrowseSession; the Renderer never rebuilds a full layout-only query.
+    type: z.literal('browse.session.geometry.request'),
+    libraryId: identifierSchema,
+    sessionId: identifierSchema,
+    startIndex: z.number().int().nonnegative(),
+    limit: z.number().int().positive().max(500).optional(),
+  }),
+  z.strictObject({
+    // Stage C.3: select-all reuses the same ordered snapshot as pages and
+    // geometry instead of rebuilding a smart-collection/search scope.
+    type: z.literal('browse.session.ids.request'),
+    libraryId: identifierSchema,
+    sessionId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('browse.session.close.request'),
+    libraryId: identifierSchema,
+    sessionId: identifierSchema,
+  }),
+  z.strictObject({
+    // Stage C.3: sidebar state and global counts share one coherent Worker
+    // read model instead of issuing one IPC/COUNT per navigation surface.
+    type: z.literal('library.navigation-summary.request'),
+    libraryId: identifierSchema,
+    showIgnored: z.boolean().optional(),
+    includeTrashedFolders: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('ai.search-plan.request'),
@@ -1752,6 +1802,47 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     showIgnored: z.boolean().optional(),
   }),
   z.strictObject({
+    type: z.literal('browse.session.open'),
+    libraryId: identifierSchema,
+    query: searchQuerySchema,
+    filters: z.array(filterClauseSchema).max(16).optional(),
+    scope: searchScopeSchema.optional(),
+    sort: sortDefinitionSchema.optional(),
+    smartCollectionId: identifierSchema.optional(),
+    limit: z.number().int().positive().max(500).optional(),
+    showIgnored: z.boolean().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('browse.session.page'),
+    libraryId: identifierSchema,
+    sessionId: identifierSchema,
+    limit: z.number().int().positive().max(500).optional(),
+    offset: z.number().int().nonnegative().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('browse.session.geometry'),
+    libraryId: identifierSchema,
+    sessionId: identifierSchema,
+    startIndex: z.number().int().nonnegative(),
+    limit: z.number().int().positive().max(500).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('browse.session.ids'),
+    libraryId: identifierSchema,
+    sessionId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('browse.session.close'),
+    libraryId: identifierSchema,
+    sessionId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('library.navigation-summary'),
+    libraryId: identifierSchema,
+    showIgnored: z.boolean().optional(),
+    includeTrashedFolders: z.boolean().optional(),
+  }),
+  z.strictObject({
     type: z.literal('smart-collection.list'),
     libraryId: identifierSchema,
   }),
@@ -2493,6 +2584,8 @@ export const workerRequestSchema = z.strictObject({
   command: workerCommandSchema,
   /** Main-side wall-clock send time used only for cross-process diagnostics. */
   sentAt: z.number().int().nonnegative().optional(),
+  /** Main-owned request lane and generation metadata for Worker admission. */
+  performance: performanceRequestEnvelopeSchema.optional(),
   /** Origin metadata is non-secret and only affects the history projection. */
   historyContext: z.strictObject({
     source: z.enum(['desktop', 'script', 'mcp', 'plugin']),

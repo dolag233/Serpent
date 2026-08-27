@@ -203,6 +203,99 @@ describe('renderer request protocol', () => {
     })).toThrow();
   });
 
+  it('round-trips bounded BrowseSession geometry blocks', () => {
+    expect(parseRendererRequest({
+      type: 'browse.session.geometry.request',
+      libraryId: 'library-01',
+      sessionId: 'session-01',
+      startIndex: 128,
+      limit: 128,
+    })).toMatchObject({ type: 'browse.session.geometry.request', startIndex: 128 });
+    expect(parseWorkerRequest({
+      requestId: 'geometry-01',
+      command: {
+        type: 'browse.session.geometry',
+        libraryId: 'library-01',
+        sessionId: 'session-01',
+        startIndex: 128,
+        limit: 128,
+      },
+    }).command).toMatchObject({ type: 'browse.session.geometry' });
+    expect(parseWorkerResponse({
+      requestId: 'geometry-01',
+      result: {
+        ok: true,
+        type: 'browse.session.geometry',
+        libraryId: 'library-01',
+        sessionId: 'session-01',
+        startIndex: 128,
+        changeSequence: 4,
+        entries: [{ index: 128, assetId: 'asset-128', width: 1920, height: 1080 }],
+      },
+    }).result).toMatchObject({ type: 'browse.session.geometry' });
+  });
+
+  it('round-trips the coherent navigation summary request', () => {
+    expect(parseRendererRequest({
+      type: 'library.navigation-summary.request',
+      libraryId: 'library-01',
+      showIgnored: true,
+      includeTrashedFolders: true,
+    })).toMatchObject({ type: 'library.navigation-summary.request', showIgnored: true });
+    expect(parseWorkerRequest({
+      requestId: 'navigation-01',
+      command: {
+        type: 'library.navigation-summary',
+        libraryId: 'library-01',
+        showIgnored: true,
+        includeTrashedFolders: true,
+      },
+    }).command).toMatchObject({ type: 'library.navigation-summary' });
+    expect(parseWorkerResponse({
+      requestId: 'navigation-01',
+      result: {
+        ok: true,
+        type: 'library.navigation-summary',
+        summary: {
+          libraryId: 'library-01',
+          changeSequence: 4,
+          allAssetCount: 10,
+          rootAssetCount: 3,
+          trashedAssetCount: 1,
+          folders: [],
+          linkedFolders: [],
+          tags: [],
+          collections: [],
+          smartCollections: [],
+          trashedFolders: [],
+        },
+      },
+    }).result).toMatchObject({ type: 'library.navigation-summary' });
+  });
+
+  it('round-trips BrowseSession select-all ids without rebuilding the query', () => {
+    expect(parseRendererRequest({
+      type: 'browse.session.ids.request',
+      libraryId: 'library-01',
+      sessionId: 'session-01',
+    })).toEqual({
+      type: 'browse.session.ids.request',
+      libraryId: 'library-01',
+      sessionId: 'session-01',
+    });
+    expect(parseWorkerResponse({
+      requestId: 'session-ids-01',
+      result: {
+        ok: true,
+        type: 'browse.session.ids',
+        libraryId: 'library-01',
+        sessionId: 'session-01',
+        changeSequence: 4,
+        assetIds: ['asset-01', 'asset-02'],
+      },
+    }).result).toMatchObject({ type: 'browse.session.ids', assetIds: ['asset-01', 'asset-02'] });
+  });
+
   it('rejects the retired Label field in search clauses', () => {
     expect(() => parseRendererRequest({
       type: 'asset.search.request',

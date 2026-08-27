@@ -8,7 +8,7 @@ import {
 } from "react";
 
 import type { ImageSequenceSummary } from "../shared/asset-types";
-import { coverSrc } from "./asset-card-hover-preview";
+import { resolveSequenceFrameUrl } from "./sequence-frame-preview";
 
 interface SequenceFrameCanvasProps {
   alt: string;
@@ -42,11 +42,7 @@ export function SequenceFrameCanvas({
   );
   const frameUrls = useMemo(
     () =>
-      frames.map((frame) =>
-        frame.thumbnailArtifactId
-          ? coverSrc(libraryId, frame.thumbnailArtifactId)
-          : null,
-      ),
+      frames.map((frame) => resolveSequenceFrameUrl(libraryId, frame)),
     [frames, libraryId],
   );
   const currentUrl = frameUrls[frameIndex] ?? null;

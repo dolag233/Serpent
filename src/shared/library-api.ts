@@ -1,4 +1,5 @@
 import type { PublicError, PublicErrorReason } from './protocol/errors';
+import type { LibraryNavigationSummary } from './library-navigation';
 
 /** Serpent-xffq：WebDAV 服务端能力探测结果。 */
 export interface SyncCapabilities {
@@ -27,6 +28,7 @@ export interface SyncReport {
 
 import type {
   AssetSummary,
+  BrowseGeometryBlock,
   BrowseLayoutEntry,
   AiSearchPlan,
   AssetMetadataResult,
@@ -482,6 +484,12 @@ export interface SerpentLibraryApi {
   executeSmartCollection(input: { libraryId: string; collectionId: string; scopeMode?: boolean; idsOnly?: boolean; layoutOnly?: boolean; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; assetIds?: string[]; layout?: BrowseLayoutEntry[] }>>;
   // Search
   searchAssets(input: { libraryId: string; query?: SearchQuery | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'long_edge' | 'duration' | 'rating' | 'color' | 'author'; order: 'asc' | 'desc' }; scopeMode?: boolean; idsOnly?: boolean; layoutOnly?: boolean; limit?: number; offset?: number; showIgnored?: boolean }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[]; assetIds?: string[]; layout?: BrowseLayoutEntry[] }>>;
+  openBrowseSession(input: { libraryId: string; query: SearchQuery | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'long_edge' | 'duration' | 'rating' | 'color' | 'author'; order: 'asc' | 'desc' }; smartCollectionId?: string; limit?: number; showIgnored?: boolean }): Promise<LibraryApiResult<{ sessionId: string; libraryGeneration: number; changeSequence: number; queryFingerprint: string; items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>>;
+  fetchBrowseSessionPage(input: { libraryId: string; sessionId: string; limit?: number; offset?: number }): Promise<LibraryApiResult<{ sessionId: string; changeSequence: number; items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] } | { stale: true; sessionId: string; reason: 'library-generation' | 'change-sequence' | 'missing' }>>;
+  fetchBrowseSessionGeometry(input: { libraryId: string; sessionId: string; startIndex: number; limit?: number }): Promise<LibraryApiResult<BrowseGeometryBlock | { stale: true; sessionId: string; reason: 'library-generation' | 'change-sequence' | 'missing' }>>;
+  fetchBrowseSessionAssetIds(input: { libraryId: string; sessionId: string }): Promise<LibraryApiResult<string[] | { stale: true; sessionId: string; reason: 'library-generation' | 'change-sequence' | 'missing' }>>;
+  closeBrowseSession(input: { libraryId: string; sessionId: string }): Promise<LibraryApiResult<{ sessionId: string }>>;
+  fetchLibraryNavigationSummary(input: { libraryId: string; showIgnored?: boolean; includeTrashedFolders?: boolean }): Promise<LibraryApiResult<LibraryNavigationSummary>>;
   planAiSearch(input: { naturalQuery: string }): Promise<LibraryApiResult<{ plan: AiSearchPlan; apiFormat: AiApiFormat; model: string }>>;
   // Trash / Delete
   trashAssets(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ trashedCount: number; historyEntryId?: string }>>;

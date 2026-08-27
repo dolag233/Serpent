@@ -1,4 +1,5 @@
-import { lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -123,6 +124,129 @@ describe('open reconciliation performance', () => {
     expect(diagnostics).not.toContain('open.background-reconciliation');
     expect(diagnostics).not.toContain('open.refresh-managed-assets');
     expect(() => service.openLibrary(created.libraryPath)).not.toThrow();
+  }, 120_000);
+
+  it('cleans an old unreferenced artifact left by a crashed replacement', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-reconciliation-artifact-orphan-'));
+    roots.push(root);
+    const service = new LibraryService({ observerFactory: () => ({ close() {} }) });
+    services.push(service);
+    const created = service.createLibrary({
+      displayName: 'Artifact orphan cleanup',
+      selectedParentPath: root,
+    });
+    const artifactsRoot = path.join(created.libraryPath, '.serpent', 'artifacts');
+    mkdirSync(artifactsRoot, { recursive: true });
+    const orphanPath = path.join(artifactsRoot, 'crashed-replacement.jpg');
+    writeFileSync(orphanPath, 'orphan');
+    const oldTime = new Date(Date.now() - 10 * 60_000);
+    utimesSync(orphanPath, oldTime, oldTime);
+
+    service.closeLibrary(created.libraryId);
+    const reopened = service.openLibrary(created.libraryPath);
+    await service.runOpenBackgroundReconciliation(reopened.libraryId);
+
+    expect(existsSync(orphanPath)).toBe(false);
+  }, 120_000);
+
+  it('waits for active media lease cleanup before closing SQLite', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-reconciliation-media-close-'));
+    roots.push(root);
+    const service = new LibraryService({ observerFactory: () => ({ close() {} }) });
+    services.push(service);
+    const created = service.createLibrary({
+      displayName: 'Media close settle',
+      selectedParentPath: root,
+    });
+    type ActiveMediaJob = {
+      controller: AbortController;
+      libraryId: string;
+      assetId: string;
+      settled: Promise<void>;
+    };
+    const activeMediaJobs = (service as unknown as {
+      activeMediaJobs: Map<string, ActiveMediaJob>;
+    }).activeMediaJobs;
+    const controller = new AbortController();
+    const jobId = 'synthetic-close-settle-job';
+    let settle!: () => void;
+    const settled = new Promise<void>((resolve) => { settle = resolve; });
+    controller.signal.addEventListener('abort', () => {
+      setTimeout(() => {
+        activeMediaJobs.delete(jobId);
+        settle();
+      }, 25);
+    }, { once: true });
+    activeMediaJobs.set(jobId, {
+      controller,
+      libraryId: created.libraryId,
+      assetId: 'synthetic-asset',
+      settled,
+    });
+
+    const startedAt = performance.now();
+    await service.closeLibraryAsync(created.libraryId);
+
+    expect(performance.now() - startedAt).toBeGreaterThanOrEqual(15);
+    expect(activeMediaJobs.has(jobId)).toBe(false);
+  }, 120_000);
+
+  it('precomputes portable-copy fingerprints before the SQLite commit transaction', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-reconciliation-fingerprint-'));
+    roots.push(root);
+    let fingerprintCalls = 0;
+    let hashing = false;
+    let statementsDuringHash = 0;
+    const service = new LibraryService({
+      observerFactory: () => ({ close() {} }),
+      contentFingerprintAsync: async (assetPath) => {
+        fingerprintCalls += 1;
+        hashing = true;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        const fingerprint = createHash('sha1').update(readFileSync(assetPath)).digest('hex');
+        hashing = false;
+        return fingerprint;
+      },
+      onDbStatement: () => {
+        if (hashing) statementsDuringHash += 1;
+      },
+    });
+    services.push(service);
+    const created = service.createLibrary({
+      displayName: 'Reconciliation fingerprint boundary',
+      selectedParentPath: root,
+    });
+    const assetsRoot = path.join(created.libraryPath, 'Assets');
+    mkdirSync(assetsRoot, { recursive: true });
+    const fileCount = 32;
+    const payload = Buffer.alloc(128 * 1024, 0x61);
+    for (let index = 0; index < fileCount; index += 1) {
+      writeFileSync(path.join(assetsRoot, `asset-${index.toString().padStart(3, '0')}.bin`), payload);
+    }
+    service.refreshManagedAssets(created.libraryId);
+    const beforeRevisionIds = new Map(
+      service.listAssets({ libraryId: created.libraryId, recursive: true })
+        .map((asset) => [asset.relativeFilePath, asset.currentRevisionId]),
+    );
+
+    service.closeLibrary(created.libraryId);
+    const copiedMtime = new Date(Date.now() + 60_000);
+    for (let index = 0; index < fileCount; index += 1) {
+      utimesSync(
+        path.join(assetsRoot, `asset-${index.toString().padStart(3, '0')}.bin`),
+        copiedMtime,
+        copiedMtime,
+      );
+    }
+
+    const reopened = service.openLibrary(created.libraryPath);
+    await service.runOpenBackgroundReconciliation(reopened.libraryId);
+    const afterAssets = service.listAssets({ libraryId: reopened.libraryId, recursive: true });
+
+    expect(fingerprintCalls).toBe(fileCount);
+    expect(statementsDuringHash).toBe(0);
+    expect(new Map(afterAssets.map((asset) => [asset.relativeFilePath, asset.currentRevisionId])))
+      .toEqual(beforeRevisionIds);
   }, 120_000);
 
   it('keeps background reconciliation parked until the interactive idle window expires', async () => {
