@@ -7267,6 +7267,7 @@ async function startApplication(): Promise<void> {
         ".webp": "image/webp",
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
+        ".jfif": "image/jpeg",
         ".png": "image/png",
         ".gif": "image/gif",
         ".webm": "video/webm",

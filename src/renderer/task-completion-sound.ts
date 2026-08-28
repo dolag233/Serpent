@@ -1,4 +1,5 @@
 import completionSoundUrl from "./assets/complete-sfx.mp3";
+import { loadTaskCompletionSoundPreferences } from "./task-completion-sound-preferences";
 
 /** Keep the completion cue audible without competing with the user's work. */
 export const TASK_COMPLETION_SOUND_VOLUME = 0.18;
@@ -10,13 +11,17 @@ export type CompletionAudio = {
 };
 
 export type CompletionAudioFactory = (source: string) => CompletionAudio;
+export type CompletionSoundEnabled = () => boolean;
 
 export function createTaskCompletionSound(
   createAudio: CompletionAudioFactory = (source) => new Audio(source),
+  isEnabled: CompletionSoundEnabled = () =>
+    loadTaskCompletionSoundPreferences().enabled,
 ): () => void {
   let audio: CompletionAudio | undefined;
   return () => {
     try {
+      if (!isEnabled()) return;
       audio ??= createAudio(completionSoundUrl);
       audio.volume = TASK_COMPLETION_SOUND_VOLUME;
       audio.currentTime = 0;

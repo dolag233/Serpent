@@ -735,6 +735,7 @@ import {
 } from '../shared/audio-media';
 import {
   IMAGE_EXTENSIONS,
+  JPEG_IMAGE_EXTENSIONS,
   RAW_IMAGE_EXTENSIONS,
   VIDEO_EXTENSIONS,
   MODEL_EXTENSIONS,
@@ -20964,7 +20965,7 @@ export class LibraryService {
       }
       if (
         !imageProcessed &&
-        (extension === '.jpg' || extension === '.jpeg') &&
+        JPEG_IMAGE_EXTENSIONS.includes(extension as (typeof JPEG_IMAGE_EXTENSIONS)[number]) &&
         !execution.signal?.aborted
       ) {
         // Sharp correctly rejects severe JPEG truncation, while FFmpeg can
@@ -27800,7 +27801,7 @@ export class LibraryService {
     // not touch ready artifacts or source files.
     if (jobKinds.some((kind) => primaryPreviewKinds.has(kind))) {
       const now = new Date().toISOString();
-      const sourceDirectExtensionSql = ['jpg', 'jpeg', 'png', 'webp', 'gif']
+      const sourceDirectExtensionSql = ['jpg', 'jpeg', 'jfif', 'png', 'webp', 'gif']
         .map((extension) => `LOWER(source_asset.relative_file_path) LIKE '%.${extension}'`)
         .join(' OR ');
       if (processArtifactColumns.has('width') && processArtifactColumns.has('height')) {

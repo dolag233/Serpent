@@ -6,6 +6,7 @@ import {
   createPluginUiUrl,
   parsePluginUiAssetRequest,
   parsePluginUiAssetRequestFromNavigation,
+  pluginUiMimeType,
   resolvePluginUiAssetPath,
   rewritePluginUiHtmlAssetUrls,
 } from '../../src/main/plugin-ui-assets';
@@ -18,6 +19,10 @@ import { buildPluginUiThemeHostMessage } from '../../src/plugins/plugin-themes';
 import { pluginManifestSchema } from '../../src/plugins/plugin-manifest';
 
 describe('plugin custom UI contract', () => {
+  it('serves JFIF plugin assets as JPEG', () => {
+    expect(pluginUiMimeType('entry/reference.JFIF')).toBe('image/jpeg');
+  });
+
   it('requires a relative entry path for workspace views', () => {
     const result = pluginManifestSchema.safeParse({
       manifestVersion: 1,

@@ -1278,6 +1278,8 @@ export const zhCN = {
     hoverAudioPlayHint: "鼠标悬停音频卡片时在画布内播放，移开即停止。",
     hoverVideoSound: "视频悬停播放带声音",
     hoverVideoSoundHint: "悬停视频卡片播放时播放声音（默认关闭，避免噪音）。",
+    taskCompletionSound: "任务结果提示音",
+    taskCompletionSoundHint: "操作完成或失败时播放轻提示音。关闭后不再播放。",
     languageHint: "控制界面文案语言，立即生效。",
     imageSequenceAutoDetect: "导入时自动检测序列帧",
     imageSequenceAutoDetectHint:

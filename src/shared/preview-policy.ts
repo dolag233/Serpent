@@ -1,3 +1,5 @@
+import { JPEG_IMAGE_EXTENSIONS } from "./media-formats";
+
 /**
  * Bounded source-direct policy for card previews.
  *
@@ -20,8 +22,7 @@ export const SOURCE_DIRECT_MAX_PIXELS = 2_000_000;
 export const SOURCE_DIRECT_MAX_BYTES = 2 * 1024 * 1024;
 
 const SOURCE_DIRECT_EXTENSIONS = new Set([
-  ".jpg",
-  ".jpeg",
+  ...JPEG_IMAGE_EXTENSIONS,
   ".png",
   ".webp",
   ".gif",

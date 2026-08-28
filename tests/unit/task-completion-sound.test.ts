@@ -33,4 +33,17 @@ describe("task completion sound", () => {
     expect(() => playCompletionSound()).not.toThrow();
     await Promise.resolve();
   });
+
+  it("does not create or play audio when the preference is disabled", () => {
+    const factory = vi.fn(() => ({
+      currentTime: 0,
+      volume: 1,
+      play: vi.fn(),
+    }));
+    const playCompletionSound = createTaskCompletionSound(factory, () => false);
+
+    playCompletionSound();
+
+    expect(factory).not.toHaveBeenCalled();
+  });
 });

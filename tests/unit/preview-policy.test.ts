@@ -17,6 +17,7 @@ const base = {
 describe("isSourceDirectPreview", () => {
   it("accepts bounded native raster images", () => {
     expect(isSourceDirectPreview(base)).toBe(true);
+    expect(isSourceDirectPreview({ ...base, fileName: "paint.JFIF" })).toBe(true);
   });
 
   it("accepts a low-pixel lossless image just above the old byte boundary", () => {

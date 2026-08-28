@@ -1,3 +1,5 @@
+import { JPEG_IMAGE_EXTENSIONS } from "./media-formats";
+
 const IMAGE_SEQUENCE_EXTENSIONS = new Set([
   ".avif",
   ".bmp",
@@ -5,8 +7,7 @@ const IMAGE_SEQUENCE_EXTENSIONS = new Set([
   ".gif",
   ".heic",
   ".heif",
-  ".jpeg",
-  ".jpg",
+  ...JPEG_IMAGE_EXTENSIONS,
   ".png",
   ".psd",
   ".tga",

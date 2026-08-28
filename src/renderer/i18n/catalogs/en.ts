@@ -1294,6 +1294,8 @@ export const en = {
     hoverAudioPlayHint: "Hovering an audio card plays it in place; leaving stops it.",
     hoverVideoSound: "Video hover preview with sound",
     hoverVideoSoundHint: "Play sound during video hover preview (off by default to avoid noise).",
+    taskCompletionSound: "Task result sound",
+    taskCompletionSoundHint: "Play a quiet sound when an operation finishes or fails.",
     languageHint: "Controls the interface language. Changes apply immediately.",
     imageSequenceAutoDetect: "Detect image sequences during import",
     imageSequenceAutoDetectHint:
