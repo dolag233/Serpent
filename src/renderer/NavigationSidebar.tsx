@@ -126,7 +126,7 @@ function NavRow({
     title && title !== label ? `${label} — ${title}` : label;
 
   return (
-    <div className="nav-tree-row">
+    <div className="nav-tree-row" style={{ paddingLeft: depth * 14 }}>
       {disclosure ?? <span className="nav-disclosure-spacer" aria-hidden="true" />}
       <button
         className={`nav-row${active ? " is-active" : ""}${dropActive ? " is-drop-target" : ""}`}
@@ -142,7 +142,7 @@ function NavRow({
         onDrop={onDrop}
         onDragEnter={onDragEnter}
         onDragLeave={onDragLeave}
-        style={{ paddingLeft: 7 + depth * 14 }}
+        style={{ paddingLeft: 7 }}
         title={hoverTitle}
         type="button"
       >
@@ -222,9 +222,9 @@ function InlineFolderEditRow({
   }, [commitOnce]);
 
   return (
-    <div className="nav-tree-row">
+    <div className="nav-tree-row" style={{ paddingLeft: depth * 14 }}>
       <span className="nav-disclosure-spacer" aria-hidden="true" />
-      <div className="nav-inline-edit" style={{ paddingLeft: 7 + depth * 14 }}>
+      <div className="nav-inline-edit" style={{ paddingLeft: 7 }}>
       <Icon name="folder" size={15} />
       <input
         aria-invalid={state.error ? true : undefined}
@@ -338,9 +338,9 @@ function InlineCollectionEditRow({
   }, [commitOnce]);
 
   return (
-    <div className="nav-tree-row">
+    <div className="nav-tree-row" style={{ paddingLeft: depth * 14 }}>
       <span className="nav-disclosure-spacer" aria-hidden="true" />
-      <div className="nav-inline-edit" style={{ paddingLeft: 7 + depth * 14 }}>
+      <div className="nav-inline-edit" style={{ paddingLeft: 7 }}>
         <Icon name="collection" size={15} />
         <input
           aria-label={ariaLabel ?? t("nav.newCollection")}
