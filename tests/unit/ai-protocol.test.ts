@@ -11,13 +11,20 @@ import {
 import type { AiAnalysisRequest } from '../../src/worker/ai/protocol';
 import { DashScopeVendorAdapter } from '../../src/worker/ai/dashscope-adapter';
 import {
+  buildOpenAiStructuredResponseFormat,
   isStructuredOutputFormatRejection,
   OpenAIVendorAdapter,
 } from '../../src/worker/ai/openai-adapter';
+import {
+  normalizeOpenAiChatResponse,
+  normalizeOpenAiResponsesResponse,
+  parseOpenAiAnalysisResponse,
+} from '../../src/worker/ai/openai-response';
 import { VendorAdapterError } from '../../src/worker/ai/vendor-adapter';
 import {
   safeAiConnectionFailure,
   safeAiDiagnostic,
+  safeAiErrorDetail,
   vendorFailure,
 } from '../../src/worker/ai/error-mapping';
 
@@ -192,6 +199,31 @@ describe('vendorFailure', () => {
     expect(String(nested)).toContain('Bearer [redacted]');
     expect(String(nested)).not.toContain('AIza-secret');
     expect(String(nested)).not.toContain('top-secret');
+  });
+
+  it('keeps structured provider error fields in safe diagnostics', () => {
+    const error = new VendorAdapterError(
+      'invalid_response',
+      'AI service returned HTTP 400',
+      {
+        details: {
+          httpStatus: 400,
+          providerCode: 'invalid_parameter',
+          providerType: 'invalid_request_error',
+          providerParam: 'response_format.type',
+          providerMessage: 'response format is not supported',
+        },
+      },
+    );
+
+    const diagnostic = safeAiDiagnostic('AI_INVALID_RESPONSE', error);
+    expect(String(diagnostic.cause)).toContain('providerCode=invalid_parameter');
+    expect(String(diagnostic.cause)).toContain('providerParam=response_format.type');
+
+    const detail = safeAiErrorDetail('AI_INVALID_RESPONSE', error);
+    expect(detail).toContain('provider=invalid_parameter');
+    expect(detail).toContain('param=response_format.type');
+    expect(detail).toContain('response format is not supported');
   });
 });
 
@@ -469,6 +501,158 @@ describe('safe AI connection failures', () => {
 // ---------------------------------------------------------------------------
 
 describe('OpenAIVendorAdapter', () => {
+  it('builds a nullable schema without JSON Schema type arrays for local backends', () => {
+    const format = buildOpenAiStructuredResponseFormat('json_schema', 'zh-CN');
+    const schema = (format.json_schema as Record<string, unknown>).schema as Record<string, unknown>;
+    const properties = schema.properties as Record<string, Record<string, unknown>>;
+
+    expect(properties.description!.anyOf).toEqual([
+      { type: 'string' },
+      { type: 'null' },
+    ]);
+    expect(properties.rating!.anyOf).toEqual([
+      { type: 'integer' },
+      { type: 'null' },
+    ]);
+    expect(properties.description!.type).not.toEqual(expect.any(Array));
+    expect(properties.rating!.type).not.toEqual(expect.any(Array));
+  });
+
+  it('falls back to plain text when LM Studio rejects the nullable schema shape', async () => {
+    const requestFormats: unknown[] = [];
+    const fetchStub: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requestFormats.push(body.response_format ?? null);
+      if (requestFormats.length === 1) {
+        return new Response(
+          JSON.stringify({
+            error: { message: "ValueError: 'type' must be a string" },
+          }),
+          { status: 400, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response(
+        JSON.stringify(openAiChatResponse({ tags: ['lm-studio-text'] })),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const adapter = new OpenAIVendorAdapter(
+      'test-api-key',
+      'qwen3.5-4b-mlx',
+      fetchStub,
+      'http://lm-studio-schema-shape.local/v1',
+    );
+
+    await expect(adapter.analyze(TEST_IMAGE_REQUEST)).resolves.toMatchObject({
+      tags: ['lm-studio-text'],
+    });
+    expect(requestFormats).toHaveLength(2);
+    expect(requestFormats[1]).toBeNull();
+  });
+
+  it('falls back to plain text when a provider rejects the schema envelope as null', async () => {
+    const requestFormats: unknown[] = [];
+    const fetchStub: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requestFormats.push(body.response_format ?? null);
+      if (requestFormats.length === 1) {
+        return new Response(
+          JSON.stringify({
+            error: {
+              code: 'invalid_parameter_error',
+              type: 'invalid_request_error',
+              param: 'response_format.json_schema.schema',
+              message: "Format error : 'response_format.json_schema.schema'. the specific reason is as follows: None is not of type 'object', 'boolean'.",
+            },
+          }),
+          { status: 400, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response(
+        JSON.stringify(openAiChatResponse({ tags: ['schema-envelope-text'] })),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const adapter = new OpenAIVendorAdapter(
+      'test-api-key',
+      'qwen3.5-4b-mlx',
+      fetchStub,
+      'http://lm-studio-schema-envelope.local/v1',
+    );
+
+    await expect(adapter.analyze(TEST_IMAGE_REQUEST)).resolves.toMatchObject({
+      tags: ['schema-envelope-text'],
+    });
+    expect(requestFormats).toHaveLength(2);
+    expect(requestFormats[0]).toMatchObject({ type: 'json_schema' });
+    expect(requestFormats[1]).toBeNull();
+  });
+
+  it('retries without structured output when Qwen returns JSON only in reasoning_content', async () => {
+    const requestFormats: unknown[] = [];
+    const fetchStub: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requestFormats.push(body.response_format ?? null);
+      if (requestFormats.length === 1) {
+        return new Response(JSON.stringify({
+          model: 'qwen3.5-4b-mlx',
+          choices: [{
+            message: {
+              role: 'assistant',
+              content: '',
+              reasoning_content: JSON.stringify({ tags: ['reasoning-only'] }),
+              tool_calls: [],
+            },
+            finish_reason: 'stop',
+          }],
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return new Response(
+        JSON.stringify(openAiChatResponse({ tags: ['qwen-recovered'] }, 'qwen3.5-4b-mlx')),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const adapter = new OpenAIVendorAdapter(
+      'test-api-key',
+      'qwen3.5-4b-mlx',
+      fetchStub,
+      'http://lm-studio-reasoning.local/v1',
+    );
+
+    await expect(adapter.analyze(TEST_IMAGE_REQUEST)).resolves.toMatchObject({
+      tags: ['qwen-recovered'],
+    });
+    expect(requestFormats).toHaveLength(2);
+    expect(requestFormats[0]).toMatchObject({ type: 'json_schema' });
+    expect(requestFormats[1]).toBeNull();
+  });
+
+  it('accepts Chat content-part arrays and still validates their JSON text', async () => {
+    const adapter = new OpenAIVendorAdapter(
+      'test-api-key',
+      'content-parts-model',
+      okFetch({
+        model: 'content-parts-model',
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: [{
+              type: 'text',
+              text: JSON.stringify({ tags: ['content-part'] }),
+            }],
+          },
+          finish_reason: 'stop',
+        }],
+      }),
+      'http://content-parts.local/v1',
+    );
+
+    await expect(adapter.analyze(TEST_IMAGE_REQUEST)).resolves.toMatchObject({
+      tags: ['content-part'],
+      modelVersion: 'content-parts-model',
+    });
+  });
+
   it('starts OpenAI-compatible analysis with strict json_schema', async () => {
     let requestBody: Record<string, unknown> | undefined;
     const fetchStub: typeof fetch = async (_input, init) => {
@@ -1069,6 +1253,121 @@ describe('OpenAIVendorAdapter', () => {
     await expect(adapter.analyze(TEST_IMAGE_REQUEST)).rejects.toMatchObject({
       kind: 'invalid_response',
       retryable: true,
+    });
+  });
+});
+
+describe('OpenAI response envelope normalization', () => {
+  it('keeps refusal and tool calls separate from assistant JSON text', () => {
+    const refusal = normalizeOpenAiChatResponse({
+      model: 'qwen-local',
+      choices: [{
+        message: { content: null, refusal: '拒绝处理此请求' },
+        finish_reason: 'stop',
+      }],
+    }, 'fallback-model');
+    expect(refusal).toMatchObject({
+      kind: 'refusal',
+      text: '拒绝处理此请求',
+      modelVersion: 'qwen-local',
+    });
+    expect(() => parseOpenAiAnalysisResponse(refusal)).toThrow();
+
+    const toolCall = normalizeOpenAiChatResponse({
+      model: 'qwen-local',
+      choices: [{
+        message: {
+          content: null,
+          tool_calls: [{
+            type: 'function',
+            function: { name: 'asset_analysis', arguments: '{"tags":["tool"]}' },
+          }],
+        },
+        finish_reason: 'tool_calls',
+      }],
+    }, 'fallback-model');
+    expect(toolCall).toMatchObject({
+      kind: 'tool_call',
+      name: 'asset_analysis',
+      arguments: { tags: ['tool'] },
+    });
+    expect(() => parseOpenAiAnalysisResponse(toolCall)).toThrow();
+  });
+
+  it('keeps Responses incomplete status out of the structured-output fallback path', () => {
+    const response = normalizeOpenAiResponsesResponse({
+      model: 'responses-model',
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      output: [],
+    }, 'fallback-model');
+
+    expect(response).toMatchObject({
+      kind: 'incomplete',
+      reason: 'max_output_tokens',
+    });
+    let error: unknown;
+    try {
+      parseOpenAiAnalysisResponse(response);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({
+      details: {
+        responseKind: 'incomplete',
+        canRetryWithoutStructuredOutput: false,
+      },
+    });
+  });
+
+  it('keeps a Responses failed envelope distinct while retaining provider details', () => {
+    const response = normalizeOpenAiResponsesResponse({
+      model: 'responses-model',
+      status: 'failed',
+      error: {
+        code: 'server_error',
+        type: 'server_error',
+        message: 'provider failed to generate output',
+      },
+      output: [],
+    }, 'fallback-model');
+
+    expect(response).toMatchObject({
+      kind: 'failed',
+      message: 'provider failed to generate output',
+      providerError: { code: 'server_error' },
+    });
+    let error: unknown;
+    try {
+      parseOpenAiAnalysisResponse(response);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({
+      details: {
+        responseKind: 'failed',
+        providerCode: 'server_error',
+        canRetryWithoutStructuredOutput: false,
+      },
+    });
+  });
+
+  it('reads Responses output message parts and validates their JSON', () => {
+    const response = normalizeOpenAiResponsesResponse({
+      model: 'responses-model',
+      status: 'completed',
+      output: [{
+        type: 'message',
+        content: [{
+          type: 'output_text',
+          text: JSON.stringify({ tags: ['responses-part'] }),
+        }],
+      }],
+    }, 'fallback-model');
+
+    expect(parseOpenAiAnalysisResponse(response)).toEqual({
+      tags: ['responses-part'],
+      modelVersion: 'responses-model',
     });
   });
 });

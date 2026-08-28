@@ -503,8 +503,13 @@ describe('OpenAIVendorAdapter Responses compatibility', () => {
     const mockFetch: typeof fetch = async (_input, init) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       bodies.push(body);
-      if (body.text) {
-        return new Response('unsupported text.format', { status: 400 });
+      const text = body.text as Record<string, unknown> | undefined;
+      const format = text?.format as Record<string, unknown> | undefined;
+      if (format?.type === 'json_schema') {
+        return new Response('unsupported text.format json_schema; use json_object', { status: 400 });
+      }
+      if (format?.type === 'json_object') {
+        return new Response('unsupported text.format json_object; use text', { status: 400 });
       }
       return new Response(JSON.stringify({
         model: 'compatible-vision',
@@ -588,7 +593,7 @@ describe('OpenAIVendorAdapter Responses compatibility', () => {
     expect(calls).toBe(1);
   });
 
-  it('does not cache a structured mode when a 2xx relay returns malformed output', async () => {
+  it('recovers from a malformed structured 2xx response without poisoning the cache', async () => {
     const bodies: Array<Record<string, unknown>> = [];
     let calls = 0;
     const mockFetch: typeof fetch = async (_input, init) => {
@@ -623,17 +628,18 @@ describe('OpenAIVendorAdapter Responses compatibility', () => {
       'openai_responses',
     );
 
-    await expect(adapter.analyze(request)).rejects.toMatchObject({
-      kind: 'invalid_response',
+    await expect(adapter.analyze(request)).resolves.toMatchObject({
+      tags: ['recovered'],
     });
     await expect(adapter.analyze(request)).resolves.toMatchObject({
       tags: ['recovered'],
     });
-    expect(calls).toBe(2);
-    // The malformed first response must not cause the second request to use
-    // the plain-text cache entry.
+    expect(calls).toBe(3);
+    // The malformed first response must not be cached as a structured mode;
+    // the bounded text fallback is validated and can then be cached.
     expect(bodies[0]?.text).toBeDefined();
-    expect(bodies[1]?.text).toBeDefined();
+    expect(bodies[1]).not.toHaveProperty('text');
+    expect(bodies[2]).not.toHaveProperty('text');
   });
 
   it('coordinates the first format probe without holding followers at the global limiter', async () => {
@@ -679,10 +685,9 @@ describe('OpenAIVendorAdapter Responses compatibility', () => {
     expect(structuredCalls).toBe(1);
     releaseFirstProbe();
     await expect(first).resolves.toMatchObject({ tags: ['parallel'] });
-    // The leader may continue the negotiated schema -> json_object fallback
-    // after the stalled first probe is released; the concurrency guarantee is
-    // that only one structured request is in flight before that release.
-    expect(structuredCalls).toBe(2);
+    // The provider explicitly names plain text as its supported fallback, so
+    // the leader does not probe json_object after the stalled schema request.
+    expect(structuredCalls).toBe(1);
     expect(bodies.filter((body) => !body.text)).toHaveLength(2);
   });
 
