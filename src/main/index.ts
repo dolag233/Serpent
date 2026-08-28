@@ -37,6 +37,7 @@ import {
   NativeAssetDragCache,
   startNativeAssetDrag,
 } from "./native-asset-drag";
+import { nativeDragAssetsForResult } from "./native-asset-drag-prime";
 import {
   clearViewerVideoShortcutCapture,
   isViewerVideoShortcutContentsActive,
@@ -4649,33 +4650,32 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     // what the user actually sees and can drag immediately) blocks the
     // response. The rest primes in fire-and-forget chunks so a 50k browse
     // result no longer stalls the renderer behind a full-cache worker burst.
-    const nativeDragAssets = !workerResult.ok
-      ? []
-      : workerResult.type === "asset.list" ||
-          workerResult.type === "collection.assets.list" ||
-          workerResult.type === "asset.list-trash"
-        ? workerResult.assets
-        : workerResult.type === "asset.search.result" ||
-            workerResult.type === "smart-collection.executed"
-          ? workerResult.items
-          : [];
+    const nativeDragAssets = nativeDragAssetsForResult(workerResult);
+    // Conflict resolution requests intentionally carry only importId; the
+    // library context is retained from the earlier conflicts response until
+    // the completion branch below consumes it.
+    const nativeDragLibraryId =
+      "libraryId" in request && typeof request.libraryId === "string"
+        ? request.libraryId
+        : request.type === "asset.import.resolve"
+          ? pendingImportLibraries.get(request.importId)
+          : undefined;
     if (
       nativeDragAssets.length > 0 &&
-      "libraryId" in request &&
-      typeof request.libraryId === "string"
+      nativeDragLibraryId
     ) {
       const dragAssetIds = nativeDragAssets.flatMap((asset) =>
         asset.sequence?.frames.map((frame) => frame.assetId) ?? [asset.assetId],
       );
       await primeNativeAssetDragCache(
-        request.libraryId,
+        nativeDragLibraryId,
         dragAssetIds.slice(0, NATIVE_DRAG_PRIME_VISIBLE_COUNT),
         "upsert",
       );
       const rest = dragAssetIds.slice(NATIVE_DRAG_PRIME_VISIBLE_COUNT);
       if (rest.length > 0) {
         void primeNativeAssetDragCacheInBackground(
-          request.libraryId,
+          nativeDragLibraryId,
           rest,
         );
       }

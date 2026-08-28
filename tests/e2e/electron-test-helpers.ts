@@ -69,6 +69,23 @@ export async function clickNativeApplicationMenuItem(
   application: ElectronApplication,
   menuItemId: string,
 ): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        application.evaluate(({ Menu }, targetMenuItemId) => {
+          const findItem = (items: Electron.MenuItem[]): Electron.MenuItem | undefined => {
+            for (const item of items) {
+              if (item.id === targetMenuItemId) return item;
+              const nested = findItem(item.submenu?.items ?? []);
+              if (nested) return nested;
+            }
+            return undefined;
+          };
+          return findItem(Menu.getApplicationMenu()?.items ?? [])?.enabled ?? false;
+        }, menuItemId),
+      { timeout: 15_000 },
+    )
+    .toBe(true);
   await application.evaluate(({ BrowserWindow, Menu }, targetMenuItemId) => {
     const menu = Menu.getApplicationMenu();
     const findItem = (items: Electron.MenuItem[]): Electron.MenuItem | undefined => {

@@ -1260,6 +1260,7 @@ function AppInner() {
     useState<ExportProgressEvent | null>(null);
   const exportProgressRef = useRef(exportProgress);
   exportProgressRef.current = exportProgress;
+  const exportStartedAtRef = useRef<number | null>(null);
   const [importProgress, setImportProgress] =
     useState<ImportProgressEvent | null>(null);
   const importProgressRef = useRef(importProgress);
@@ -1316,6 +1317,7 @@ function AppInner() {
   const [syncBindingStatus, setSyncBindingStatus] = useState<"none" | "disabled" | "enabled">("none");
   /** 本次同步是否已弹过「正在同步」toast（有实际传输才提示）。 */
   const syncRunNotifiedRef = useRef(false);
+  const syncRunStartedAtRef = useRef<number | null>(null);
   const [showIgnoredItems, setShowIgnoredItems] = useState(false);
   const [appLogEntries, setAppLogEntries] = useState<AppLogEntry[]>([]);
   const [appLogLoading, setAppLogLoading] = useState(false);
@@ -4267,12 +4269,10 @@ function AppInner() {
         setImportProgress(null);
         setLibraryTransferKind("import");
         setLibraryTransferName("");
-        playTaskCompletionSound();
       } catch (caught) {
         setImportProgress(null);
         setLibraryTransferKind("import");
         setLibraryTransferName("");
-        playTaskCompletionSound();
         showBlockingError(
           busyState === "creating"
             ? t("dialog.blockingError.libraryCreateFailed")
@@ -5653,7 +5653,10 @@ function AppInner() {
     return undefined;
   }
 
-  async function reloadCurrentContent() {
+  async function reloadCurrentContent(options?: {
+    /** Wait for the navigation snapshot before resolving the operation. */
+    blockingNavigation?: boolean;
+  }) {
     if (!library) return;
     if (activeSmartCollectionId) {
       await chooseSmartCollection(activeSmartCollectionId);
@@ -5675,6 +5678,7 @@ function AppInner() {
     await loadContent(library, assetScope, {
       discovery,
       searchScope: currentSearchScope(),
+      blockingLibraryLoad: options?.blockingNavigation,
     });
   }
 
@@ -6635,6 +6639,7 @@ function AppInner() {
 
   async function importAssets(kind: "files" | "folder") {
     if (!api || !library) return;
+    const startedAt = Date.now();
     setUiState("importing");
     setError(null);
     setNotice(null);
@@ -6665,9 +6670,9 @@ function AppInner() {
       }
       setNotice(importSummaryMessage(result.value, locale));
       await revealAfterImport(result.value);
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
       showBlockingError(
         t("dialog.blockingError.importFailed"),
         toMessage(caught, t("toast.importFailed"), locale),
@@ -6679,6 +6684,7 @@ function AppInner() {
 
   async function importEagleLibrary() {
     if (!api || !library || importProgress) return;
+    const startedAt = Date.now();
     setLibraryTransferKind("import");
     setImportProgress({
       type: "import.progress",
@@ -6700,9 +6706,9 @@ function AppInner() {
       }
       setNotice(importSummaryMessage(result.value, locale));
       await reloadCurrentContent();
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
       showBlockingError(
         t("dialog.blockingError.importFailed"),
         toMessage(caught, t("toast.importFailed"), locale),
@@ -6714,6 +6720,7 @@ function AppInner() {
 
   async function importBillfishLibrary() {
     if (!api || !library || importProgress) return;
+    const startedAt = Date.now();
     setLibraryTransferKind("import");
     setImportProgress({
       type: "import.progress",
@@ -6735,9 +6742,9 @@ function AppInner() {
       }
       setNotice(importSummaryMessage(result.value, locale));
       await reloadCurrentContent();
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
       showBlockingError(
         t("dialog.blockingError.importFailed"),
         toMessage(caught, t("toast.importFailed"), locale),
@@ -6756,6 +6763,7 @@ function AppInner() {
     applyToRest: boolean;
   }) {
     if (!api || !library || !imageSequenceImportOffer) return;
+    const startedAt = Date.now();
     setImageSequenceImportSubmitting(true);
     setImageSequenceImportError(null);
     setUiState("importing");
@@ -6786,10 +6794,10 @@ function AppInner() {
         setImageSequenceImportIndex(nextSequenceIndex);
       } else {
         setImageSequenceImportOffer(null);
-        playTaskCompletionSound();
+        playTaskCompletionSound(startedAt);
       }
     } catch (caught) {
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
       setImageSequenceImportError(
         toMessage(caught, t("toast.importFailed"), locale),
       );
@@ -6805,6 +6813,7 @@ function AppInner() {
     duplicate: RememberedDuplicateDecision,
   ) {
     if (!api || !library) return;
+    const startedAt = Date.now();
     setUiState("importing");
     try {
       const result = await api.resolveImport({
@@ -6816,9 +6825,9 @@ function AppInner() {
       clearImportConflictsUi();
       setNotice(importSummaryMessage(result.value, locale));
       await revealAfterImport(result.value);
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
       showBlockingError(
         t("dialog.blockingError.importContinueFailed"),
         toMessage(caught, t("toast.continueImportFailed"), locale),
@@ -6873,6 +6882,7 @@ function AppInner() {
 
   async function refreshAssets() {
     if (!api || !library) return;
+    const startedAt = Date.now();
     setUiState("loading");
     try {
       const result = await api.refreshAssets({ libraryId: library.libraryId });
@@ -6883,9 +6893,9 @@ function AppInner() {
           ? t("toast.diskSynced", { count: result.value.changedCount })
           : t("toast.diskUpToDate"),
       );
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
       setError(toMessage(caught, t("toast.refreshFailed"), locale));
     } finally {
       setUiState("ready");
@@ -6894,6 +6904,7 @@ function AppInner() {
 
   async function importFolderAsLinked() {
     if (!api || !library) return;
+    const startedAt = Date.now();
     setUiState("importing");
     setError(null);
     setNotice(null);
@@ -6907,10 +6918,13 @@ function AppInner() {
         throw new LibraryOperationError(result.error);
       }
       setNotice(t("toast.linkedFolderCreated", { name: result.value.displayName }));
-      await reloadCurrentContent();
-      playTaskCompletionSound();
+      // The new linked-folder row is part of the navigation snapshot, not the
+      // primary asset page. Wait for that snapshot here so the completed
+      // operation never reports success while the sidebar still looks stale.
+      await reloadCurrentContent({ blockingNavigation: true });
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
       setError(toMessage(caught, t("toast.linkFolderFailed"), locale));
     } finally {
       setUiState("ready");
@@ -6919,6 +6933,7 @@ function AppInner() {
 
   async function relinkFolder(folderId: string) {
     if (!api || !library) return;
+    const startedAt = Date.now();
     setUiState("loading");
     try {
       const result = await api.relinkMissingFolder({
@@ -6931,9 +6946,9 @@ function AppInner() {
       }
       setNotice(t("toast.linkedFolderRelocated", { name: result.value.displayName }));
       await reloadCurrentContent();
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
       setError(toMessage(caught, t("toast.relocateFailed"), locale));
     } finally {
       setUiState("ready");
@@ -6992,6 +7007,7 @@ function AppInner() {
       )
     )
       return;
+    const startedAt = Date.now();
     setUiState("importing");
     try {
       const result = await api.convertLinkedFolderToManaged({
@@ -7005,9 +7021,9 @@ function AppInner() {
         t("toast.convertLinkedDone", { count: result.value.convertedCount }),
       );
       await reloadCurrentContent();
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
       setError(toMessage(caught, t("toast.convertLinkedFailed"), locale));
     } finally {
       setUiState("ready");
@@ -7032,10 +7048,8 @@ function AppInner() {
         closed = true;
         applyClosedLibraryUi();
         await refreshRecentLibraries(null);
-        playTaskCompletionSound();
       } catch (caught) {
         clearLibraryClosePending(currentLibrary.libraryId, closeGeneration);
-        playTaskCompletionSound();
         setError(toMessage(caught, t("toast.closeFailed"), locale));
       } finally {
         setUiState(closed ? "idle" : "ready");
@@ -7066,10 +7080,8 @@ function AppInner() {
         applyClosedLibraryUi();
         await refreshRecentLibraries(null);
         setNotice(t("toast.libraryRemoved", { name: removedName }));
-        playTaskCompletionSound();
       } catch (caught) {
         clearLibraryClosePending(currentLibrary.libraryId, closeGeneration);
-        playTaskCompletionSound();
         setError(toMessage(caught, t("toast.libraryRemoveFailed"), locale));
       } finally {
         setUiState(removed ? "idle" : "ready");
@@ -7188,6 +7200,7 @@ function AppInner() {
       const deletedName = currentLibrary.displayName;
       const openLibrary = currentLibrary;
       const openScope = assetScope;
+      const startedAt = Date.now();
       setUiState("closing");
       const closeGeneration = markLibraryClosePending(openLibrary.libraryId);
       let toreDown = false;
@@ -7222,7 +7235,7 @@ function AppInner() {
       applyClosedLibraryUi();
       await refreshRecentLibraries(null);
       setNotice(t("toast.libraryDeletedFromDisk", { name: deletedName }));
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
       clearLibraryClosePending(openLibrary.libraryId, closeGeneration);
       // Serpent-qgm1: a failed disk deletion must NOT masquerade as success.
@@ -7234,7 +7247,7 @@ function AppInner() {
         caught instanceof LibraryOperationError &&
         (caught.code === "LIBRARY_NOT_FOUND" || caught.code === "NOT_A_LIBRARY");
       if (!cancelled) {
-        playTaskCompletionSound();
+        playTaskCompletionSound(startedAt);
         setError(toMessage(caught, t("toast.libraryDeleteFailed"), locale));
       }
       if (gone) {
@@ -7467,6 +7480,7 @@ function AppInner() {
 
   async function deletePermanentFromTrash(assetIds: string[]) {
     if (!api || !library || assetIds.length === 0) return;
+    const startedAt = Date.now();
     setUiState("loading");
     try {
       const result = await api.deleteAssetsPermanent({
@@ -7498,8 +7512,9 @@ function AppInner() {
       applyLocalAssetRemoval(assetIds, {
         removedCount: result.value.deletedCount,
       });
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
       setError(toMessage(caught, t("toast.permanentDeleteFailed"), locale));
     } finally {
       setUiState("ready");
@@ -7599,6 +7614,7 @@ function AppInner() {
   ) {
     if (!api || !library) return;
     if (assetIds.length === 0 && folderIds.length === 0) return;
+    const startedAt = Date.now();
     await releaseAssetPreviewsBeforeDiskDelete();
     setUiState("loading");
     try {
@@ -7633,8 +7649,9 @@ function AppInner() {
       );
       clearAssetSelection();
       applyLocalAssetRemoval(assetIds, { removedCount: deletedAssets });
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
       setError(toMessage(caught, t("toast.folderDeleteFromDiskFailed"), locale));
     } finally {
       setUiState("ready");
@@ -7647,6 +7664,7 @@ function AppInner() {
   ) {
     if (!api || !library) return;
     if (assetIds.length === 0 && folderIds.length === 0) return;
+    const startedAt = Date.now();
 
     const assetById = new Map(assets.map((asset) => [asset.assetId, asset]));
     const linkedAssetIds = assetIds.filter(
@@ -7738,8 +7756,9 @@ function AppInner() {
       } else {
         await reloadCurrentContent();
       }
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
       setError(toMessage(caught, t("toast.batchDeleteFailed"), locale));
     } finally {
       setUiState("ready");
@@ -7748,6 +7767,7 @@ function AppInner() {
 
   async function emptyTrash() {
     if (!api || !library) return;
+    const startedAt = Date.now();
     setUiState("loading");
     try {
       const result = await api.purgeTrash({ libraryId: library.libraryId });
@@ -7770,8 +7790,9 @@ function AppInner() {
           t("common.sentenceEnd"),
       );
       await loadContent(library, "all", { trashMode: true });
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
       setError(toMessage(caught, t("toast.emptyTrashFailed"), locale));
     } finally {
       setUiState("ready");
@@ -7822,7 +7843,6 @@ function AppInner() {
         });
       }
     } catch (caught) {
-      playTaskCompletionSound();
       setError(toMessage(caught, t("toast.relinkFailed"), locale));
     } finally {
       setUiState("ready");
@@ -7847,7 +7867,6 @@ function AppInner() {
         priorRestoredExamples: [],
       });
     } catch (caught) {
-      playTaskCompletionSound();
       setError(toMessage(caught, t("toast.batchRelinkPreviewFailed"), locale));
     } finally {
       setUiState("ready");
@@ -7856,6 +7875,7 @@ function AppInner() {
 
   async function applyBatchRelink() {
     if (!api || !library || !batchRelinkPreview) return;
+    const startedAt = Date.now();
     setUiState("loading");
     try {
       const result = await api.relinkBatchApply({
@@ -7884,9 +7904,9 @@ function AppInner() {
           missing: result.value.unchangedMissingCount,
         }),
       );
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
       setBatchRelinkPreview(null);
       setError(toMessage(caught, t("toast.batchRelinkFailed"), locale));
     } finally {
@@ -7915,6 +7935,7 @@ function AppInner() {
 
   async function exportLibrary(format: "folder" | "zip", includeLinkedContent: boolean) {
     if (!api || !library) return;
+    exportStartedAtRef.current = Date.now();
     setExportDialogOpen(false);
     setExportProgress({
       type: "export.progress",
@@ -7937,14 +7958,17 @@ function AppInner() {
         if (result.error.code === "CANCELLED") {
           // Serpent-tye: folder/save dialog cancel must clear the optimistic strip.
           setExportProgress(null);
+          exportStartedAtRef.current = null;
           setNotice(t("toast.exportCancelled"));
         } else {
           throw new LibraryOperationError(result.error);
         }
       }
     } catch (caught) {
+      const startedAt = exportStartedAtRef.current;
+      exportStartedAtRef.current = null;
       setExportProgress(null);
-      playTaskCompletionSound();
+      if (startedAt !== null) playTaskCompletionSound(startedAt);
       setError(toMessage(caught, t("toast.exportFailed"), locale));
     } finally {
       setTimeout(() => {
@@ -7972,6 +7996,7 @@ function AppInner() {
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setNotice(t("toast.cancellingExport"));
+      exportStartedAtRef.current = null;
     } catch (caught) {
       setError(toMessage(caught, t("toast.cancelExportFailed"), locale));
     }
@@ -8019,7 +8044,6 @@ function AppInner() {
       setImportValidated(result.value);
       setImportProgress(null);
     } catch (caught) {
-      playTaskCompletionSound();
       showBlockingError(
         t("dialog.blockingError.importValidateFailed"),
         toMessage(caught, t("toast.importValidateFailed"), locale),
@@ -8030,6 +8054,7 @@ function AppInner() {
 
   async function startImportZip() {
     if (!api) return;
+    const startedAt = Date.now();
     setImportProgress({
       type: "import.progress",
       importId: "",
@@ -8051,10 +8076,10 @@ function AppInner() {
       }
       setImportProgress(null);
       if (await activateImportedLibrary(result.value)) {
-        playTaskCompletionSound();
+        playTaskCompletionSound(startedAt);
       }
     } catch (caught) {
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
       showBlockingError(
         t("dialog.blockingError.libraryImportFailed"),
         toMessage(caught, t("toast.zipImportFailed"), locale),
@@ -8145,6 +8170,7 @@ function AppInner() {
     // starts; the persistent activity strip (正在导入资源库) is the only
     // indicator from here until completion.
     const validated = importValidated;
+    const startedAt = Date.now();
     setImportValidated(null);
     setImportProgress({
       type: "import.progress",
@@ -8169,10 +8195,10 @@ function AppInner() {
       }
       setImportProgress(null);
       if (await activateImportedLibrary(result.value)) {
-        playTaskCompletionSound();
+        playTaskCompletionSound(startedAt);
       }
     } catch (caught) {
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
       showBlockingError(
         t("dialog.blockingError.libraryImportFailed"),
         toMessage(caught, t("toast.importFailed"), locale),
@@ -8187,6 +8213,7 @@ function AppInner() {
     // the validated dialog closes as soon as the import starts and the
     // persistent activity strip (正在导入资源库) becomes the only indicator.
     const validated = importValidated;
+    const startedAt = Date.now();
     setImportValidated(null);
     setImportProgress({
       type: "import.progress",
@@ -8211,10 +8238,10 @@ function AppInner() {
       }
       setImportProgress(null);
       if (await activateImportedLibrary(result.value)) {
-        playTaskCompletionSound();
+        playTaskCompletionSound(startedAt);
       }
     } catch (caught) {
-      playTaskCompletionSound();
+      playTaskCompletionSound(startedAt);
       showBlockingError(
         t("dialog.blockingError.libraryImportFailed"),
         toMessage(caught, t("toast.importFailed"), locale),
@@ -8390,7 +8417,9 @@ function AppInner() {
       if (event.type === "export.progress") {
         setExportProgress(event);
         if (event.phase === "complete") {
-          playTaskCompletionSound();
+          const startedAt = exportStartedAtRef.current;
+          exportStartedAtRef.current = null;
+          if (startedAt !== null) playTaskCompletionSound(startedAt);
           setNotice(
             t("toast.exportComplete", {
               files: event.totalFiles,
@@ -8398,7 +8427,12 @@ function AppInner() {
             }),
           );
         } else if (event.phase === "cancelled") {
+          exportStartedAtRef.current = null;
           setNotice(t("toast.exportCancelled"));
+        } else if (event.phase === "failed") {
+          const startedAt = exportStartedAtRef.current;
+          exportStartedAtRef.current = null;
+          if (startedAt !== null) playTaskCompletionSound(startedAt);
         }
       } else if (event.type === "import.progress") {
         setImportProgress(event);
@@ -8409,12 +8443,14 @@ function AppInner() {
       } else if (event.type === "sync.progress") {
         if (event.phase === "complete") {
           setSyncProgress(null);
+          const startedAt = syncRunStartedAtRef.current;
+          syncRunStartedAtRef.current = null;
           // 完成事件 filesDone=0（worker 不携带 report），只弹中性
           // 「已同步」toast；仅当本次同步实际发生过传输（progress 曾
           // 显示 filesTotal>0）才提示，空跑同步不打扰。
           if (syncRunNotifiedRef.current) {
             syncRunNotifiedRef.current = false;
-            playTaskCompletionSound();
+            if (startedAt !== null) playTaskCompletionSound(startedAt);
             setNotice(t("settings.sync.statusSynced"));
           }
         } else {
@@ -11972,9 +12008,12 @@ function AppInner() {
           },
           async syncRun(input) {
             if (!api) return { ok: false, message: t("common.unavailable") };
+            const startedAt = Date.now();
+            syncRunStartedAtRef.current = startedAt;
             const result = await api.syncRun(input);
             if (!result.ok) {
-              playTaskCompletionSound();
+              syncRunStartedAtRef.current = null;
+              playTaskCompletionSound(startedAt);
               return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
             }
             return { ok: true, value: result.value };

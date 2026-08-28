@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createTaskCompletionSound,
+  shouldPlayTaskCompletionSound,
+  TASK_COMPLETION_SOUND_MIN_DURATION_MS,
   TASK_COMPLETION_SOUND_VOLUME,
 } from "../../src/renderer/task-completion-sound";
 
@@ -45,5 +47,29 @@ describe("task completion sound", () => {
     playCompletionSound();
 
     expect(factory).not.toHaveBeenCalled();
+  });
+
+  it("requires an operation to exceed one minute", () => {
+    const startedAt = 10_000;
+
+    expect(
+      shouldPlayTaskCompletionSound(
+        startedAt,
+        startedAt + TASK_COMPLETION_SOUND_MIN_DURATION_MS,
+      ),
+    ).toBe(false);
+    expect(
+      shouldPlayTaskCompletionSound(
+        startedAt,
+        startedAt + TASK_COMPLETION_SOUND_MIN_DURATION_MS + 1,
+      ),
+    ).toBe(true);
+  });
+
+  it("does not play for invalid timestamps", () => {
+    expect(shouldPlayTaskCompletionSound(Number.NaN, 70_001)).toBe(false);
+    expect(shouldPlayTaskCompletionSound(10_000, Number.POSITIVE_INFINITY)).toBe(
+      false,
+    );
   });
 });

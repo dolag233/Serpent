@@ -3,6 +3,8 @@ import { loadTaskCompletionSoundPreferences } from "./task-completion-sound-pref
 
 /** Keep the completion cue audible without competing with the user's work. */
 export const TASK_COMPLETION_SOUND_VOLUME = 0.18;
+/** A result cue is reserved for operations that have lasted longer than a minute. */
+export const TASK_COMPLETION_SOUND_MIN_DURATION_MS = 60_000;
 
 export type CompletionAudio = {
   currentTime: number;
@@ -12,6 +14,17 @@ export type CompletionAudio = {
 
 export type CompletionAudioFactory = (source: string) => CompletionAudio;
 export type CompletionSoundEnabled = () => boolean;
+
+export function shouldPlayTaskCompletionSound(
+  startedAt: number,
+  finishedAt = Date.now(),
+): boolean {
+  return (
+    Number.isFinite(startedAt) &&
+    Number.isFinite(finishedAt) &&
+    finishedAt - startedAt > TASK_COMPLETION_SOUND_MIN_DURATION_MS
+  );
+}
 
 export function createTaskCompletionSound(
   createAudio: CompletionAudioFactory = (source) => new Audio(source),
@@ -35,4 +48,13 @@ export function createTaskCompletionSound(
   };
 }
 
-export const playTaskCompletionSound = createTaskCompletionSound();
+const playTaskCompletionSoundImmediately = createTaskCompletionSound();
+
+/** Play only for an eligible operation that actually exceeded one minute. */
+export function playTaskCompletionSound(
+  startedAt: number,
+  finishedAt = Date.now(),
+): void {
+  if (!shouldPlayTaskCompletionSound(startedAt, finishedAt)) return;
+  playTaskCompletionSoundImmediately();
+}

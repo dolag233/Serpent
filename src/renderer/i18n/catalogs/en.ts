@@ -1295,7 +1295,7 @@ export const en = {
     hoverVideoSound: "Video hover preview with sound",
     hoverVideoSoundHint: "Play sound during video hover preview (off by default to avoid noise).",
     taskCompletionSound: "Task result sound",
-    taskCompletionSoundHint: "Play a quiet sound when an operation finishes or fails.",
+    taskCompletionSoundHint: "Play a quiet sound only after imports, exports, or other eligible operations actually run longer than one minute.",
     languageHint: "Controls the interface language. Changes apply immediately.",
     imageSequenceAutoDetect: "Detect image sequences during import",
     imageSequenceAutoDetectHint:

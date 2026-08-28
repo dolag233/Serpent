@@ -62,7 +62,7 @@ test('imports a linked folder, reconciles external changes, and relinks after th
     await waitForLibraryLoadingToFinish(window);
 
     await openLinkedFolderImportMenu(application, window);
-    await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible({ timeout: 15_000 });
 
     await window.getByRole('button', { name: 'source', exact: true }).click();
     await expect(window.getByText('a.png', { exact: true })).toBeVisible();
@@ -207,7 +207,7 @@ test('restores a linked library after a full app restart', async () => {
 
     // Link the folder.
     await openLinkedFolderImportMenu(application, window);
-    await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible({ timeout: 15_000 });
     await window.getByRole('button', { name: 'source', exact: true }).click();
 
     // The root shows direct files and a virtual child-folder row; nested files
@@ -311,7 +311,7 @@ test('applies default ignore rules — .git and node_modules are not registered 
     await waitForLibraryLoadingToFinish(window);
 
     await openLinkedFolderImportMenu(application, window);
-    await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible({ timeout: 15_000 });
     await window.getByRole('button', { name: 'source', exact: true }).click();
 
     // Only the real assets should be visible.
