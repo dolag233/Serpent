@@ -6,8 +6,11 @@
  * the original file directly; the Worker selects a derivative where needed.
  */
 
+/** Filename extensions that contain the JPEG bitstream. */
+export const JPEG_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.jfif'] as const;
+
 export const SHARP_IMAGE_EXTENSIONS = [
-  '.png', '.jpg', '.jpeg', '.gif', '.tif', '.tiff', '.webp', '.svg',
+  '.png', ...JPEG_IMAGE_EXTENSIONS, '.gif', '.tif', '.tiff', '.webp', '.svg',
 ] as const;
 
 /** Formats decoded by the bundled OIIO runtime rather than by Chromium/sharp. */
@@ -116,7 +119,8 @@ export function directImageMimeForExtension(
   switch (normalizedExtension(extensionOrFilename)) {
     case '.png': return 'image/png';
     case '.jpg':
-    case '.jpeg': return 'image/jpeg';
+    case '.jpeg':
+    case '.jfif': return 'image/jpeg';
     case '.gif': return 'image/gif';
     case '.webp': return 'image/webp';
     // SVG stays vector in the viewer; the grid still uses its generated
@@ -130,7 +134,8 @@ export function imageMimeForExtension(extensionOrFilename: string): string | nul
   switch (normalizedExtension(extensionOrFilename)) {
     case '.png': return 'image/png';
     case '.jpg':
-    case '.jpeg': return 'image/jpeg';
+    case '.jpeg':
+    case '.jfif': return 'image/jpeg';
     case '.gif': return 'image/gif';
     case '.tif':
     case '.tiff': return 'image/tiff';

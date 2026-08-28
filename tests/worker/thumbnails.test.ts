@@ -76,6 +76,20 @@ async function createPngBytes(width: number, height: number): Promise<Buffer> {
   }).png().toBuffer();
 }
 
+async function createJpegBytes(width: number, height: number): Promise<Buffer> {
+  const sharp = require('sharp') as (input: unknown) => {
+    jpeg(): { toBuffer(): Promise<Buffer> };
+  };
+  return sharp({
+    create: {
+      width,
+      height,
+      channels: 3,
+      background: { r: 220, g: 120, b: 40 },
+    },
+  }).jpeg().toBuffer();
+}
+
 function importNoConflict(service: LibraryService, libraryId: string, sourcePath: string): void {
   sharedImportNoConflict(service, libraryId, sourcePath);
 }
@@ -165,7 +179,7 @@ describe('schema v9 migration', () => {
 describe('detectMediaType', () => {
   it('detects product image types, including OIIO and RAW derivatives', () => {
     for (const filename of [
-      'photo.png', 'photo.jpeg', 'photo.gif', 'photo.webp', 'photo.bmp',
+      'photo.png', 'photo.jpeg', 'photo.JFIF', 'photo.gif', 'photo.webp', 'photo.bmp',
       'photo.tiff', 'photo.tga', 'photo.exr', 'photo.ico', 'layer.psd',
       'camera.dng', 'camera.cr2', 'camera.cr3', 'camera.nef', 'camera.arw',
       'camera.raf', 'camera.orf', 'camera.rw2',
@@ -189,6 +203,38 @@ describe('detectMediaType', () => {
 });
 
 describe('generateThumbnail (sharp)', () => {
+  it('imports, thumbnails, and serves a JPEG bitstream with a .jfif filename', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Jfif', selectedParentPath: root });
+    const sourcePath = path.join(root, 'reference.jfif');
+    writeFileSync(sourcePath, await createJpegBytes(24, 16));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    await expect(service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    })).resolves.toMatchObject({ artifactId: expect.any(String) });
+    expect(service.listAssets({
+      libraryId: created.libraryId,
+      recursive: true,
+    })[0]).toMatchObject({ width: 24, height: 16 });
+    expect(service.getPreviewArtifact(created.libraryId, asset.assetId)).toMatchObject({
+      mediaType: 'image',
+      status: 'ready',
+      playbackMode: 'source',
+      sourceMimeType: 'image/jpeg',
+    });
+    expect(service.getCurrentMediaSource(
+      created.libraryId,
+      asset.assetId,
+      asset.currentRevisionId,
+    )).toMatchObject({ mimeType: 'image/jpeg' });
+
+    service.closeAll();
+  });
+
   it('uses a bounded plugin artifact from the media queue before native decoding', async () => {
     const root = temporaryRoot();
     const service = new LibraryService();

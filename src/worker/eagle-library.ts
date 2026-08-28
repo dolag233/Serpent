@@ -8,6 +8,7 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 
+import { JPEG_IMAGE_EXTENSIONS } from '../shared/media-formats';
 import { normalizeAbsolutePath } from './library-rules';
 
 const MAX_METADATA_BYTES = 4 * 1024 * 1024;
@@ -214,7 +215,9 @@ function sourceCandidateScore(
   return 0;
 }
 
-const EAGLE_THUMBNAIL_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
+const EAGLE_THUMBNAIL_EXTENSIONS = [
+  '.png', ...JPEG_IMAGE_EXTENSIONS, '.webp', '.gif',
+];
 
 function inspectRegularFile(filePath: string): BigIntStats | undefined {
   try {
