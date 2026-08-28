@@ -737,6 +737,7 @@ import {
 } from '../shared/audio-media';
 import {
   IMAGE_EXTENSIONS,
+  JPEG_IMAGE_EXTENSIONS,
   RAW_IMAGE_EXTENSIONS,
   VIDEO_EXTENSIONS,
   MODEL_EXTENSIONS,
@@ -20887,7 +20888,7 @@ export class LibraryService {
       }
       if (
         !imageProcessed &&
-        (extension === '.jpg' || extension === '.jpeg') &&
+        JPEG_IMAGE_EXTENSIONS.includes(extension as (typeof JPEG_IMAGE_EXTENSIONS)[number]) &&
         !execution.signal?.aborted
       ) {
         // Sharp correctly rejects severe JPEG truncation, while FFmpeg can

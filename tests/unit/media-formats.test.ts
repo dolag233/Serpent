@@ -16,6 +16,10 @@ import {
 describe('media format registry', () => {
   it('routes web-native and derived images through the intended decoder', () => {
     expect(imageDecoderForExtension('poster.PNG')).toBe('sharp');
+    expect(imageDecoderForExtension('poster.JFIF')).toBe('sharp');
+    expect(isSupportedImageExtension('poster.jfif')).toBe(true);
+    expect(directImageMimeForExtension('.jfif')).toBe('image/jpeg');
+    expect(imageMimeForExtension('poster.JFIF')).toBe('image/jpeg');
     expect(imageDecoderForExtension('art.svg')).toBe('sharp');
     for (const extension of ['.bmp', '.ico', '.psd', '.exr', '.tga']) {
       expect(imageDecoderForExtension(extension)).toBe('oiio');
