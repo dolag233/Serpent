@@ -44,6 +44,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
       SERPENT_E2E_IMPORT_FILES: sourcePath,
+      SERPENT_E2E_TRASH_DELAY_MS: '750',
     },
   });
 
@@ -299,21 +300,10 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
       { timeout: 10_000 },
     ).catch(() => undefined);
     await locateAssetCard(window, 'hero.png').click({ button: 'right' });
-    // Serpent-a711e8: make the durable mutation deliberately slow so this
-    // assertion proves the visible card is removed optimistically, rather
-    // than merely benefiting from a fast local Worker round trip.
-    await window.evaluate(() => {
-      const library = (globalThis as typeof globalThis & {
-        serpent: { library: {
-          trashAssets: (input: { libraryId: string; assetIds: string[] }) => Promise<unknown>;
-        } };
-      }).serpent.library;
-      const original = library.trashAssets;
-      library.trashAssets = async (input) => {
-        await new Promise((resolve) => globalThis.setTimeout(resolve, 750));
-        return original(input);
-      };
-    });
+    // Serpent-a711e8: Main delays the real asset.trash IPC request in this
+    // E2E-only launch, proving that the visible card disappears before the
+    // durable Worker mutation resolves. The frozen preload API is never
+    // mutated by the test.
     const deletionStartedAt = Date.now();
     await window.getByRole('menuitem', { name: '移入回收站' }).click();
     await expect(locateAssetCard(window, 'hero.png')).toHaveCount(0, { timeout: 600 });

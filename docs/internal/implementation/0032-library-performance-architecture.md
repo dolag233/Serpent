@@ -2,6 +2,7 @@
 
 > 状态：设计稿 v1（2026-08-25）
 > 范围：资源库打开、浏览、搜索、缩略图、查看器、后台任务、文件监听与恢复
+> 产品修订（2026-08-28）：资源库打开/切换是安全边界；持续超过 3 秒才显示简洁身份提示，结构一致后再进入主界面。普通浏览、搜索、缩略图和查看器仍按渐进式加载。
 > 关联原则：[渐进加载 UX](../ui/0006-progressive-loading-ux-principles.md)、[Worker 饥饿排查](../research/2026-08-24-viewer-thumbnail-worker-starvation.md)
 
 ## 0. 目标
@@ -12,7 +13,7 @@
 
 核心指标：
 
-- 打开资源库后约 1 秒内进入可交互主界面。
+- 打开/切换资源库若持续超过 3 秒才显示明确的资源库身份和切换入口；完成结构一致性加载后再进入可交互主界面。
 - 切换文件夹、合集、过滤或搜索后，500 ms 内开始出现首屏内容；固定搜索首屏不超过 1 秒。
 - 双击资产后，500 ms 内出现可理解的首帧、缩略图或格式占位；后台元数据、色卡、AI 不得成为首帧门禁。
 - ready 缩略图进入可见窗口后，不得因为后台对账或其他媒体任务产生秒级等待。
@@ -436,7 +437,7 @@ PDF 额外要求：
 
 ### 12.2 侧栏与计数
 
-侧栏使用一次 `LibraryNavigationSummary` 返回 folders、linked folders、collections、smart collections、trash 和必要计数。画布首屏请求必须先入队，侧栏 hydration 随后渐进更新。
+普通范围导航使用一次 `LibraryNavigationSummary` 返回 folders、linked folders、collections、smart collections、trash 和必要计数；画布首屏请求必须先入队，侧栏 hydration 随后渐进更新。资源库打开/切换若持续超过 3 秒则显示简洁身份提示，等待资产首屏和这份结构摘要形成一致快照后再让主界面可见。
 
 计数规则：
 
@@ -565,7 +566,7 @@ type PerformanceSpan = {
 - `src/worker/browse-session-store.ts`：查询 fingerprint、稳定顺序、分页/geometry/count 复用。
 - `src/renderer/browse/use-virtual-browse-session.ts`：窗口摘要、几何块、逻辑锚点。
 - `App.tsx` 只保留组合层；新增交互不得继续内联进巨型组件。
-- 侧栏改为 `LibraryNavigationSummary` 渐进 hydration。
+- 普通范围导航的侧栏改为 `LibraryNavigationSummary` 渐进 hydration；资源库打开/切换则等待该摘要与首批资产形成一致快照后再解除主界面门禁，超过 3 秒才展示简洁等待提示。
 
 完成条件：20k/100k 资产不向 Renderer 常驻传输完整摘要；切换范围首屏稳定，侧栏不会抢在画布前执行。
 
@@ -711,7 +712,7 @@ npm run test:library-availability
 本规格只有在以下条件同时满足时才能标记完成：
 
 1. 请求所有权、lane、generation、取消和计时贯穿 Renderer/Main/Worker。
-2. 打开、浏览、查看器和后台维护使用明确的渐进状态，不互相作为门禁。
+2. 普通浏览、查看器和后台维护使用明确的渐进状态；资源库打开/切换以完整结构快照作为主界面门禁，超过 3 秒才显示资源库身份和切换入口。
 3. 浏览会话、摘要缓存和 artifact key 具有可证明的失效规则。
 4. 20k 性能基线达到项目目标；100k、Windows/macOS、网络盘结果有独立记录。
 5. Library Availability、相关 Worker/单元/E2E 全绿。

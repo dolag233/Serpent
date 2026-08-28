@@ -43,6 +43,8 @@ export interface VideoPlayerControlsProps {
   /** Optional probe fps for editorial frame steps (falls back to 30). */
   frameRateFps?: number | null;
   isFullscreen?: boolean;
+  /** Preloaded navigation surfaces must not start playback before promotion. */
+  autoPlay?: boolean;
   muted: boolean;
   /** Keep preloaded navigation surfaces from capturing global shortcuts. */
   keyboardShortcutsDisabled?: boolean;
@@ -96,6 +98,7 @@ function waitForVideoSeeked(video: HTMLVideoElement): Promise<void> {
 export function VideoPlayerControls({
   frameRateFps = null,
   isFullscreen = false,
+  autoPlay = true,
   muted,
   keyboardShortcutsDisabled = false,
   onError,
@@ -444,7 +447,7 @@ export function VideoPlayerControls({
         {...viewportPointerHandlers}
       >
         <video
-          autoPlay
+          autoPlay={autoPlay}
           className="preview-video"
           loop
           onDurationChange={(event) =>

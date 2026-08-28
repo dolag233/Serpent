@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
 
-import type { ElectronApplication, Locator, Page } from '@playwright/test';
+import { expect, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 
 const require = createRequire(path.resolve('package.json'));
 
@@ -44,6 +44,18 @@ export function resolveElectronExecutablePath(): string {
 export function assetCard(window: Page, displayName: string): Locator {
   const escaped = displayName.replaceAll('"', '\\"');
   return window.locator(`.asset-card[title="${escaped}"]`);
+}
+
+/**
+ * Wait until the library replacement safety boundary has completed. A
+ * locator can be technically visible underneath the opaque loading overlay,
+ * so checking the underlying heading or switcher alone is not sufficient for
+ * an E2E action that mutates or reads the new library.
+ */
+export async function waitForLibraryLoadingToFinish(window: Page): Promise<void> {
+  await expect(window.locator('.library-loading-backdrop')).toBeHidden({
+    timeout: 15_000,
+  });
 }
 
 /**

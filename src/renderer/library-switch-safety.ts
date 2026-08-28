@@ -6,6 +6,7 @@ import type {
 
 export type LibrarySwitchActivity =
   | "library-operation"
+  | "library-write"
   | "asset-import"
   | "library-export"
   | "sync";
@@ -42,10 +43,13 @@ export function activeLibrarySwitchActivity(input: {
   importProgress: ImportProgressEvent | null;
   exportProgress: ExportProgressEvent | null;
   syncProgress: SyncProgressEvent | null;
+  /** A write can use the generic renderer loading state. */
+  writeOperationInFlight?: boolean;
 }): LibrarySwitchActivity | null {
   if (["creating", "opening", "closing"].includes(input.uiState)) {
     return "library-operation";
   }
+  if (input.writeOperationInFlight) return "library-write";
   if (isImportActive(input.importProgress) || input.uiState === "importing") {
     return "asset-import";
   }

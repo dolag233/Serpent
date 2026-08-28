@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import {
   aiTagsSchemaDescription,
   buildAiAnalysisSystemPrompt,
@@ -67,28 +69,84 @@ const structuredOutputModeByEndpoint = new Map<
 >();
 // Adapter instances are constructed per asset. A first batch must not send
 // the same capability probe once per asset; followers use the portable text
-// body immediately while the leader negotiates the richer envelope.
-const structuredOutputNegotiationInFlight = new Set<string>();
+// body immediately while the leader negotiates the richer envelope. The
+// promise lets a follower recover when that text-only request is rejected by
+// a provider that requires a structured envelope.
+type StructuredOutputNegotiationResult =
+  OpenAiStructuredOutputMode | undefined;
+type StructuredOutputNegotiationInFlight = {
+  promise: Promise<StructuredOutputNegotiationResult>;
+  resolve: (mode: StructuredOutputNegotiationResult) => void;
+};
+const structuredOutputNegotiationInFlight = new Map<
+  string,
+  StructuredOutputNegotiationInFlight
+>();
+const STRUCTURED_OUTPUT_MODES: OpenAiStructuredOutputMode[] = [
+  'json_schema',
+  'json_object',
+  'text',
+];
 
 function beginStructuredOutputNegotiation(capabilityKey: string): {
   modes: OpenAiStructuredOutputMode[];
   ownsProbe: boolean;
+  cachedMode?: OpenAiStructuredOutputMode;
+  probeResult?: Promise<StructuredOutputNegotiationResult>;
 } {
   const cachedMode = structuredOutputModeByEndpoint.get(capabilityKey);
-  if (cachedMode) return { modes: [cachedMode], ownsProbe: false };
-  const ownsProbe = !structuredOutputNegotiationInFlight.has(capabilityKey);
-  if (ownsProbe) structuredOutputNegotiationInFlight.add(capabilityKey);
+  if (cachedMode) {
+    return {
+      modes: [
+        cachedMode,
+        ...STRUCTURED_OUTPUT_MODES.filter((mode) => mode !== cachedMode),
+      ],
+      ownsProbe: false,
+      cachedMode,
+    };
+  }
+  const inFlight = structuredOutputNegotiationInFlight.get(capabilityKey);
+  const ownsProbe = inFlight === undefined;
+  if (ownsProbe) {
+    let resolve!: (mode: StructuredOutputNegotiationResult) => void;
+    const promise = new Promise<StructuredOutputNegotiationResult>((settle) => {
+      resolve = settle;
+    });
+    structuredOutputNegotiationInFlight.set(capabilityKey, { promise, resolve });
+  }
   return {
-    modes: ownsProbe ? ['json_schema', 'json_object', 'text'] : ['text'],
+    modes: ownsProbe ? [...STRUCTURED_OUTPUT_MODES] : ['text'],
     ownsProbe,
+    ...(inFlight ? { probeResult: inFlight.promise } : {}),
   };
 }
 
 function finishStructuredOutputNegotiation(
   capabilityKey: string,
   ownsProbe: boolean,
+  successfulMode?: OpenAiStructuredOutputMode,
 ): void {
-  if (ownsProbe) structuredOutputNegotiationInFlight.delete(capabilityKey);
+  if (!ownsProbe) return;
+  const inFlight = structuredOutputNegotiationInFlight.get(capabilityKey);
+  if (!inFlight) return;
+  structuredOutputNegotiationInFlight.delete(capabilityKey);
+  inFlight.resolve(successfulMode);
+}
+
+function structuredOutputCapabilityKey(
+  endpoint: string,
+  model: string,
+  apiKey: string,
+  wireFormat: OpenAiWireFormat,
+): string {
+  // Do not retain credentials in the process-wide capability cache. The
+  // fingerprint prevents one account's provider configuration from being
+  // reused for another account using the same endpoint/model pair.
+  const keyFingerprint = createHash('sha256')
+    .update(apiKey, 'utf8')
+    .digest('hex')
+    .slice(0, 24);
+  return `${wireFormat}|${endpoint}|${model}|${keyFingerprint}`;
 }
 
 export function isStructuredOutputFormatRejection(body: string): boolean {
@@ -96,7 +154,7 @@ export function isStructuredOutputFormatRejection(body: string): boolean {
   // particular LM Studio/Qwen reports that response_format "must be" one of
   // json_schema or text, which the old unsupported-only matcher missed.
   const format = '(?:text\\.format|response[_ -]?format|json[_ -]?schema|json[_ -]?object|structured[_ -]?output|output[_ -]?format|schema)';
-  const unsupported = '(?:unsupported|not\\s+supported|does not support|not available|unknown|invalid|unrecognized|unrecognised|must be|only)';
+  const unsupported = '(?:unsupported|not\\s+supported|does not support|not available|unrecognized|unrecognised|must be|only)';
   return new RegExp(
     `(?:${format}.{0,120}${unsupported}|${unsupported}.{0,120}${format})`,
     'iu',
@@ -263,10 +321,17 @@ export class OpenAIVendorAdapter implements VendorAdapter {
     const messages = this.#buildChatMessages(request);
 
     const endpoint = resolveOpenAiChatCompletionsUrl(this.baseUrl);
-    const capabilityKey = `${endpoint}|${this.model}`;
+    const capabilityKey = structuredOutputCapabilityKey(
+      endpoint,
+      this.model,
+      this.apiKey,
+      this.wireFormat,
+    );
     const negotiation = beginStructuredOutputNegotiation(capabilityKey);
-    const modes = negotiation.modes;
+    const modes = [...negotiation.modes];
     let response: Response | undefined;
+    let successfulMode: OpenAiStructuredOutputMode | undefined;
+    let negotiatedMode: OpenAiStructuredOutputMode | undefined;
     try {
       for (let modeIndex = 0; modeIndex < modes.length; modeIndex += 1) {
         const mode = modes[modeIndex]!;
@@ -296,19 +361,15 @@ export class OpenAIVendorAdapter implements VendorAdapter {
         }
 
         if (response.ok) {
-          // A follower sends portable text while the first request probes the
-          // richer envelope. It must not overwrite a later schema result with
-          // `text` merely because its faster request completed first.
-          if (negotiation.ownsProbe) {
-            structuredOutputModeByEndpoint.set(capabilityKey, mode);
-          }
+          successfulMode = mode;
           break;
         }
 
         // Only retry a failed optional envelope. A normal 400 (bad model,
         // credential scope, malformed image, etc.) remains the original error.
         const canTryPortableMode =
-          mode !== 'text' && (response.status === 400 || response.status === 422);
+          (mode !== 'text' || !negotiation.ownsProbe) &&
+          (response.status === 400 || response.status === 422);
         if (!canTryPortableMode) {
           throw await this.#mapHttpError(response);
         }
@@ -325,6 +386,24 @@ export class OpenAIVendorAdapter implements VendorAdapter {
         }
         if (!isStructuredOutputFormatRejection(compatibilityBody)) {
           throw await this.#mapHttpError(response);
+        }
+        if (negotiation.cachedMode === mode) {
+          // A provider can be reconfigured after this process cached its
+          // capability. Drop the stale entry and let this request negotiate a
+          // portable fallback instead of failing every later asset.
+          structuredOutputModeByEndpoint.delete(capabilityKey);
+        }
+        if (mode === 'text' && !negotiation.ownsProbe) {
+          const probedMode = negotiation.probeResult
+            ? await negotiation.probeResult
+            : undefined;
+          const cachedMode = structuredOutputModeByEndpoint.get(capabilityKey) ?? probedMode;
+          const fallbackModes = cachedMode && cachedMode !== 'text'
+            ? [cachedMode, ...STRUCTURED_OUTPUT_MODES.filter((candidate) => candidate !== cachedMode && candidate !== 'text')]
+            : STRUCTURED_OUTPUT_MODES.filter((candidate) => candidate !== 'text');
+          for (const fallbackMode of fallbackModes) {
+            if (!modes.includes(fallbackMode)) modes.push(fallbackMode);
+          }
         }
       }
 
@@ -351,9 +430,29 @@ export class OpenAIVendorAdapter implements VendorAdapter {
         );
       }
 
-      return this.#extractChatResult(json);
+      const result = this.#extractChatResult(json);
+      // Only cache a mode after the response body has passed the same parser
+      // used for every later asset. A relay can return HTTP 2xx while ignoring
+      // response_format or returning an empty/malformed envelope; caching that
+      // mode would poison all subsequent requests for this endpoint/model.
+      if (
+        successfulMode !== undefined &&
+        (
+          negotiation.ownsProbe ||
+          negotiation.cachedMode !== undefined ||
+          (negotiation.probeResult !== undefined && successfulMode !== 'text')
+        )
+      ) {
+        structuredOutputModeByEndpoint.set(capabilityKey, successfulMode);
+      }
+      negotiatedMode = successfulMode;
+      return result;
     } finally {
-      finishStructuredOutputNegotiation(capabilityKey, negotiation.ownsProbe);
+      finishStructuredOutputNegotiation(
+        capabilityKey,
+        negotiation.ownsProbe,
+        negotiatedMode,
+      );
     }
   }
 
@@ -362,10 +461,17 @@ export class OpenAIVendorAdapter implements VendorAdapter {
     signal?: AbortSignal,
   ): Promise<AiAnalysisResult> {
     const endpoint = resolveOpenAiResponsesUrl(this.baseUrl);
-    const capabilityKey = `${endpoint}|${this.model}`;
+    const capabilityKey = structuredOutputCapabilityKey(
+      endpoint,
+      this.model,
+      this.apiKey,
+      this.wireFormat,
+    );
     const negotiation = beginStructuredOutputNegotiation(capabilityKey);
-    const modes = negotiation.modes;
+    const modes = [...negotiation.modes];
     let response: Response | undefined;
+    let successfulMode: OpenAiStructuredOutputMode | undefined;
+    let negotiatedMode: OpenAiStructuredOutputMode | undefined;
     try {
       for (let modeIndex = 0; modeIndex < modes.length; modeIndex += 1) {
         const mode = modes[modeIndex]!;
@@ -401,11 +507,7 @@ export class OpenAIVendorAdapter implements VendorAdapter {
         }
 
         if (response.ok) {
-          // See the Chat Completions path above: only the probe owner may
-          // commit the endpoint capability cache.
-          if (negotiation.ownsProbe) {
-            structuredOutputModeByEndpoint.set(capabilityKey, mode);
-          }
+          successfulMode = mode;
           break;
         }
 
@@ -413,7 +515,8 @@ export class OpenAIVendorAdapter implements VendorAdapter {
         // provider explicitly rejects that envelope. A normal 400/422 must not
         // be retried because it may describe a bad model, credential, or input.
         const canTryPortableMode =
-          mode !== 'text' && (response.status === 400 || response.status === 422);
+          (mode !== 'text' || !negotiation.ownsProbe) &&
+          (response.status === 400 || response.status === 422);
         if (!canTryPortableMode) {
           throw await this.#mapHttpError(response);
         }
@@ -432,6 +535,23 @@ export class OpenAIVendorAdapter implements VendorAdapter {
         if (!isStructuredOutputFormatRejection(compatibilityBody)) {
           throw await this.#mapHttpError(response);
         }
+        if (negotiation.cachedMode === mode) {
+          // See the Chat Completions path: cached capabilities are hints, not
+          // permanent provider contracts.
+          structuredOutputModeByEndpoint.delete(capabilityKey);
+        }
+        if (mode === 'text' && !negotiation.ownsProbe) {
+          const probedMode = negotiation.probeResult
+            ? await negotiation.probeResult
+            : undefined;
+          const cachedMode = structuredOutputModeByEndpoint.get(capabilityKey) ?? probedMode;
+          const fallbackModes = cachedMode && cachedMode !== 'text'
+            ? [cachedMode, ...STRUCTURED_OUTPUT_MODES.filter((candidate) => candidate !== cachedMode && candidate !== 'text')]
+            : STRUCTURED_OUTPUT_MODES.filter((candidate) => candidate !== 'text');
+          for (const fallbackMode of fallbackModes) {
+            if (!modes.includes(fallbackMode)) modes.push(fallbackMode);
+          }
+        }
       }
 
       if (!response || !response.ok) {
@@ -449,9 +569,27 @@ export class OpenAIVendorAdapter implements VendorAdapter {
         );
       }
 
-      return this.#extractResponsesResult(json);
+      const result = this.#extractResponsesResult(json);
+      // See the Chat Completions path above: successful HTTP status alone is
+      // not evidence that the server honored the requested output envelope.
+      if (
+        successfulMode !== undefined &&
+        (
+          negotiation.ownsProbe ||
+          negotiation.cachedMode !== undefined ||
+          (negotiation.probeResult !== undefined && successfulMode !== 'text')
+        )
+      ) {
+        structuredOutputModeByEndpoint.set(capabilityKey, successfulMode);
+      }
+      negotiatedMode = successfulMode;
+      return result;
     } finally {
-      finishStructuredOutputNegotiation(capabilityKey, negotiation.ownsProbe);
+      finishStructuredOutputNegotiation(
+        capabilityKey,
+        negotiation.ownsProbe,
+        negotiatedMode,
+      );
     }
   }
 

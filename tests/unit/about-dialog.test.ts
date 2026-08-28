@@ -62,6 +62,8 @@ describe("AboutDialog update controls", () => {
     expect(html).toContain('data-hover-tip="检查更新"');
     expect(html).toContain('data-hover-tip="下载更新 0.1.3 版本"');
     expect(html).toContain("查看更新日志");
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('aria-controls="about-release-notes-panel"');
   });
 
   it("shows download progress and a stop button while installing", () => {

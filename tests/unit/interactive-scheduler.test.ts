@@ -131,6 +131,14 @@ describe('performance command classification', () => {
 });
 
 describe('InteractiveScheduler', () => {
+  function deferred<T = void>() {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    const promise = new Promise<T>((nextResolve) => {
+      resolve = nextResolve;
+    });
+    return { promise, resolve };
+  }
+
   it('drops superseded queued work before it reaches the handler', async () => {
     const scheduler = new InteractiveScheduler();
     let releaseBlockingRead!: () => void;
@@ -196,6 +204,76 @@ describe('InteractiveScheduler', () => {
     expect(order).toEqual(['background-start', 'interactive']);
     releaseBackground();
     await expect(background).resolves.toBe('background');
+  });
+
+  it('lets another library read proceed while lifecycle cleanup drains the old library', async () => {
+    const scheduler = new InteractiveScheduler();
+    const closeGate = deferred();
+    const events: string[] = [];
+    const close = scheduler.schedule(
+      {
+        requestId: 'close-a',
+        lane: 'mutation',
+        libraryId: 'library-a',
+        lifecycleBoundary: true,
+      },
+      async () => {
+        events.push('close-start');
+        await closeGate.promise;
+        events.push('close-end');
+      },
+    );
+    await Promise.resolve();
+
+    const read = scheduler.schedule(
+      {
+        requestId: 'read-b',
+        lane: 'background-secondary',
+        libraryId: 'library-b',
+      },
+      () => {
+        events.push('read-b');
+      },
+    );
+
+    await expect(read).resolves.toBeUndefined();
+    expect(events).toEqual(['close-start', 'read-b']);
+    closeGate.resolve();
+    await expect(close).resolves.toBeUndefined();
+    expect(events).toEqual(['close-start', 'read-b', 'close-end']);
+  });
+
+  it('does not let reads of the closing library bypass its lifecycle boundary', async () => {
+    const scheduler = new InteractiveScheduler();
+    const closeGate = deferred();
+    let readStarted = false;
+    const close = scheduler.schedule(
+      {
+        requestId: 'close-a',
+        lane: 'mutation',
+        libraryId: 'library-a',
+        lifecycleBoundary: true,
+      },
+      () => closeGate.promise,
+    );
+    await Promise.resolve();
+    const read = scheduler.schedule(
+      {
+        requestId: 'read-a',
+        lane: 'background-secondary',
+        libraryId: 'library-a',
+      },
+      () => {
+        readStarted = true;
+      },
+    );
+
+    await Promise.resolve();
+    expect(readStarted).toBe(false);
+    closeGate.resolve();
+    await expect(close).resolves.toBeUndefined();
+    await expect(read).resolves.toBeUndefined();
+    expect(readStarted).toBe(true);
   });
 
   it('does not start a mutation until all reads have finished', async () => {

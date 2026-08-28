@@ -37,6 +37,8 @@ import type { WorkspaceNavHistory, WorkspaceNavLocation } from "./workspace-nav-
 export type UseBrowserSessionRestoreArgs = {
   api: SerpentLibraryApi | null;
   loadContent: LoadContentForRestore;
+  /** Keep the workspace covered until the restored library is coherent. */
+  setLibraryLoading: (state: { name: string | null } | null) => void;
   collectionRecursiveRef: MutableRefObject<boolean>;
   folderRecursiveRef: MutableRefObject<boolean>;
   setFolderRecursive: (enabled: boolean) => void;
@@ -93,6 +95,7 @@ export function useBrowserSessionRestore(
   const {
     api,
     loadContent,
+    setLibraryLoading,
     collectionRecursiveRef,
     folderRecursiveRef,
     setFolderRecursive,
@@ -136,7 +139,11 @@ export function useBrowserSessionRestore(
       setShowTrash(false);
       setTrashedAssets([]);
       if (activeLibrary) {
-        const restoredItems = (await loadContent(activeLibrary, "all")) ?? [];
+        setLibraryLoading({ name: activeLibrary.displayName });
+        const restoredItems =
+          (await loadContent(activeLibrary, "all", {
+            blockingLibraryLoad: true,
+          })) ?? [];
         const session = readBrowserSession(activeLibrary.libraryId);
         let restoredLocation: WorkspaceNavLocation = { kind: "all" };
         if (session) {
@@ -195,14 +202,17 @@ export function useBrowserSessionRestore(
         navHistoryRef.current.clear(restoredLocation);
         setNavHistoryUi({ canBack: false, canForward: false });
       } else {
+        setLibraryLoading(null);
         navHistoryRef.current.clear({ kind: "all" });
         setNavHistoryUi({ canBack: false, canForward: false });
       }
       setUiState(activeLibrary ? "ready" : "idle");
     } catch (caught) {
+      setLibraryLoading(null);
       setError(toMessage(caught, t("toast.workspaceRestoreFailed"), locale));
       setUiState(activeLibrary ? "ready" : "idle");
     } finally {
+      setLibraryLoading(null);
       // Do not let useBrowserSessionPersist observe the transient empty
       // selection between setLibrary() and applyStoredBrowserSession().
       setBrowserSessionReady(true);
@@ -226,6 +236,7 @@ export function useBrowserSessionRestore(
     setError,
     setFolderRecursive,
     setLibrary,
+    setLibraryLoading,
     setNavHistoryUi,
     setSearchTotal,
     setSelectedAssetId,

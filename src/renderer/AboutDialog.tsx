@@ -187,7 +187,10 @@ export function AboutDialog({
           {hasReleaseNotes ? (
             <div className="about-dialog-release-notes">
               <button
+                aria-controls="about-release-notes-panel"
+                aria-expanded={releaseNotesOpen}
                 className="about-dialog-release-notes-toggle"
+                id="about-release-notes-toggle"
                 onClick={() => setReleaseNotesOpen((current) => !current)}
                 type="button"
               >
@@ -196,7 +199,12 @@ export function AboutDialog({
                   : t("dialog.about.viewReleaseNotes")}
               </button>
               {releaseNotesOpen ? (
-                <div className="about-dialog-release-notes-panel" role="region">
+                <div
+                  className="about-dialog-release-notes-panel"
+                  id="about-release-notes-panel"
+                  aria-labelledby="about-release-notes-toggle"
+                  role="region"
+                >
                   {releaseMeta?.date ? (
                     <p className="about-dialog-release-notes-date">
                       {t("dialog.about.releaseDate", { date: releaseMeta.date })}

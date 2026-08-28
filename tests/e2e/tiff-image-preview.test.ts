@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs";
+import { once } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -14,34 +15,34 @@ test("opens a TIFF viewer image at the source resolution", async () => {
   const sourcePath = path.join(temporaryRoot, "native-resolution.tiff");
   const libraryName = "TIFF 原生分辨率验收";
   const libraryPath = path.join(temporaryRoot, libraryName);
-
-  await sharp({
-    create: {
-      width: 2048,
-      height: 1024,
-      channels: 4,
-      background: { r: 46, g: 112, b: 164, alpha: 1 },
-    },
-  }).tiff({ compression: "none" }).toFile(sourcePath);
-
-  const executablePath = resolveElectronExecutablePath();
-  const applicationDirectory =
-    process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
-  const application = await electron.launch({
-    args: [applicationDirectory],
-    cwd: applicationDirectory,
-    executablePath,
-    env: {
-      ...process.env,
-      SERPENT_E2E: "1",
-      SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
-      SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
-      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, "user-data"),
-      SERPENT_E2E_IMPORT_FILES: sourcePath,
-    },
-  });
-
+  let application: Awaited<ReturnType<typeof electron.launch>> | undefined;
   try {
+    await sharp({
+      create: {
+        width: 2048,
+        height: 1024,
+        channels: 4,
+        background: { r: 46, g: 112, b: 164, alpha: 1 },
+      },
+    }).tiff({ compression: "none" }).toFile(sourcePath);
+
+    const executablePath = resolveElectronExecutablePath();
+    const applicationDirectory =
+      process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+    application = await electron.launch({
+      args: [applicationDirectory],
+      cwd: applicationDirectory,
+      executablePath,
+      env: {
+        ...process.env,
+        SERPENT_E2E: "1",
+        SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
+        SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
+        SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, "user-data"),
+        SERPENT_E2E_IMPORT_FILES: sourcePath,
+      },
+    });
+
     const window = await application.firstWindow();
     await window.getByRole("button", { name: "创建资源库" }).click();
     await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
@@ -84,7 +85,18 @@ test("opens a TIFF viewer image at the source resolution", async () => {
       )
       .toEqual({ width: 2048, height: 1024 });
   } finally {
-    await application.close();
+    if (application) {
+      const childProcess = application.process();
+      if (childProcess.exitCode === null) {
+        await application.evaluate(({ app }) => app.quit()).catch(() => undefined);
+        await Promise.race([
+          once(childProcess, "exit").then(() => undefined),
+          new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
+        ]);
+      }
+      if (childProcess.exitCode === null) childProcess.kill("SIGKILL");
+      await application.close().catch(() => undefined);
+    }
     rmSync(temporaryRoot, { force: true, recursive: true });
   }
 });

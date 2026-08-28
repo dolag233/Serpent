@@ -181,7 +181,7 @@ JSONL 流程操作，禁止重新启用旧数据库同步。
 - **打包后 `.app` 不能从 SMB 运行**：必须先复制到本地 APFS（macOS QA 用）。
 - **共享知识进入仓库**：事故复盘、质量门禁和切片状态不得只留在 Claude memory、聊天或本机忽略文件中。
 - **隐私与本地环境信息（强制）**：任何提交文件（源码、测试、开发日志、文档、工单和截图 fixture 等）都不得包含开发机器的本地绝对路径、个人目录或资源库名称、隐私数据、访问令牌、API Key、密码、Cookie 或其他环境凭据。测试和示例必须使用临时目录、占位符或脱敏 fixture；提交前检查路径、密钥和个人信息，避免隐私泄露。
-- **性能目标（产品质量门）**：大型资源库性能是产品目标，所有性能回归使用 `tests/worker/large-library-performance.test.ts` 的 20,000 资产基线（约 90% 可解码图片：jpg/png/webp/gif/tiff，多种横竖比例；图片长边按游戏美术口径 1% 8K / 3% 4K / 30% 2K / 余量 1K；5% 短视频：mp4/webm/mov；各 1% 的 3D/文本/音频/不支持格式），并在开发日志记录当次命令和结果。打开库主窗口壳 **1 秒内可交互**；切换文件夹/合集首屏目标 **500 ms** 内并渐进补齐；固定 token 搜索首屏目标 **1 秒** 内且只服务最新请求；Inspector 由 `AssetSummary` 先渲染文件名/尺寸/评分，首屏目标 **500 ms** 内，标签/合集/AI/技术元数据渐进加载；删除/恢复后的选择和可见卡片目标 **200 ms** 内局部更新，后台完成持久化收敛。预算是产品目标，不是把共享 CI 单次波动写成硬性通过条件；缺少真实 Electron、独立进程或 Windows 证据只能写“未验证”。
+- **性能目标（产品质量门）**：大型资源库性能是产品目标，所有性能回归使用 `tests/worker/large-library-performance.test.ts` 的 20,000 资产基线（约 90% 可解码图片：jpg/png/webp/gif/tiff，多种横竖比例；图片长边按游戏美术口径 1% 8K / 3% 4K / 30% 2K / 余量 1K；5% 短视频：mp4/webm/mov；各 1% 的 3D/文本/音频/不支持格式），并在开发日志记录当次命令和结果。打开/切换资源库应在约 **1 秒内**给出明确的资源库身份、阶段与进度反馈，完成结构一致性加载后再进入主窗口；切换文件夹/合集首屏目标 **500 ms** 内并渐进补齐；固定 token 搜索首屏目标 **1 秒** 内且只服务最新请求；Inspector 由 `AssetSummary` 先渲染文件名/尺寸/评分，首屏目标 **500 ms** 内，标签/合集/AI/技术元数据渐进加载；删除/恢复后的选择和可见卡片目标 **200 ms** 内局部更新，后台完成持久化收敛。预算是产品目标，不是把共享 CI 单次波动写成硬性通过条件；缺少真实 Electron、独立进程或 Windows 证据只能写“未验证”。
 - **TypeScript pinned 6.0.3**：typescript-eslint@8.63.0 不支持 TS 7.x，等生态适配后再升。
 - **标准化 UI（强制，2026-08-12 用户反馈）**：不同地方的同类 UI 必须使用同一套样式。新增/修改任何 UI 元素前，先查找并复用既有样式体系——主题变量（`--text`/`--secondary`/`--raised-2`/`--menu-item-hover-background` 等 token）、既有组件（`Tooltip`/`HoverTipHost`、`MenuSurface`、`DialogShell`、`Icon` 等）与既有 CSS 类。**禁止硬编码颜色/尺寸 fallback**（如 `#2b2d33`、`opacity: 0.62`）——会破坏亮/暗主题。hover 提示必须用标准 `data-hover-tip` / `<Tooltip>`（延迟与主题由 HoverTipHost 统一，~420ms），禁止自造 tooltip 浮层。样式审查是代码审查固定项：核对新样式只依赖主题 token 与既有类。（镜像 AGENTS.md）
 
@@ -225,7 +225,7 @@ JSONL 流程操作，禁止重新启用旧数据库同步。
 - `docs/internal/qa/NNNN-*.md` — QA 报告
 - `docs/internal/qa/human-acceptance-checklist.md` — 功能验收队列；UI 仅用户可标「人类验收通过」；`PLUGIN-*`/`AUT-*` 以自动化测试为准（见 `docs/internal/agent-plugin-playbook.md`）
 - `docs/internal/ui/0001-studio-contact-sheet-direction.md` — UI 视觉方向
-- `docs/internal/ui/0006-progressive-loading-ux-principles.md` — 禁止同步阻塞加载；打开库约 1 秒可交互
+- `docs/internal/ui/0006-progressive-loading-ux-principles.md` — 给用户以安全感：资源库打开/切换超过 3 秒才显示简洁等待提示，结构一致后进入主界面；普通 IO 瓶颈继续用 placeholder 渐进补齐
 - `docs/internal/research/` — 技术调研
 
 ## 核心体验回归门禁

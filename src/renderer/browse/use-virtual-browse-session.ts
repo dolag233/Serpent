@@ -111,6 +111,11 @@ export type VirtualBrowseSessionArgs = {
   setVirtualBrowseLayout: (layout: VirtualBrowseLayout | null) => void;
 };
 
+export type VirtualBrowseSessionLocalSnapshot = {
+  layout: BrowseLayoutEntry[];
+  virtualLayout: VirtualBrowseLayout | null;
+};
+
 /**
  * Owns the Renderer-side geometry window for one BrowseSession. Summary pages
  * and geometry blocks share the same generation fence; a stale geometry reply
@@ -290,6 +295,18 @@ export function useVirtualBrowseSession({
 
   const getVirtualLayout = useCallback(() => virtualLayoutRef.current, []);
 
+  const snapshotLocalState = useCallback((): VirtualBrowseSessionLocalSnapshot => ({
+    layout: layoutRef.current,
+    virtualLayout: virtualLayoutRef.current,
+  }), []);
+
+  const restoreLocalState = useCallback((snapshot: VirtualBrowseSessionLocalSnapshot) => {
+    layoutRef.current = snapshot.layout;
+    virtualLayoutRef.current = snapshot.virtualLayout;
+    setVirtualBrowseLayout(snapshot.virtualLayout);
+    setBrowseLayout(snapshot.layout);
+  }, [setBrowseLayout, setVirtualBrowseLayout]);
+
   const getLoadedSummaryAssetIds = useCallback(() => {
     const layout = virtualLayoutRef.current;
     return layout ? virtualSummaryAssetIds(layout) : null;
@@ -327,6 +344,8 @@ export function useVirtualBrowseSession({
     ensureRange,
     getLayout,
     getVirtualLayout,
+    snapshotLocalState,
+    restoreLocalState,
     getLoadedSummaryAssetIds,
     removeEntries,
     isVirtualized,

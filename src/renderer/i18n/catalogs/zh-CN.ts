@@ -63,7 +63,7 @@ export const zhCN = {
     chooseLibrary: "选择资源库",
     noLibraryOpen: "尚未打开资源库",
     switchLibrary: "切换资源库…",
-    librarySwitchWarning: "当前有一项操作正在进行。切换资源库会中断当前操作，未提交的更改可能丢失。确定要继续吗？",
+    librarySwitchWarning: "当前有一项操作正在进行。Serpent 会等待它完成后再切换资源库；该操作完成后可能仍会改变切换后的显示内容。确定要继续吗？",
     otherLibraries: "其他资源库",
     createLibrary: "创建资源库",
     createLibraryEllipsis: "新建资源库…",
@@ -1570,6 +1570,7 @@ export const zhCN = {
     zoomIn: "放大",
     zoomOut: "缩小",
     zoomFit: "适应宽度",
+    htmlPreview: "HTML 预览",
     htmlLoadFailed: "无法加载 HTML 文件。",
     htmlLoading: "正在加载 HTML…"
   },
@@ -1652,6 +1653,9 @@ export const zhCN = {
     exportingLibrary: "正在导出资源库：",
     importingLibrary: "导入资源库：",
     openingLibrary: "正在打开资源库：{name}",
+    openingLibraryNamed: "正在打开“{name}”资源库",
+    openingLibraryGeneric: "正在打开资源库",
+    switchLibraryWhileLoading: "切换资源库",
     validatingEagleLibrary: "正在打开 Eagle 资源库…",
     validatingBillfishLibrary: "正在验证 Billfish 资源库…",
     cancelExport: "取消导出",
@@ -1848,6 +1852,7 @@ export const zhCN = {
     convertLinkedDone: "已转换 {count} 项；外部源目录保持不变。",
     convertLinkedFailed: "转换链接文件夹失败。",
     closeFailed: "关闭失败。",
+    previousLibraryCloseFailed: "新资源库已打开，但旧资源库未能完全关闭。请稍后重试关闭旧资源库。",
     restoredCount: "已恢复 {count} 项资产",
     restoreTrashedFolderDone:
       "已恢复文件夹「{name}」：{folders} 个文件夹、{assets} 项资产",
@@ -2103,7 +2108,10 @@ export const zhCN = {
       SYNC_CONFLICT: "远端内容已被其他设备修改。",
       SYNC_METHOD_NOT_ALLOWED: "服务器不支持所需的同步操作（例如 MOVE）。请更换支持 WebDAV 完整方法的服务器，或联系管理员开启。",
       SYNC_WRITE_UNSUPPORTED: "该服务器不支持上传文件，无法用于同步。请更换允许 PUT 上传的 WebDAV 服务。",
-      SYNC_HTTP_ERROR: "服务器返回了 HTTP 错误。请检查地址、账号权限和服务器状态后重试。"
+      SYNC_HTTP_ERROR: "服务器返回了 HTTP 错误。请检查地址、账号权限和服务器状态后重试。",
+      LINKED_FOLDER_NETWORK_DISCONNECTED: "网络盘或链接文件夹当前不可达，请重新连接后再打开资源库。",
+      LINKED_FOLDER_NOT_FOUND: "这台电脑上找不到链接文件夹路径。请重新连接磁盘或重新指定链接文件夹后再打开资源库。",
+      LINKED_FOLDER_FOREIGN_DEVICE: "链接文件夹的设备或卷标识与记录不一致，请在此电脑上重新指定链接文件夹。"
     },
     withReason: "{message} 原因：{reason}"
   },

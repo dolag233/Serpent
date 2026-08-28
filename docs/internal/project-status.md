@@ -211,10 +211,12 @@
   真实 Eagle 小库、Windows/packaged、
   三条工单暂不写成最终关闭。`dw9a` 已补恢复报告摘要/打开入口和已知位置候选探测；候选探测接入后的 Renderer 首帧空白回归已修复，并由 4 项相关 Electron E2E 复跑通过；真实物理损坏重启与平台证据仍保留。
 
+- **2026-08-28 资源库打开 UX 产品修订**：资源库是安全边界。打开/切换若持续超过 3 秒才显示简洁的资源库身份和切换入口；在文件夹、合集、标签、回收站摘要与首批资产查询形成一致快照前，不展示部分首屏，也不保留旧库导航。普通浏览、搜索、缩略图和 AI 仍按渐进式规则运行。实现与验收以 `docs/internal/ui/0006-progressive-loading-ux-principles.md` 为准。
+
 - **2026-08-14 晚间用户反馈（先开单）**：
   THUMB-006 / `Serpent-lpnt` 人类验收通过（残缺/缺失图像能生成正常缩略图；重复单 `Serpent-k2zw` 一并关闭）。
   P0 `Serpent-oq86` Windows 平铺卡片上下抖动：用户确认通过（CANVAS-038）。
-  新开 P0：`Serpent-tumv` 禁止同步加载、打开库约 1 秒可交互（LIB-018，原则见 `docs/internal/ui/0006-progressive-loading-ux-principles.md`）。
+  新开 P0：`Serpent-tumv` 资源库打开安全边界（LIB-018）：超过 3 秒才显示简洁身份提示，结构确认后再进入主界面；原则见 `docs/internal/ui/0006-progressive-loading-ux-principles.md`。
   新开 P1：`Serpent-esuj` 查看页模糊→原图快慢不一且升级重置视图（VIEWER-027）。
   `Serpent-g8u9` Windows F2/Delete：链接与托管同等操作；Delete 默认进回收站且不弹确认（托管→应用回收站，链接→系统回收站）。已去掉链接删除确认框与主进程「删除链接源文件」危险确认。COMMAND-002 / COMMAND-005 / SHORTCUT-001 待 Windows 再验。Ctrl+V 另议。
 - **2026-08-14 大批量浏览卡顿与框选**：窗口化 + 全量布局几何框选 + 解码并发逻辑核−3。

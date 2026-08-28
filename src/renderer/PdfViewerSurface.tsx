@@ -33,6 +33,8 @@ export type PdfViewerSurfaceProps = {
   /** Aborted when the owning viewer session closes or changes revision. */
   sessionSignal?: AbortSignal | null;
   isFullscreen: boolean;
+  /** Preloaded navigation surfaces must not own global zoom shortcuts. */
+  keyboardShortcutsDisabled?: boolean;
   /** Called when a placeholder, first page, or error can be shown. */
   onPresentationReady?: () => void;
 };
@@ -74,6 +76,7 @@ export function PdfViewerSurface({
   placeholderUrl,
   sessionSignal,
   isFullscreen,
+  keyboardShortcutsDisabled = false,
   onPresentationReady,
 }: PdfViewerSurfaceProps) {
   const t = useT();
@@ -552,6 +555,7 @@ export function PdfViewerSurface({
   // Cmd/Ctrl+= / - / 0 — same global chords as the image/video viewer
   // (0 resets to fit width). Ignore while typing in an editable target.
   useEffect(() => {
+    if (keyboardShortcutsDisabled) return;
     const platform = isMacPlatform(navigator.userAgent) ? "mac" : "windows";
     const onKeyDown = (event: KeyboardEvent) => {
       if (shouldIgnoreGlobalZoomShortcut(event.target)) return;
@@ -568,7 +572,7 @@ export function PdfViewerSurface({
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zoom]);
+  }, [keyboardShortcutsDisabled, zoom]);
 
   return (
     <div
@@ -580,7 +584,6 @@ export function PdfViewerSurface({
         <div className="pdf-viewer-placeholder" aria-hidden="true">
           <img
             alt=""
-            onLoad={() => onPresentationReady?.()}
             src={placeholderUrl}
           />
         </div>

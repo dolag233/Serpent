@@ -49,7 +49,7 @@ export function HtmlViewerSurface({
         sandbox="allow-scripts allow-same-origin"
         onLoad={handleLoad}
         onError={handleError}
-        title="HTML preview"
+        title={t("viewer.htmlPreview")}
       />
     </div>
   );

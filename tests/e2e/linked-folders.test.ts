@@ -14,6 +14,7 @@ import {
   assetCard,
   openLinkedFolderImportMenu,
   resolveElectronExecutablePath,
+  waitForLibraryLoadingToFinish,
 } from './electron-test-helpers';
 
 test.describe.configure({ timeout: 120_000 });
@@ -58,6 +59,7 @@ test('imports a linked folder, reconciles external changes, and relinks after th
     await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();
+    await waitForLibraryLoadingToFinish(window);
 
     await openLinkedFolderImportMenu(application, window);
     await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible();
@@ -201,6 +203,7 @@ test('restores a linked library after a full app restart', async () => {
     await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();
+    await waitForLibraryLoadingToFinish(window);
 
     // Link the folder.
     await openLinkedFolderImportMenu(application, window);
@@ -227,6 +230,7 @@ test('restores a linked library after a full app restart', async () => {
     // Restart the app — the library should auto-open because of SERPENT_E2E_RESTORE_RECENT.
     application = await launch();
     window = await application.firstWindow();
+    await waitForLibraryLoadingToFinish(window);
 
     // Wait for the library to be restored and the linked folder to be visible.
     const restoredSource = window
@@ -304,6 +308,7 @@ test('applies default ignore rules — .git and node_modules are not registered 
     await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();
+    await waitForLibraryLoadingToFinish(window);
 
     await openLinkedFolderImportMenu(application, window);
     await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible();

@@ -72,7 +72,7 @@ export const en = {
     chooseLibrary: "Choose library",
     noLibraryOpen: "No library open",
     switchLibrary: "Switch library…",
-    librarySwitchWarning: "An operation is still in progress. Switching libraries will interrupt it, and uncommitted changes may be lost. Continue?",
+    librarySwitchWarning: "An operation is still in progress. Serpent will wait for it to finish before switching libraries; the operation may still change what is shown after the switch. Continue?",
     otherLibraries: "Other libraries",
     createLibrary: "Create library",
     createLibraryEllipsis: "New library…",
@@ -1584,6 +1584,7 @@ export const en = {
   viewer: {
     pdfLoadFailed: "Could not load the PDF file.",
     pdfPages: "Loaded {loaded}/{count} pages",
+    htmlPreview: "HTML preview",
     htmlLoadFailed: "Could not load the HTML file.",
     htmlLoading: "Loading HTML…"
   },
@@ -1666,6 +1667,9 @@ export const en = {
     exportingLibrary: "Exporting library:",
     importingLibrary: "Importing library:",
     openingLibrary: "Opening library: {name}",
+    openingLibraryNamed: "Opening “{name}” library",
+    openingLibraryGeneric: "Opening library",
+    switchLibraryWhileLoading: "Switch library",
     validatingEagleLibrary: "Opening Eagle library…",
     validatingBillfishLibrary: "Validating Billfish library…",
     cancelExport: "Cancel export",
@@ -1863,6 +1867,7 @@ export const en = {
     convertLinkedDone: "Converted {count} items; external source folder unchanged.",
     convertLinkedFailed: "Failed to convert linked folder.",
     closeFailed: "Close failed.",
+    previousLibraryCloseFailed: "The new library is open, but the previous library could not be fully closed. Retry closing it later.",
     restoredCount: "Restored {count} assets",
     restoreTrashedFolderDone:
       "Restored folder “{name}”: {folders} folders, {assets} assets",
@@ -2120,7 +2125,10 @@ export const en = {
       SYNC_CONFLICT: "The remote content was modified by another device.",
       SYNC_METHOD_NOT_ALLOWED: "The server does not support the required sync operation (for example MOVE). Use a WebDAV server that allows the full method set, or ask the administrator to enable it.",
       SYNC_WRITE_UNSUPPORTED: "The server does not support file upload, so it cannot be used for sync. Use a WebDAV service that allows PUT.",
-      SYNC_HTTP_ERROR: "The server returned an HTTP error. Check the address, account permissions, and server status, then retry."
+      SYNC_HTTP_ERROR: "The server returned an HTTP error. Check the address, account permissions, and server status, then retry.",
+      LINKED_FOLDER_NETWORK_DISCONNECTED: "The network share or linked folder is currently unreachable. Reconnect it, then open the library again.",
+      LINKED_FOLDER_NOT_FOUND: "The linked folder path no longer exists on this computer. Reconnect the drive or relink the folder, then open the library again.",
+      LINKED_FOLDER_FOREIGN_DEVICE: "The linked folder's device or volume identity differs from the recorded computer. Relink it on this computer."
     },
     withReason: "{message} Reason: {reason}"
   },

@@ -63,7 +63,7 @@ import {
 import { apiFormatLimiterKey, formatAiLanguagesForPrompt } from '../shared/ai-endpoints';
 import { VendorAdapterError } from './ai/vendor-adapter';
 import type { VendorAdapter } from './ai/vendor-adapter';
-import type { AiAnalysisRequest } from './ai/protocol';
+import { applyAiOutputPolicy, type AiAnalysisRequest } from './ai/protocol';
 import {
   AI_ARTIFACT_PENDING_CODES,
   AI_ARTIFACT_PENDING_MAX_ATTEMPTS,
@@ -2038,6 +2038,18 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       return { ok: true, type: 'library.opened', library };
     }
     case 'library.open': {
+      // Deterministic renderer E2E seam for the library safety overlay. This
+      // is never enabled in production and keeps the opening stage observable
+      // long enough to assert that partial navigation stays covered.
+      if (process.env.SERPENT_E2E === '1') {
+        const delayMs = Number.parseInt(
+          process.env.SERPENT_E2E_LIBRARY_OPEN_DELAY_MS ?? '',
+          10,
+        );
+        if (Number.isInteger(delayMs) && delayMs > 0 && delayMs <= 10_000) {
+          await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+        }
+      }
       const library = libraryService.openLibrary(request.command.selectedLibraryPath);
       return { ok: true, type: 'library.opened', library };
     }
@@ -2086,6 +2098,15 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       libraryService.cancelJobs(request.command.libraryId);
       publishAiProgress(request.command.libraryId);
       aiJobAbortRegistry.abort(request.command.libraryId);
+      if (process.env.SERPENT_E2E === '1') {
+        const delayMs = Number.parseInt(
+          process.env.SERPENT_E2E_CLOSE_DELAY_MS ?? '',
+          10,
+        );
+        if (Number.isInteger(delayMs) && delayMs > 0 && delayMs <= 10_000) {
+          await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+        }
+      }
       await libraryService.closeLibraryAsync(request.command.libraryId);
       return { ok: true, type: 'library.closed', libraryId: request.command.libraryId };
     case 'library.rename': {
@@ -3616,6 +3637,12 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         };
       }
 
+      analysisResult = applyAiOutputPolicy(analysisResult, {
+        settings: analysisSettings,
+        existingTagNames,
+        language,
+      });
+
       const { tagsWritten, fieldsWritten, committed } = libraryService.writeAiAnalysisResult({
         libraryId,
         assetId,
@@ -4726,6 +4753,10 @@ parentPort.on('message', async (event) => {
       ...(performanceEnvelope.interactionGeneration === undefined
         ? {}
         : { interactionGeneration: performanceEnvelope.interactionGeneration }),
+      ...(request.command.type === 'library.close'
+        || request.command.type === 'library.delete-from-disk'
+        ? { lifecycleBoundary: true }
+        : {}),
       ...(generationBound === undefined ? {} : { isCurrent: generationBound }),
     } as const;
     const lifecycleBoundary = request.command.type === 'library.close'

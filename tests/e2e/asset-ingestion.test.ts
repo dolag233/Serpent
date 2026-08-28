@@ -197,6 +197,53 @@ test('imports files and a directory hierarchy, then reconciles external changes'
   }
 });
 
+test('imports into the library root after leaving a folder scope', async () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-import-scope-e2e-'));
+  const sourcePath = path.join(temporaryRoot, 'root-only.txt');
+  const libraryName = '导入目标验收';
+  const libraryPath = path.join(temporaryRoot, libraryName);
+  writeFileSync(sourcePath, 'root import');
+
+  const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  const application = await electron.launch({
+    args: [applicationDirectory],
+    cwd: applicationDirectory,
+    executablePath: resolveElectronExecutablePath(),
+    env: {
+      ...process.env,
+      SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
+      SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
+      SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
+      SERPENT_E2E_IMPORT_FILES: sourcePath,
+    },
+  });
+
+  try {
+    const window = await application.firstWindow();
+    await window.getByRole('button', { name: '创建资源库' }).click();
+    await window.getByRole('textbox', { name: '名称' }).fill(libraryName);
+    await window.getByRole('button', { name: '创建', exact: true }).click();
+    await window.getByRole('button', { name: '添加文件夹' }).click();
+    await window.getByLabel('新文件夹名称').fill('项目');
+    await window.keyboard.press('Enter');
+    await expect(sidebarFolderRow(window, '项目')).toBeVisible();
+    await sidebarFolderRow(window, '项目').click();
+    await window.getByRole('button', { name: '所有资产' }).click();
+    await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
+
+    await expect(
+      window.locator('.asset-card').filter({ hasText: 'root-only.txt' }),
+    ).toBeVisible();
+    expect(existsSync(path.join(libraryPath, 'Assets', 'root-only.txt'))).toBe(true);
+    expect(existsSync(path.join(libraryPath, 'Assets', '项目', 'root-only.txt'))).toBe(false);
+  } finally {
+    await application.evaluate(({ app }) => app.quit()).catch(() => undefined);
+    await application.close().catch(() => undefined);
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
 test('shows a specific safe import reason and persists the complete Worker error', async () => {
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-error-log-e2e-'));
   const sourceDirectory = path.join(temporaryRoot, 'source-with-link');

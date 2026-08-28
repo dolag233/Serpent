@@ -28,6 +28,7 @@ interface TestDatabaseConnection {
   prepare(source: string): {
     all(...parameters: unknown[]): unknown[];
     get(...parameters: unknown[]): unknown;
+    run(...parameters: unknown[]): unknown;
   };
   pragma(source: string): unknown;
 }
@@ -367,7 +368,7 @@ describe('Linked folder import', () => {
     service.closeAll();
   });
 
-  it('rejects a NAS library when a linked root belongs to another computer', () => {
+  it('rejects a NAS library when a linked root is disconnected', () => {
     const root = temporaryRoot();
     const sourceRoot = path.join(root, 'computer-a-assets');
     mkdirSync(sourceRoot);
@@ -383,9 +384,105 @@ describe('Linked folder import', () => {
     rmSync(sourceRoot, { recursive: true, force: true });
 
     expect(() => service.openLibrary(created.libraryPath)).toThrowError(
-      expect.objectContaining({ code: 'LINKED_FOLDER_UNAVAILABLE' }),
+      expect.objectContaining({
+        code: 'LINKED_FOLDER_UNAVAILABLE',
+        reason: 'LINKED_FOLDER_NOT_FOUND',
+      }),
     );
     service.closeAll();
+  });
+
+  it('distinguishes a foreign device hint when the same path still exists', () => {
+    const root = temporaryRoot();
+    const sourceRoot = path.join(root, 'computer-a-assets');
+    mkdirSync(sourceRoot);
+    writeFileSync(path.join(sourceRoot, 'a.png'), 'aaa');
+
+    const service = newService({ storageKindOverrideForTests: 'network' });
+    const created = service.createLibrary({ displayName: 'NasLinked', selectedParentPath: root });
+    service.importFolderAsLinked({ libraryId: created.libraryId, sourceRootPath: sourceRoot });
+    service.closeAll();
+
+    const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    database.prepare('UPDATE linked_folders SET source_device_hint = ?').run('foreign-device');
+    database.close();
+
+    expect(() => service.openLibrary(created.libraryPath)).toThrowError(
+      expect.objectContaining({
+        code: 'LINKED_FOLDER_UNAVAILABLE',
+        reason: 'LINKED_FOLDER_FOREIGN_DEVICE',
+      }),
+    );
+  });
+
+  it('fails closed when an older NAS linked folder has no device hint', () => {
+    const root = temporaryRoot();
+    const sourceRoot = path.join(root, 'legacy-assets');
+    mkdirSync(sourceRoot);
+    writeFileSync(path.join(sourceRoot, 'a.png'), 'aaa');
+
+    const service = newService({ storageKindOverrideForTests: 'network' });
+    const created = service.createLibrary({ displayName: 'LegacyNasLinked', selectedParentPath: root });
+    service.importFolderAsLinked({ libraryId: created.libraryId, sourceRootPath: sourceRoot });
+    service.closeAll();
+
+    const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    database.prepare('UPDATE linked_folders SET source_device_hint = NULL').run();
+    database.close();
+
+    expect(() => service.openLibrary(created.libraryPath)).toThrowError(
+      expect.objectContaining({ code: 'LINKED_FOLDER_UNAVAILABLE' }),
+    );
+  });
+
+  it('rejects a replacement directory at the same NAS path', () => {
+    const root = temporaryRoot();
+    const sourceRoot = path.join(root, 'replaceable-assets');
+    mkdirSync(sourceRoot);
+    writeFileSync(path.join(sourceRoot, 'a.png'), 'aaa');
+
+    const service = newService({ storageKindOverrideForTests: 'network' });
+    const created = service.createLibrary({ displayName: 'NasLinked', selectedParentPath: root });
+    service.importFolderAsLinked({ libraryId: created.libraryId, sourceRootPath: sourceRoot });
+    service.closeAll();
+
+    rmSync(sourceRoot, { recursive: true, force: true });
+    mkdirSync(sourceRoot);
+    writeFileSync(path.join(sourceRoot, 'replacement.png'), 'replacement');
+
+    expect(() => service.openLibrary(created.libraryPath)).toThrowError(
+      expect.objectContaining({
+        code: 'LINKED_FOLDER_UNAVAILABLE',
+        reason: 'LINKED_FOLDER_FOREIGN_DEVICE',
+      }),
+    );
+  });
+
+  it('preserves permission failures instead of reporting a disconnected share', () => {
+    const root = temporaryRoot();
+    const sourceRoot = path.join(root, 'protected-assets');
+    mkdirSync(sourceRoot);
+    writeFileSync(path.join(sourceRoot, 'a.png'), 'aaa');
+
+    const service = newService({ storageKindOverrideForTests: 'network' });
+    const created = service.createLibrary({ displayName: 'NasLinked', selectedParentPath: root });
+    service.importFolderAsLinked({ libraryId: created.libraryId, sourceRootPath: sourceRoot });
+    service.closeAll();
+
+    const deniedLstat = () => {
+      const error = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+      throw error;
+    };
+    const reopened = newService({
+      storageKindOverrideForTests: 'network',
+      linkedRootLstat: deniedLstat,
+    });
+    expect(() => reopened.openLibrary(created.libraryPath)).toThrowError(
+      expect.objectContaining({
+        code: 'LINKED_FOLDER_UNAVAILABLE',
+        reason: 'PERMISSION_DENIED',
+      }),
+    );
   });
 
   it('relinks an offline linked folder to a new root and restores assets that exist there', () => {

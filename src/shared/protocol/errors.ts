@@ -153,6 +153,9 @@ export const publicErrorReasonSchema = z.enum([
   'SYNC_METHOD_NOT_ALLOWED',
   'SYNC_WRITE_UNSUPPORTED',
   'SYNC_HTTP_ERROR',
+  'LINKED_FOLDER_NETWORK_DISCONNECTED',
+  'LINKED_FOLDER_NOT_FOUND',
+  'LINKED_FOLDER_FOREIGN_DEVICE',
 ]);
 
 export type PublicErrorReason = z.infer<typeof publicErrorReasonSchema>;

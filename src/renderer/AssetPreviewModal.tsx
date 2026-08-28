@@ -43,6 +43,7 @@ import { detectPbrTextureChannel } from "./pbr-texture-channel";
 import { useViewerChromeContrast } from "./use-viewer-chrome-contrast";
 import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
 import { ImageSequencePlayer } from "./ImageSequencePlayer";
+import { isGifDisplayName } from "./gif-player-controls";
 import {
   ViewerContextMenu,
   type ViewerContextMenuPosition,
@@ -258,7 +259,8 @@ const AssetPreviewModalContent = forwardRef<
     setVolume: setViewerVolume,
     setMuted: setViewerMuted,
   } = useViewerVolume(
-    resolution?.mediaType === "video" || resolution?.mediaType === "audio",
+    !preloadOnly &&
+      (resolution?.mediaType === "video" || resolution?.mediaType === "audio"),
   );
 
   const resolvePreview = useCallback(
@@ -932,6 +934,7 @@ const AssetPreviewModalContent = forwardRef<
     <ViewerSurface
       aria-label={t("preview.viewPage", { name: asset.displayName })}
       aria-hidden={preloadOnly || undefined}
+      inert={preloadOnly || undefined}
       className={`workspace-viewer${chromeIdle ? " is-chrome-idle" : ""}${isTextViewer ? " is-text-viewer" : ""}${isDocumentViewer ? " is-document-viewer" : ""}${preloadOnly ? " is-preview-preloading" : ""}`}
       onContextMenu={(event) => {
         if (preloadOnly || !viewerContextMenuAvailable) return;
@@ -973,10 +976,12 @@ const AssetPreviewModalContent = forwardRef<
               onRotate={rotateViewer}
               onSwipeNext={onNext}
               onSwipePrevious={onPrevious}
+              preloadOnly={preloadOnly}
               sequence={asset.sequence}
             />
           ) : ready && resolution?.mediaType === "video" && resolution.url ? (
             <VideoPlayerControls
+              autoPlay={!preloadOnly}
               key={`${asset.assetId}:${resolution.url}:${playbackRetryGeneration}`}
               displayTransform={displayTransform}
               fitRequestToken={fitRequestToken}
@@ -1039,6 +1044,7 @@ const AssetPreviewModalContent = forwardRef<
           ) : ready && resolution?.mediaType === "audio" && resolution.url ? (
             <AudioPlayerControls
               key={resolution.url}
+              autoPlay={!preloadOnly}
               keyboardShortcutsDisabled={preloadOnly}
               muted={viewerMuted}
               onError={handlePlaybackError}
@@ -1064,6 +1070,7 @@ const AssetPreviewModalContent = forwardRef<
               onFullscreen={() => void toggleFullscreen()}
               onInfoNotice={onInfoNotice}
               onPresentationReady={notifyPresentationReady}
+              preloadOnly={preloadOnly}
               sourceUrl={resolution.url}
             />
           ) : ready && resolution?.mediaType === "document" && resolution.url ? (
@@ -1074,6 +1081,7 @@ const AssetPreviewModalContent = forwardRef<
                 isFullscreen={isFullscreen}
                 key={`${libraryId}:${asset.assetId}`}
                 libraryId={libraryId}
+                keyboardShortcutsDisabled={preloadOnly}
                 onPresentationReady={notifyPresentationReady}
                 placeholderUrl={placeholderUrl}
                 sessionSignal={viewerSessionSignal}
@@ -1094,6 +1102,7 @@ const AssetPreviewModalContent = forwardRef<
               isFullscreen={isFullscreen}
               key={`${libraryId}:${asset.assetId}`}
               libraryId={libraryId}
+              keyboardShortcutsDisabled={preloadOnly}
               onPresentationReady={notifyPresentationReady}
               placeholderUrl={placeholderUrl}
               sessionSignal={viewerSessionSignal}
@@ -1129,7 +1138,9 @@ const AssetPreviewModalContent = forwardRef<
               onSwipePrevious={onPrevious}
               pbrChannel={pbrChannel}
               placeholderSrc={placeholderUrl ?? undefined}
+              isAnimated={isGifDisplayName(asset.displayName)}
               onPresentationReady={notifyPresentationReady}
+              preloadOnly={preloadOnly}
               src={imageSrc}
             />
           ) : unsupported ? (            <div className="preview-state" role="status">
@@ -1307,6 +1318,7 @@ export const AssetPreviewModal = forwardRef<
 >(function AssetPreviewModal(props, ref) {
   const { asset, ...contentProps } = props;
   const [activeAsset, setActiveAsset] = useState(asset);
+  const [promotedTargetId, setPromotedTargetId] = useState<string | null>(null);
   const latestAssetIdRef = useRef(asset.assetId);
   latestAssetIdRef.current = asset.assetId;
 
@@ -1317,33 +1329,37 @@ export const AssetPreviewModal = forwardRef<
     setActiveAsset(asset);
   }, [activeAsset.assetId, asset]);
 
-  const transitioning = activeAsset.assetId !== asset.assetId;
+  const targetIsCurrent = activeAsset.assetId === asset.assetId;
+  const targetWasPromoted =
+    !targetIsCurrent && promotedTargetId === asset.assetId;
   const promoteTarget = useCallback(() => {
     if (latestAssetIdRef.current !== asset.assetId) return;
-    setActiveAsset((current) =>
-      current.assetId === asset.assetId ? current : asset,
-    );
+    setActiveAsset(asset);
+    setPromotedTargetId(asset.assetId);
   }, [asset]);
 
   return (
     <div className="workspace-viewer-transition">
-      <AssetPreviewModalContent
-        {...contentProps}
-        asset={activeAsset}
-        key={activeAsset.assetId}
-        onPresentationReady={undefined}
-        preloadOnly={false}
-        ref={ref}
-      />
-      {transitioning ? (
+      {!targetIsCurrent && !targetWasPromoted ? (
+        <AssetPreviewModalContent
+          {...contentProps}
+          asset={activeAsset}
+          key={activeAsset.assetId}
+          onPresentationReady={undefined}
+          preloadOnly={false}
+          ref={ref}
+        />
+      ) : null}
+      {
         <AssetPreviewModalContent
           {...contentProps}
           asset={asset}
           key={asset.assetId}
-          onPresentationReady={promoteTarget}
-          preloadOnly
+          onPresentationReady={targetIsCurrent || targetWasPromoted ? undefined : promoteTarget}
+          preloadOnly={!targetIsCurrent && !targetWasPromoted}
+          ref={targetIsCurrent || targetWasPromoted ? ref : undefined}
         />
-      ) : null}
+      }
     </div>
   );
 });

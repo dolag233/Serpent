@@ -588,6 +588,54 @@ describe('OpenAIVendorAdapter Responses compatibility', () => {
     expect(calls).toBe(1);
   });
 
+  it('does not cache a structured mode when a 2xx relay returns malformed output', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    let calls = 0;
+    const mockFetch: typeof fetch = async (_input, init) => {
+      calls += 1;
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      if (calls === 1) {
+        return new Response(JSON.stringify({
+          model: 'cache-poisoning-model',
+          output_text: 'the relay ignored response_format',
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        model: 'cache-poisoning-model',
+        output_text: JSON.stringify({ tags: ['recovered'] }),
+      }), { status: 200 });
+    };
+    const endpoint = 'https://malformed-2xx.example/v1';
+    const request = {
+      displayName: 'cache-poisoning.png',
+      filename: 'cache-poisoning.png',
+      mime: 'image/png',
+      language: 'zh-CN' as const,
+      enabledFields: { description: true, tags: true, rating: true },
+      existingTagNames: [],
+      imageBase64: 'fakebase64',
+    };
+    const adapter = new OpenAIVendorAdapter(
+      'test-key',
+      'cache-poisoning-model',
+      mockFetch,
+      endpoint,
+      'openai_responses',
+    );
+
+    await expect(adapter.analyze(request)).rejects.toMatchObject({
+      kind: 'invalid_response',
+    });
+    await expect(adapter.analyze(request)).resolves.toMatchObject({
+      tags: ['recovered'],
+    });
+    expect(calls).toBe(2);
+    // The malformed first response must not cause the second request to use
+    // the plain-text cache entry.
+    expect(bodies[0]?.text).toBeDefined();
+    expect(bodies[1]?.text).toBeDefined();
+  });
+
   it('coordinates the first format probe without holding followers at the global limiter', async () => {
     const bodies: Array<Record<string, unknown>> = [];
     let structuredCalls = 0;

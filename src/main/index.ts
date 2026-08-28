@@ -4573,6 +4573,23 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       previousLibraryPaths = await closeOpenLibrariesBeforeReplacement();
     }
 
+    // Deterministic E2E seam for optimistic asset deletion. The renderer must
+    // remove the card before this real IPC/Worker request resolves; production
+    // never delays requests because this branch is gated by SERPENT_E2E.
+    if (
+      !app.isPackaged &&
+      process.env.SERPENT_E2E === "1" &&
+      command.type === "asset.trash"
+    ) {
+      const delayMs = Number.parseInt(
+        process.env.SERPENT_E2E_TRASH_DELAY_MS ?? "",
+        10,
+      );
+      if (Number.isInteger(delayMs) && delayMs > 0 && delayMs <= 10_000) {
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+
     // 测试连接（sync.probe）：单次超时后自动重试，最大重试后给出提醒
     // （用户决定 2026-08-17；传输数据本身无墙钟超时）。
     const viewerRequest = command.type === "media.get-preview-artifact" ? command : undefined;
@@ -5732,7 +5749,7 @@ async function executeMcpLibraryContextCommand(input: {
   }
   if (input.commandId === 'library.open') {
     if (selected.libraryId === '' || needsOpen) {
-      publishLifecycle({ type: 'library.opening', operation: 'open' });
+      publishLifecycle({ type: 'library.opening', operation: 'open', source: 'mcp' });
       const opened = await client.request({
         type: 'library.open',
         selectedLibraryPath: selected.libraryPath,
@@ -5817,11 +5834,15 @@ function scheduleWindowsInstallerCleanup(installerPath: string): void {
       { detached: true, stdio: "ignore", windowsHide: true },
     );
     cleanupProcess.once("error", (error) => {
-      logger?.error("app-update.cleanup", error, { artifact: outputDirectory });
+      logger?.error("app-update.cleanup", error, {
+        artifactKind: "windows-installer-cleanup",
+      });
     });
     cleanupProcess.unref();
   } catch (error) {
-    logger?.error("app-update.cleanup", error, { artifact: outputDirectory });
+    logger?.error("app-update.cleanup", error, {
+      artifactKind: "windows-installer-cleanup",
+    });
   }
 }
 

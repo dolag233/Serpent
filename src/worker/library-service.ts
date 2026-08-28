@@ -44,7 +44,7 @@ import {
 } from 'node:child_process';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 
 import BetterSqlite3 from 'better-sqlite3';
 
@@ -4410,6 +4410,9 @@ export interface LibraryServiceOptions {
   onNetworkMetadataSnapshotProgress?: (progress: NetworkMetadataSnapshotProgress) => void;
   afterSourceSnapshotCopy?: (sourcePath: string) => void;
   assetLstat?: (assetPath: string) => Stats;
+  /** Test-only seams for classifying linked-root access failures on open. */
+  linkedRootLstat?: (absoluteRootPath: string) => Stats;
+  linkedRootAccess?: (absoluteRootPath: string) => void;
   /** Test-only async fingerprint seam for proving file I/O stays outside DB transactions. */
   contentFingerprintAsync?: (assetPath: string, signal?: AbortSignal) => Promise<string>;
   beforeSourceSnapshotOpen?: (sourcePath: string) => void;
@@ -4965,6 +4968,28 @@ function sourceSnapshot(stat: BigIntStats): SourceSnapshot {
     mtimeNs: stat.mtimeNs,
     size: stat.size,
   };
+}
+
+/**
+ * A numeric filesystem device id is only meaningful on one host. Include the
+ * host and root inode identity in the persisted hint so a same-path mount on
+ * another computer, or a replaced root on the same volume, cannot silently
+ * pass the NAS safety check. Numeric hints from older libraries remain
+ * accepted as a backwards-compatible fallback.
+ */
+function sourceHostDeviceHint(device: number | bigint | string): string {
+  return `v2:${createHash('sha256')
+    .update(`${hostname()}\u0000${String(device)}`, 'utf8')
+    .digest('hex')}`;
+}
+
+function sourceDeviceHint(
+  device: number | bigint | string,
+  inode: number | bigint | string = 'unknown',
+): string {
+  return `v2:${createHash('sha256')
+    .update(`${hostname()}\u0000${String(device)}\u0000${String(inode)}`, 'utf8')
+    .digest('hex')}`;
 }
 
 function sameSourceSnapshot(left: SourceSnapshot, right: SourceSnapshot): boolean {
@@ -10904,20 +10929,80 @@ export class LibraryService {
     return targetPath;
   }
 
-  private linkedRootIsGone(absoluteRootPath: string): boolean {
+  private linkedRootAvailability(
+    absoluteRootPath: string,
+  ):
+    | {
+        available: true;
+        deviceHint: string;
+        legacyHostDeviceHint?: string;
+        legacyDeviceHint?: string;
+      }
+    | { available: false; reason: PublicErrorReason } {
+    const lstat = this.options.linkedRootLstat ?? lstatSync;
+    const access = this.options.linkedRootAccess ?? ((rootPath: string) => {
+      accessSync(rootPath, constants.R_OK | constants.X_OK);
+    });
     try {
-      const entry = lstatSync(absoluteRootPath);
-      if (entry.isSymbolicLink() || !entry.isDirectory()) return true;
+      const entry = lstat(absoluteRootPath);
+      if (entry.isSymbolicLink()) {
+        return { available: false, reason: 'SYMBOLIC_LINK_NOT_ALLOWED' };
+      }
+      if (!entry.isDirectory()) {
+        return { available: false, reason: 'UNSUPPORTED_FILE_ENTRY' };
+      }
       // Windows delete-pending: a just-removed tree can leave a directory
       // entry that lstat still sees but that rejects every access with EPERM
       // until the last open handle closes. POSIX reports ENOENT at the lstat
       // above, so only Windows needs this second check — without it the
       // refresh falls through to enumeration and crashes on the EPERM.
-      accessSync(absoluteRootPath, constants.F_OK);
-      return false;
-    } catch {
-      return true;
+      access(absoluteRootPath);
+      const device =
+        typeof entry.dev === 'number' || typeof entry.dev === 'bigint'
+          ? entry.dev
+          : 'unknown';
+      const inode =
+        typeof entry.ino === 'number' || typeof entry.ino === 'bigint'
+          ? entry.ino
+          : 'unknown';
+      return {
+        available: true,
+        deviceHint: sourceDeviceHint(device, inode),
+        ...(device === 'unknown'
+          ? {}
+          : { legacyHostDeviceHint: sourceHostDeviceHint(device) }),
+        ...(device === 'unknown' ? {} : { legacyDeviceHint: String(device) }),
+      };
+    } catch (error) {
+      const code =
+        typeof error === 'object' && error !== null && 'code' in error &&
+        typeof error.code === 'string'
+          ? error.code
+          : undefined;
+      if (code === 'ENOENT' || code === 'ENOTDIR') {
+        return { available: false, reason: 'LINKED_FOLDER_NOT_FOUND' };
+      }
+      if (code === 'EIO') {
+        return { available: false, reason: 'IO_ERROR' };
+      }
+      if (
+        code === 'ENODEV' || code === 'ESTALE' || code === 'ECONNRESET' ||
+        code === 'ENETUNREACH' || code === 'EHOSTUNREACH'
+      ) {
+        return {
+          available: false,
+          reason: 'LINKED_FOLDER_NETWORK_DISCONNECTED',
+        };
+      }
+      return {
+        available: false,
+        reason: publicReasonFromError(error) ?? 'IO_ERROR',
+      };
     }
+  }
+
+  private linkedRootIsGone(absoluteRootPath: string): boolean {
+    return !this.linkedRootAvailability(absoluteRootPath).available;
   }
 
   private linkedAssetPath(
@@ -15555,7 +15640,7 @@ export class LibraryService {
     const defaultRules = DEFAULT_LINKED_FOLDER_RULES.map((rule) => ({ ...rule, ruleId: randomUUID() }));
     const entries = this.enumerateLinkedSources(canonicalRoot, folderId, defaultRules);
     const now = new Date().toISOString();
-    const sourceDeviceHint = String(rootStat.dev);
+    const sourceDeviceHintValue = sourceDeviceHint(rootStat.dev, rootStat.ino);
 
     openLibrary.connection.transaction(() => {
       openLibrary.connection
@@ -15570,7 +15655,7 @@ export class LibraryService {
           openLibrary.summary.libraryId,
           normalizedName,
           canonicalRoot,
-          sourceDeviceHint,
+          sourceDeviceHintValue,
           pathIdentity,
           now,
           now,
@@ -15674,7 +15759,7 @@ export class LibraryService {
       .get(newPathIdentity, input.folderId);
     if (conflict) throw new LibraryServiceError('FOLDER_ALREADY_EXISTS');
 
-    const sourceDeviceHint = String(rootStat.dev);
+    const sourceDeviceHintValue = sourceDeviceHint(rootStat.dev, rootStat.ino);
     const now = new Date().toISOString();
 
     openLibrary.connection.transaction(() => {
@@ -15685,7 +15770,7 @@ export class LibraryService {
                   path_identity = ?, updated_at = ?
             WHERE folder_id = ?`,
         )
-        .run(canonicalNewRoot, sourceDeviceHint, newPathIdentity, now, input.folderId);
+        .run(canonicalNewRoot, sourceDeviceHintValue, newPathIdentity, now, input.folderId);
 
       const assets = openLibrary.connection
         .prepare(
@@ -26316,7 +26401,7 @@ export class LibraryService {
   }
 
   /**
-   * Serpent-tumv (LIB-018, progressive open): the disk-heavy post-open
+   * Serpent-tumv (LIB-018, deferred open maintenance): the disk-heavy post-open
    * reconciliation that used to run inside the synchronous library.open —
    * artifact-file sweep, expired-trash purge, and the whole Assets-directory
    * rescan. The Worker runtime starts this after the library.opened response
@@ -41213,7 +41298,7 @@ export class LibraryService {
         }
       }
     }
-    // Serpent-tumv (LIB-018, progressive open): the disk-heavy reconciliation
+    // Serpent-tumv (LIB-018, deferred open maintenance): the disk-heavy reconciliation
     // steps moved out of the synchronous open path and run in the background
     // (runOpenBackgroundReconciliation). Opening a large library used to
     // block on a full artifact-file lstat sweep + expired-trash purge + a
@@ -41231,10 +41316,34 @@ export class LibraryService {
   ): void {
     if (!networkStorage) return;
     const linkedFolders = connection
-      .prepare('SELECT absolute_root_path FROM linked_folders')
-      .all() as Array<{ absolute_root_path: string }>;
-    if (linkedFolders.some((folder) => this.linkedRootIsGone(folder.absolute_root_path))) {
-      throw new LibraryServiceError('LINKED_FOLDER_UNAVAILABLE');
+      .prepare('SELECT absolute_root_path, source_device_hint FROM linked_folders')
+      .all() as Array<{ absolute_root_path: string; source_device_hint: string | null }>;
+    for (const folder of linkedFolders) {
+      const availability = this.linkedRootAvailability(folder.absolute_root_path);
+      if (!availability.available) {
+        throw new LibraryServiceError('LINKED_FOLDER_UNAVAILABLE', {
+          reason: availability.reason,
+        });
+      }
+      // `source_device_hint` is not the catalog identity key. It is a safety
+      // signal for the case where another computer has a different volume at
+      // the same path used by the original computer.
+      // A missing hint is deliberately fail-closed. Older libraries may not
+      // have recorded the originating host/volume, and accepting the current
+      // path in that case could silently scan another computer's local folder.
+      const storedDeviceHint = folder.source_device_hint?.trim();
+      if (!storedDeviceHint) {
+        throw new LibraryServiceError('LINKED_FOLDER_UNAVAILABLE');
+      }
+      if (
+        storedDeviceHint !== availability.deviceHint &&
+        storedDeviceHint !== availability.legacyHostDeviceHint &&
+        storedDeviceHint !== availability.legacyDeviceHint
+      ) {
+        throw new LibraryServiceError('LINKED_FOLDER_UNAVAILABLE', {
+          reason: 'LINKED_FOLDER_FOREIGN_DEVICE',
+        });
+      }
     }
   }
 

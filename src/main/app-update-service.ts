@@ -801,7 +801,7 @@ export class AppUpdateService {
           await removeUpdateArtifact(downloadPath);
         } catch (error) {
           this.#options.logger?.error('app-update.cleanup', error, {
-            artifact: downloadPath,
+            artifactKind: 'download',
           });
         }
       }
@@ -809,7 +809,7 @@ export class AppUpdateService {
         await removeUpdateArtifact(extractedInstallerDirectory);
       } catch (error) {
         this.#options.logger?.error('app-update.cleanup', error, {
-          artifact: extractedInstallerDirectory,
+          artifactKind: 'extracted-installer',
         });
       }
       this.#downloadAbort = undefined;

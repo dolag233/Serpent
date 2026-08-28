@@ -7,6 +7,7 @@ import {
 } from "./i18n";
 import type { IconName } from "./Icons";
 import type { CommandPlatform } from "./commands/command-types";
+import type { ApplicationMenuCommand } from "../shared/application-menu";
 
 export const SERPENT_VERSION = packageJson.version;
 
@@ -36,6 +37,61 @@ export type MainMenuSection = {
   readonly disabled?: boolean;
   readonly onSelect?: () => void;
 };
+
+export type MainMenuCommandState = {
+  readonly command: ApplicationMenuCommand;
+  readonly enabled: boolean;
+};
+
+const APPLICATION_MENU_ITEM_COMMANDS: Readonly<Record<string, ApplicationMenuCommand>> = {
+  "edit.copy-selection": "copy-selection",
+  "edit.invert-selection": "invert-selection",
+  "file.import-files": "file.import-files",
+  "file.import-folder": "file.import-folder",
+  "file.import-linked-folder": "file.import-linked-folder",
+  "edit.undo": "edit.undo",
+  "edit.redo": "edit.redo",
+  "library.create": "library.create",
+  "library.open": "library.open",
+  "library.close": "library.close",
+  "library.remove": "library.remove",
+  "library.delete-from-disk": "library.delete-from-disk",
+  "library.import": "library.import",
+  "library.export": "library.export",
+  "library.settings": "library.settings",
+  "window.background-jobs": "window.background-jobs",
+  "window.diagnostics": "window.diagnostics",
+  "about.serpent": "about.serpent",
+  "about.github": "about.github",
+  "about.open-source": "about.open-source",
+  "about.diagnostics": "about.diagnostics",
+};
+
+/**
+ * Convert the canonical renderer menu into enabled states for macOS's native
+ * custom command items. Native roles keep their own Chromium semantics; only
+ * commands routed back into the renderer need explicit synchronization.
+ */
+export function collectMainMenuCommandStates(
+  sections: readonly MainMenuSection[],
+): MainMenuCommandState[] {
+  const states = new Map<ApplicationMenuCommand, boolean>();
+  const visit = (items: readonly MainMenuItem[], sectionEnabled: boolean) => {
+    for (const item of items) {
+      const command = APPLICATION_MENU_ITEM_COMMANDS[item.id];
+      if (command) states.set(command, sectionEnabled && !item.disabled);
+      if (item.submenu) visit(item.submenu, sectionEnabled && !item.disabled);
+    }
+  };
+  for (const section of sections) {
+    const sectionEnabled = !section.disabled;
+    if (section.id === "settings") {
+      states.set("settings", sectionEnabled);
+    }
+    visit(section.items ?? [], sectionEnabled);
+  }
+  return [...states].map(([command, enabled]) => ({ command, enabled }));
+}
 
 export type MainMenuActions = {
   readonly createLibrary: () => void;
@@ -211,10 +267,22 @@ export function buildMainMenuSections({
           onSelect: actions.openLibrary,
         },
         {
+          id: "library.close",
+          label: label(locale, "shell.closeLibrary"),
+          disabled: libraryDisabled,
+          onSelect: actions.closeLibrary,
+        },
+        {
           id: "library.import",
           label: label(locale, "toolbar.importLibrary"),
           disabled: libraryDisabled,
           onSelect: actions.importLibrary,
+        },
+        {
+          id: "library.export",
+          label: label(locale, "toolbar.exportLibrary"),
+          disabled: libraryDisabled,
+          onSelect: actions.exportLibrary,
         },
         {
           id: "library.remove",

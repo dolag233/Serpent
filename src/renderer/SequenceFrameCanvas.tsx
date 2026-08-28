@@ -16,6 +16,7 @@ interface SequenceFrameCanvasProps {
   frameIndex: number;
   frames: ImageSequenceSummary["frames"];
   libraryId: string;
+  onPresentationError?: () => void;
   onPresentationReady?: () => void;
 }
 
@@ -33,6 +34,7 @@ export function SequenceFrameCanvas({
   frameIndex,
   frames,
   libraryId,
+  onPresentationError,
   onPresentationReady,
 }: SequenceFrameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -81,7 +83,9 @@ export function SequenceFrameCanvas({
         }
       };
       image.onload = markReady;
-      image.onerror = () => undefined;
+      image.onerror = () => {
+        if (!cancelled) onPresentationError?.();
+      };
       if (!image.src) image.src = url;
       if (image.complete) markReady();
     }
@@ -96,7 +100,7 @@ export function SequenceFrameCanvas({
         }
       }
     };
-  }, [frameUrls]);
+  }, [frameUrls, onPresentationError]);
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -165,7 +169,6 @@ export function SequenceFrameCanvas({
           className="sequence-frame-canvas-fallback"
           decoding="async"
           draggable={false}
-          onLoad={() => onPresentationReady?.()}
           src={fallbackUrl}
         />
       ) : null}

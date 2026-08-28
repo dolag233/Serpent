@@ -36,6 +36,7 @@ import {
 } from "./browse-window-slots";
 import {
   useVirtualBrowseSession,
+  type VirtualBrowseSessionLocalSnapshot,
 } from "./browse/use-virtual-browse-session";
 
 const browseDiagnosticsEnabled = Boolean(
@@ -299,7 +300,7 @@ export type UseBrowsePaginationResult = {
    * an in-flight/next append cannot resurrect deleted rows and the offset
    * counters stay consistent until the deferred full reconcile re-registers.
    */
-  removeLocally: (assetIds: string[], removedCount: number) => void;
+  removeLocally: (assetIds: string[], removedCount: number) => () => void;
   /** Drop the current definition (library close / navigation to non-browse views). */
   reset: () => void;
   hasMorePages: boolean;
@@ -352,6 +353,8 @@ export function useBrowsePagination(
     getLoadedSummaryAssetIds,
     removeEntries: removeVirtualLayoutEntries,
     reset: resetVirtualBrowseSession,
+    restoreLocalState: restoreVirtualBrowseLocalState,
+    snapshotLocalState: snapshotVirtualBrowseLocalState,
   } = useVirtualBrowseSession({
     api,
     setBrowseLayout,
@@ -698,7 +701,21 @@ export function useBrowsePagination(
   );
 
   const removeLocally = useCallback(
-    (assetIds: string[], removedCount: number) => {
+    (assetIds: string[], removedCount: number): (() => void) => {
+      const generation = generationRef.current;
+      const previous = {
+        deletedIds: new Set(deletedIdsRef.current),
+        filledOffsets: new Set(filledOffsetsRef.current),
+        layout: layoutRef.current,
+        total: totalRef.current,
+        virtual: snapshotVirtualBrowseLocalState(),
+      } satisfies {
+        deletedIds: Set<string>;
+        filledOffsets: Set<number>;
+        layout: BrowseLayoutEntry[];
+        total: number;
+        virtual: VirtualBrowseSessionLocalSnapshot;
+      };
       for (const assetId of assetIds) {
         deletedIdsRef.current.add(assetId);
       }
@@ -708,11 +725,32 @@ export function useBrowsePagination(
         (entry) => !removed.has(entry.assetId),
       );
       removeVirtualLayoutEntries(assetIds, removedCount);
-      layoutRef.current = getLoadedBrowseLayout();
+      if (previous.virtual.virtualLayout) {
+        layoutRef.current = getLoadedBrowseLayout();
+      }
       setBrowseLayout(layoutRef.current);
       refreshHasMore(totalRef.current, filledOffsetsRef.current);
+      return () => {
+        if (generation !== generationRef.current) return;
+        deletedIdsRef.current = previous.deletedIds;
+        filledOffsetsRef.current = previous.filledOffsets;
+        totalRef.current = previous.total;
+        layoutRef.current = previous.layout;
+        restoreVirtualBrowseLocalState(previous.virtual);
+        setBrowseLayout(previous.layout);
+        setSearchTotal(previous.total);
+        refreshHasMore(previous.total, previous.filledOffsets);
+      };
     },
-    [getLoadedBrowseLayout, refreshHasMore, removeVirtualLayoutEntries, setBrowseLayout],
+    [
+      getLoadedBrowseLayout,
+      refreshHasMore,
+      removeVirtualLayoutEntries,
+      restoreVirtualBrowseLocalState,
+      setBrowseLayout,
+      setSearchTotal,
+      snapshotVirtualBrowseLocalState,
+    ],
   );
 
   const reset = useCallback(() => {

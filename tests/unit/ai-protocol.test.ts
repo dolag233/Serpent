@@ -4,6 +4,7 @@ import { DEFAULT_AI_ANALYSIS_SETTINGS } from '../../src/shared/ai-analysis-setti
 import {
   aiAnalysisResultSchema,
   aiStructuredOutputSchema,
+  applyAiOutputPolicy,
   parseAiAnalysisResult,
   parseAiAnalysisResultFromModelText,
 } from '../../src/worker/ai/protocol';
@@ -263,6 +264,48 @@ describe('parseAiAnalysisResult', () => {
       'm2',
     );
     expect(prose).toEqual({ tags: ['b'], modelVersion: 'm2' });
+  });
+});
+
+describe('applyAiOutputPolicy', () => {
+  it('enforces the tag count and existing-tag policy at the write boundary', () => {
+    const result = applyAiOutputPolicy(
+      {
+        modelVersion: 'provider',
+        tags: ['已有', '新增', ' 已有 ', 'x'.repeat(201)],
+      },
+      {
+        settings: {
+          ...DEFAULT_AI_ANALYSIS_SETTINGS,
+          forceExistingTags: true,
+          maxTags: 2,
+        },
+        existingTagNames: ['已有'],
+        language: 'zh-CN',
+      },
+    );
+
+    expect(result.tags).toEqual(['已有']);
+  });
+
+  it('bounds provider descriptions according to the selected language policy', () => {
+    const result = applyAiOutputPolicy(
+      {
+        modelVersion: 'provider',
+        tags: [],
+        description: '一'.repeat(200),
+      },
+      {
+        settings: {
+          ...DEFAULT_AI_ANALYSIS_SETTINGS,
+          maxDescriptionCharsZh: 20,
+        },
+        existingTagNames: [],
+        language: 'zh-CN',
+      },
+    );
+
+    expect(result.description).toHaveLength(20);
   });
 });
 
@@ -574,6 +617,123 @@ describe('OpenAIVendorAdapter', () => {
       expect.objectContaining({ type: 'json_schema' }),
       { type: 'json_object' },
     ]);
+  });
+
+  it('invalidates a cached structured mode when a relay changes capabilities', async () => {
+    const requestFormats: unknown[] = [];
+    let requestCount = 0;
+    const fetchStub: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requestFormats.push(body.response_format ?? null);
+      requestCount += 1;
+      if (requestCount === 2) {
+        return new Response('unsupported response_format json_schema', { status: 400 });
+      }
+      return new Response(
+        JSON.stringify(openAiChatResponse({ tags: [`cache-${requestCount}`] })),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const baseUrl = 'http://capability-flap-relay.local/v1';
+    const first = new OpenAIVendorAdapter(
+      'test-api-key',
+      'cache-flap-model',
+      fetchStub,
+      baseUrl,
+    );
+    await expect(first.analyze(TEST_IMAGE_REQUEST)).resolves.toMatchObject({
+      tags: ['cache-1'],
+    });
+
+    const second = new OpenAIVendorAdapter(
+      'test-api-key',
+      'cache-flap-model',
+      fetchStub,
+      baseUrl,
+    );
+    await expect(second.analyze(TEST_IMAGE_REQUEST)).resolves.toMatchObject({
+      tags: ['cache-3'],
+    });
+    await expect(new OpenAIVendorAdapter(
+      'test-api-key',
+      'cache-flap-model',
+      fetchStub,
+      baseUrl,
+    ).analyze(TEST_IMAGE_REQUEST)).resolves.toMatchObject({
+      tags: ['cache-4'],
+    });
+
+    expect(requestFormats).toEqual([
+      expect.objectContaining({ type: 'json_schema' }),
+      expect.objectContaining({ type: 'json_schema' }),
+      { type: 'json_object' },
+      { type: 'json_object' },
+    ]);
+  });
+
+  it('does not reuse a capability learned with another API key', async () => {
+    const requestFormats: unknown[] = [];
+    const fetchStub: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requestFormats.push(body.response_format ?? null);
+      return new Response(
+        JSON.stringify(openAiChatResponse({ tags: ['isolated-key'] })),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const endpoint = 'http://key-isolation-relay.local/v1';
+    await new OpenAIVendorAdapter(
+      'key-a', 'same-model', fetchStub, endpoint,
+    ).analyze(TEST_IMAGE_REQUEST);
+    await new OpenAIVendorAdapter(
+      'key-b', 'same-model', fetchStub, endpoint,
+    ).analyze(TEST_IMAGE_REQUEST);
+
+    expect(requestFormats).toHaveLength(2);
+    expect(requestFormats[0]).toMatchObject({ type: 'json_schema' });
+    expect(requestFormats[1]).toMatchObject({ type: 'json_schema' });
+  });
+
+  it('lets a concurrent follower recover when a text-only request is rejected', async () => {
+    const requestFormats: unknown[] = [];
+    let releaseLeader!: () => void;
+    let leaderStarted!: () => void;
+    const leaderGate = new Promise<void>((resolve) => { releaseLeader = resolve; });
+    const leaderStartedPromise = new Promise<void>((resolve) => { leaderStarted = resolve; });
+    const fetchStub: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requestFormats.push(body.response_format ?? null);
+      if (requestFormats.length === 1) {
+        leaderStarted();
+        await leaderGate;
+        return new Response(
+          JSON.stringify(openAiChatResponse({ tags: ['leader'] })),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (requestFormats.length === 2) {
+        return new Response('unsupported response_format text', { status: 400 });
+      }
+      return new Response(
+        JSON.stringify(openAiChatResponse({ tags: ['follower'] })),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const endpoint = 'http://concurrent-text-rejection.local/v1';
+    const leader = new OpenAIVendorAdapter(
+      'same-key', 'same-model', fetchStub, endpoint,
+    ).analyze(TEST_IMAGE_REQUEST);
+    await leaderStartedPromise;
+    const follower = new OpenAIVendorAdapter(
+      'same-key', 'same-model', fetchStub, endpoint,
+    ).analyze(TEST_IMAGE_REQUEST);
+
+    releaseLeader();
+    await expect(leader).resolves.toMatchObject({ tags: ['leader'] });
+    await expect(follower).resolves.toMatchObject({ tags: ['follower'] });
+    expect(requestFormats).toHaveLength(3);
+    expect(requestFormats[1]).toBeNull();
+    expect(requestFormats[2]).toMatchObject({ type: 'json_schema' });
   });
 
   it('only classifies explicit response-format compatibility failures', () => {

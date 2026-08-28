@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   buildMainMenuSections,
+  collectMainMenuCommandStates,
   type MainMenuActions,
 } from "../../src/renderer/main-menu-items";
 
@@ -147,7 +148,9 @@ describe("main-menu-items (Serpent-bnah)", () => {
     expect(library?.items?.map((item) => item.id)).toEqual([
       "library.create",
       "library.open",
+      "library.close",
       "library.import",
+      "library.export",
       "library.remove",
       "library.delete-from-disk",
       "library.settings",
@@ -158,6 +161,28 @@ describe("main-menu-items (Serpent-bnah)", () => {
     expect(library?.items?.find((item) => item.id === "library.delete-from-disk")?.danger).toBe(
       true,
     );
+  });
+
+  it("maps canonical custom commands to native enabled states", () => {
+    const { sections } = build({
+      state: {
+        libraryOpen: false,
+        busy: true,
+        hasUndoableOperation: false,
+        hasRedoableOperation: false,
+        hasSelectedAssets: false,
+        hasPasteTarget: false,
+        hasBrowseAssets: false,
+      },
+    });
+    const states = new Map(
+      collectMainMenuCommandStates(sections).map((state) => [state.command, state.enabled]),
+    );
+    expect(states.get("library.close")).toBe(false);
+    expect(states.get("library.open")).toBe(false);
+    expect(states.get("library.export")).toBe(false);
+    expect(states.get("settings")).toBe(false);
+    expect(states.get("window.diagnostics")).toBe(true);
   });
 
   it("does not expose a library rename menu item", () => {

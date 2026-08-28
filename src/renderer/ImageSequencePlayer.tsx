@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ImageSequenceSummary } from "../shared/asset-types";
 import type { SerpentLibraryApi } from "../shared/library-api";
@@ -18,6 +18,8 @@ export interface ImageSequencePlayerProps {
   isFullscreen: boolean;
   /** Keep preloaded navigation surfaces from capturing global shortcuts. */
   keyboardShortcutsDisabled?: boolean;
+  /** Preloaded navigation surfaces must not start sequence playback. */
+  preloadOnly?: boolean;
   libraryId: string;
   onFullscreen(): void;
   onPresentationReady?: () => void;
@@ -45,6 +47,7 @@ export function ImageSequencePlayer({
   fitRequestToken,
   onSwipeNext,
   onSwipePrevious,
+  preloadOnly = false,
   sequence,
 }: ImageSequencePlayerProps) {
   const t = useT();
@@ -57,8 +60,20 @@ export function ImageSequencePlayer({
     () => new Map(),
   );
   const [frameIndex, setFrameIndex] = useState(0);
+  // Keep the user's playback choice across a preload → visible promotion.
+  // `isPlaying` masks the state while hidden, so a promoted sequence starts
+  // with the same autoplay behavior as a directly opened sequence.
   const [playing, setPlaying] = useState(true);
-  const playingRef = useRef(true);
+  const isPlaying = !preloadOnly && playing;
+  const playingRef = useRef(isPlaying);
+  const [frameErrorAssetId, setFrameErrorAssetId] = useState<string | null>(null);
+
+  useEffect(() => {
+    // A preloaded surface must be paused immediately after its prop changes.
+    // This ref only serves imperative interval/key handling and is not render
+    // state, so syncing it here avoids a cascading state update.
+    playingRef.current = isPlaying;
+  }, [isPlaying]);
 
   const setPlayback = (nextPlaying: boolean) => {
     // Keep the imperative guard in sync before React processes the state
@@ -69,7 +84,7 @@ export function ImageSequencePlayer({
   };
 
   useEffect(() => {
-    if (!playing) return;
+    if (!isPlaying) return;
     const timer = window.setInterval(
       () => {
         setFrameIndex((current) => {
@@ -87,12 +102,17 @@ export function ImageSequencePlayer({
       1000 / Math.max(1, sequence.fps),
     );
     return () => window.clearInterval(timer);
-  }, [playing, sequence.fps, sequence.frames.length]);
+  }, [isPlaying, sequence.fps, sequence.frames.length]);
 
   const currentFrame = sequence.frames[frameIndex]!;
 
+  const reportFrameError = useCallback(() => {
+    setFrameErrorAssetId(currentFrame.assetId);
+    onPresentationReady?.();
+  }, [currentFrame.assetId, onPresentationReady]);
+
   useEffect(() => {
-    if (playing) return;
+    if (isPlaying) return;
     let cancelled = false;
     void api
       .requestPreview({
@@ -101,18 +121,25 @@ export function ImageSequencePlayer({
         mode: "client",
       })
       .then((result) => {
-        if (cancelled || !result.ok || !result.value.url) return;
+        if (cancelled) return;
+        if (!result.ok || !result.value.url) {
+          reportFrameError();
+          return;
+        }
         setResolvedUrls((current) => {
           if (current.has(currentFrame.assetId)) return current;
           const next = new Map(current);
           next.set(currentFrame.assetId, result.value.url!);
           return next;
         });
+      })
+      .catch(() => {
+        if (!cancelled) reportFrameError();
       });
     return () => {
       cancelled = true;
     };
-  }, [api, currentFrame.assetId, libraryId, playing]);
+  }, [api, currentFrame.assetId, isPlaying, libraryId, reportFrameError]);
 
   useEffect(() => {
     if (keyboardShortcutsDisabled) return;
@@ -144,7 +171,12 @@ export function ImageSequencePlayer({
 
   return (
     <div className="preview-sequence-stage">
-      {playing ? (
+      {frameErrorAssetId === currentFrame.assetId ? (
+        <div className="preview-state is-error" role="alert">
+          <strong>{t("preview.unavailable")}</strong>
+          <p>{t("preview.statusReadFailed")}</p>
+        </div>
+      ) : isPlaying ? (
         <div className="preview-sequence-play-stage">
           {thumbnailUrls.some(Boolean) ? (
             <SequenceFrameCanvas
@@ -153,6 +185,7 @@ export function ImageSequencePlayer({
               frameIndex={frameIndex}
               frames={sequence.frames}
               libraryId={libraryId}
+              onPresentationError={reportFrameError}
               onPresentationReady={onPresentationReady}
             />
           ) : (
@@ -187,10 +220,10 @@ export function ImageSequencePlayer({
           onClick={() => setPlayback(!playingRef.current)}
           type="button"
           {...iconActionAttrs(
-            playing ? t("preview.sequencePause") : t("preview.sequencePlay"),
+            isPlaying ? t("preview.sequencePause") : t("preview.sequencePlay"),
           )}
         >
-          <span aria-hidden="true">{playing ? "❚❚" : "▶"}</span>
+          <span aria-hidden="true">{isPlaying ? "❚❚" : "▶"}</span>
         </button>
         <Slider
           aria-label={t("preview.sequenceFrame")}

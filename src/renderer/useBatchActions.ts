@@ -22,8 +22,10 @@ export interface UseBatchActionsParams {
    */
   applyLocalAssetRemoval: (
     assetIds: string[],
-    options?: { removedCount?: number },
-  ) => void;
+    options?: { removedCount?: number; libraryId?: string },
+  ) => () => void;
+  /** Prevent late read/UI callbacks from an old library crossing a switch. */
+  isCurrentLibrary: (libraryId: string) => boolean;
   chooseTag: (tagId: string) => Promise<void>;
   chooseCollection: (collectionId: string, recursive?: boolean) => Promise<void>;
   clearAssetSelection: () => void;
@@ -52,6 +54,7 @@ export function useBatchActions({
   setError,
   reloadCurrentContent,
   applyLocalAssetRemoval,
+  isCurrentLibrary,
   chooseTag,
   chooseCollection,
   clearAssetSelection,
@@ -60,10 +63,11 @@ export function useBatchActions({
 }: UseBatchActionsParams): UseBatchActionsResult {
   const { locale } = useLocale();
 
-  async function refreshCollections() {
+  async function refreshCollections(libraryId?: string) {
     if (!api || !library) return;
-    const result = await api.listCollections({ libraryId: library.libraryId });
-    if (result.ok) setCollections(result.value);
+    const targetLibraryId = libraryId ?? library.libraryId;
+    const result = await api.listCollections({ libraryId: targetLibraryId });
+    if (result.ok && isCurrentLibrary(targetLibraryId)) setCollections(result.value);
   }
 
   async function batchAssignTagToSelection(tagId: string, assetIds: string[]) {
@@ -237,6 +241,7 @@ export function useBatchActions({
 
   async function trashLinkedAssets(assetIds: string[]) {
     if (!api || !library || assetIds.length === 0) return;
+    const operationLibraryId = library.libraryId;
     setUiState("loading");
     try {
       let deletedCount = 0;
@@ -278,9 +283,14 @@ export function useBatchActions({
         );
       }
       if (deletedCount > 0) {
+        if (!isCurrentLibrary(operationLibraryId)) return;
         clearAssetSelection();
-        await refreshCollections();
-        applyLocalAssetRemoval(assetIds, { removedCount: deletedCount });
+        await refreshCollections(operationLibraryId);
+        if (!isCurrentLibrary(operationLibraryId)) return;
+        applyLocalAssetRemoval(assetIds, {
+          removedCount: deletedCount,
+          libraryId: operationLibraryId,
+        });
       }
     } catch (caught) {
       setError(
@@ -297,16 +307,20 @@ export function useBatchActions({
 
   async function trashManagedAssets(assetIds: string[]) {
     if (!api || !library) return undefined;
+    const operationLibraryId = library.libraryId;
     // Serpent-a711e8: the Worker must still finish the durable trash/history
     // transaction before we report success, but the visible cards do not need
     // to wait for that round trip.  Remove them optimistically and reconcile
     // immediately if the mutation fails; otherwise large-library deletes can
     // leave the user staring at cards for several seconds.
     const optimisticallyRemoved = assetIds.length > 0;
+    let restoreLocalRemoval: (() => void) | undefined;
     setUiState("loading");
     if (optimisticallyRemoved) {
       clearAssetSelection();
-      applyLocalAssetRemoval(assetIds);
+      restoreLocalRemoval = applyLocalAssetRemoval(assetIds, {
+        libraryId: operationLibraryId,
+      });
     }
     try {
       const result = await api.trashAssets({
@@ -314,42 +328,59 @@ export function useBatchActions({
         assetIds,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      if (!isCurrentLibrary(operationLibraryId)) {
+        return result.value.historyEntryId;
+      }
       setNotice(
         translateForLocale(locale, "toast.batchTrashed", {
           count: result.value.trashedCount,
         }),
         result.value.historyEntryId,
       );
-      await refreshCollections();
+      await refreshCollections(operationLibraryId);
       // A concurrent mutation can make the durable count smaller than the
       // optimistic selection.  Re-read the current scope in that uncommon
       // case instead of leaving an under-counted view until navigation.
-      if (result.value.trashedCount !== assetIds.length) {
+      if (
+        isCurrentLibrary(operationLibraryId) &&
+        result.value.trashedCount !== assetIds.length
+      ) {
         await reloadCurrentContent();
       }
+      if (!isCurrentLibrary(operationLibraryId)) return result.value.historyEntryId;
       return result.value.historyEntryId;
     } catch (caught) {
-      if (optimisticallyRemoved) {
+      if (optimisticallyRemoved && isCurrentLibrary(operationLibraryId)) {
         // Restore cards/counts when the durable operation failed.  The
         // background reconcile scheduled by applyLocalAssetRemoval is safe to
         // leave in place and will converge the view once more.
-        await reloadCurrentContent().catch(() => undefined);
+        try {
+          await reloadCurrentContent();
+        } catch {
+          // A failed reload must not leave the optimistic removal silently in
+          // place. Restore the exact pre-delete snapshot and surface both
+          // failures so the user knows the view is authoritative again.
+          restoreLocalRemoval?.();
+        }
       }
-      setError(
-        toMessage(
-          caught,
-          translateForLocale(locale, "toast.batchDeleteFailed"),
-          locale,
-        ),
-      );
+      if (isCurrentLibrary(operationLibraryId)) {
+        setError(
+          toMessage(
+            caught,
+            translateForLocale(locale, "toast.batchDeleteFailed"),
+            locale,
+          ),
+        );
+      }
       return undefined;
     } finally {
-      setUiState("ready");
+      if (isCurrentLibrary(operationLibraryId)) setUiState("ready");
     }
   }
 
   async function deleteManagedAssetsFromDisk(assetIds: string[]) {
     if (!api || !library || assetIds.length === 0) return;
+    const operationLibraryId = library.libraryId;
     setUiState("loading");
     try {
       const result = await api.deleteAssetsFromDisk({
@@ -362,10 +393,12 @@ export function useBatchActions({
           count: result.value.deletedCount,
         }),
       );
-      await refreshCollections();
+      await refreshCollections(operationLibraryId);
+      if (!isCurrentLibrary(operationLibraryId)) return;
       clearAssetSelection();
       applyLocalAssetRemoval(assetIds, {
         removedCount: result.value.deletedCount,
+        libraryId: operationLibraryId,
       });
     } catch (caught) {
       setError(

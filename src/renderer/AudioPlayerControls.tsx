@@ -37,6 +37,8 @@ import { applyViewerVolumeToMedia } from "./viewer-volume-preferences";
 export interface AudioPlayerControlsProps {
   /** Keep preloaded navigation surfaces from capturing global shortcuts. */
   keyboardShortcutsDisabled?: boolean;
+  /** Preloaded audio must decode without starting playback or producing sound. */
+  autoPlay?: boolean;
   muted: boolean;
   onError(event: SyntheticEvent<HTMLAudioElement>): void;
   onMutedChange(muted: boolean): void;
@@ -59,6 +61,7 @@ const SCRUB_STEP_SECONDS = 5;
  * faster rate → longer trail span).
  */
 export function AudioPlayerControls({
+  autoPlay = true,
   keyboardShortcutsDisabled = false,
   muted,
   onError,
@@ -317,7 +320,7 @@ export function AudioPlayerControls({
         />
       </div>
       <audio
-        autoPlay
+        autoPlay={autoPlay}
         className="preview-audio"
         onDurationChange={(event) =>
           setDuration(event.currentTarget.duration || 0)
