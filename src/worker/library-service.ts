@@ -25336,7 +25336,11 @@ export class LibraryService {
 
     if (input.scope?.kind === 'folder') {
       if (input.scope.folderId === null) {
-        whereParts.push(`a.location_kind = 'managed' AND a.managed_folder_id IS NULL`);
+        whereParts.push(
+          input.scope.recursive
+            ? `a.location_kind = 'managed'`
+            : `a.location_kind = 'managed' AND a.managed_folder_id IS NULL`,
+        );
       } else {
         const folderId = input.scope.folderId;
         const managed = connection

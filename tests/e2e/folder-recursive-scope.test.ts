@@ -180,19 +180,26 @@ test("folder browse stays direct until include-subfolders is checked", async () 
     await expect(parentCard).toHaveCount(0, { timeout: 15_000 });
     await expect(childCard).toHaveCount(0);
 
-    // Explicit switch: include descendants for browse + search.
+    // Text search is recursive even while ordinary browsing remains direct.
+    // There is no explicit search button — submitting the form runs the query.
+    await window.getByLabel("搜索资源库").fill("child-note");
+    await window.getByLabel("搜索资源库").press("Enter");
+    await expect(includeSubfolders).toHaveAttribute("aria-pressed", "false");
+    await expect(childCard).toBeVisible({ timeout: 15_000 });
+    await expect(parentCard).toHaveCount(0);
+
+    // Clearing the term restores the parent's ordinary non-recursive browse.
+    await window.getByLabel("搜索资源库").fill("");
+    await window.getByLabel("搜索资源库").press("Enter");
+    await expect(childCard).toHaveCount(0, { timeout: 15_000 });
+    await expect(parentCard).toHaveCount(0);
+
+    // The explicit switch continues to control descendant inclusion when no
+    // text search is active.
     await includeSubfolders.click();
     await expect(includeSubfolders).toHaveAttribute("aria-pressed", "true");
     await expect(parentCard).toBeVisible({ timeout: 15_000 });
     await expect(childCard).toBeVisible({ timeout: 15_000 });
-
-    // REQ-FILTER-012: searching while scoped to 父文件夹 with include on
-    // recurses into descendant folders. There is no explicit search button —
-    // submitting the search form (Enter) runs the query.
-    await window.getByLabel("搜索资源库").fill("child-note");
-    await window.getByLabel("搜索资源库").press("Enter");
-    await expect(childCard).toBeVisible({ timeout: 15_000 });
-    await expect(parentCard).toHaveCount(0);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { recursive: true, force: true });
