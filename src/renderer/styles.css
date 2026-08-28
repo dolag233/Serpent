@@ -1828,7 +1828,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 
 /* CU-D9: deep/long folder, collection, and smart-collection names ellipsize
    instead of wrapping and inflating row height. Depth indent stays on the
-   button padding; disclosure stays outside .nav-row. */
+   tree row so the disclosure and content advance together. */
 .nav-row-label {
   min-width: 0;
   overflow: hidden;

@@ -217,8 +217,14 @@ describe("NavigationSidebar virtual library root", () => {
     );
     expect(parentFolderRow?.title).toBe(parentFolderName);
     expect(childFolderRow?.title).toBe(childFolderName);
-    expect(parentFolderRow?.style.paddingLeft).toBe("21px");
-    expect(childFolderRow?.style.paddingLeft).toBe("35px");
+    expect(parentFolderRow?.style.paddingLeft).toBe("7px");
+    expect(childFolderRow?.style.paddingLeft).toBe("7px");
+    expect(parentFolderRow?.closest<HTMLElement>(".nav-tree-row")?.style.paddingLeft).toBe(
+      "14px",
+    );
+    expect(childFolderRow?.closest<HTMLElement>(".nav-tree-row")?.style.paddingLeft).toBe(
+      "28px",
+    );
     expect(
       parentFolderRow?.closest(".nav-tree-row")?.querySelector(".nav-disclosure"),
     ).not.toBeNull();
@@ -243,7 +249,13 @@ describe("NavigationSidebar virtual library root", () => {
     expect(parentCollectionRow?.title).toBe(parentCollectionName);
     expect(childCollectionRow?.title).toBe(childCollectionName);
     expect(parentCollectionRow?.style.paddingLeft).toBe("7px");
-    expect(childCollectionRow?.style.paddingLeft).toBe("21px");
+    expect(childCollectionRow?.style.paddingLeft).toBe("7px");
+    expect(
+      parentCollectionRow?.closest<HTMLElement>(".nav-tree-row")?.style.paddingLeft,
+    ).toBe("0px");
+    expect(
+      childCollectionRow?.closest<HTMLElement>(".nav-tree-row")?.style.paddingLeft,
+    ).toBe("14px");
     expect(parentCollectionRow?.classList.contains("is-active")).toBe(false);
     expect(childCollectionRow?.classList.contains("is-active")).toBe(true);
     expect(parentCollectionRow?.querySelectorAll(".nav-count")).toHaveLength(1);
