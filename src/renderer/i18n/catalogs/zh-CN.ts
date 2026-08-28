@@ -1103,7 +1103,7 @@ export const zhCN = {
     categoryAssets: "资产",
     categoryAppearance: "外观",
     categoryBrowse: "浏览",
-    categoryAi: "AI",
+    categoryAi: "AI分析",
     categoryMcp: "MCP",
     categoryPlugins: "插件",
     categoryPluginSettings: "插件设置",

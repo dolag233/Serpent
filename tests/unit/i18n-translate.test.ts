@@ -38,6 +38,8 @@ describe('i18n translate', () => {
   it('creates locale-aware translators from catalogs', () => {
     const zh = createTranslator(catalogs['zh-CN']);
     const en = createTranslator(catalogs.en, catalogs['zh-CN']);
+    expect(zh('settings.categoryAi')).toBe('AI分析');
+    expect(en('settings.categoryAi')).toBe('AI Analysis');
     expect(zh('shell.libraryMenu')).toBe('资源库菜单');
     expect(zh('shell.networkStorageNotice')).toContain('网络共享');
     expect(en('shell.libraryMenu')).toBe('Library menu');

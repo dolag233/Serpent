@@ -1119,7 +1119,7 @@ export const en = {
     categoryAssets: "Assets",
     categoryAppearance: "Appearance",
     categoryBrowse: "Browse",
-    categoryAi: "AI",
+    categoryAi: "AI Analysis",
     categoryMcp: "MCP",
     categoryPlugins: "Plugins",
     categoryPluginSettings: "Plugin settings",
