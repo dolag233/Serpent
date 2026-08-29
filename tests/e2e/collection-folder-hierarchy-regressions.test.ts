@@ -1,6 +1,12 @@
 import { _electron as electron, expect, test, type Page } from "@playwright/test";
 
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -8,7 +14,11 @@ import { resolveElectronExecutablePath } from "./electron-test-helpers";
 
 test.describe.configure({ timeout: 120_000 });
 
-function launchApp(temporaryRoot: string, libraryPath: string) {
+function launchApp(
+  temporaryRoot: string,
+  libraryPath: string,
+  importFiles?: string,
+) {
   const applicationDirectory =
     process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
   return electron.launch({
@@ -21,6 +31,7 @@ function launchApp(temporaryRoot: string, libraryPath: string) {
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
       SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, "user-data"),
+      ...(importFiles ? { SERPENT_E2E_IMPORT_FILES: importFiles } : {}),
     },
   });
 }
@@ -167,6 +178,51 @@ test("renames a parent collection and parent folder without losing children", as
     expect(
       existsSync(path.join(libraryPath, "Assets", "文件夹A-重命名", "文件夹B")),
     ).toBe(true);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("drops an asset into a nested collection and persists membership", async () => {
+  const temporaryRoot = mkdtempSync(
+    path.join(tmpdir(), "serpent-nested-collection-drop-"),
+  );
+  const libraryName = "Nested Collection Drop";
+  const libraryPath = path.join(temporaryRoot, libraryName);
+  const sourceRoot = path.join(temporaryRoot, "sources");
+  mkdirSync(sourceRoot);
+  const sourcePath = path.join(sourceRoot, "nested-drop.txt");
+  writeFileSync(sourcePath, "nested drop");
+  const application = await launchApp(temporaryRoot, libraryPath, sourcePath);
+
+  try {
+    const window = await application.firstWindow();
+    await createLibrary(window, libraryName);
+    await createCollection(window, "合集A");
+    await createCollection(window, "子合集B", "合集A");
+    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "导入文件", exact: true }).first().click();
+    const sourceAsset = window.locator(
+      '.asset-card[title="nested-drop.txt"]',
+    );
+    await expect(sourceAsset).toBeVisible({ timeout: 15_000 });
+
+    const child = collectionRow(window, "子合集B");
+    await expect(child).toBeVisible();
+    await sourceAsset.dragTo(child);
+    await expect(window.locator(".workspace-notice")).toContainText(
+      "加入合集",
+      { timeout: 15_000 },
+    );
+
+    await child.click();
+    await expect(window.locator(".scope-crumb-label.is-current")).toContainText(
+      "子合集B",
+    );
+    await expect(
+      window.locator('.asset-card[title="nested-drop.txt"]'),
+    ).toBeVisible({ timeout: 15_000 });
   } finally {
     await application.close();
     rmSync(temporaryRoot, { recursive: true, force: true });

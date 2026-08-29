@@ -26,10 +26,21 @@ function dispatchDragEvent(
   element: Element,
   type: "dragenter" | "dragover",
   dataTransfer: DataTransfer,
-): void {
+): Event {
   const event = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
   element.dispatchEvent(event);
+  return event;
+}
+
+function dispatchDropEvent(
+  element: Element,
+  dataTransfer: DataTransfer,
+): Event {
+  const event = new Event("drop", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+  element.dispatchEvent(event);
+  return event;
 }
 
 function createNavigationProps(
@@ -449,12 +460,17 @@ describe("NavigationSidebar virtual library root", () => {
       assetCount: 0,
       childCollectionCount: 0,
     };
+    const onAssetsDroppedOnCollection = vi.fn();
+    const onResolveManagedAssetDrop = vi.fn(async () => ["asset-1"]);
     const props = createNavigationProps({
       collections: [parent, child],
       collectionTree: new Map([
         [null, [parent]],
         [parent.collectionId, [child]],
       ]),
+      onExternalDragOver: (event) => event.preventDefault(),
+      onAssetsDroppedOnCollection,
+      onResolveManagedAssetDrop,
     });
     container = document.createElement("div");
     document.body.append(container);
@@ -481,11 +497,38 @@ describe("NavigationSidebar virtual library root", () => {
 
     for (const types of [["Files"], ["application/x-serpent-managed-assets"]]) {
       await act(async () => {
-        dispatchDragEvent(childRow!, "dragover", createDragTransfer(types));
+        const dragOver = dispatchDragEvent(
+          childRow!,
+          "dragover",
+          createDragTransfer(types),
+        );
+        if (types[0] === "Files") {
+          expect(dragOver.defaultPrevented).toBe(true);
+        }
       });
 
       expect(childRow?.classList.contains("is-drop-target")).toBe(true);
       expect(parentRow?.classList.contains("is-drop-target")).toBe(false);
     }
+
+    const nativeFileTransfer = {
+      ...createDragTransfer(["Files"]),
+      files: [new File(["asset"], "asset.png")],
+    } as unknown as DataTransfer;
+    let dropEvent: Event | undefined;
+    await act(async () => {
+      dropEvent = dispatchDropEvent(childRow!, nativeFileTransfer);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(dropEvent?.defaultPrevented).toBe(true);
+    expect(onResolveManagedAssetDrop).toHaveBeenCalledWith(
+      nativeFileTransfer.files,
+    );
+    expect(onAssetsDroppedOnCollection).toHaveBeenCalledWith(
+      child.collectionId,
+      ["asset-1"],
+      "move",
+    );
   });
 });

@@ -46,8 +46,8 @@
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `Serpent-520839` | 父合集含子合集时重命名 | 待人类验收 | 创建合集 A，在 A 下创建子合集 B；右键 A →「重命名合集」，改名后再进入 A/B；可选执行一次撤销/重做 | A 重命名成功；B 仍可见且仍属于 A；子树不会丢失；撤销/重做不报“目标合集已不存在” | [开发日志](../development/2026-08-29-collection-hierarchy-regression-development-log.md) / `src/worker/library-service.ts` / `tests/worker/organization.test.ts` / `tests/e2e/collection-folder-hierarchy-regressions.test.ts` | 自动化 macOS Electron 已通过；Windows、packaged 与用户人工验收未执行 |
-| `Serpent-50f2e3` | 资产拖到子合集时高亮实际目标 | 待人类验收 | 创建父合集 A 和子合集 B；从资产卡片拖到 B，观察侧栏高亮；再测试拖到文件夹和父合集 | 仅 B 高亮，A 不抢占；拖到文件夹/父合集仍正常；完成放置后目标正确 | [开发日志](../development/2026-08-29-collection-hierarchy-regression-development-log.md) / `src/renderer/NavigationSidebar.tsx` / `tests/unit/navigation-sidebar.test.ts` | 侧栏单测已覆盖嵌套事件回归；Finder/Explorer 原生拖拽、Windows、packaged 与用户人工验收未执行 |
+| `Serpent-520839` | 父合集含子合集时重命名 | 人类验收通过 | 创建合集 A，在 A 下创建子合集 B；右键 A →「重命名合集」，改名后再进入 A/B；可选执行一次撤销/重做 | A 重命名成功；B 仍可见且仍属于 A；子树不会丢失；撤销/重做不报“目标合集已不存在” | [开发日志](../development/2026-08-29-collection-hierarchy-regression-development-log.md) / `src/worker/library-service.ts` / `tests/worker/organization.test.ts` / `tests/e2e/collection-folder-hierarchy-regressions.test.ts` | 2026-08-29 用户验收通过。自动化 macOS Electron 已通过；Windows、packaged 未执行。 |
+| `Serpent-50f2e3` | 资产拖到子合集时高亮实际目标并完成放置 | 人类验收通过 | 创建父合集 A 和子合集 B；从资产卡片拖到 B，观察侧栏高亮并确认资产进入 B；再测试拖到文件夹和父合集 | 仅 B 高亮，A 不抢占；拖到文件夹/父合集仍正常；完成放置后资产确实成为 B 的成员 | [开发日志](../development/2026-08-29-collection-hierarchy-regression-development-log.md) / `src/renderer/NavigationSidebar.tsx` / `tests/unit/navigation-sidebar.test.ts` / `tests/e2e/collection-folder-hierarchy-regressions.test.ts` | 2026-08-29 用户复验通过：子合集可实际接收资产，重新进入后成员关系保留。此前“高亮通过但无法放置”的反馈已修复并纳入复盘。Finder/Explorer 原生拖拽、Windows、packaged 未执行。 |
 
 ### 2026-08-27 导入 ZIP 后卡片损坏
 

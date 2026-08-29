@@ -1435,6 +1435,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
               } else if (supportsExternalImportTransfer(event.dataTransfer)) {
                 event.stopPropagation();
                 setAssetDropTarget(`collection:${c.collectionId}`);
+                // Native Electron asset drags arrive as Files. The child row
+                // owns the event so the parent collection cannot steal the
+                // highlight, therefore it must also accept the drop here.
+                onExternalDragOver(event);
               }
             }}
             onDrop={(event) => {
