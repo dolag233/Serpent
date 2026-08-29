@@ -18,6 +18,7 @@ import {
   estimateMasonryCardBodyPx,
   layoutMasonryAssetRects,
   masonryColumnWidthPx,
+  overlayLiveAssetGeometry,
   publishCanvasAssetLayout,
   stackItemHeights,
 } from "./canvas-asset-layout";
@@ -219,11 +220,14 @@ function RegularMasonryColumns({
       })),
     [assets],
   );
-  const layoutEntries = layout.length > 0 ? layout : fallbackLayout;
   const assetById = useMemo(
     () => new Map(assets.map((asset) => [asset.assetId, asset])),
     [assets],
   );
+  const layoutEntries = useMemo(() => {
+    const source = layout.length > 0 ? layout : fallbackLayout;
+    return overlayLiveAssetGeometry(source, assetById);
+  }, [assetById, fallbackLayout, layout]);
   const rankByAssetId = useMemo(
     () => new Map(layoutEntries.map((entry, index) => [entry.assetId, index] as const)),
     [layoutEntries],

@@ -1375,6 +1375,16 @@ function scheduleSecondaryMediaQueue(
               assetId: event.assetId,
               kind: event.kind,
             });
+            if (event.width && event.height) {
+              parentPort?.postMessage({
+                type: 'asset.dimensions.ready',
+                libraryId,
+                assetId: event.assetId,
+                width: event.width,
+                height: event.height,
+                ...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
+              });
+            }
           },
         });
       let processed = await runSecondaryJobs(

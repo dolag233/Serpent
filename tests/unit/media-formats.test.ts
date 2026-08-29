@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  artifactProtocolMimeForExtension,
   directImageMimeForExtension,
   imageDecoderForExtension,
   imageViewerDecoderForExtension,
   imageMimeForExtension,
+  isChromiumDirectPlayVideoExtension,
   isRawImageExtension,
   isSupportedImageExtension,
   isSupportedModelExtension,
@@ -49,6 +51,25 @@ describe('media format registry', () => {
       expect(videoMimeForExtension(extension)).toMatch(/^video\//);
     }
     expect(isSupportedVideoExtension('clip.mpeg')).toBe(false);
+  });
+
+  it('treats only Chromium-playable containers as viewer source-first', () => {
+    expect(isChromiumDirectPlayVideoExtension('clip.mp4')).toBe(true);
+    expect(isChromiumDirectPlayVideoExtension('.webm')).toBe(true);
+    expect(isChromiumDirectPlayVideoExtension('.m4v')).toBe(true);
+    expect(isChromiumDirectPlayVideoExtension('clip.MOV')).toBe(false);
+    expect(isChromiumDirectPlayVideoExtension('.avi')).toBe(false);
+    expect(isChromiumDirectPlayVideoExtension('.wmv')).toBe(false);
+    expect(isChromiumDirectPlayVideoExtension('.mkv')).toBe(false);
+  });
+
+  it('serves H.264 playback proxies as video/mp4 over serpent://', () => {
+    expect(artifactProtocolMimeForExtension('proxy.mp4')).toBe('video/mp4');
+    expect(artifactProtocolMimeForExtension('.MP4')).toBe('video/mp4');
+    expect(artifactProtocolMimeForExtension('.webm')).toBe('video/webm');
+    expect(artifactProtocolMimeForExtension('.webp')).toBe('image/webp');
+    expect(artifactProtocolMimeForExtension('.ogg')).toBe('audio/ogg');
+    expect(artifactProtocolMimeForExtension('.bin')).toBe('application/octet-stream');
   });
 
   it('serves SVG viewers from the original vector source', () => {

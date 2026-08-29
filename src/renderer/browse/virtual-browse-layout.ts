@@ -133,6 +133,27 @@ function mergeLayoutEntries(
   };
 }
 
+/** Live dimension patches (video ffprobe, image header) must bump geometry. */
+export function patchVirtualLayoutGeometry(
+  current: VirtualBrowseLayout,
+  patches: ReadonlyMap<string, { width: number; height: number }>,
+): VirtualBrowseLayout {
+  if (patches.size === 0) return current;
+  const updates: Array<{ index: number; entry: BrowseLayoutEntry }> = [];
+  for (const [assetId, size] of patches) {
+    const index = current.indexByAssetId.get(assetId);
+    if (index === undefined) continue;
+    const previous = current.entries.get(index);
+    if (!previous) continue;
+    if (previous.width === size.width && previous.height === size.height) continue;
+    updates.push({
+      index,
+      entry: { ...previous, width: size.width, height: size.height },
+    });
+  }
+  return mergeLayoutEntries(current, updates);
+}
+
 export function createVirtualBrowseLayout(input: {
   total: number;
   firstPage: { items: readonly AssetSummary[]; offset: number };

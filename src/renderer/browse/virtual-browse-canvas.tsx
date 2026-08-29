@@ -69,6 +69,8 @@ function virtualJustifiedSlotStyle(input: {
  * overflow must not grow the row, or loadImmediately offsets drift above the
  * real viewport and the top visible cards lose their thumbnails
  * (Serpent-614293). Masonry already does this with an explicit slot height.
+ * Do not clip overflow here: the selection ring is an outward 2px box-shadow
+ * that must paint into the 14px row gap (REQ-SELECT-003 / Serpent-ebff32).
  */
 export function virtualJustifiedRowStyle(input: {
   bodyHeightPx: number;
@@ -77,7 +79,7 @@ export function virtualJustifiedRowStyle(input: {
   return {
     height: Math.max(1, Math.round(input.bodyHeightPx)),
     flexShrink: 0,
-    overflow: "hidden",
+    overflow: "visible",
     marginBottom: input.isLast ? undefined : ASSET_GRID_GAP_PX,
   };
 }

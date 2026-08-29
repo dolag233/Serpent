@@ -1,0 +1,13 @@
+{
+  "version": "0.1.4",
+  "date": "2026-08-28",
+  "changelog": [
+    {
+      "zhCN": "修复资源库打开与媒体预览稳定性。",
+      "en": "Improve library-open and media-preview stability."
+    }
+  ],
+  "changelogUrl": "https://github.com/dolag233/Serpent/releases/tag/v0.1.4",
+  "downloadUrl": "https://github.com/dolag233/Serpent/releases/tag/v0.1.4",
+  "mandatory": false
+}

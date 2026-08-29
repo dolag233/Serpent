@@ -139,6 +139,26 @@ export function useAssetCardHoverPreview(input: {
     resolutionsByAssetId,
   ]);
 
+  useEffect(() => {
+    if (!api || !libraryId) return;
+    return api.onThumbnailEvent((event) => {
+      if (event.libraryId !== libraryId) return;
+      if (
+        event.type !== "asset.derived.ready" ||
+        event.kind !== "generate_webm_proxy"
+      ) {
+        return;
+      }
+      setResolutionsByAssetId((previous) => {
+        const key = resolutionKey(libraryId, event.assetId);
+        if (!previous.has(key)) return previous;
+        const next = new Map(previous);
+        next.delete(key);
+        return next;
+      });
+    });
+  }, [api, libraryId]);
+
   useEffect(
     () => () => {
       requestSeqRef.current += 1;

@@ -9266,6 +9266,10 @@ select.ai-config-input.ai-config-languages {
      boxes (Serpent-5p45). */
   align-items: flex-start;
   gap: 14px;
+  /* Selection ring is an outward box-shadow; clipping the row turns the
+     left edge into a thick bar that ignores border-radius (Serpent-ebff32).
+     Row height is locked in virtualJustifiedRowStyle instead. */
+  overflow: visible;
 }
 
 .justified-card-slot {

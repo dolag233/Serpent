@@ -125,7 +125,7 @@ describe("virtual browse canvas geometry", () => {
     const style = virtualJustifiedRowStyle({ bodyHeightPx: 258, isLast: false });
     expect(style.height).toBe(258);
     expect(style.flexShrink).toBe(0);
-    expect(style.overflow).toBe("hidden");
+    expect(style.overflow).toBe("visible");
     expect(style.marginBottom).toBe(14);
     expect(virtualJustifiedRowStyle({ bodyHeightPx: 258, isLast: true }).marginBottom)
       .toBeUndefined();

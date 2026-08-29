@@ -8,6 +8,7 @@ import {
   layoutMasonryAssetRects,
   MASONRY_CAPTION_BAND_PX,
   MASONRY_DIMENSIONS_CAPTION_BAND_PX,
+  overlayLiveAssetGeometry,
   stackItemHeights,
 } from "../../src/renderer/canvas-asset-layout";
 
@@ -100,5 +101,22 @@ describe("canvas asset layout", () => {
 
   it("keeps trailing gap out of the last stacked item", () => {
     expect(stackItemHeights([100, 100, 100])).toEqual([114, 114, 100]);
+  });
+
+  it("overlays live asset dimensions onto a stale browse-layout snapshot (Serpent-9c9f97)", () => {
+    const layout = [
+      { assetId: "video", width: null, height: null },
+      { assetId: "still", width: 800, height: 600 },
+    ];
+    const assets = new Map([
+      ["video", { width: 1920, height: 1080 }],
+      ["still", { width: 800, height: 600 }],
+    ]);
+    const next = overlayLiveAssetGeometry(layout, assets);
+    expect(next).not.toBe(layout);
+    expect(next[0]).toMatchObject({ assetId: "video", width: 1920, height: 1080 });
+    expect(next[1]).toBe(layout[1]);
+    expect(overlayLiveAssetGeometry(layout, new Map([["still", { width: 800, height: 600 }]])))
+      .toBe(layout);
   });
 });

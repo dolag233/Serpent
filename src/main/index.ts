@@ -47,6 +47,7 @@ import { forwardViewerVideoShortcut } from "./viewer-video-shortcut-forward";
 import { forwardBrowseShortcut } from "./browse-shortcut-forward";
 import { setWindowsBrowseShortcutAcceleratorsEnabled } from "./viewer-video-shortcut-menu";
 import { matchBrowseKeyboardShortcut } from "../shared/browse-keyboard-shortcuts";
+import { artifactProtocolMimeForExtension } from "../shared/media-formats";
 import {
   selectImportSources as selectImportSourcesDialog,
   selectLibraryDirectory,
@@ -7487,25 +7488,7 @@ async function startApplication(): Promise<void> {
         url.hostname,
       );
       const ext = path.extname(absoluteArtifactPath).toLowerCase();
-      const mimeMap: Record<string, string> = {
-        ".webp": "image/webp",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".jfif": "image/jpeg",
-        ".png": "image/png",
-        ".gif": "image/gif",
-        ".webm": "video/webm",
-        ".json": "application/json",
-        ".wav": "audio/wav",
-        ".mp3": "audio/mpeg",
-        ".ogg": "audio/ogg",
-        ".oga": "audio/ogg",
-        ".m4a": "audio/mp4",
-        ".aac": "audio/aac",
-        ".flac": "audio/flac",
-        ".opus": "audio/ogg",
-      };
-      const mimeType = mimeMap[ext] ?? "application/octet-stream";
+      const mimeType = artifactProtocolMimeForExtension(ext);
 
       if (isLibraryMediaReadBlocked(libraryId)) {
         return new Response("Library unavailable", { status: 410 });

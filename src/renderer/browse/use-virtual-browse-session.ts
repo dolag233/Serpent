@@ -15,6 +15,7 @@ import {
   materializeVirtualLoadedEntries,
   mergeVirtualGeometryBlock,
   mergeVirtualSummaryPage,
+  patchVirtualLayoutGeometry,
   removeVirtualLayoutEntries,
   virtualSummaryAssetIds,
   type VirtualBrowseLayout,
@@ -327,6 +328,20 @@ export function useVirtualBrowseSession({
 
   const isVirtualized = useCallback(() => sessionRef.current?.virtualized === true, []);
 
+  const applyGeometryPatches = useCallback((
+    patches: ReadonlyMap<string, { width: number; height: number }>,
+  ) => {
+    if (patches.size === 0) return;
+    const current = virtualLayoutRef.current;
+    if (!current || sessionRef.current?.virtualized !== true) return;
+    const next = patchVirtualLayoutGeometry(current, patches);
+    if (next === current) return;
+    virtualLayoutRef.current = next;
+    layoutRef.current = materializeVirtualLoadedEntries(next);
+    setVirtualBrowseLayout(next);
+    setBrowseLayout(layoutRef.current);
+  }, [setBrowseLayout, setVirtualBrowseLayout]);
+
   const reset = useCallback(() => {
     sessionRef.current = null;
     cacheRef.current.clear();
@@ -348,6 +363,7 @@ export function useVirtualBrowseSession({
     restoreLocalState,
     getLoadedSummaryAssetIds,
     removeEntries,
+    applyGeometryPatches,
     isVirtualized,
     reset,
   };

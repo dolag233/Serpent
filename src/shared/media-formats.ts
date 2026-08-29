@@ -34,6 +34,13 @@ export const VIDEO_EXTENSIONS = [
 ] as const;
 
 /**
+ * Containers Chromium can typically play from the original file in the viewer
+ * (REQ-VIEW-002). Other video containers still use a ready playback proxy
+ * instead of remounting an unplayable source after the proxy already exists.
+ */
+export const CHROMIUM_DIRECT_PLAY_VIDEO_EXTENSIONS = ['.mp4', '.webm', '.m4v'] as const;
+
+/**
  * T1 3D formats (slice 0030, decision #3): FBX / OBJ(MTL) / glTF / GLB / STL.
  * Registration means Serpent owns a preview path for these; actual rendering
  * (viewer + offscreen thumbnails) lands in later slices (C / E).
@@ -57,8 +64,19 @@ const oiioExtensions = new Set<string>([
 ]);
 const imageExtensions = new Set<string>(IMAGE_EXTENSIONS);
 const videoExtensions = new Set<string>(VIDEO_EXTENSIONS);
+const chromiumDirectPlayVideoExtensions = new Set<string>(CHROMIUM_DIRECT_PLAY_VIDEO_EXTENSIONS);
 const modelExtensions = new Set<string>(MODEL_EXTENSIONS);
 const documentExtensions = new Set<string>(DOCUMENT_EXTENSIONS);
+const audioProtocolMimeByExtension: Record<string, string> = {
+  '.wav': 'audio/wav',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.oga': 'audio/ogg',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.flac': 'audio/flac',
+  '.opus': 'audio/ogg',
+};
 
 function normalizedExtension(extensionOrFilename: string): string {
   const lower = extensionOrFilename.toLowerCase();
@@ -76,6 +94,23 @@ export function isSupportedImageExtension(extensionOrFilename: string): boolean 
 
 export function isSupportedVideoExtension(extensionOrFilename: string): boolean {
   return videoExtensions.has(normalizedExtension(extensionOrFilename));
+}
+
+export function isChromiumDirectPlayVideoExtension(extensionOrFilename: string): boolean {
+  return chromiumDirectPlayVideoExtensions.has(normalizedExtension(extensionOrFilename));
+}
+
+/**
+ * MIME type for bytes served over `serpent://preview` / `serpent://proxy`.
+ * H.264 playback proxies are `.mp4`; missing that mapping used to emit
+ * `application/octet-stream`, which Chromium will not decode.
+ */
+export function artifactProtocolMimeForExtension(extensionOrFilename: string): string {
+  const extension = normalizedExtension(extensionOrFilename);
+  return imageMimeForExtension(extension)
+    ?? videoMimeForExtension(extension)
+    ?? audioProtocolMimeByExtension[extension]
+    ?? (extension === '.json' ? 'application/json' : 'application/octet-stream');
 }
 
 export function isSupportedModelExtension(extensionOrFilename: string): boolean {
