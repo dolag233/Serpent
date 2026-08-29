@@ -1658,6 +1658,8 @@ export const zhCN = {
     openingLibrary: "正在打开资源库：{name}",
     openingLibraryNamed: "正在打开“{name}”资源库",
     openingLibraryGeneric: "正在打开资源库",
+    deletingLibraryNamed: "正在删除“{name}”资源库",
+    deletingLibraryGeneric: "正在删除资源库",
     switchLibraryWhileLoading: "切换资源库",
     validatingEagleLibrary: "正在打开 Eagle 资源库…",
     validatingBillfishLibrary: "正在验证 Billfish 资源库…",

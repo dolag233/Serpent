@@ -54,6 +54,7 @@ describe("LibraryLoadingOverlay", () => {
 
     expect(html).toContain("正在打开“示例资源库”资源库");
     expect(html).toContain("切换资源库");
+    expect(html).toContain('role="progressbar"');
     expect(html).not.toContain("进度");
     expect(html).not.toContain("Serpent 正在");
   });
@@ -70,5 +71,16 @@ describe("LibraryLoadingOverlay", () => {
 
     expect(onSwitchLibrary).toHaveBeenCalledOnce();
     expect(container?.querySelector('[role="dialog"]')).toBeTruthy();
+  });
+
+  it("reuses the quiet delayed surface for a slow library deletion", () => {
+    const html = renderToStaticMarkup(
+      overlay({ operation: "deleting", onSwitchLibrary: undefined }),
+    );
+
+    expect(html).toContain("正在删除“示例资源库”资源库");
+    expect(html).toContain('role="progressbar"');
+    expect(html).not.toContain("切换资源库");
+    expect(html).not.toContain("Serpent 正在");
   });
 });

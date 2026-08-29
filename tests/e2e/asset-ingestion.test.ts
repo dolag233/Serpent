@@ -129,6 +129,9 @@ test('imports files and a directory hierarchy, then reconciles external changes'
       window.getByRole('button', { name: '导入文件夹', exact: true }).first(),
     ).toBeEnabled();
     await openFolderImportMenu(application, window);
+    // The navigation summary is refreshed after the import completes, so the
+    // whole imported hierarchy is available without reopening the library.
+    await expect(sidebarFolderRow(window, '角色参考')).toBeVisible();
     await expect(sidebarFolderRow(window, '正面')).toBeVisible();
     await sidebarFolderRow(window, '正面').click();
     await expect(window.getByText('pose.webp', { exact: true })).toBeVisible();

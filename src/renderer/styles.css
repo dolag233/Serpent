@@ -3652,10 +3652,6 @@ input[type="range"] {
   max-width: 36rem;
 }
 
-.library-loading-dialog > [data-dialog-content="true"] {
-  display: none;
-}
-
 /* While a modal is open, freeze shell chrome so hover popovers (filters) cannot open. */
 body.serpent-modal-open .app-shell {
   pointer-events: none;

@@ -49,6 +49,15 @@
 | `Serpent-520839` | 父合集含子合集时重命名 | 人类验收通过 | 创建合集 A，在 A 下创建子合集 B；右键 A →「重命名合集」，改名后再进入 A/B；可选执行一次撤销/重做 | A 重命名成功；B 仍可见且仍属于 A；子树不会丢失；撤销/重做不报“目标合集已不存在” | [开发日志](../development/2026-08-29-collection-hierarchy-regression-development-log.md) / `src/worker/library-service.ts` / `tests/worker/organization.test.ts` / `tests/e2e/collection-folder-hierarchy-regressions.test.ts` | 2026-08-29 用户验收通过。自动化 macOS Electron 已通过；Windows、packaged 未执行。 |
 | `Serpent-50f2e3` | 资产拖到子合集时高亮实际目标并完成放置 | 人类验收通过 | 创建父合集 A 和子合集 B；从资产卡片拖到 B，观察侧栏高亮并确认资产进入 B；再测试拖到文件夹和父合集 | 仅 B 高亮，A 不抢占；拖到文件夹/父合集仍正常；完成放置后资产确实成为 B 的成员 | [开发日志](../development/2026-08-29-collection-hierarchy-regression-development-log.md) / `src/renderer/NavigationSidebar.tsx` / `tests/unit/navigation-sidebar.test.ts` / `tests/e2e/collection-folder-hierarchy-regressions.test.ts` | 2026-08-29 用户复验通过：子合集可实际接收资产，重新进入后成员关系保留。此前“高亮通过但无法放置”的反馈已修复并纳入复盘。Finder/Explorer 原生拖拽、Windows、packaged 未执行。 |
 
+### 2026-08-29 资源库删除、导入刷新、查看器缩放与 FBX
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| LIBRARY-DELETE-PROGRESS-001 | 删除资源库的延迟进度反馈 | 待人类验收 | 打开一个资源库，发起「从硬盘删除资源库」；分别观察快速删除和持续超过 3 秒的删除 | 快速操作不闪现窗口；持续操作显示简洁的「正在删除“xx”资源库」和不确定进度条；不显示冗余说明；删除期间不允许切换资源库 | [LibraryLoadingOverlay](../../../src/renderer/LibraryLoadingOverlay.tsx) / [覆盖单测](../../../tests/unit/library-loading-overlay.test.tsx) / [开发日志](../development/2026-08-29-library-delete-import-zoom-fbx-development-log.md) | 自动化：覆盖组件静态结构，资源库可用性 9 files / 208 tests passed；真实删除耗时与窗口视觉待用户验收。 |
+| IMPORT-FOLDER-REFRESH-001 | 导入文件/文件夹后刷新文件夹面板 | 待人类验收 | 在某个托管文件夹中导入文件和含多级子目录的文件夹；不关闭或重新打开资源库，观察左侧文件夹树和当前画布文件夹卡片 | 导入完成后文件夹树、层级和计数刷新；当前画布的直系子文件夹查询也刷新；不需要重新打开资源库 | [App 导入路径](../../../src/renderer/App.tsx) / [导入 Electron E2E](../../../tests/e2e/asset-ingestion.test.ts) / [开发日志](../development/2026-08-29-library-delete-import-zoom-fbx-development-log.md) | 自动化：`node scripts/run-e2e.mjs tests/e2e/asset-ingestion.test.ts --grep "imports files and a directory hierarchy"` 1 passed；真实大型库与视觉体验待用户验收。 |
+| VIEWER-ZOOM-BOUNDARY-001 | 查看器缩放滑块覆盖完整范围 | 待人类验收 | 打开图片查看器；把缩放滑块拖到最小和最右端，再在最右端继续滚轮放大；观察滑块和图像 | 最小为 `0.05`，最大为 `8×`；滑块 End 能精确到最大值；已到最大值后滚轮不再继续放大；滑块与滚轮/键盘缩放边界一致 | [viewer-fit](../../../src/renderer/viewer-fit.ts) / [ZoomableImage](../../../src/renderer/zoomable-preview-image.tsx) / [媒体 E2E](../../../tests/e2e/media-preview.test.ts) / [开发日志](../development/2026-08-29-library-delete-import-zoom-fbx-development-log.md) | 自动化：媒体查看器 E2E 1 passed，覆盖 `0.05–8×`、End 到 `8` 与滚轮上限；真实体感与不同窗口尺寸待用户验收。 |
+| MODEL-FBX-THUMBNAIL-001 | FBX 缩略图生成与失败诊断 | 待人类验收 | 导入一个可渲染的 FBX；观察卡片缩略图，再双击查看；若本机禁用 WebGL，观察失败提示/日志是否明确区分 WebGL 不可用与 FBX 格式失败 | FBX 缩略图真实解码；FBX 转换、模型加载、WebGL 不可用分别给出准确诊断，不再等待超时后笼统显示格式失败 | [离屏渲染器](../../../src/renderer/offscreen-thumbnail/main.ts) / [模型 E2E](../../../tests/e2e/model-thumbnail.test.ts) / [FBX Worker 测试](../../../tests/worker/fbx-conversion.test.ts) / [开发日志](../development/2026-08-29-library-delete-import-zoom-fbx-development-log.md) | 自动化：FBX Electron E2E 1 passed，FBX Worker 20/20 passed；当前使用 SwiftShader 验证，真实 GPU/WebGL、Windows、packaged 未执行，待用户验收。 |
+
 ### 2026-08-27 导入 ZIP 后卡片损坏
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

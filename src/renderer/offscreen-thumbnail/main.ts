@@ -93,8 +93,29 @@ bridge.onRender((job) => {
   };
   console.log('offscreen-thumbnail.render-received', { requestId: job.requestId });
   activeJobId = job.requestId;
+  let pageRenderer: WebGLRenderer;
+  try {
+    pageRenderer = ensureRenderer();
+  } catch (error) {
+    // WebGL creation happens before the frame pipeline can return a typed
+    // result. Report it explicitly; otherwise the Main queue waits for its
+    // timeout and the card looks like an FBX/model-specific failure.
+    window.__serpentOffscreenThumbnailDebug = {
+      requestId: job.requestId,
+      stage: 'outcome:webgl-unavailable',
+    };
+    if (activeJobId === job.requestId) activeJobId = null;
+    console.error('offscreen-thumbnail.webgl-unavailable', error);
+    bridge.sendFrame({
+      requestId: job.requestId,
+      status: 'failed',
+      errorCode: 'MODEL_WEBGL_UNAVAILABLE',
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
   void renderModelThumbnailFrame(job, {
-    renderer: ensureRenderer(),
+    renderer: pageRenderer,
     // Keep thumbnail lighting aligned with the interactive viewer's default
     // bundled environment. The frame pipeline still falls back to its key
     // light if the environment asset cannot be loaded.

@@ -508,6 +508,7 @@ type UiState =
   | "ready";
 type LibraryLoadingState = {
   name: string | null;
+  operation?: "opening" | "deleting";
 };
 
 const LIBRARY_LOADING_DISPLAY_DELAY_MS = 3_000;
@@ -1803,9 +1804,12 @@ function AppInner() {
   // 筛选与排序面板：外点 / Esc 自动关闭（现代浮层语义），summary 切换不变。
   const pendingRestoredFocusRef = useRef<string | null>(null);
   const pendingRevealRef = useRef<PendingAssetReveal | null>(null);
-  const chooseFolderRef = useRef<(scope: AssetScope) => Promise<void>>(
-    async () => undefined,
-  );
+  const chooseFolderRef = useRef<
+    (
+      scope: AssetScope,
+      options?: { refreshSidebar?: boolean; blockingNavigation?: boolean },
+    ) => Promise<void>
+  >(async () => undefined);
   const revealAfterImportRef = useRef<
     (completion: { assets: AssetSummary[] }) => Promise<void>
   >(async () => undefined);
@@ -4412,7 +4416,7 @@ function AppInner() {
 
   async function chooseFolder(
     scope: AssetScope,
-    options?: { refreshSidebar?: boolean },
+    options?: { refreshSidebar?: boolean; blockingNavigation?: boolean },
   ) {
     if (!library) return;
     const targetLibraryId = library.libraryId;
@@ -4474,6 +4478,7 @@ function AppInner() {
         refreshSidebar:
           options?.refreshSidebar ??
           (scope === "all" || scope === "root" || scope === assetScope),
+        blockingLibraryLoad: options?.blockingNavigation,
       });
       if (!isCurrentLibraryView(viewSession)) return;
       recordNavigation(
@@ -6632,20 +6637,25 @@ function AppInner() {
   async function revealAfterImport(completion: {
     assets: AssetSummary[];
   }): Promise<void> {
+    // Folder cards are backed by a separate direct-child query from the asset
+    // page. A successful import can create a new managed folder without
+    // changing the current browse scope, so explicitly invalidate that query
+    // before revealing the imported assets.
+    setFolderBrowseRefreshToken((token) => token + 1);
     const reveal = pendingRevealFromAssets(completion.assets);
     if (!reveal) {
-      await reloadCurrentContent();
+      await reloadCurrentContent({ blockingNavigation: true });
       return;
     }
     pendingRevealRef.current = reveal;
     if (!currentScopeShowsRevealAssets(assetScope, completion.assets)) {
       const target = sharedBrowseScopeForAssets(completion.assets);
       if (target) {
-        await chooseFolder(target);
+        await chooseFolder(target, { blockingNavigation: true });
         return;
       }
     }
-    await reloadCurrentContent();
+    await reloadCurrentContent({ blockingNavigation: true });
   }
   revealAfterImportRef.current = revealAfterImport;
 
@@ -6719,7 +6729,8 @@ function AppInner() {
         throw new LibraryOperationError(result.error);
       }
       setNotice(importSummaryMessage(result.value, locale));
-      await reloadCurrentContent();
+      setFolderBrowseRefreshToken((token) => token + 1);
+      await reloadCurrentContent({ blockingNavigation: true });
       playTaskCompletionSound(startedAt);
     } catch (caught) {
       playTaskCompletionSound(startedAt);
@@ -6755,7 +6766,8 @@ function AppInner() {
         throw new LibraryOperationError(result.error);
       }
       setNotice(importSummaryMessage(result.value, locale));
-      await reloadCurrentContent();
+      setFolderBrowseRefreshToken((token) => token + 1);
+      await reloadCurrentContent({ blockingNavigation: true });
       playTaskCompletionSound(startedAt);
     } catch (caught) {
       playTaskCompletionSound(startedAt);
@@ -7216,6 +7228,7 @@ function AppInner() {
       const openScope = assetScope;
       const startedAt = Date.now();
       setUiState("closing");
+      setLibraryLoading({ name: deletedName, operation: "deleting" });
       const closeGeneration = markLibraryClosePending(openLibrary.libraryId);
       let toreDown = false;
       try {
@@ -7284,6 +7297,7 @@ function AppInner() {
         void refreshRecentLibraries(openLibrary.displayPath);
       }
       } finally {
+        setLibraryLoading(null);
         setUiState(toreDown ? "idle" : "ready");
       }
     });
@@ -9909,11 +9923,16 @@ function AppInner() {
     {libraryLoading && libraryLoadingVisible ? (
       <LibraryLoadingOverlay
         name={libraryLoading.name}
-        onSwitchLibrary={() => {
-          setDialog(null);
-          setImportLibraryChooserOpen(false);
-          setOpenLibraryChooserOpen(true);
-        }}
+        operation={libraryLoading.operation}
+        onSwitchLibrary={
+          libraryLoading.operation === "deleting"
+            ? undefined
+            : () => {
+                setDialog(null);
+                setImportLibraryChooserOpen(false);
+                setOpenLibraryChooserOpen(true);
+              }
+        }
       />
     ) : null}
     <main

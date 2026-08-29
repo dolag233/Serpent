@@ -370,6 +370,17 @@ import {
   pluginUiMimeType,
 } from "./plugin-ui-assets";
 
+// Headless E2E hosts may expose no hardware WebGL implementation. Opt those
+// tests into Chromium's explicitly acknowledged software path; production
+// keeps the platform's normal GPU selection and never silently downgrades it.
+if (
+  process.env.SERPENT_E2E === "1" &&
+  process.env.SERPENT_E2E_ENABLE_SWIFTSHADER === "1"
+) {
+  app.commandLine.appendSwitch("enable-unsafe-swiftshader");
+  app.commandLine.appendSwitch("use-angle", "swiftshader");
+}
+
 if (process.env.SERPENT_E2E === "1") {
   const explicitUserDataPath = process.env.SERPENT_E2E_USER_DATA_PATH;
   app.setPath(
@@ -398,7 +409,10 @@ protocol.registerSchemesAsPrivileged(serpentProtocolSchemes());
 
 // E2E（本地/CI）：虚拟化 runner 的 GPU 不可靠，白屏会让所有交互测试
 // 超时（CI mac 上 69 个 E2E 全挂）。禁用硬件加速换取稳定渲染。
-if (process.env.SERPENT_E2E === "1") {
+if (
+  process.env.SERPENT_E2E === "1" &&
+  process.env.SERPENT_E2E_ENABLE_SWIFTSHADER !== "1"
+) {
   app.disableHardwareAcceleration();
 }
 

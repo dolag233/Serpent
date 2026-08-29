@@ -1672,6 +1672,8 @@ export const en = {
     openingLibrary: "Opening library: {name}",
     openingLibraryNamed: "Opening “{name}” library",
     openingLibraryGeneric: "Opening library",
+    deletingLibraryNamed: "Deleting “{name}” library",
+    deletingLibraryGeneric: "Deleting library",
     switchLibraryWhileLoading: "Switch library",
     validatingEagleLibrary: "Opening Eagle library…",
     validatingBillfishLibrary: "Validating Billfish library…",

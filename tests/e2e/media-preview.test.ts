@@ -529,6 +529,17 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
     await expect
       .poll(async () => (await imageLocator.boundingBox())?.width ?? 0)
       .toBeCloseTo(fitBox!.width, 0);
+    const zoomSlider = preview.locator('input[type="range"][aria-label="图像缩放"]');
+    await expect(zoomSlider).toHaveAttribute("min", "0.05");
+    await expect(zoomSlider).toHaveAttribute("max", "8");
+    await zoomSlider.focus();
+    await zoomSlider.press("End");
+    await expect(zoomSlider).toHaveValue("8");
+    await viewportLocator.hover({ position: { x: viewportBox!.width / 2, y: viewportBox!.height / 2 } });
+    await window.mouse.wheel(0, -4_000);
+    // Wheel/keyboard zoom and the range input share the same 8× ceiling.
+    await expect(zoomSlider).toHaveValue("8");
+    await preview.getByRole("button", { name: "适应" }).click();
     await window.evaluate(() => {
       const global = globalThis as typeof globalThis & {
         __serpentImageDecodeGate?: ImageDecodeGate;

@@ -25,6 +25,10 @@ import {
 } from "./viewer-display-transform";
 import { isViewerFitShortcut } from "./viewer-fit-shortcut";
 import {
+  VIEWER_MAX_SCALE,
+  VIEWER_MIN_SCALE,
+} from "./viewer-fit";
+import {
   pbrTextureDisplayFilter,
   type PbrTextureChannelPresentation,
 } from "./pbr-texture-channel";
@@ -135,7 +139,6 @@ export const ZoomableImage = forwardRef<
   const fullDecoded = !useAnimatedPlaceholder && decodedSource === src;
   const fullLayerDecoded = decodedSource === fullSource;
   const {
-    fitScale,
     fitToWindow,
     measureAndFit,
     view,
@@ -296,7 +299,11 @@ export const ZoomableImage = forwardRef<
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [fitKeybinds, fitToWindow, keyboardShortcutsDisabled]);
 
-  const sliderMax = Math.max((fitScale || 1) * 4, 2);
+  // The range must describe the same scale domain as wheel/keyboard zoom.
+  // Using `fitScale * 4` made the slider stop early for small images while
+  // the wheel continued to the viewer's real 8× ceiling.
+  const sliderMin = VIEWER_MIN_SCALE;
+  const sliderMax = VIEWER_MAX_SCALE;
   // Keep the element itself in source orientation. CSS rotation swaps the
   // rendered bounding box; swapping width/height here as well would stretch
   // the bitmap and effectively swap the dimensions twice.
@@ -419,7 +426,7 @@ export const ZoomableImage = forwardRef<
         <input
           aria-label={t("preview.imageZoom")}
           max={sliderMax}
-          min={Math.min(fitScale || 0.1, 0.1)}
+          min={sliderMin}
           onChange={(event) => {
             const bounds = viewportRef.current?.getBoundingClientRect();
             if (!bounds) return;
@@ -429,10 +436,12 @@ export const ZoomableImage = forwardRef<
               Number(event.target.value),
             );
           }}
-          step={Math.max(sliderMax / 200, 0.01)}
+          // Keep the range endpoint reachable. A 0.04 step from a 0.05
+          // minimum lands on 7.97 when the user presses End, despite max=8.
+          step={0.01}
           tabIndex={VIEWER_CHROME_TAB_INDEX}
           type="range"
-          value={Math.min(sliderMax, Math.max(0.05, view.scale))}
+          value={Math.min(sliderMax, Math.max(sliderMin, view.scale))}
         />
         {onRotate && (
           <button

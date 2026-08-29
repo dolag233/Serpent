@@ -1,10 +1,12 @@
 import type { ReactNode } from "react";
 
 import { useT } from "./i18n";
+import { Progress } from "./ui/primitives";
 import { DialogShell } from "./ui/patterns";
 
 export type LibraryLoadingOverlayProps = {
   readonly name: string | null;
+  readonly operation?: "opening" | "deleting";
   readonly onSwitchLibrary?: () => void;
 };
 
@@ -18,12 +20,22 @@ export type LibraryLoadingOverlayProps = {
  */
 export function LibraryLoadingOverlay({
   name,
+  operation = "opening",
   onSwitchLibrary,
 }: LibraryLoadingOverlayProps): ReactNode {
   const t = useT();
   const title = name?.trim()
-    ? t("progress.openingLibraryNamed", { name: name.trim() })
-    : t("progress.openingLibraryGeneric");
+    ? t(
+        operation === "deleting"
+          ? "progress.deletingLibraryNamed"
+          : "progress.openingLibraryNamed",
+        { name: name.trim() },
+      )
+    : t(
+        operation === "deleting"
+          ? "progress.deletingLibraryGeneric"
+          : "progress.openingLibraryGeneric",
+      );
 
   return (
     <div
@@ -33,6 +45,7 @@ export function LibraryLoadingOverlay({
     >
       <DialogShell
         className="library-loading-dialog"
+        contentClassName="library-loading-content"
         dialogId="library-loading-dialog"
         footer={
           onSwitchLibrary ? (
@@ -46,7 +59,12 @@ export function LibraryLoadingOverlay({
           ) : undefined
         }
         title={title}
-      />
+      >
+        <Progress
+          aria-label={title}
+          indeterminate
+        />
+      </DialogShell>
     </div>
   );
 }

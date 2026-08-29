@@ -88,6 +88,9 @@ async function assertDecodedModelThumbnail(input: {
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
       SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, "user-data"),
+      // CI/agent hosts may disable hardware WebGL. This opt-in keeps the
+      // thumbnail contract testable through Chromium's software renderer.
+      SERPENT_E2E_ENABLE_SWIFTSHADER: "1",
       SERPENT_E2E_IMPORT_FILES: modelFiles.join(path.delimiter),
     },
   });
