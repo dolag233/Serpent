@@ -62,8 +62,8 @@
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `Serpent-ec11d0` | 视频全屏后鼠标静止时自动隐藏进度条 | 待人类验收 | 打开可播放视频并进入全屏；鼠标移动唤醒控件后保持静止超过 2 秒；再移动鼠标观察恢复 | 全屏视频控制条在闲置后隐藏；鼠标再次移动时恢复；不会因全屏按钮或进度条保留焦点而永久显示 | [视频控件样式](../../../src/renderer/styles.css) / [视频 E2E](../../../tests/e2e/media-video-playback.test.ts) / [开发日志](../development/2026-08-29-video-fullscreen-chrome-space-development-log.md) | 自动化：修复前 `opacity=1` 红测，修复后视频 Electron E2E 1 passed；全量 E2E 86 passed、3 skipped；macOS 开发态自动化，Windows、packaged 和视觉验收待执行。 |
-| `Serpent-8e681a` | 拖动视频进度条后 Space 优先播放/暂停 | 待人类验收 | 播放视频并拖动底部进度条；保持进度条焦点按 Space；重复按一次 | Space 直接切换视频播放/暂停，不触发进度条控件自身的选择/默认 Space 行为；真正的文本输入区域仍可正常输入 | [视频 Space 判定](../../../src/renderer/video-player-controls.ts) / [视频控件](../../../src/renderer/VideoPlayerControls.tsx) / [逻辑单测](../../../tests/unit/video-player-controls.test.ts) / [视频 E2E](../../../tests/e2e/media-video-playback.test.ts) / [开发日志](../development/2026-08-29-video-fullscreen-chrome-space-development-log.md) | 自动化：39 个查看器逻辑单测通过，真实视频拖动后 Space E2E 通过；全量 E2E 86 passed、3 skipped；macOS 开发态自动化，Windows、packaged 和视觉验收待执行。 |
+| `Serpent-ec11d0` | 视频全屏后鼠标静止时自动隐藏进度条 | 人类验收通过 | 打开可播放视频并进入全屏；鼠标移动唤醒控件后保持静止超过 2 秒；再移动鼠标观察恢复 | 全屏视频控制条在闲置后隐藏；鼠标再次移动时恢复；不会因全屏按钮或进度条保留焦点而永久显示 | [视频控件样式](../../../src/renderer/styles.css) / [视频 E2E](../../../tests/e2e/media-video-playback.test.ts) / [开发日志](../development/2026-08-29-video-fullscreen-chrome-space-development-log.md) | 自动化：修复前 `opacity=1` 红测，修复后视频 Electron E2E 1 passed；全量 E2E 86 passed、3 skipped。2026-08-29 用户验收通过。 |
+| `Serpent-8e681a` | 拖动视频进度条后 Space 优先播放/暂停 | 人类验收通过 | 播放视频并拖动底部进度条；保持进度条焦点按 Space；重复按一次 | Space 直接切换视频播放/暂停，不触发进度条控件自身的选择/默认 Space 行为；真正的文本输入区域仍可正常输入 | [视频 Space 判定](../../../src/renderer/video-player-controls.ts) / [视频控件](../../../src/renderer/VideoPlayerControls.tsx) / [逻辑单测](../../../tests/unit/video-player-controls.test.ts) / [视频 E2E](../../../tests/e2e/media-video-playback.test.ts) / [开发日志](../development/2026-08-29-video-fullscreen-chrome-space-development-log.md) | 自动化：39 个查看器逻辑单测通过，真实视频拖动后 Space E2E 通过；全量 E2E 86 passed、3 skipped。2026-08-29 用户验收通过。 |
 
 ### 2026-08-27 导入 ZIP 后卡片损坏
 
