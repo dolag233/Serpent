@@ -37,6 +37,8 @@ import type { WorkspaceNavHistory, WorkspaceNavLocation } from "./workspace-nav-
 export type UseBrowserSessionRestoreArgs = {
   api: SerpentLibraryApi | null;
   loadContent: LoadContentForRestore;
+  /** Keep the workspace covered until the restored library is coherent. */
+  setLibraryLoading: (state: { name: string | null } | null) => void;
   collectionRecursiveRef: MutableRefObject<boolean>;
   folderRecursiveRef: MutableRefObject<boolean>;
   setFolderRecursive: (enabled: boolean) => void;
@@ -57,6 +59,9 @@ export type UseBrowserSessionRestoreArgs = {
   setAssetSelectionAnchor: (assetId: string | null) => void;
   /** Blocks the persistence effect while the saved session is being hydrated. */
   setBrowserSessionReady: (ready: boolean) => void;
+  /** Importing after a relaunch starts at the library root even when the last
+   * browse scope is restored to a nested folder. */
+  resetImportTargetFolderRef: MutableRefObject<string | undefined>;
   pendingRestoredFocusRef: MutableRefObject<string | null>;
   navHistoryRef: MutableRefObject<WorkspaceNavHistory>;
   setNavHistoryUi: Dispatch<
@@ -90,6 +95,7 @@ export function useBrowserSessionRestore(
   const {
     api,
     loadContent,
+    setLibraryLoading,
     collectionRecursiveRef,
     folderRecursiveRef,
     setFolderRecursive,
@@ -108,6 +114,7 @@ export function useBrowserSessionRestore(
     setSelectedAssetIds,
     setAssetSelectionAnchor,
     setBrowserSessionReady,
+    resetImportTargetFolderRef,
     pendingRestoredFocusRef,
     navHistoryRef,
     setNavHistoryUi,
@@ -132,7 +139,11 @@ export function useBrowserSessionRestore(
       setShowTrash(false);
       setTrashedAssets([]);
       if (activeLibrary) {
-        const restoredItems = (await loadContent(activeLibrary, "all")) ?? [];
+        setLibraryLoading({ name: activeLibrary.displayName });
+        const restoredItems =
+          (await loadContent(activeLibrary, "all", {
+            blockingLibraryLoad: true,
+          })) ?? [];
         const session = readBrowserSession(activeLibrary.libraryId);
         let restoredLocation: WorkspaceNavLocation = { kind: "all" };
         if (session) {
@@ -184,17 +195,24 @@ export function useBrowserSessionRestore(
             await loadContent(activeLibrary, "all");
           }
         }
+        // Browse scope is a navigation preference; it is not an implicit
+        // import destination. A relaunch must never silently direct a new
+        // import into the last folder the user happened to browse.
+        resetImportTargetFolderRef.current = undefined;
         navHistoryRef.current.clear(restoredLocation);
         setNavHistoryUi({ canBack: false, canForward: false });
       } else {
+        setLibraryLoading(null);
         navHistoryRef.current.clear({ kind: "all" });
         setNavHistoryUi({ canBack: false, canForward: false });
       }
       setUiState(activeLibrary ? "ready" : "idle");
     } catch (caught) {
+      setLibraryLoading(null);
       setError(toMessage(caught, t("toast.workspaceRestoreFailed"), locale));
       setUiState(activeLibrary ? "ready" : "idle");
     } finally {
+      setLibraryLoading(null);
       // Do not let useBrowserSessionPersist observe the transient empty
       // selection between setLibrary() and applyStoredBrowserSession().
       setBrowserSessionReady(true);
@@ -218,6 +236,7 @@ export function useBrowserSessionRestore(
     setError,
     setFolderRecursive,
     setLibrary,
+    setLibraryLoading,
     setNavHistoryUi,
     setSearchTotal,
     setSelectedAssetId,
@@ -226,6 +245,7 @@ export function useBrowserSessionRestore(
     setTagFilter,
     setTrashedAssets,
     setUiState,
+    resetImportTargetFolderRef,
     t,
   ]);
 

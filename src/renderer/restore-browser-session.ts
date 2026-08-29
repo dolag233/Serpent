@@ -56,7 +56,10 @@ export type RestoreBrowserSessionApi = {
 export type LoadContentForRestore = (
   activeLibrary: RendererLibrarySummary,
   scope: "all" | "root" | string,
-  opts?: { trashMode?: boolean },
+  opts?: {
+    trashMode?: boolean;
+    blockingLibraryLoad?: boolean;
+  },
 ) => Promise<AssetSummary[] | undefined>;
 
 export type RestoreBrowserSessionDeps = {

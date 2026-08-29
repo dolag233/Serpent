@@ -19,6 +19,7 @@ export type TextViewerControlsProps = {
   libraryId: string;
   assetId: string;
   onClose: () => void;
+  onPresentationReady?: () => void;
   onSaved?: () => void;
 };
 
@@ -41,6 +42,7 @@ export const TextViewerControls = forwardRef<
     libraryId,
     assetId,
     onClose,
+    onPresentationReady,
     onSaved,
   },
   ref,
@@ -146,6 +148,10 @@ export const TextViewerControls = forwardRef<
   useEffect(() => {
     resizeTextarea();
   }, [content, lineCount, loading, resizeTextarea]);
+
+  useEffect(() => {
+    if (!loading) onPresentationReady?.();
+  }, [loading, onPresentationReady]);
 
   const save = useCallback(
     async (options?: { createRevision?: boolean }): Promise<boolean> => {

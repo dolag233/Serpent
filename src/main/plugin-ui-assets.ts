@@ -150,7 +150,8 @@ export function pluginUiMimeType(relativePath: string): string {
     case '.svg': return 'image/svg+xml';
     case '.png': return 'image/png';
     case '.jpg':
-    case '.jpeg': return 'image/jpeg';
+    case '.jpeg':
+    case '.jfif': return 'image/jpeg';
     case '.gif': return 'image/gif';
     case '.webp': return 'image/webp';
     default: return 'application/octet-stream';

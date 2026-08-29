@@ -86,10 +86,23 @@ function diagnosticCause(error: unknown, depth = 0): Error | undefined {
 export function safeAiDiagnostic(errorCode: string, source?: unknown): Error {
   const vendorError = findVendorError(source);
   const httpStatus = vendorError?.message.match(/\bHTTP\s+(\d{3})\b/i)?.[1];
+  const providerDetails = vendorError?.details;
   const summary = [
     `Provider failure category: ${errorCode}`,
     vendorError ? `kind=${vendorError.kind}` : undefined,
     httpStatus ? `httpStatus=${httpStatus}` : undefined,
+    providerDetails?.providerCode
+      ? `providerCode=${redactDiagnosticText(providerDetails.providerCode)}`
+      : undefined,
+    providerDetails?.providerType
+      ? `providerType=${redactDiagnosticText(providerDetails.providerType)}`
+      : undefined,
+    providerDetails?.providerParam
+      ? `providerParam=${redactDiagnosticText(providerDetails.providerParam)}`
+      : undefined,
+    providerDetails?.providerMessage
+      ? `providerMessage=${redactDiagnosticText(providerDetails.providerMessage).slice(0, 240)}`
+      : undefined,
   ].filter((part): part is string => part !== undefined).join('; ');
   return new Error('AI queue analysis failed.', {
     cause: new Error(summary, { cause: diagnosticCause(vendorError?.cause ?? source) }),
@@ -104,11 +117,22 @@ export function safeAiErrorDetail(
 ): string {
   const vendorError = findVendorError(source);
   const httpStatus = vendorError?.message.match(/\bHTTP\s+(\d{3})\b/i)?.[1];
+  const providerDetails = vendorError?.details;
   const parts = [
     errorCode,
     vendorError ? `kind=${vendorError.kind}` : undefined,
     httpStatus ? `http=${httpStatus}` : undefined,
+    providerDetails?.providerCode
+      ? `provider=${redactDiagnosticText(providerDetails.providerCode)}`
+      : undefined,
+    providerDetails?.providerParam
+      ? `param=${redactDiagnosticText(providerDetails.providerParam)}`
+      : undefined,
   ].filter((part): part is string => part !== undefined);
+
+  if (providerDetails?.providerMessage) {
+    parts.push(redactDiagnosticText(providerDetails.providerMessage).slice(0, 200));
+  }
 
   if (source instanceof Error && source.message) {
     const msg = redactDiagnosticText(source.message).replace(/\s+/g, ' ').trim();

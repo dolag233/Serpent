@@ -1,23 +1,43 @@
-import {
-  buildAiAnalysisSystemPrompt,
-} from '../../shared/ai-analysis-settings';
+import { createHash } from 'node:crypto';
+
+import { buildAiAnalysisSystemPrompt } from '../../shared/ai-analysis-settings';
 import {
   resolveOpenAiChatCompletionsUrl,
   resolveOpenAiResponsesUrl,
 } from '../../shared/ai-endpoints';
 import {
   buildAiAnalysisUserTextLines,
-  parseAiAnalysisResultFromModelText,
   resolveAiAnalysisSettings,
 } from './protocol';
 import type { AiAnalysisRequest, AiAnalysisResult } from './protocol';
+import {
+  buildOpenAiResponsesTextFormat,
+  buildOpenAiStructuredResponseFormat,
+  canRetryOpenAiResponseWithoutStructuredOutput,
+  classifyOpenAiHttpError,
+  mapOpenAiHttpError,
+  normalizeOpenAiChatResponse,
+  normalizeOpenAiResponsesResponse,
+  parseOpenAiAnalysisResponse,
+  OPENAI_STRUCTURED_OUTPUT_MODES,
+} from './openai-response';
+import type {
+  OpenAiStructuredOutputMode,
+  OpenAiWireFormat,
+} from './openai-response';
 import { isAiAbortOrTimeoutError, VendorAdapterError } from './vendor-adapter';
 import type { VendorAdapter, VendorId } from './vendor-adapter';
 
+export type { OpenAiStructuredOutputMode, OpenAiWireFormat } from './openai-response';
+export {
+  buildOpenAiStructuredResponseFormat,
+  isStructuredOutputFormatRejection,
+} from './openai-response';
+
 /**
- * Ask for a plain JSON object in the prompt. Prefer `json_object` over
- * strict `json_schema` — most midstream OpenAI-compatible relays reject
- * json_schema and only return text / loose JSON (Serpent-0s4i / p4c6).
+ * Keep a portable JSON contract in the prompt even when the endpoint accepts
+ * a structured-output envelope. This is the fallback for relays that only
+ * support ordinary text responses.
  */
 function buildJsonOnlySuffix(language: string): string {
   return (
@@ -27,55 +47,132 @@ function buildJsonOnlySuffix(language: string): string {
   );
 }
 
-function httpStatusToErrorKind(
-  status: number,
-  bodyText: string,
-): VendorAdapterError['kind'] {
-  switch (status) {
-    case 401:
-      return 'auth';
-    case 403:
-      return 'permission';
-    case 429: {
-      const lower = bodyText.toLowerCase();
-      if (lower.includes('quota') || lower.includes('insufficient')) {
-        return 'quota';
-      }
-      return 'rate_limit';
-    }
-    case 400:
-      return 'invalid_response';
-    default:
-      if (status >= 500) {
-        return 'network';
-      }
-      return 'invalid_response';
-  }
-}
-
-export type OpenAiWireFormat = 'openai_chat' | 'openai_responses';
-
-type ResponsesTextFormatSupport = 'supported' | 'unsupported';
-
 // Adapter instances are intentionally short lived (one analysis request), so
 // this process-wide capability cache avoids paying a failed structured-output
 // request for every asset on a compatibility relay that only returns text.
-const responsesTextFormatSupportByEndpoint = new Map<
+const structuredOutputModeByEndpoint = new Map<
   string,
-  ResponsesTextFormatSupport
+  OpenAiStructuredOutputMode
 >();
-// Adapters are constructed per asset. Coordinate the initial capability
-// negotiation so a high-concurrency first batch does not send the same
-// known-incompatible structured-output probe once per asset.
-const responsesTextFormatNegotiationByEndpoint = new Set<string>();
+// Adapter instances are constructed per asset. A first batch must not send
+// the same capability probe once per asset; followers use the portable text
+// body immediately while the leader negotiates the richer envelope. The
+// promise lets a follower recover when that text-only request is rejected by
+// a provider that requires a structured envelope.
+type StructuredOutputNegotiationResult =
+  OpenAiStructuredOutputMode | undefined;
+type StructuredOutputNegotiationInFlight = {
+  promise: Promise<StructuredOutputNegotiationResult>;
+  resolve: (mode: StructuredOutputNegotiationResult) => void;
+};
+const structuredOutputNegotiationInFlight = new Map<
+  string,
+  StructuredOutputNegotiationInFlight
+>();
+function beginStructuredOutputNegotiation(capabilityKey: string): {
+  modes: OpenAiStructuredOutputMode[];
+  ownsProbe: boolean;
+  cachedMode?: OpenAiStructuredOutputMode;
+  probeResult?: Promise<StructuredOutputNegotiationResult>;
+} {
+  const cachedMode = structuredOutputModeByEndpoint.get(capabilityKey);
+  if (cachedMode) {
+    return {
+      modes: [
+        cachedMode,
+        ...DEFAULT_STRUCTURED_OUTPUT_MODES.filter((mode) => mode !== cachedMode),
+      ],
+      ownsProbe: false,
+      cachedMode,
+    };
+  }
+  const inFlight = structuredOutputNegotiationInFlight.get(capabilityKey);
+  const ownsProbe = inFlight === undefined;
+  if (ownsProbe) {
+    let resolve!: (mode: StructuredOutputNegotiationResult) => void;
+    const promise = new Promise<StructuredOutputNegotiationResult>((settle) => {
+      resolve = settle;
+    });
+    structuredOutputNegotiationInFlight.set(capabilityKey, { promise, resolve });
+  }
+  return {
+    modes: ownsProbe
+      ? ['json_schema', 'text']
+      : ['text'],
+    ownsProbe,
+    ...(inFlight ? { probeResult: inFlight.promise } : {}),
+  };
+}
 
-function isUnsupportedResponsesTextFormat(body: string): boolean {
-  const format = '(?:text\\.format|response_format|json_object|structured\\s+output)';
-  const unsupported = '(?:unsupported|not\\s+supported|unknown|invalid)';
-  return new RegExp(
-    `(?:${format}.{0,120}${unsupported}|${unsupported}.{0,120}${format})`,
-    'iu',
-  ).test(body);
+function finishStructuredOutputNegotiation(
+  capabilityKey: string,
+  ownsProbe: boolean,
+  successfulMode?: OpenAiStructuredOutputMode,
+): void {
+  if (!ownsProbe) return;
+  const inFlight = structuredOutputNegotiationInFlight.get(capabilityKey);
+  if (!inFlight) return;
+  structuredOutputNegotiationInFlight.delete(capabilityKey);
+  inFlight.resolve(successfulMode);
+}
+
+function structuredOutputCapabilityKey(
+  endpoint: string,
+  model: string,
+  apiKey: string,
+  wireFormat: OpenAiWireFormat,
+): string {
+  // Do not retain credentials in the process-wide capability cache. The
+  // fingerprint prevents one account's provider configuration from being
+  // reused for another account using the same endpoint/model pair.
+  const keyFingerprint = createHash('sha256')
+    .update(apiKey, 'utf8')
+    .digest('hex')
+    .slice(0, 24);
+  return `${wireFormat}|${endpoint}|${model}|${keyFingerprint}`;
+}
+
+const DEFAULT_STRUCTURED_OUTPUT_MODES: OpenAiStructuredOutputMode[] = [
+  'json_schema',
+  'text',
+];
+
+function queueFallbackModes(
+  modes: OpenAiStructuredOutputMode[],
+  currentIndex: number,
+  candidates: readonly OpenAiStructuredOutputMode[],
+  attemptedModes: ReadonlySet<OpenAiStructuredOutputMode>,
+): void {
+  let insertAt = currentIndex + 1;
+  for (const candidate of candidates) {
+    if (candidate === modes[currentIndex] || attemptedModes.has(candidate)) continue;
+    const existingIndex = modes.indexOf(candidate);
+    if (existingIndex <= currentIndex && existingIndex >= 0) continue;
+    if (existingIndex > currentIndex) modes.splice(existingIndex, 1);
+    if (!modes.includes(candidate)) {
+      modes.splice(insertAt, 0, candidate);
+      insertAt += 1;
+    }
+  }
+}
+
+async function parseOpenAiResponseBody(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch (error: unknown) {
+    throw new VendorAdapterError(
+      'invalid_response',
+      'The AI service returned an unreadable response envelope.',
+      {
+        cause: error,
+        retryable: true,
+        details: {
+          responseKind: 'invalid_envelope',
+          canRetryWithoutStructuredOutput: true,
+        },
+      },
+    );
+  }
 }
 
 /**
@@ -160,7 +257,7 @@ export class OpenAIVendorAdapter implements VendorAdapter {
       throw this.#mapFetchError(error);
     }
     if (!response.ok) {
-      throw await this.#mapHttpError(response);
+      throw await mapOpenAiHttpError(response);
     }
     try {
       await response.json();
@@ -179,204 +276,325 @@ export class OpenAIVendorAdapter implements VendorAdapter {
   ): Promise<AiAnalysisResult> {
     const messages = this.#buildChatMessages(request);
 
-    let response: Response;
+    const endpoint = resolveOpenAiChatCompletionsUrl(this.baseUrl);
+    const capabilityKey = structuredOutputCapabilityKey(
+      endpoint,
+      this.model,
+      this.apiKey,
+      this.wireFormat,
+    );
+    const negotiation = beginStructuredOutputNegotiation(capabilityKey);
+    const modes = [...negotiation.modes];
+    const attemptedModes = new Set<OpenAiStructuredOutputMode>();
+    let contentFallbackUsed = false;
+    let response: Response | undefined;
+    let successfulMode: OpenAiStructuredOutputMode | undefined;
+    let negotiatedMode: OpenAiStructuredOutputMode | undefined;
     try {
-      response = await this._fetch(
-        resolveOpenAiChatCompletionsUrl(this.baseUrl),
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: this.model,
-            messages,
-            response_format: { type: 'json_object' },
-            temperature: 0.2,
-          }),
-          signal,
-        },
-      );
-    } catch (error: unknown) {
-      throw this.#mapFetchError(error);
-    }
-
-    // Some midstream relays reject json_object; retry as plain chat text only
-    // when the response specifically identifies that optional envelope. An
-    // ordinary 400 (bad model, credential scope, malformed request) is not a
-    // second provider attempt.
-    let chatFormatRejected = false;
-    if (response.status === 400) {
-      try {
-        chatFormatRejected = isUnsupportedResponsesTextFormat(
-          await response.clone().text(),
-        );
-      } catch (error: unknown) {
-        if (isAiAbortOrTimeoutError(error)) throw this.#mapFetchError(error);
-        throw new VendorAdapterError(
-          'invalid_response',
-          'The AI service returned an unreadable response.',
-          { cause: error, retryable: true },
-        );
-      }
-    }
-    if (chatFormatRejected) {
-      try {
-        response = await this._fetch(
-          resolveOpenAiChatCompletionsUrl(this.baseUrl),
-          {
+      for (let modeIndex = 0; modeIndex < modes.length; modeIndex += 1) {
+        const mode = modes[modeIndex]!;
+        attemptedModes.add(mode);
+        const body: Record<string, unknown> = {
+          model: this.model,
+          messages,
+          temperature: 0.2,
+        };
+        if (mode !== 'text') {
+          body.response_format = buildOpenAiStructuredResponseFormat(
+            mode,
+            request.language,
+          );
+        }
+        try {
+          response = await this._fetch(endpoint, {
             method: 'POST',
             headers: {
               Authorization: `Bearer ${this.apiKey}`,
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-              model: this.model,
-              messages,
-              temperature: 0.2,
-            }),
+            body: JSON.stringify(body),
             signal,
-          },
-        );
-      } catch (error: unknown) {
-        throw this.#mapFetchError(error);
+          });
+        } catch (error: unknown) {
+          throw this.#mapFetchError(error);
+        }
+
+        if (!response.ok) {
+          // Only inspect a failed optional envelope. A normal 400 (bad model,
+          // credential scope, malformed image, etc.) remains the original error.
+          const canInspectFormatFailure =
+            (mode !== 'text' || !negotiation.ownsProbe) &&
+            (response.status === 400 || response.status === 422);
+          if (!canInspectFormatFailure) {
+            throw await mapOpenAiHttpError(response, mode);
+          }
+          let compatibilityBody: string;
+          try {
+            compatibilityBody = await response.clone().text();
+          } catch (error: unknown) {
+            if (isAiAbortOrTimeoutError(error)) throw this.#mapFetchError(error);
+            throw new VendorAdapterError(
+              'invalid_response',
+              'The AI service returned an unreadable error response.',
+              { cause: error, retryable: true },
+            );
+          }
+          const classification = classifyOpenAiHttpError(
+            response.status,
+            compatibilityBody,
+            mode,
+          );
+          if (!classification.formatRejected) {
+            throw await mapOpenAiHttpError(response, mode);
+          }
+          if (negotiation.cachedMode === mode) {
+            // A provider can be reconfigured after this process cached its
+            // capability. Drop the stale entry and renegotiate this request.
+            structuredOutputModeByEndpoint.delete(capabilityKey);
+          }
+
+          let fallbackModes = classification.suggestedModes ?? (
+            mode === 'json_schema' ? ['json_object', 'text'] : ['text']
+          );
+          if (mode === 'text' && negotiation.probeResult) {
+            const probedMode = await negotiation.probeResult;
+            const cachedMode = structuredOutputModeByEndpoint.get(capabilityKey) ?? probedMode;
+            fallbackModes = cachedMode
+              ? [cachedMode, ...OPENAI_STRUCTURED_OUTPUT_MODES]
+              : ['json_schema', 'json_object'];
+          }
+          queueFallbackModes(modes, modeIndex, fallbackModes, attemptedModes);
+          continue;
+        }
+
+        let json: unknown;
+        try {
+          json = await parseOpenAiResponseBody(response);
+        } catch (error: unknown) {
+          if (
+            mode !== 'text' &&
+            !contentFallbackUsed &&
+            canRetryOpenAiResponseWithoutStructuredOutput(error)
+          ) {
+            contentFallbackUsed = true;
+            queueFallbackModes(modes, modeIndex, ['text'], attemptedModes);
+            continue;
+          }
+          throw error;
+        }
+
+        const normalized = normalizeOpenAiChatResponse(json, this.model);
+        let result: AiAnalysisResult;
+        try {
+          result = parseOpenAiAnalysisResponse(normalized);
+        } catch (error: unknown) {
+          if (
+            mode !== 'text' &&
+            !contentFallbackUsed &&
+            canRetryOpenAiResponseWithoutStructuredOutput(error)
+          ) {
+            contentFallbackUsed = true;
+            if (negotiation.cachedMode === mode) {
+              structuredOutputModeByEndpoint.delete(capabilityKey);
+            }
+            queueFallbackModes(modes, modeIndex, ['text'], attemptedModes);
+            continue;
+          }
+          throw error;
+        }
+
+        successfulMode = mode;
+        // Cache only a mode whose response envelope and domain result both
+        // passed validation. HTTP 2xx alone is not a capability proof.
+        if (
+          negotiation.ownsProbe ||
+          negotiation.cachedMode !== undefined ||
+          (negotiation.probeResult !== undefined && mode !== 'text')
+        ) {
+          structuredOutputModeByEndpoint.set(capabilityKey, mode);
+        }
+        negotiatedMode = successfulMode;
+        return result;
       }
-    }
 
-    if (!response.ok) {
-      throw await this.#mapHttpError(response);
-    }
-
-    let json: unknown;
-    try {
-      json = await response.json();
-    } catch (error: unknown) {
-      throw new VendorAdapterError(
-        'invalid_response',
-        'The AI service returned an unreadable response.',
-        { cause: error, retryable: true },
+      if (!response) {
+        throw new VendorAdapterError(
+          'invalid_response',
+          'The AI service returned no response.',
+          { retryable: true },
+        );
+      }
+      throw await mapOpenAiHttpError(response, modes[modes.length - 1]);
+    } finally {
+      finishStructuredOutputNegotiation(
+        capabilityKey,
+        negotiation.ownsProbe,
+        negotiatedMode,
       );
     }
-
-    return this.#extractChatResult(json);
   }
 
   async #analyzeResponses(
     request: AiAnalysisRequest,
     signal?: AbortSignal,
   ): Promise<AiAnalysisResult> {
-    const body = {
-      model: this.model,
-      instructions: this.#buildSystemPrompt(request),
-      input: [
-        {
-          role: 'user',
-          content: this.#buildResponsesUserContent(request),
-        },
-      ],
-      text: {
-        format: { type: 'json_object' },
-      },
-      temperature: 0.2,
-    };
-
     const endpoint = resolveOpenAiResponsesUrl(this.baseUrl);
-    const supportsTextFormat = responsesTextFormatSupportByEndpoint.get(endpoint);
-    const negotiation = supportsTextFormat === undefined
-      && !responsesTextFormatNegotiationByEndpoint.has(endpoint);
-    if (negotiation) responsesTextFormatNegotiationByEndpoint.add(endpoint);
-    const settleNegotiation = (support: ResponsesTextFormatSupport | undefined): void => {
-      if (!negotiation) return;
-      if (support !== undefined) {
-        responsesTextFormatSupportByEndpoint.set(endpoint, support);
-      }
-      responsesTextFormatNegotiationByEndpoint.delete(endpoint);
-    };
-    const plainTextBody = {
-      model: body.model,
-      instructions: body.instructions,
-      input: body.input,
-      temperature: body.temperature,
-    };
-    // A follower in the very first batch must not reserve a global model slot
-    // while awaiting the leader's probe. It sends the portable text-only
-    // contract immediately; the leader alone decides/caches capability.
-    const requestBody = supportsTextFormat === 'unsupported' || !negotiation
-      ? plainTextBody
-      : body;
-    let response: Response;
+    const capabilityKey = structuredOutputCapabilityKey(
+      endpoint,
+      this.model,
+      this.apiKey,
+      this.wireFormat,
+    );
+    const negotiation = beginStructuredOutputNegotiation(capabilityKey);
+    const modes = [...negotiation.modes];
+    const attemptedModes = new Set<OpenAiStructuredOutputMode>();
+    let contentFallbackUsed = false;
+    let response: Response | undefined;
+    let successfulMode: OpenAiStructuredOutputMode | undefined;
+    let negotiatedMode: OpenAiStructuredOutputMode | undefined;
     try {
-      response = await this._fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody),
-        signal,
-      });
-    } catch (error: unknown) {
-      settleNegotiation(undefined);
-      throw this.#mapFetchError(error);
-    }
+      for (let modeIndex = 0; modeIndex < modes.length; modeIndex += 1) {
+        const mode = modes[modeIndex]!;
+        attemptedModes.add(mode);
+        const requestBody: Record<string, unknown> = {
+          model: this.model,
+          instructions: this.#buildSystemPrompt(request),
+          input: [
+            {
+              role: 'user',
+              content: this.#buildResponsesUserContent(request),
+            },
+          ],
+          temperature: 0.2,
+        };
+        if (mode !== 'text') {
+          requestBody.text = {
+            format: buildOpenAiResponsesTextFormat(mode, request.language),
+          };
+        }
 
-    // Compatible Responses relays frequently implement the endpoint and
-    // multimodal input but reject OpenAI's optional `text.format` envelope.
-    // The system prompt still requires one JSON object, so retrying without
-    // this envelope preserves a portable plain-text result contract without
-    // weakening Serpent's schema validation after receipt.
-    let structuredOutputRejected = false;
-    if (negotiation && response.status === 400) {
-      try {
-        structuredOutputRejected = isUnsupportedResponsesTextFormat(
-          await response.clone().text(),
-        );
-      } catch (error: unknown) {
-        settleNegotiation(undefined);
-        if (isAiAbortOrTimeoutError(error)) throw this.#mapFetchError(error);
+        try {
+          response = await this._fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${this.apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(requestBody),
+            signal,
+          });
+        } catch (error: unknown) {
+          throw this.#mapFetchError(error);
+        }
+
+        if (!response.ok) {
+          const canInspectFormatFailure =
+            (mode !== 'text' || !negotiation.ownsProbe) &&
+            (response.status === 400 || response.status === 422);
+          if (!canInspectFormatFailure) {
+            throw await mapOpenAiHttpError(response, mode);
+          }
+
+          let compatibilityBody: string;
+          try {
+            compatibilityBody = await response.clone().text();
+          } catch (error: unknown) {
+            if (isAiAbortOrTimeoutError(error)) throw this.#mapFetchError(error);
+            throw new VendorAdapterError(
+              'invalid_response',
+              'The AI service returned an unreadable error response.',
+              { cause: error, retryable: true },
+            );
+          }
+          const classification = classifyOpenAiHttpError(
+            response.status,
+            compatibilityBody,
+            mode,
+          );
+          if (!classification.formatRejected) {
+            throw await mapOpenAiHttpError(response, mode);
+          }
+          if (negotiation.cachedMode === mode) {
+            structuredOutputModeByEndpoint.delete(capabilityKey);
+          }
+
+          let fallbackModes = classification.suggestedModes ?? (
+            mode === 'json_schema' ? ['json_object', 'text'] : ['text']
+          );
+          if (mode === 'text' && negotiation.probeResult) {
+            const probedMode = await negotiation.probeResult;
+            const cachedMode = structuredOutputModeByEndpoint.get(capabilityKey) ?? probedMode;
+            fallbackModes = cachedMode
+              ? [cachedMode, ...OPENAI_STRUCTURED_OUTPUT_MODES]
+              : ['json_schema', 'json_object'];
+          }
+          queueFallbackModes(modes, modeIndex, fallbackModes, attemptedModes);
+          continue;
+        }
+
+        let json: unknown;
+        try {
+          json = await parseOpenAiResponseBody(response);
+        } catch (error: unknown) {
+          if (
+            mode !== 'text' &&
+            !contentFallbackUsed &&
+            canRetryOpenAiResponseWithoutStructuredOutput(error)
+          ) {
+            contentFallbackUsed = true;
+            queueFallbackModes(modes, modeIndex, ['text'], attemptedModes);
+            continue;
+          }
+          throw error;
+        }
+
+        const normalized = normalizeOpenAiResponsesResponse(json, this.model);
+        let result: AiAnalysisResult;
+        try {
+          result = parseOpenAiAnalysisResponse(normalized);
+        } catch (error: unknown) {
+          if (
+            mode !== 'text' &&
+            !contentFallbackUsed &&
+            canRetryOpenAiResponseWithoutStructuredOutput(error)
+          ) {
+            contentFallbackUsed = true;
+            if (negotiation.cachedMode === mode) {
+              structuredOutputModeByEndpoint.delete(capabilityKey);
+            }
+            queueFallbackModes(modes, modeIndex, ['text'], attemptedModes);
+            continue;
+          }
+          throw error;
+        }
+
+        successfulMode = mode;
+        if (
+          negotiation.ownsProbe ||
+          negotiation.cachedMode !== undefined ||
+          (negotiation.probeResult !== undefined && mode !== 'text')
+        ) {
+          structuredOutputModeByEndpoint.set(capabilityKey, mode);
+        }
+        negotiatedMode = successfulMode;
+        return result;
+      }
+
+      if (!response) {
         throw new VendorAdapterError(
           'invalid_response',
-          'The AI service returned an unreadable response.',
-          { cause: error, retryable: true },
+          'The AI service returned no response.',
+          { retryable: true },
         );
       }
-    }
-    if (structuredOutputRejected) {
-      settleNegotiation('unsupported');
-      try {
-        response = await this._fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(plainTextBody),
-          signal,
-        });
-      } catch (error: unknown) {
-        throw this.#mapFetchError(error);
-      }
-    } else if (negotiation) {
-      settleNegotiation(response.ok ? 'supported' : undefined);
-    }
-
-    if (!response.ok) {
-      throw await this.#mapHttpError(response);
-    }
-
-    let json: unknown;
-    try {
-      json = await response.json();
-    } catch (error: unknown) {
-      throw new VendorAdapterError(
-        'invalid_response',
-        'The AI service returned an unreadable response.',
-        { cause: error, retryable: true },
+      throw await mapOpenAiHttpError(response, modes[modes.length - 1]);
+    } finally {
+      finishStructuredOutputNegotiation(
+        capabilityKey,
+        negotiation.ownsProbe,
+        negotiatedMode,
       );
     }
-
-    return this.#extractResponsesResult(json);
   }
 
   #buildChatMessages(
@@ -479,153 +697,4 @@ export class OpenAIVendorAdapter implements VendorAdapter {
     );
   }
 
-  async #mapHttpError(response: Response): Promise<VendorAdapterError> {
-    let bodyText = '';
-    try {
-      bodyText = await response.text();
-    } catch {
-      // Ignore — body is not essential for error classification.
-    }
-
-    const kind = httpStatusToErrorKind(response.status, bodyText);
-    return new VendorAdapterError(kind, `AI service returned HTTP ${response.status}`);
-  }
-
-  #extractChatResult(json: unknown): AiAnalysisResult {
-    if (typeof json !== 'object' || json === null) {
-      throw new VendorAdapterError(
-        'invalid_response',
-        'The AI service returned an unexpected response shape.',
-        { retryable: true },
-      );
-    }
-
-    const body = json as Record<string, unknown>;
-
-    if (!Array.isArray(body.choices) || body.choices.length === 0) {
-      throw new VendorAdapterError(
-        'invalid_response',
-        'The AI service returned no completion choices.',
-        { retryable: true },
-      );
-    }
-
-    const choice = body.choices[0] as Record<string, unknown>;
-    const message = choice.message as Record<string, unknown> | undefined;
-    const content = message?.content;
-
-    if (typeof content !== 'string' || !content.trim()) {
-      throw new VendorAdapterError(
-        'invalid_response',
-        'The AI service returned an empty completion.',
-        { retryable: true },
-      );
-    }
-
-    const modelVersion =
-      typeof body.model === 'string' && body.model.trim()
-        ? body.model
-        : this.model;
-
-    try {
-      return parseAiAnalysisResultFromModelText(content, modelVersion);
-    } catch (error: unknown) {
-      throw new VendorAdapterError(
-        'invalid_response',
-        'The AI response did not match the required schema.',
-        { cause: error, retryable: true },
-      );
-    }
-  }
-
-  #extractResponsesResult(json: unknown): AiAnalysisResult {
-    if (typeof json !== 'object' || json === null) {
-      throw new VendorAdapterError(
-        'invalid_response',
-        'The AI service returned an unexpected response shape.',
-        { retryable: true },
-      );
-    }
-
-    const body = json as Record<string, unknown>;
-    const textFromContent = (value: unknown): string => {
-      if (typeof value === 'string') return value;
-      if (!Array.isArray(value)) return '';
-      return value
-        .filter((part): part is Record<string, unknown> =>
-          Boolean(part) && typeof part === 'object',
-        )
-        .map((part) => part.text)
-        .filter((part): part is string => typeof part === 'string')
-        .join('');
-    };
-    let content = '';
-
-    if (typeof body.output_text === 'string' && body.output_text.trim()) {
-      content = body.output_text;
-    } else if (Array.isArray(body.output)) {
-      for (const item of body.output) {
-        if (!item || typeof item !== 'object') continue;
-        const row = item as Record<string, unknown>;
-        if (row.type !== 'message' || !Array.isArray(row.content)) continue;
-        for (const part of row.content) {
-          if (!part || typeof part !== 'object') continue;
-          const block = part as Record<string, unknown>;
-          if (
-            (block.type === 'output_text' || block.type === 'text') &&
-            typeof block.text === 'string'
-          ) {
-            content += block.text;
-          }
-        }
-      }
-    }
-
-    // Some nominal Responses relays return an OpenAI Chat-style envelope, or
-    // a DashScope-style `output.choices` envelope. Keep the network protocol
-    // tolerant, but feed every variant through the same strict JSON/schema
-    // parser below so a relay cannot write arbitrary asset metadata.
-    if (!content.trim()) {
-      const chatChoice = Array.isArray(body.choices) ? body.choices[0] : undefined;
-      if (chatChoice && typeof chatChoice === 'object') {
-        const message = (chatChoice as Record<string, unknown>).message;
-        if (message && typeof message === 'object') {
-          content = textFromContent((message as Record<string, unknown>).content);
-        }
-      }
-    }
-    if (!content.trim() && body.output && typeof body.output === 'object') {
-      const choices = (body.output as Record<string, unknown>).choices;
-      const choice = Array.isArray(choices) ? choices[0] : undefined;
-      if (choice && typeof choice === 'object') {
-        const message = (choice as Record<string, unknown>).message;
-        if (message && typeof message === 'object') {
-          content = textFromContent((message as Record<string, unknown>).content);
-        }
-      }
-    }
-
-    if (!content.trim()) {
-      throw new VendorAdapterError(
-        'invalid_response',
-        'The AI service returned an empty Responses output.',
-        { retryable: true },
-      );
-    }
-
-    const modelVersion =
-      typeof body.model === 'string' && body.model.trim()
-        ? body.model
-        : this.model;
-
-    try {
-      return parseAiAnalysisResultFromModelText(content, modelVersion);
-    } catch (error: unknown) {
-      throw new VendorAdapterError(
-        'invalid_response',
-        'The AI response did not match the required schema.',
-        { cause: error, retryable: true },
-      );
-    }
-  }
 }

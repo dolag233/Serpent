@@ -37,7 +37,10 @@ function writeExecutable(filePath: string, body: string): void {
   chmodSync(filePath, 0o755);
 }
 
-function writeFixtureFile(filePath: string, contents = 'fixture'): void {
+function writeFixtureFile(
+  filePath: string,
+  contents: string | Uint8Array = 'fixture',
+): void {
   mkdirSync(path.dirname(filePath), { recursive: true });
   writeFileSync(filePath, contents);
 }
@@ -215,10 +218,17 @@ describe.skipIf(process.platform === 'win32')('media binary release gate', () =>
         writeFixtureFile(path.join(asarSource, utility), '// packaged utility fixture\n');
       }
       await createPackage(asarSource, path.join(packagedResources, 'app.asar'));
-      writeFixtureFile(path.join(
-        packagedResources,
-        'app.asar.unpacked/node_modules/better-sqlite3/build/Release/better_sqlite3.node',
-      ));
+      // verify-package rejects suspiciously small native modules because a
+      // vcpkg-linked build can otherwise pass the existence check and fail at
+      // runtime. Use a size-valid binary-shaped fixture for this positive
+      // package test; dedicated release checks cover the actual native binary.
+      writeFixtureFile(
+        path.join(
+          packagedResources,
+          'app.asar.unpacked/node_modules/better-sqlite3/build/Release/better_sqlite3.node',
+        ),
+        Buffer.alloc(512 * 1024, 0x41),
+      );
       writeFixtureFile(path.join(
         packagedResources,
         'app.asar.unpacked/node_modules/trash/lib/macos-trash',

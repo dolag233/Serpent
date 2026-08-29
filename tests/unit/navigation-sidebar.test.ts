@@ -11,6 +11,27 @@ import {
 } from "../../src/renderer/NavigationSidebar";
 import { LocaleProvider } from "../../src/renderer/i18n";
 
+function createDragTransfer(types: string[]): DataTransfer {
+  return {
+    types,
+    dropEffect: "none",
+    effectAllowed: "all",
+    files: [],
+    getData: () => "",
+    setData: () => undefined,
+  } as unknown as DataTransfer;
+}
+
+function dispatchDragEvent(
+  element: Element,
+  type: "dragenter" | "dragover",
+  dataTransfer: DataTransfer,
+): void {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+  element.dispatchEvent(event);
+}
+
 function createNavigationProps(
   overrides: Partial<NavigationSidebarProps> = {},
 ): NavigationSidebarProps {
@@ -353,5 +374,57 @@ describe("NavigationSidebar virtual library root", () => {
       parentId,
       childId,
     ]);
+  });
+
+  it("highlights collection and trash rows for native File drags", async () => {
+    const collection = {
+      collectionId: "collection-1",
+      parentId: null,
+      name: "References",
+      description: null,
+      coverAssetId: null,
+      position: 0,
+      assetCount: 1,
+      childCollectionCount: 0,
+    };
+    const props = createNavigationProps({
+      collections: [collection],
+      collectionTree: new Map([[null, [collection]]]),
+    });
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        createElement(
+          LocaleProvider,
+          null,
+          createElement(NavigationSidebar, props),
+        ),
+      );
+    });
+
+    const collectionRow = container.querySelector<HTMLButtonElement>(
+      'button[data-nav-collection-id="collection-1"]',
+    );
+    const trashRow = [...container.querySelectorAll<HTMLButtonElement>(".nav-row")]
+      .find((row) => /Trash|回收站/u.test(row.textContent ?? ""));
+    expect(collectionRow).not.toBeNull();
+    expect(trashRow).toBeDefined();
+
+    const nativeFileTransfer = createDragTransfer(["Files"]);
+    await act(async () => {
+      dispatchDragEvent(collectionRow!, "dragover", nativeFileTransfer);
+    });
+
+    expect(collectionRow?.classList.contains("is-drop-target")).toBe(true);
+
+    await act(async () => {
+      dispatchDragEvent(trashRow!, "dragover", nativeFileTransfer);
+    });
+
+    expect(trashRow?.classList.contains("is-drop-target")).toBe(true);
+    expect(collectionRow?.classList.contains("is-drop-target")).toBe(false);
   });
 });

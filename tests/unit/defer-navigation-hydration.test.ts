@@ -59,4 +59,40 @@ describe("deferNavigationHydration", () => {
     await expect(result).resolves.toBe("ready");
     expect(canvas.removeEventListener).toHaveBeenCalledOnce();
   });
+
+  it("cancels queued work when a newer session wins", async () => {
+    vi.useFakeTimers();
+    const requestAnimationFrame = vi.fn((callback: (timestamp: number) => void) => {
+      callback(0);
+      return 1;
+    });
+    vi.stubGlobal("window", { requestAnimationFrame });
+    vi.stubGlobal("document", { querySelector: vi.fn(() => null) });
+    const load = vi.fn(async () => "stale");
+    const controller = new AbortController();
+
+    const result = deferNavigationHydration(load, { signal: controller.signal });
+    controller.abort();
+    await vi.runAllTimersAsync();
+
+    await expect(result).resolves.toBeUndefined();
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("starts immediately after paint for a library replacement", async () => {
+    vi.useFakeTimers();
+    const requestAnimationFrame = vi.fn((callback: (timestamp: number) => void) => {
+      callback(0);
+      return 1;
+    });
+    vi.stubGlobal("window", { requestAnimationFrame });
+    vi.stubGlobal("document", { querySelector: vi.fn(() => null) });
+    const load = vi.fn(async () => "ready");
+
+    const result = deferNavigationHydration(load, { immediate: true });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(load).toHaveBeenCalledOnce();
+    await expect(result).resolves.toBe("ready");
+  });
 });

@@ -64,6 +64,20 @@ describe('plugin menu contribution context', () => {
     });
   });
 
+  it('reports JFIF assets as JPEG to plugin menu contributions', () => {
+    const asset = image({ assetId: 'jfif-1', displayName: 'Reference.JFIF' });
+    const context = createPluginMenuContributionContext({
+      descriptor: assetDescriptor(asset),
+      assets: [asset],
+      libraryId: 'library-a',
+    });
+
+    expect(context.selection).toMatchObject({
+      extensions: ['jfif'],
+      mimeTypes: ['image/jpeg', 'image/*'],
+    });
+  });
+
   it('constructs a JPEG/PNG multi-selection without collapsing asset identity', () => {
     const jpeg = image({ assetId: 'jpeg-1', displayName: 'A.JPEG' });
     const png = image({ assetId: 'png-1', displayName: 'B.png' });

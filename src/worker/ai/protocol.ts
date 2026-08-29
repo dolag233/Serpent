@@ -87,6 +87,66 @@ export function parseAiAnalysisResultFromModelText(
   });
 }
 
+const MAX_AI_TAG_CHARS = 200;
+const MAX_AI_DESCRIPTION_CHARS = 4_000;
+
+/**
+ * Enforce user-facing AI settings after parsing provider output. Prompt text
+ * is advisory: a provider, relay, or asset-controlled filename can still
+ * return valid JSON that violates those instructions, so policy belongs at
+ * the write boundary as well.
+ */
+export function applyAiOutputPolicy(
+  result: AiAnalysisResult,
+  input: {
+    settings: AiAnalysisSettings;
+    existingTagNames: readonly string[];
+    language: string;
+  },
+): AiAnalysisResult {
+  const existingByKey = new Map(
+    input.existingTagNames
+      .map((name) => name.trim())
+      .filter(Boolean)
+      .map((name) => [name.toLocaleLowerCase(), name] as const),
+  );
+  const seenTags = new Set<string>();
+  const tags: string[] = [];
+  for (const rawTag of result.tags) {
+    const trimmed = rawTag.trim();
+    if (!trimmed || trimmed.length > MAX_AI_TAG_CHARS) continue;
+    const key = trimmed.toLocaleLowerCase();
+    const canonical = existingByKey.get(key);
+    if (input.settings.forceExistingTags && canonical === undefined) continue;
+    if (seenTags.has(key)) continue;
+    seenTags.add(key);
+    tags.push(canonical ?? trimmed);
+    if (tags.length >= input.settings.maxTags) break;
+  }
+
+  let description = result.description?.trim();
+  if (description) {
+    description = description.slice(0, MAX_AI_DESCRIPTION_CHARS);
+    const language = input.language.toLocaleLowerCase();
+    if (language.includes("zh") || language.includes("chinese")) {
+      description = description.slice(0, input.settings.maxDescriptionCharsZh);
+    }
+    if (language.includes("en") || language.includes("english")) {
+      description = description
+        .split(/\s+/u)
+        .slice(0, input.settings.maxDescriptionWordsEn)
+        .join(" ");
+    }
+    if (!description) description = undefined;
+  }
+
+  return {
+    ...result,
+    ...(description === undefined ? { description: undefined } : { description }),
+    tags,
+  };
+}
+
 /** Coerce common model drift before Zod (tags as string, nulls, etc.). */
 function normalizeAiStructuredInput(input: unknown): unknown {
   const stripped = stripNullValues(input);

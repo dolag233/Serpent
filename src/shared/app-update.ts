@@ -25,6 +25,27 @@ export const APP_UPDATE_ERROR_CODES = [
 ] as const;
 export type AppUpdateErrorCode = (typeof APP_UPDATE_ERROR_CODES)[number];
 
+const appUpdateReleaseNoteSchema = z.union([
+  z.string().min(1).max(4_000),
+  z.strictObject({
+    zhCN: z.string().min(1).max(4_000).optional(),
+    en: z.string().min(1).max(4_000).optional(),
+  }).refine((value) => value.zhCN !== undefined || value.en !== undefined),
+]);
+
+/** Optional metadata asset attached to a GitHub Release. */
+export const appUpdateReleaseMetaSchema = z.strictObject({
+  version: z.string().min(1).max(64),
+  date: z.string().min(1).max(64),
+  changelog: z.array(appUpdateReleaseNoteSchema).max(100).optional(),
+  changelogUrl: z.string().url().max(2_048).optional(),
+  downloadUrl: z.string().url().max(2_048).optional(),
+  mandatory: z.boolean().default(false),
+});
+
+export type AppUpdateReleaseNote = z.infer<typeof appUpdateReleaseNoteSchema>;
+export type AppUpdateReleaseMeta = z.infer<typeof appUpdateReleaseMetaSchema>;
+
 const appUpdateDistributionSchema = z.enum(APP_UPDATE_DISTRIBUTIONS);
 const appUpdateAssetKindSchema = z.enum(APP_UPDATE_ASSET_KINDS);
 const appUpdateErrorCodeSchema = z.enum(APP_UPDATE_ERROR_CODES);
@@ -61,6 +82,7 @@ const appUpdateAvailableSchema = z.object({
   assetName: z.string().min(1).max(255),
   assetSize: z.number().int().nonnegative(),
   releaseNotes: z.string().max(12_000),
+  releaseMeta: appUpdateReleaseMetaSchema.optional(),
 });
 
 export const appUpdateCheckResultSchema = z.discriminatedUnion('status', [

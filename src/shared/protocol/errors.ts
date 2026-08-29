@@ -49,6 +49,8 @@ export const PUBLIC_ERROR_MESSAGES = {
     'Serpent could not write files in the selected folder. The folder may lack write permission, the disk may be full or read-only, or another program may have the files locked. Check the folder and NAS connection, then retry.',
   LIBRARY_NETWORK_SHARE:
     'Serpent could not open or write the library database on this network share (NAS/SMB). NAS libraries use rollback journaling and depend on the share’s file-locking and reconnect behavior. Check the NAS connection and permissions; if it keeps failing, copy the library to a local disk or use WebDAV sync.',
+  LINKED_FOLDER_UNAVAILABLE:
+    'This NAS library contains a linked folder that is unavailable on this computer. The library database is intact. Reconnect the folder or relink it on this computer, then open the library again.',
   LIBRARY_IO_ERROR:
     'Serpent could not complete the library operation because the disk or filesystem reported an I/O error. Check the drive connection, free space, and permissions; if it keeps failing, copy the library to a local disk and inspect Diagnostics.',
   LIBRARY_BUSY: 'This library is being updated by another Serpent window or a brief database lock. Wait a few seconds and retry; do not open the same library from two computers at once.',
@@ -151,6 +153,9 @@ export const publicErrorReasonSchema = z.enum([
   'SYNC_METHOD_NOT_ALLOWED',
   'SYNC_WRITE_UNSUPPORTED',
   'SYNC_HTTP_ERROR',
+  'LINKED_FOLDER_NETWORK_DISCONNECTED',
+  'LINKED_FOLDER_NOT_FOUND',
+  'LINKED_FOLDER_FOREIGN_DEVICE',
 ]);
 
 export type PublicErrorReason = z.infer<typeof publicErrorReasonSchema>;

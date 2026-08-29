@@ -10,7 +10,12 @@ import path from 'node:path';
 
 import { _electron as electron, expect, test, type Page } from '@playwright/test';
 
-import { assetCard, resolveElectronExecutablePath } from './electron-test-helpers';
+import {
+  assetCard,
+  openLinkedFolderImportMenu,
+  resolveElectronExecutablePath,
+  waitForLibraryLoadingToFinish,
+} from './electron-test-helpers';
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -54,11 +59,10 @@ test('imports a linked folder, reconciles external changes, and relinks after th
     await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();
+    await waitForLibraryLoadingToFinish(window);
 
-    await window.getByRole('button', { name: '主菜单' }).click();
-    await window.getByRole('menuitem', { name: '文件', exact: true }).hover();
-    await window.getByRole('menuitem', { name: '导入链接文件夹' }).click();
-    await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible();
+    await openLinkedFolderImportMenu(application, window);
+    await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible({ timeout: 15_000 });
 
     await window.getByRole('button', { name: 'source', exact: true }).click();
     await expect(window.getByText('a.png', { exact: true })).toBeVisible();
@@ -104,7 +108,12 @@ test('imports a linked folder, reconciles external changes, and relinks after th
 
     // Relink to the new root that has a.png (different content) but not b.png/c.png.
     writeFileSync(path.join(newRoot, 'a.png'), Buffer.from('aaa-restored'));
-    await window.getByRole('button', { name: 'source', exact: true }).click();
+    const offlineSource = window
+      .locator('button.nav-row[data-nav-folder-kind="linked"]')
+      .filter({ hasText: 'source' })
+      .first();
+    await expect(offlineSource).toHaveAttribute('title', /离线/);
+    await offlineSource.click();
     const afterRelink = await listAllAssets(window);
     const aAfterRelink = afterRelink.find((asset) => asset.displayName === 'a.png');
     const bAfterRelink = afterRelink.find((asset) => asset.displayName === 'b.png');
@@ -194,12 +203,11 @@ test('restores a linked library after a full app restart', async () => {
     await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();
+    await waitForLibraryLoadingToFinish(window);
 
     // Link the folder.
-    await window.getByRole('button', { name: '主菜单' }).click();
-    await window.getByRole('menuitem', { name: '文件', exact: true }).hover();
-    await window.getByRole('menuitem', { name: '导入链接文件夹' }).click();
-    await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible();
+    await openLinkedFolderImportMenu(application, window);
+    await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible({ timeout: 15_000 });
     await window.getByRole('button', { name: 'source', exact: true }).click();
 
     // The root shows direct files and a virtual child-folder row; nested files
@@ -222,6 +230,7 @@ test('restores a linked library after a full app restart', async () => {
     // Restart the app — the library should auto-open because of SERPENT_E2E_RESTORE_RECENT.
     application = await launch();
     window = await application.firstWindow();
+    await waitForLibraryLoadingToFinish(window);
 
     // Wait for the library to be restored and the linked folder to be visible.
     const restoredSource = window
@@ -299,11 +308,10 @@ test('applies default ignore rules — .git and node_modules are not registered 
     await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();
+    await waitForLibraryLoadingToFinish(window);
 
-    await window.getByRole('button', { name: '主菜单' }).click();
-    await window.getByRole('menuitem', { name: '文件', exact: true }).hover();
-    await window.getByRole('menuitem', { name: '导入链接文件夹' }).click();
-    await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible();
+    await openLinkedFolderImportMenu(application, window);
+    await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible({ timeout: 15_000 });
     await window.getByRole('button', { name: 'source', exact: true }).click();
 
     // Only the real assets should be visible.

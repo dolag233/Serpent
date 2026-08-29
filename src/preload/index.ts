@@ -2597,7 +2597,7 @@ const shell: SerpentShellApi = Object.freeze({
         'library.create', 'library.open', 'library.close', 'library.remove',
         'library.delete-from-disk', 'library.import', 'library.import-eagle', 'library.export', 'library.settings',
         'window.background-jobs', 'window.diagnostics',
-        'about.serpent', 'about.github', 'about.open-source', 'settings',
+        'about.serpent', 'about.github', 'about.open-source', 'about.diagnostics', 'settings',
       ];
       if (commands.includes(input as ApplicationMenuCommand)) {
         listener(input as ApplicationMenuCommand);

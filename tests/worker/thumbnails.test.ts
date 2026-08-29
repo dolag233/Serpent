@@ -1108,15 +1108,15 @@ describe('processThumbnailQueue', () => {
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'LegacyAdmissionPrune', selectedParentPath: root });
 
-    const sourceDirectPath = path.join(root, 'source-direct.png');
-    writeFileSync(sourceDirectPath, VALID_1X1_PNG);
+    const sourceDirectPath = path.join(root, 'source-direct.jfif');
+    writeFileSync(sourceDirectPath, await createJpegBytes(1, 1));
     importNoConflict(service, created.libraryId, sourceDirectPath);
 
     const derivedPath = path.join(root, 'derived.png');
     createTestImage(derivedPath);
     importNoConflict(service, created.libraryId, derivedPath);
     const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
-    const sourceDirect = assets.find((asset) => asset.displayName === 'source-direct.png')!;
+    const sourceDirect = assets.find((asset) => asset.displayName === 'source-direct.jfif')!;
     const derived = assets.find((asset) => asset.displayName === 'derived.png')!;
     await service.generateThumbnail({ libraryId: created.libraryId, assetId: derived.assetId });
     expect(service.getCurrentArtifact(created.libraryId, derived.assetId, 'thumbnail'))

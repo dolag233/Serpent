@@ -71,6 +71,8 @@ export const en = {
     libraryMenu: "Library menu",
     chooseLibrary: "Choose library",
     noLibraryOpen: "No library open",
+    switchLibrary: "Switch library…",
+    librarySwitchWarning: "An operation is still in progress. Serpent will wait for it to finish before switching libraries; the operation may still change what is shown after the switch. Continue?",
     otherLibraries: "Other libraries",
     createLibrary: "Create library",
     createLibraryEllipsis: "New library…",
@@ -821,8 +823,8 @@ export const en = {
       fps: "Frame rate (FPS)",
       help: "Default is 30 FPS. Only frames with the same resolution stay in the sequence.",
       applyToRest: "Apply these settings to later sequences",
-      importSelected: "Import selected file only",
-      importSequence: "Import {count} frames as sequence",
+      importSelected: "Import individual file",
+      importSequence: "Import image sequence",
       importing: "Importing…"
     },
     pluginTrustPrompt: {
@@ -852,6 +854,7 @@ export const en = {
       automationNotice: "Notice",
       automationWarning: "Warning",
       automationError: "Couldn't finish the automation action",
+      switchLibrary: "Switch library",
       confirm: "OK"
     },
     rename: {
@@ -993,7 +996,12 @@ export const en = {
       updateAssetMissing: "This release has no compatible update for this build.",
       updateVerificationFailed: "The downloaded update failed integrity verification.",
       updateDownloadFailed: "The update download failed. Try again.",
-      updateOpenFailed: "The installer could not be opened."
+      updateOpenFailed: "The installer could not be opened.",
+      viewReleaseNotes: "View release notes",
+      hideReleaseNotes: "Hide release notes",
+      releaseDate: "Published {date}",
+      mandatoryUpdate: "This update is required.",
+      openReleaseNotes: "Open the full release notes in a browser"
     },
     openSource: {
       title: "Open-source components & licenses",
@@ -1112,7 +1120,7 @@ export const en = {
     categoryAssets: "Assets",
     categoryAppearance: "Appearance",
     categoryBrowse: "Browse",
-    categoryAi: "AI",
+    categoryAi: "AI Analysis",
     categoryMcp: "MCP",
     categoryPlugins: "Plugins",
     categoryPluginSettings: "Plugin settings",
@@ -1287,6 +1295,8 @@ export const en = {
     hoverAudioPlayHint: "Hovering an audio card plays it in place; leaving stops it.",
     hoverVideoSound: "Video hover preview with sound",
     hoverVideoSoundHint: "Play sound during video hover preview (off by default to avoid noise).",
+    taskCompletionSound: "Task result sound",
+    taskCompletionSoundHint: "Play a quiet sound only after imports, exports, or other eligible operations actually run longer than one minute.",
     languageHint: "Controls the interface language. Changes apply immediately.",
     imageSequenceAutoDetect: "Detect image sequences during import",
     imageSequenceAutoDetectHint:
@@ -1577,6 +1587,7 @@ export const en = {
   viewer: {
     pdfLoadFailed: "Could not load the PDF file.",
     pdfPages: "Loaded {loaded}/{count} pages",
+    htmlPreview: "HTML preview",
     htmlLoadFailed: "Could not load the HTML file.",
     htmlLoading: "Loading HTML…"
   },
@@ -1659,6 +1670,9 @@ export const en = {
     exportingLibrary: "Exporting library:",
     importingLibrary: "Importing library:",
     openingLibrary: "Opening library: {name}",
+    openingLibraryNamed: "Opening “{name}” library",
+    openingLibraryGeneric: "Opening library",
+    switchLibraryWhileLoading: "Switch library",
     validatingEagleLibrary: "Opening Eagle library…",
     validatingBillfishLibrary: "Validating Billfish library…",
     cancelExport: "Cancel export",
@@ -1857,6 +1871,7 @@ export const en = {
     convertLinkedDone: "Converted {count} items; external source folder unchanged.",
     convertLinkedFailed: "Failed to convert linked folder.",
     closeFailed: "Close failed.",
+    previousLibraryCloseFailed: "The new library is open, but the previous library could not be fully closed. Retry closing it later.",
     restoredCount: "Restored {count} assets",
     restoreTrashedFolderDone:
       "Restored folder “{name}”: {folders} folders, {assets} assets",
@@ -2021,6 +2036,7 @@ export const en = {
       LIBRARY_STRUCTURE_MISMATCH: "This library’s database structure does not match this version of Serpent. Upgrade to the latest Serpent and reopen the library.",
       LIBRARY_NOT_WRITABLE: "Serpent could not write files in the selected folder. The folder may lack write permission, the disk may be full or read-only, or another program may have the files locked. Check the folder and NAS connection, then retry.",
       LIBRARY_NETWORK_SHARE: "Serpent could not open or write the library database on this network share (NAS/SMB). NAS libraries use rollback journaling and depend on the share’s file-locking and reconnect behavior. Check the NAS connection and permissions; if it keeps failing, copy the library to a local disk or use WebDAV sync.",
+      LINKED_FOLDER_UNAVAILABLE: "This NAS library contains a linked folder that is unavailable on this computer. The library database is intact. Reconnect the folder or relink it on this computer, then open the library again.",
       LIBRARY_IO_ERROR: "Serpent could not complete the library operation because the disk or filesystem reported an I/O error. Check the drive connection, free space, and permissions; if it keeps failing, copy the library to a local disk and inspect Diagnostics.",
       LIBRARY_BUSY: "This library is being updated by another Serpent window or a brief database lock. Wait a few seconds and retry; do not open the same library from two computers at once.",
       LIBRARY_CLEANUP_FAILED: "Creating the library failed, and leftover temporary files could not be removed automatically. Delete any `.serpent-create-*.partial` folder next to the chosen location, then retry with a writable folder.",
@@ -2113,7 +2129,10 @@ export const en = {
       SYNC_CONFLICT: "The remote content was modified by another device.",
       SYNC_METHOD_NOT_ALLOWED: "The server does not support the required sync operation (for example MOVE). Use a WebDAV server that allows the full method set, or ask the administrator to enable it.",
       SYNC_WRITE_UNSUPPORTED: "The server does not support file upload, so it cannot be used for sync. Use a WebDAV service that allows PUT.",
-      SYNC_HTTP_ERROR: "The server returned an HTTP error. Check the address, account permissions, and server status, then retry."
+      SYNC_HTTP_ERROR: "The server returned an HTTP error. Check the address, account permissions, and server status, then retry.",
+      LINKED_FOLDER_NETWORK_DISCONNECTED: "The network share or linked folder is currently unreachable. Reconnect it, then open the library again.",
+      LINKED_FOLDER_NOT_FOUND: "The linked folder path no longer exists on this computer. Reconnect the drive or relink the folder, then open the library again.",
+      LINKED_FOLDER_FOREIGN_DEVICE: "The linked folder's device or volume identity differs from the recorded computer. Relink it on this computer."
     },
     withReason: "{message} Reason: {reason}"
   },

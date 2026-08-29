@@ -498,14 +498,18 @@ describe('listTagNames', () => {
 // ---------------------------------------------------------------------------
 
 describe('OpenAIVendorAdapter Responses compatibility', () => {
-  it('retries without the Responses json_object envelope when a compatible relay rejects it', async () => {
+  it('negotiates strict schema, json_object, and plain text for a compatible relay', async () => {
     const bodies: Array<Record<string, unknown>> = [];
-    let call = 0;
     const mockFetch: typeof fetch = async (_input, init) => {
-      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
-      call += 1;
-      if (call === 1) {
-        return new Response('unsupported text.format', { status: 400 });
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      bodies.push(body);
+      const text = body.text as Record<string, unknown> | undefined;
+      const format = text?.format as Record<string, unknown> | undefined;
+      if (format?.type === 'json_schema') {
+        return new Response('unsupported text.format json_schema; use json_object', { status: 400 });
+      }
+      if (format?.type === 'json_object') {
+        return new Response('unsupported text.format json_object; use text', { status: 400 });
       }
       return new Response(JSON.stringify({
         model: 'compatible-vision',
@@ -540,9 +544,12 @@ describe('OpenAIVendorAdapter Responses compatibility', () => {
       rating: 4,
       modelVersion: 'compatible-vision',
     });
-    expect(bodies).toHaveLength(2);
-    expect(bodies[0]?.text).toEqual({ format: { type: 'json_object' } });
-    expect(bodies[1]).not.toHaveProperty('text');
+    expect(bodies).toHaveLength(3);
+    expect(bodies[0]?.text).toMatchObject({
+      format: { type: 'json_schema' },
+    });
+    expect(bodies[1]?.text).toEqual({ format: { type: 'json_object' } });
+    expect(bodies[2]).not.toHaveProperty('text');
 
     await adapter.analyze({
       displayName: 'second.png',
@@ -556,8 +563,8 @@ describe('OpenAIVendorAdapter Responses compatibility', () => {
     // The first request negotiated the relay capability. Later assets on the
     // same endpoint send one request, so a 400 fallback cannot halve batch
     // throughput or silently consume every retry budget.
-    expect(bodies).toHaveLength(3);
-    expect(bodies[2]).not.toHaveProperty('text');
+    expect(bodies).toHaveLength(4);
+    expect(bodies[3]).not.toHaveProperty('text');
   });
 
   it('does not retry an ordinary Responses 400 as a format fallback', async () => {
@@ -584,6 +591,55 @@ describe('OpenAIVendorAdapter Responses compatibility', () => {
       imageBase64: 'fakebase64',
     })).rejects.toMatchObject({ kind: 'invalid_response' });
     expect(calls).toBe(1);
+  });
+
+  it('recovers from a malformed structured 2xx response without poisoning the cache', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    let calls = 0;
+    const mockFetch: typeof fetch = async (_input, init) => {
+      calls += 1;
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      if (calls === 1) {
+        return new Response(JSON.stringify({
+          model: 'cache-poisoning-model',
+          output_text: 'the relay ignored response_format',
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        model: 'cache-poisoning-model',
+        output_text: JSON.stringify({ tags: ['recovered'] }),
+      }), { status: 200 });
+    };
+    const endpoint = 'https://malformed-2xx.example/v1';
+    const request = {
+      displayName: 'cache-poisoning.png',
+      filename: 'cache-poisoning.png',
+      mime: 'image/png',
+      language: 'zh-CN' as const,
+      enabledFields: { description: true, tags: true, rating: true },
+      existingTagNames: [],
+      imageBase64: 'fakebase64',
+    };
+    const adapter = new OpenAIVendorAdapter(
+      'test-key',
+      'cache-poisoning-model',
+      mockFetch,
+      endpoint,
+      'openai_responses',
+    );
+
+    await expect(adapter.analyze(request)).resolves.toMatchObject({
+      tags: ['recovered'],
+    });
+    await expect(adapter.analyze(request)).resolves.toMatchObject({
+      tags: ['recovered'],
+    });
+    expect(calls).toBe(3);
+    // The malformed first response must not be cached as a structured mode;
+    // the bounded text fallback is validated and can then be cached.
+    expect(bodies[0]?.text).toBeDefined();
+    expect(bodies[1]).not.toHaveProperty('text');
+    expect(bodies[2]).not.toHaveProperty('text');
   });
 
   it('coordinates the first format probe without holding followers at the global limiter', async () => {
@@ -629,6 +685,8 @@ describe('OpenAIVendorAdapter Responses compatibility', () => {
     expect(structuredCalls).toBe(1);
     releaseFirstProbe();
     await expect(first).resolves.toMatchObject({ tags: ['parallel'] });
+    // The provider explicitly names plain text as its supported fallback, so
+    // the leader does not probe json_object after the stalled schema request.
     expect(structuredCalls).toBe(1);
     expect(bodies.filter((body) => !body.text)).toHaveLength(2);
   });

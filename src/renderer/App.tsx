@@ -68,9 +68,23 @@ import {
   NavigationSidebar,
 } from "./NavigationSidebar";
 import { LibrarySwitcher, buildRecentLibraryMenuEntries, type RecentLibraryMenuEntry } from "./LibrarySwitcher";
+import {
+  LibraryLoadingOverlay,
+} from "./LibraryLoadingOverlay";
+import { activeLibrarySwitchActivity } from "./library-switch-safety";
+import { createLibraryTransitionLock } from "./library-transition-lock";
+import {
+  advanceLibraryViewSession,
+  invalidateLibraryViewSession,
+  isCurrentLibraryViewSession,
+  type LibraryViewSession,
+  type LibraryViewSessionToken,
+} from "./library-view-session";
+import { createTrackedLibraryApi } from "./tracked-library-api";
 import { MainMenu } from "./MainMenu";
 import {
   buildMainMenuSections,
+  collectMainMenuCommandStates,
   SERPENT_VERSION,
   type MainMenuItem,
 } from "./main-menu-items";
@@ -183,6 +197,7 @@ import {
 import { shouldRefreshContentForLibraryChange } from "./library-change-refresh";
 import { AboutDialog } from "./AboutDialog";
 import { OpenSourceLicensesDialog } from "./OpenSourceLicensesDialog";
+import { playTaskCompletionSound } from "./task-completion-sound";
 import type {
   AppUpdateCheckResult,
   AppUpdateInstallResult,
@@ -281,7 +296,10 @@ import {
 } from "./folder-drag-drop";
 import { importSummaryMessage } from "./import-summary";
 import { automationCommandToast } from "./automation-command-toast";
-import type { DialogEscapeSnapshot } from "./dialog-escape-stack";
+import {
+  resolveDialogEscapeAction,
+  type DialogEscapeSnapshot,
+} from "./dialog-escape-stack";
 import { useAssetRename } from "./useAssetRename";
 import { useInlineFolderEdit } from "./use-inline-folder-edit";
 import { useInlineSmartCollectionEdit } from "./use-inline-smart-collection-edit";
@@ -341,6 +359,7 @@ import type {
   TagSummary,
   TrashedFolderSummary,
 } from "../shared/asset-types";
+import type { LibraryNavigationSummary } from "../shared/library-navigation";
 import { hasMeaningfulSmartCollectionCondition } from "../shared/smart-collection-query";
 import { expandFormatFilterTokens } from "../shared/text-media";
 import type {
@@ -487,6 +506,31 @@ type UiState =
   | "loading"
   | "importing"
   | "ready";
+type LibraryLoadingState = {
+  name: string | null;
+};
+
+const LIBRARY_LOADING_DISPLAY_DELAY_MS = 3_000;
+
+function useDelayedVisibility(active: boolean, delayMs: number): boolean {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    if (!active) {
+      // Clear the previous activation so a later slow open gets its own
+      // three-second grace period instead of reusing stale visibility.
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset is the falling-edge cleanup for this timer state
+      setVisible(false);
+      return;
+    }
+
+    const timer = window.setTimeout(() => setVisible(true), delayMs);
+    return () => window.clearTimeout(timer);
+  }, [active, delayMs]);
+
+  return visible;
+}
+
 type QueryNumericRangeState = {
   min: string;
   max: string;
@@ -596,7 +640,7 @@ function ToolButton({
 function AppInner() {
   const t = useT();
   const { locale } = useLocale();
-  const api = (window as RendererWindow).serpent?.library;
+  const rawLibraryApi = (window as RendererWindow).serpent?.library;
   const shellApi = (window as RendererWindow).serpent?.shell;
 
   useEffect(() => {
@@ -605,14 +649,10 @@ function AppInner() {
 
   useScrollbarActivity();
 
-  // Keep AI readiness (hasKey) in sync without requiring the settings dialog.
-  useEffect(() => {
-    if (!api) return;
-    void loadAiConfig();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once per api identity
-  }, [api]);
   // Library / folder / assets (existing)
   const [library, setLibrary] = useState<RendererLibrarySummary | null>(null);
+  const libraryRef = useRef<RendererLibrarySummary | null>(null);
+  libraryRef.current = library;
   const [recentLibraries, setRecentLibraries] = useState<
     RecentLibraryMenuEntry[]
   >([]);
@@ -665,6 +705,12 @@ function AppInner() {
   // overwrite the last browsed asset in localStorage.
   const [browserSessionReady, setBrowserSessionReady] = useState(false);
   const [uiState, setUiState] = useState<UiState>("booting");
+  const [libraryLoading, setLibraryLoading] =
+    useState<LibraryLoadingState | null>(null);
+  const libraryLoadingVisible = useDelayedVisibility(
+    libraryLoading !== null,
+    LIBRARY_LOADING_DISPLAY_DELAY_MS,
+  );
   const uiStateRef = useRef(uiState);
   uiStateRef.current = uiState;
   const busy = [
@@ -675,6 +721,45 @@ function AppInner() {
     "loading",
     "importing",
   ].includes(uiState);
+  const libraryTransitionLockRef = useRef<ReturnType<typeof createLibraryTransitionLock> | null>(null);
+  const libraryTransitionLock =
+    libraryTransitionLockRef.current ??
+    (libraryTransitionLockRef.current = createLibraryTransitionLock());
+  const libraryTransitionInlineOpeningRef = useRef<
+    "open-eagle" | "open-billfish" | null
+  >(null);
+  const libraryWriteDepthRef = useRef(0);
+  const libraryWriteInFlightRef = useRef(false);
+  const [, forceLibraryWriteState] = useState(false);
+  const beginLibraryWrite = useCallback(() => {
+    libraryWriteDepthRef.current += 1;
+    libraryWriteInFlightRef.current = true;
+    forceLibraryWriteState(true);
+  }, []);
+  const endLibraryWrite = useCallback(() => {
+    libraryWriteDepthRef.current = Math.max(0, libraryWriteDepthRef.current - 1);
+    const active = libraryWriteDepthRef.current > 0;
+    libraryWriteInFlightRef.current = active;
+    forceLibraryWriteState(active);
+  }, []);
+  const api = useMemo(
+    () =>
+      rawLibraryApi
+        ? createTrackedLibraryApi(
+            rawLibraryApi,
+            beginLibraryWrite,
+            endLibraryWrite,
+            libraryTransitionLock.runWrite,
+          )
+        : undefined,
+    [beginLibraryWrite, endLibraryWrite, libraryTransitionLock, rawLibraryApi],
+  );
+  // Keep AI readiness (hasKey) in sync without requiring the settings dialog.
+  useEffect(() => {
+    if (!api) return;
+    void loadAiConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once per api identity
+  }, [api]);
   // Toast + fatal alert (REQ-SHELL-010 / Serpent-99lv): controller owns
   // auto-dismiss, stack ordering, and the toast closing lifecycle.
   const {
@@ -929,6 +1014,82 @@ function AppInner() {
   // generation that is no longer current so stale reads cannot cover the
   // undoable mutation receipt with a misleading error toast.
   const contentLoadGenerationRef = useRef(0);
+  const libraryViewSessionRef = useRef<LibraryViewSession>({
+    libraryId: null,
+    generation: 0,
+  });
+  const navigationHydrationAbortRef = useRef<AbortController | null>(null);
+  const pendingLibraryCloseFencesRef = useRef(new Map<string, Set<number>>());
+  const localAssetRemovalGenerationRef = useRef(0);
+
+  const cancelPendingLibraryReads = useCallback(() => {
+    contentLoadGenerationRef.current += 1;
+    navigationHydrationAbortRef.current?.abort();
+    navigationHydrationAbortRef.current = null;
+  }, []);
+  const beginLibraryTransition = useCallback(() => {
+    cancelPendingLibraryReads();
+    const next = invalidateLibraryViewSession(libraryViewSessionRef.current);
+    libraryViewSessionRef.current = next;
+    return next;
+  }, [cancelPendingLibraryReads]);
+  const activateLibraryView = useCallback(
+    (libraryId: string) => {
+      cancelPendingLibraryReads();
+      const next = advanceLibraryViewSession(
+        libraryViewSessionRef.current,
+        libraryId,
+      );
+      libraryViewSessionRef.current = next;
+      return next;
+    },
+    [cancelPendingLibraryReads],
+  );
+  const ensureLibraryView = useCallback(
+    (libraryId: string): LibraryViewSessionToken | null => {
+      const current = libraryViewSessionRef.current;
+      if (current.libraryId === libraryId) {
+        return {
+          libraryId,
+          generation: current.generation,
+        };
+      }
+      // A stale callback can retain the previous library object for several
+      // awaits. Never let that callback reactivate its old identity after a
+      // newer library has been published; only bootstrap an identity while
+      // the renderer has no library ref yet.
+      if (libraryRef.current !== null) return null;
+      const next = activateLibraryView(libraryId);
+      return {
+        libraryId,
+        generation: next.generation,
+      };
+    },
+    [activateLibraryView],
+  );
+  const isCurrentLibraryView = useCallback(
+    (token: LibraryViewSessionToken) =>
+      isCurrentLibraryViewSession(libraryViewSessionRef.current, token),
+    [],
+  );
+  const markLibraryClosePending = useCallback((libraryId: string): number => {
+    const generation = libraryViewSessionRef.current.generation;
+    const pending = pendingLibraryCloseFencesRef.current.get(libraryId) ?? new Set<number>();
+    pending.add(generation);
+    pendingLibraryCloseFencesRef.current.set(libraryId, pending);
+    return generation;
+  }, []);
+  const clearLibraryClosePending = useCallback(
+    (libraryId: string, generation: number) => {
+      const pending = pendingLibraryCloseFencesRef.current.get(libraryId);
+      if (!pending) return;
+      pending.delete(generation);
+      if (pending.size === 0) {
+        pendingLibraryCloseFencesRef.current.delete(libraryId);
+      }
+    },
+    [],
+  );
   const reloadCurrentContentRef = useRef<() => Promise<void>>(
     async () => undefined,
   );
@@ -1070,9 +1231,14 @@ function AppInner() {
       setOperationHistory(null);
       return;
     }
-    const result = await api.getOperationHistoryStatus({ libraryId: library.libraryId });
-    if (result.ok) setOperationHistory(result.value);
-  }, [api, library]);
+    const targetLibraryId = library.libraryId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
+    const result = await api.getOperationHistoryStatus({ libraryId: targetLibraryId });
+    if (result.ok && isCurrentLibraryView(viewSession)) {
+      setOperationHistory(result.value);
+    }
+  }, [api, ensureLibraryView, isCurrentLibraryView, library]);
   useEffect(() => {
     const refreshTimer = window.setTimeout(() => {
       void refreshOperationHistory();
@@ -1095,6 +1261,9 @@ function AppInner() {
   // Export / Import state
   const [exportProgress, setExportProgress] =
     useState<ExportProgressEvent | null>(null);
+  const exportProgressRef = useRef(exportProgress);
+  exportProgressRef.current = exportProgress;
+  const exportStartedAtRef = useRef<number | null>(null);
   const [importProgress, setImportProgress] =
     useState<ImportProgressEvent | null>(null);
   const importProgressRef = useRef(importProgress);
@@ -1145,10 +1314,13 @@ function AppInner() {
   const [gitignoreContent, setGitignoreContent] = useState("");
   /** 同步传输进度（手动/自动），供资源库设置同步页显示进度条与速度。 */
   const [syncProgress, setSyncProgress] = useState<SyncProgressEvent | null>(null);
+  const syncProgressRef = useRef(syncProgress);
+  syncProgressRef.current = syncProgress;
   /** 当前库的同步绑定状态（库切换器 link/link-off 图标）。 */
   const [syncBindingStatus, setSyncBindingStatus] = useState<"none" | "disabled" | "enabled">("none");
   /** 本次同步是否已弹过「正在同步」toast（有实际传输才提示）。 */
   const syncRunNotifiedRef = useRef(false);
+  const syncRunStartedAtRef = useRef<number | null>(null);
   const [showIgnoredItems, setShowIgnoredItems] = useState(false);
   const [appLogEntries, setAppLogEntries] = useState<AppLogEntry[]>([]);
   const [appLogLoading, setAppLogLoading] = useState(false);
@@ -1156,6 +1328,22 @@ function AppInner() {
   const [appLogErrorCode, setAppLogErrorCode] = useState<
     Extract<ReadAppLogResult, { ok: false }>["code"] | null
   >(null);
+
+  function confirmLibrarySwitch(): boolean {
+    const activity = activeLibrarySwitchActivity({
+      uiState: uiStateRef.current,
+      importProgress: importProgressRef.current,
+      exportProgress: exportProgressRef.current,
+      syncProgress: syncProgressRef.current,
+      writeOperationInFlight: libraryWriteInFlightRef.current,
+    });
+    return activity === null || window.confirm(t("shell.librarySwitchWarning"));
+  }
+
+  function openLibraryChooserFromError(): void {
+    dismissFatalAlert();
+    setOpenLibraryChooserOpen(true);
+  }
 
   const appUpdateApi = (window as RendererWindow).serpent?.appUpdate;
 
@@ -2196,6 +2384,8 @@ function AppInner() {
     primarySelectedAssetId: selectedAssetId,
     isPreviewable: isHoverPreviewable,
   });
+  const hoveredAssetIdRef = useRef<string | null>(null);
+  hoveredAssetIdRef.current = hoveredAssetId;
 
   const selectionAssetIds = useMemo(() => {
     if (assetViewMode !== "masonry") return undefined;
@@ -2406,6 +2596,9 @@ function AppInner() {
   useEffect(() => {
     let cancelled = false;
     async function loadFolderBrowseEntries() {
+      const viewSession = library
+        ? ensureLibraryView(library.libraryId)
+        : null;
       const parentFolderId =
         api && library
           ? resolveFolderBrowseParentId({
@@ -2435,7 +2628,14 @@ function AppInner() {
         parentFolderId,
         showIgnored: showIgnoredItems,
       });
-      if (!cancelled && result.ok) setFolderBrowseEntries(result.value);
+      if (
+        !cancelled &&
+        viewSession &&
+        isCurrentLibraryView(viewSession) &&
+        result.ok
+      ) {
+        setFolderBrowseEntries(result.value);
+      }
     }
     void loadFolderBrowseEntries();
     return () => {
@@ -2454,6 +2654,8 @@ function AppInner() {
     searchValue,
     showIgnoredItems,
     folderRecursive,
+    ensureLibraryView,
+    isCurrentLibraryView,
     // Serpent-d0nv: a cover candidate's thumbnail.ready bumps this token so
     // the row re-fetches and the generated cover appears without navigation.
     folderBrowseRefreshToken,
@@ -2986,6 +3188,10 @@ function AppInner() {
         showIgnored?: boolean;
         /** Navigation keeps sidebar data; mutations/library open opt in to refresh. */
         refreshSidebar?: boolean;
+        /** Library replacement hydrates navigation before the new view is shown. */
+        navigationPriority?: "normal" | "library-switch";
+        /** Keep the workspace covered until the complete navigation snapshot is ready. */
+        blockingLibraryLoad?: boolean;
       },
     ) => {
       if (!api) return;
@@ -2997,8 +3203,16 @@ function AppInner() {
         (trashMode
           ? { kind: "trash" }
           : folderBrowseScope(scope, folderRecursiveRef.current));
+      const viewSession = ensureLibraryView(activeLibrary.libraryId);
+      if (!viewSession) return [];
       const libId = { libraryId: activeLibrary.libraryId };
       const generation = ++contentLoadGenerationRef.current;
+      navigationHydrationAbortRef.current?.abort();
+      const navigationHydrationAbort = new AbortController();
+      navigationHydrationAbortRef.current = navigationHydrationAbort;
+      const isCurrentLoad = () =>
+        generation === contentLoadGenerationRef.current &&
+        isCurrentLibraryView(viewSession);
       const includeLibraryCounts =
         refreshSidebar || trashMode || scope === "all" || scope === "root";
       // Post the primary browse request before sidebar/count hydration. The
@@ -3021,17 +3235,26 @@ function AppInner() {
       // retain the old count-only fallback for mutation paths that explicitly
       // keep sidebar rows untouched. Both paths start after the primary browse
       // request, so sidebar work cannot win the Worker queue race.
+      const loadNavigationSummary = () => {
+        if (!isCurrentLoad()) return Promise.resolve(undefined);
+        return api.fetchLibraryNavigationSummary({
+          ...libId,
+          showIgnored: includeIgnored,
+          includeTrashedFolders: trashMode,
+        });
+      };
       const navigationPromise = refreshSidebar
-        ? primaryAssetPromise.then(() => deferNavigationHydration(() => {
-            if (generation !== contentLoadGenerationRef.current) {
-              return Promise.resolve(undefined);
-            }
-            return api.fetchLibraryNavigationSummary({
-              ...libId,
-              showIgnored: includeIgnored,
-              includeTrashedFolders: trashMode,
-            });
-          }))
+        ? primaryAssetPromise.then(
+            (primaryResult) => {
+              if (!primaryResult.ok) return undefined;
+              if (opts?.blockingLibraryLoad) return loadNavigationSummary();
+              return deferNavigationHydration(loadNavigationSummary, {
+                signal: navigationHydrationAbort.signal,
+                immediate: opts?.navigationPriority === "library-switch",
+              });
+            },
+            () => undefined,
+          )
         : Promise.resolve(undefined);
       const countPromise = !refreshSidebar && includeLibraryCounts
         ? Promise.all([
@@ -3059,12 +3282,32 @@ function AppInner() {
           ])
         : Promise.resolve(undefined);
       const assetResult = await primaryAssetPromise;
-      if (generation !== contentLoadGenerationRef.current) return;
+      if (!isCurrentLoad()) return;
       if (!assetResult.ok) throw new LibraryOperationError(assetResult.error);
 
-      // Apply the canvas immediately. Sidebar rows and their recursive counts
-      // are deliberately allowed to arrive later; they are not a first-paint
-      // dependency for the browse surface.
+      let blockingNavigation: LibraryNavigationSummary | undefined;
+      if (opts?.blockingLibraryLoad) {
+        try {
+          const navigationResult = await navigationPromise;
+          if (!isCurrentLoad()) return;
+          if (!navigationResult) {
+            throw new Error(t("toast.readAssetsFailed"));
+          }
+          if (!navigationResult.ok) {
+            throw new LibraryOperationError(navigationResult.error);
+          }
+          blockingNavigation = navigationResult.value;
+        } finally {
+          if (navigationHydrationAbortRef.current === navigationHydrationAbort) {
+            navigationHydrationAbortRef.current = null;
+          }
+        }
+      }
+
+      // Ordinary browse scopes apply the canvas immediately and hydrate the
+      // sidebar later. A library replacement is different: blockingNavigation
+      // was read before this point, while the loading overlay still covers
+      // every state update, so no partial library identity can be shown.
       // Serpent-sa65: beginPage owns the first summaries and starts the compact
       // real-asset layout fetch that gives the virtual canvas full geometry.
       // Serpent-2oga: drop stale failure badges when the list already has ready thumbs.
@@ -3105,12 +3348,25 @@ function AppInner() {
         snippets: assetResult.value.snippets,
       });
 
+      if (blockingNavigation) {
+        setAllAssetCount(blockingNavigation.allAssetCount);
+        setRootAssetCount(blockingNavigation.rootAssetCount);
+        setTrashedAssetCount(blockingNavigation.trashedAssetCount);
+        setFolders(blockingNavigation.folders);
+        setLinkedFolders(blockingNavigation.linkedFolders);
+        setTags(blockingNavigation.tags);
+        setCollections(blockingNavigation.collections);
+        setSmartCollections(blockingNavigation.smartCollections);
+        setTrashedFolders(blockingNavigation.trashedFolders);
+        return assetResult.value.items;
+      }
+
       // Progressive navigation hydration. A stale navigation response is
       // ignored just like a stale browse page and cannot repaint a newer
       // library/scope.
       void Promise.all([navigationPromise, countPromise])
         .then(([navigation, counts]) => {
-          if (generation !== contentLoadGenerationRef.current) return;
+          if (!isCurrentLoad()) return;
           if (navigation) {
             if (!navigation.ok) throw new LibraryOperationError(navigation.error);
             setAllAssetCount(navigation.value.allAssetCount);
@@ -3134,17 +3390,32 @@ function AppInner() {
           setTrashedAssetCount(trashCountResult.value.total);
         })
         .catch((caught: unknown) => {
-          if (generation !== contentLoadGenerationRef.current) return;
+          if (!isCurrentLoad()) return;
           setError(toMessage(caught, t("toast.readAssetsFailed"), locale));
+        })
+        .finally(() => {
+          if (navigationHydrationAbortRef.current === navigationHydrationAbort) {
+            navigationHydrationAbortRef.current = null;
+          }
         });
       return assetResult.value.items;
     },
-    [api, beginBrowsePage, locale, setError, showIgnoredItems, t],
+    [
+      api,
+      beginBrowsePage,
+      ensureLibraryView,
+      isCurrentLibraryView,
+      locale,
+      setError,
+      showIgnoredItems,
+      t,
+    ],
   );
 
   useBrowserSessionRestore({
     api: api ?? null,
     loadContent,
+    setLibraryLoading,
     collectionRecursiveRef,
     folderRecursiveRef,
     setFolderRecursive,
@@ -3163,6 +3434,7 @@ function AppInner() {
     setSelectedAssetIds,
     setAssetSelectionAnchor,
     setBrowserSessionReady,
+    resetImportTargetFolderRef: managedImportTargetFolderIdRef,
     pendingRestoredFocusRef,
     navHistoryRef,
     setNavHistoryUi,
@@ -3273,32 +3545,43 @@ function AppInner() {
   useEffect(() => {
     if (!api) return;
     return api.onLifecycle((event) => {
-      if (shouldDetachLibraryOnOpening(event)) {
-        // Clear the active library synchronously when the replacement starts.
-        // The old viewer is closed asynchronously below, but the browse shell
-        // must stop presenting the previous library while Eagle/Billfish is
-        // being converted.
-        applyClosedLibraryUi();
-        const transferKind = libraryTransferKindFromOperation(
-          event.type === "library.opening" ? event.operation : undefined,
-        );
-        setLibraryTransferKind(transferKind);
-        if (event.type === "library.opening" && event.operation === "open-eagle") {
-          setNotice(t("progress.validatingEagleLibrary"));
-        } else if (event.type === "library.opening" && event.operation === "open-billfish") {
-          setNotice(t("progress.validatingBillfishLibrary"));
-        }
-        setImportProgress({
-          type: "import.progress",
-          importId: "",
-          phase: "validate",
-          cancelable: true,
-          filesProcessed: 0,
-          totalFiles: 0,
-          bytesProcessed: 0,
-          totalBytes: 0,
-        });
-        void closeAssetPreview(false);
+      if (event.type === "library.opening" && shouldDetachLibraryOnOpening(event)) {
+        const applyLibraryOpening = async () => {
+          // Clear the active library when the replacement starts. The old
+          // viewer is closed asynchronously below, but the browse shell must
+          // stop presenting the previous library while conversion runs.
+          applyClosedLibraryUi();
+          const transferKind = libraryTransferKindFromOperation(
+            event.type === "library.opening" ? event.operation : undefined,
+          );
+          setLibraryTransferKind(transferKind);
+          if (event.type === "library.opening" && event.operation === "open-eagle") {
+            setNotice(t("progress.validatingEagleLibrary"));
+          } else if (event.type === "library.opening" && event.operation === "open-billfish") {
+            setNotice(t("progress.validatingBillfishLibrary"));
+          }
+          setImportProgress({
+            type: "import.progress",
+            importId: "",
+            phase: "validate",
+            cancelable: true,
+            filesProcessed: 0,
+            totalFiles: 0,
+            bytesProcessed: 0,
+            totalBytes: 0,
+          });
+          await closeAssetPreview(false);
+        };
+        // A normal Eagle/Billfish action emits this event from inside the
+        // transition callback that initiated it. Re-entering the FIFO here
+        // would deadlock, so execute that already-owned callback directly;
+        // events arriving from MCP or another source are queued normally.
+        const inlineOpeningOwnedByThisAction =
+          event.source !== "mcp" &&
+          libraryTransitionInlineOpeningRef.current === event.operation;
+        void (inlineOpeningOwnedByThisAction
+          ? applyLibraryOpening()
+          : libraryTransitionLock(applyLibraryOpening));
         return;
       }
       if (event.type === "library.open-failed") {
@@ -3307,81 +3590,115 @@ function AppInner() {
         setLibraryTransferName("");
         return;
       }
+      if (event.type === "library.closed") {
+        const closedLibraryId = event.libraryId;
+        const pendingGenerations =
+          pendingLibraryCloseFencesRef.current.get(closedLibraryId);
+        if (
+          event.source !== "mcp" &&
+          pendingGenerations !== undefined &&
+          !pendingGenerations.has(libraryViewSessionRef.current.generation)
+        ) {
+          // An ordinary renderer-initiated close has no lifecycle source tag.
+          // If the same library was reopened before its old close event was
+          // delivered, the id alone is ambiguous; the session generation is
+          // what distinguishes that stale event from a real close. Keep all
+          // pending generations until their own requests settle so two rapid
+          // closes of the same library cannot overwrite one another.
+          return;
+        }
+        const applyLibraryClosed = async () => {
+          if (libraryRef.current?.libraryId !== closedLibraryId) return;
+          setUiState("closing");
+          try {
+            await closeAssetPreview(false);
+            if (libraryRef.current?.libraryId !== closedLibraryId) return;
+            applyClosedLibraryUi();
+            await refreshRecentLibraries(null);
+          } catch (caught) {
+            if (libraryRef.current?.libraryId === closedLibraryId) {
+              setError(toMessage(caught, t("toast.closeFailed"), locale));
+            }
+          } finally {
+            if (libraryRef.current === null) setUiState("idle");
+          }
+        };
+        // Main can close the active library on behalf of MCP. Keep the same
+        // serialized boundary as renderer-triggered close; events for the
+        // previous library become no-ops after a replacement is committed.
+        void libraryTransitionLock(applyLibraryClosed);
+        return;
+      }
       if (event.type !== "library.opened") return;
-      if (!shouldApplyLibraryLifecycleEvent({
-        event,
-        currentLibraryId: library?.libraryId,
-        scriptSandboxPreviewOpen,
-      })) return;
-      void (async () => {
+      const applyLibraryOpened = async () => {
+        if (!shouldApplyLibraryLifecycleEvent({
+          event,
+          currentLibraryId: libraryRef.current?.libraryId,
+          scriptSandboxPreviewOpen,
+        })) return;
         try {
+          beginLibraryTransition();
           await closeAssetPreview(false);
-          // P1 (2026-08-15): switching libraries must not keep the previous
-          // library's asset cards on the canvas even for a frame — their
-          // serpent://preview URLs would be rebuilt with the NEW libraryId and
-          // every card would flash "file missing". Clear the lists before the
-          // new library id lands.
-          setAssets([]);
-          setTrashedAssets([]);
-          setFolders([]);
-          setLinkedFolders([]);
-          setFolderBrowseEntries([]);
-          setTrashedFolders([]);
-          setTags([]);
-          setCollections([]);
-          setSmartCollections([]);
-          setSelectedFolderIds([]);
-          setSelectedAssetId(undefined);
-          setSelectedAssetIds([]);
-          setAssetMetadata(null);
-          setAiContent(null);
-          metadataByAssetRef.current.clear();
-          metadataConflictAssetIdsRef.current.clear();
-          setSearchTotal(null);
-          setAllAssetCount(0);
-          resetBrowsePagination();
+          clearLibraryScopedView();
+          libraryRef.current = event.library;
+          activateLibraryView(event.library.libraryId);
           setLibrary(event.library);
-          setPluginJobs(null);
-          setHiddenPluginJobActivityId(null);
-          setAssetScope("all");
-          setActiveTagId(null);
-          setActiveCollectionId(null);
-          setActiveSmartCollectionId(null);
-          resetNavHistory({ kind: "all" });
           api.setActiveContext(event.library.libraryId);
-          await loadContent(event.library, "all");
+          setLibraryLoading({ name: event.library.displayName });
+          await loadContent(event.library, "all", {
+            navigationPriority: "library-switch",
+            blockingLibraryLoad: true,
+          });
           await refreshRecentLibraries(event.library.displayPath);
           setImportProgress(null);
           setLibraryTransferKind("import");
           setLibraryTransferName("");
         } catch (caught) {
           setError(toMessage(caught, t("toast.readAssetsFailed"), locale));
+        } finally {
+          setLibraryLoading(null);
         }
-      })();
+      };
+      void libraryTransitionLock(applyLibraryOpened);
     });
     // loadContent is intentionally read from the current render; adding its
     // per-render function identity would resubscribe the lifecycle bridge.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     api,
+    activateLibraryView,
+    beginLibraryTransition,
+    clearLibraryClosePending,
     closeAssetPreview,
     library?.libraryId,
     locale,
     refreshRecentLibraries,
     resetNavHistory,
     scriptSandboxPreviewOpen,
+    libraryTransitionLock,
     setError,
     setNotice,
     t,
   ]);
   useEffect(() => {
     if (!api) return;
+    const effectLibraryId = library?.libraryId;
+    const effectViewSession = effectLibraryId
+      ? ensureLibraryView(effectLibraryId)
+      : null;
+    const isEffectLibraryCurrent = () =>
+      effectViewSession !== null && isCurrentLibraryView(effectViewSession);
     const pending = new Map<string, AssetThumbnailPatch>();
     const pendingLayoutArtifactIds = new Map<string, string | null>();
     let frame = 0;
     const flush = () => {
       frame = 0;
       if (pending.size === 0 && pendingLayoutArtifactIds.size === 0) return;
+      if (!isEffectLibraryCurrent()) {
+        pending.clear();
+        pendingLayoutArtifactIds.clear();
+        return;
+      }
       const batch = new Map(pending);
       pending.clear();
       if (batch.size > 0) {
@@ -3428,11 +3745,12 @@ function AppInner() {
       if (folderBrowseRefreshFrame !== 0) return;
       folderBrowseRefreshFrame = window.requestAnimationFrame(() => {
         folderBrowseRefreshFrame = 0;
+        if (!isEffectLibraryCurrent()) return;
         setFolderBrowseRefreshToken((token) => token + 1);
       });
     };
     const unsubscribe = api.onThumbnailEvent((event) => {
-      if (event.libraryId !== library?.libraryId) return;
+      if (event.libraryId !== effectLibraryId || !isEffectLibraryCurrent()) return;
       if (event.type === "asset.dimensions.ready") {
         queuePatch(event.assetId, {
           width: event.width,
@@ -3448,7 +3766,8 @@ function AppInner() {
         if (
           (event.kind === "extract_metadata" || event.kind === "extract_palette") &&
           selectedAssetIdRef.current === event.assetId &&
-          library
+          library &&
+          isEffectLibraryCurrent()
         ) {
           if (event.kind === "extract_metadata") {
             setExtractedMetadataRefreshKey((key) => key + 1);
@@ -3459,7 +3778,11 @@ function AppInner() {
               assetId: event.assetId,
             })
             .then((result) => {
-              if (result.ok && selectedAssetIdRef.current === event.assetId) {
+              if (
+                result.ok &&
+                selectedAssetIdRef.current === event.assetId &&
+                isEffectLibraryCurrent()
+              ) {
                 applyLoadedMetadata(event.assetId, result.value);
               }
             })
@@ -3530,7 +3853,15 @@ function AppInner() {
         window.cancelAnimationFrame(folderBrowseRefreshFrame);
       }
     };
-  }, [api, applyLoadedMetadata, library, library?.libraryId, t]);
+  }, [
+    api,
+    applyLoadedMetadata,
+    ensureLibraryView,
+    isCurrentLibraryView,
+    library,
+    library?.libraryId,
+    t,
+  ]);
   useEffect(() => {
     if (!api || !library) return;
     const unsubscribeProgress = api.onAiProgress((event) => {
@@ -3707,7 +4038,27 @@ function AppInner() {
           ? api.create({ displayName: dialogValue.trim() })
           : api.open(),
       t("toast.libraryOpFailed"),
+      undefined,
+      kind === "create" ? dialogValue.trim() || null : null,
     );
+  }
+
+  async function runInlineLibraryOpening<T>(
+    operation: "open-eagle" | "open-billfish",
+    action: () => Promise<T>,
+  ): Promise<T> {
+    let result!: T;
+    await libraryTransitionLock(async () => {
+      libraryTransitionInlineOpeningRef.current = operation;
+      try {
+        result = await action();
+      } finally {
+        if (libraryTransitionInlineOpeningRef.current === operation) {
+          libraryTransitionInlineOpeningRef.current = null;
+        }
+      }
+    });
+    return result;
   }
 
   async function openEagleLibrary() {
@@ -3716,9 +4067,13 @@ function AppInner() {
     // an empty id; if it was left behind after a failed destination, allow retry
     // instead of trapping the user on "validating…".
     if (importProgress?.importId) return;
+    if (libraryTransitionLock.hasTransitionPending() || !confirmLibrarySwitch()) return;
     setImportProgress(null);
     setDialog(null);
-    const inspect = await api.inspectEagle();
+    const inspect = await runInlineLibraryOpening(
+      "open-eagle",
+      () => api.inspectEagle(),
+    );
     if (!inspect.ok) {
       setImportProgress(null);
       if (inspect.error.code === "CANCELLED") return;
@@ -3754,6 +4109,8 @@ function AppInner() {
         "opening",
         () => api.openEagle({ displayName }),
         t("toast.openRecentFailed"),
+        "open-eagle",
+        displayName,
       );
     } finally {
       setCreateLibraryPhase("start");
@@ -3763,9 +4120,13 @@ function AppInner() {
   async function openBillfishLibrary() {
     if (!api) return;
     if (importProgress?.importId) return;
+    if (libraryTransitionLock.hasTransitionPending() || !confirmLibrarySwitch()) return;
     setImportProgress(null);
     setDialog(null);
-    const inspect = await api.inspectBillfish();
+    const inspect = await runInlineLibraryOpening(
+      "open-billfish",
+      () => api.inspectBillfish(),
+    );
     if (!inspect.ok) {
       setImportProgress(null);
       if (inspect.error.code === "CANCELLED") return;
@@ -3805,6 +4166,8 @@ function AppInner() {
         "opening",
         () => api.openBillfish({ displayName }),
         t("toast.openRecentFailed"),
+        "open-billfish",
+        displayName,
       );
     } finally {
       setCreateLibraryPhase("start");
@@ -3822,10 +4185,13 @@ function AppInner() {
 
   async function openRecentLibrary(libraryPath: string) {
     if (!api) return;
+    const recent = recentLibraries.find((entry) => entry.path === libraryPath);
     await runLibraryOpenPipeline(
       "opening",
       () => api.openRecent({ path: libraryPath }),
       t("toast.openRecentFailed"),
+      undefined,
+      recent?.name ?? null,
     );
   }
 
@@ -3833,77 +4199,120 @@ function AppInner() {
     busyState: "creating" | "opening",
     action: () => Promise<LibraryApiResult<RendererLibrarySummary>>,
     failureMessage: string,
+    inlineOpeningOperation?: "open-eagle" | "open-billfish",
+    loadingName?: string | null,
   ) {
     if (!api) return;
-    setError(null);
-    setUiState(busyState);
-    const previousLibraryId = library?.libraryId;
-    const libraryApi = api;
-    let opened = false;
-    try {
-      const result = await action();
-      if (!result.ok) {
-        if (result.error.code === "CANCELLED") {
-          setImportProgress(null);
-          return;
-        }
-        throw new LibraryOperationError(result.error);
+    // A second library choice is safe to queue behind the current transition;
+    // silently dropping it made a fast switch look like a frozen switcher.
+    if (!confirmLibrarySwitch()) return;
+    // Opening, closing, and deleting a library all replace the renderer's
+    // active identity. Keep their request, UI teardown, and ref updates in one
+    // order; otherwise a close clicked while an open is resolving can close
+    // the replacement or restore the wrong browse scope.
+    await libraryTransitionLock(async () => {
+      if (inlineOpeningOperation) {
+        libraryTransitionInlineOpeningRef.current = inlineOpeningOperation;
       }
-      // Opening an external library first gives us a validated replacement;
-      // close the old handle immediately before switching the renderer over.
-      // A successful open of the replacement must never be rolled back because
-      // the previous library would not close — that imprisoned users in a
-      // read-only library (Serpent-e0dw). Keep the new library even if close
-      // of the previous handle fails.
-      if (previousLibraryId && previousLibraryId !== result.value.libraryId) {
-        try {
-          await libraryApi.close({ libraryId: previousLibraryId });
-        } catch {
-          // Switching away must succeed even if the previous handle cannot close.
+      setError(null);
+      setUiState(busyState);
+      setLibraryLoading({ name: loadingName ?? null });
+      beginLibraryTransition();
+      const previousLibraryId = libraryRef.current?.libraryId;
+      const libraryApi = api;
+      let opened = false;
+      try {
+        const result = await action();
+        if (!result.ok) {
+          if (result.error.code === "CANCELLED") {
+            setImportProgress(null);
+            return;
+          }
+          throw new LibraryOperationError(result.error);
         }
-      }
-      // Opening/creating can replace the entire browse scope while a
-      // two-frame viewer restoration is still pending. Cancel only after the
-      // picker succeeds so cancelling the picker leaves the current viewer
-      // untouched.
-      await closeAssetPreview(false);
-      opened = true;
-      setLibrary(result.value);
-      setPluginJobs(null);
-      setHiddenPluginJobActivityId(null);
-      setAssetScope("all");
-      setActiveTagId(null);
-      setActiveCollectionId(null);
-      setActiveSmartCollectionId(null);
-      resetNavHistory({ kind: "all" });
-      api?.setActiveContext(result.value.libraryId);
-      await loadContent(result.value, "all");
-      await refreshRecentLibraries(result.value.displayPath);
-      setImportProgress(null);
-      setLibraryTransferKind("import");
-      setLibraryTransferName("");
-    } catch (caught) {
-      setImportProgress(null);
-      setLibraryTransferKind("import");
-      setLibraryTransferName("");
-      showBlockingError(
-        busyState === "creating"
-          ? t("dialog.blockingError.libraryCreateFailed")
-          : t("dialog.blockingError.libraryOpenFailed"),
-        toMessage(caught, failureMessage, locale),
-      );
-      // Serpent-s0oq: opening an invalid library removes it from the recent
-      // store in Main — refresh so the switcher menu and the no-library
-      // create dialog both drop it immediately.
-      void refreshRecentLibraries();
-    } finally {
-      setUiState(opened ? "ready" : "idle");
-      if (!opened) {
+        setLibraryLoading({ name: result.value.displayName });
+        // Opening/creating can replace the entire browse scope while a
+        // two-frame viewer restoration is still pending. Cancel only after
+        // the picker succeeds so cancelling the picker leaves the current
+        // viewer untouched.
+        await closeAssetPreview(false);
+        opened = true;
+        clearLibraryScopedView();
+        libraryRef.current = result.value;
+        activateLibraryView(result.value.libraryId);
+        setLibrary(result.value);
+        api?.setActiveContext(result.value.libraryId);
+        // Publish the replacement and queue its first browse request before
+        // closing the old handle. The Worker owns SQLite, so the replacement
+        // can be read while old-library cleanup drains in parallel; the
+        // loading overlay stays up until the new navigation snapshot is ready.
+        const firstPagePromise = loadContent(result.value, "all", {
+          navigationPriority: "library-switch",
+          blockingLibraryLoad: true,
+        });
+        const previousLibraryWillClose =
+          previousLibraryId !== undefined &&
+          previousLibraryId !== result.value.libraryId;
+        const previousCloseGeneration = previousLibraryWillClose
+          ? markLibraryClosePending(previousLibraryId!)
+          : undefined;
+        const previousClosePromise = previousLibraryWillClose
+          ? libraryApi.close({ libraryId: previousLibraryId! })
+          : undefined;
+        if (previousClosePromise) {
+          void previousClosePromise
+            .then((closeResult) => {
+              if (!closeResult.ok) {
+                setWarning(t("toast.previousLibraryCloseFailed"));
+              }
+            })
+            .catch(() => {
+              setWarning(t("toast.previousLibraryCloseFailed"));
+            })
+            .finally(() => {
+              if (previousCloseGeneration !== undefined) {
+                clearLibraryClosePending(
+                  previousLibraryId!,
+                  previousCloseGeneration,
+                );
+              }
+            });
+        }
+        await firstPagePromise;
+        await refreshRecentLibraries(result.value.displayPath);
         setImportProgress(null);
         setLibraryTransferKind("import");
         setLibraryTransferName("");
+      } catch (caught) {
+        setImportProgress(null);
+        setLibraryTransferKind("import");
+        setLibraryTransferName("");
+        showBlockingError(
+          busyState === "creating"
+            ? t("dialog.blockingError.libraryCreateFailed")
+            : t("dialog.blockingError.libraryOpenFailed"),
+          toMessage(caught, failureMessage, locale),
+        );
+        // Serpent-s0oq: opening an invalid library removes it from the recent
+        // store in Main — refresh so the switcher menu and the no-library
+        // create dialog both drop it immediately.
+        void refreshRecentLibraries();
+      } finally {
+        if (
+          inlineOpeningOperation &&
+          libraryTransitionInlineOpeningRef.current === inlineOpeningOperation
+        ) {
+          libraryTransitionInlineOpeningRef.current = null;
+        }
+        setLibraryLoading(null);
+        setUiState(opened ? "ready" : "idle");
+        if (!opened) {
+          setImportProgress(null);
+          setLibraryTransferKind("import");
+          setLibraryTransferName("");
+        }
       }
-    }
+    });
   }
 
   function clearDiscoveryControls() {
@@ -4006,8 +4415,12 @@ function AppInner() {
     options?: { refreshSidebar?: boolean },
   ) {
     if (!library) return;
+    const targetLibraryId = library.libraryId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
     // REQ-VIEW-004: leave the browse affiliate viewer when the browse scope changes.
     await closeAssetPreview(false);
+    if (!isCurrentLibraryView(viewSession)) return;
     closeContextMenu();
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
@@ -4015,9 +4428,9 @@ function AppInner() {
     setActivePluginSidebarViewId(null);
     setAssetScope(scope);
     if (scope !== "all" && scope !== "root") {
-      const enabled = isFolderRecursiveEnabled(
+        const enabled = isFolderRecursiveEnabled(
         folderRecursivePrefs,
-        library.libraryId,
+        targetLibraryId,
         scope,
       );
       folderRecursiveRef.current = enabled;
@@ -4040,10 +4453,10 @@ function AppInner() {
     // folders state（异步刷新），校验会误伤并把导入目标降级为根目录。
     // folderId 来源可信（创建结果/导航），loadContent 会处理无效值。
     managedImportTargetFolderIdRef.current = folderId ?? undefined;
-    api?.setActiveContext(library.libraryId, folderId);
+    api?.setActiveContext(targetLibraryId, folderId);
     setUiState("loading");
     try {
-      await loadContent(library, scope, {
+      await loadContent({ ...library, libraryId: targetLibraryId }, scope, {
         discovery: { sort: { field: sortField, order: sortOrder } },
         // Ordinary navigation keeps sidebar queries out of the hot path for
         // large libraries. A destructive mutation that removed the current
@@ -4053,9 +4466,16 @@ function AppInner() {
         // window, an extension, or the test bridge. Folder-to-folder
         // navigation remains cheap for giant libraries, while returning to a
         // top-level scope cannot leave a newly-created collection hidden.
+        // Re-entering the current folder is also a mutation refresh boundary.
+        // This matters after creating a child folder: the create request may
+        // still be hydrating the sidebar, and a same-scope click must not start
+        // the cheap navigation path that would cancel that refresh and leave
+        // the new folder invisible until a later navigation.
         refreshSidebar:
-          options?.refreshSidebar ?? (scope === "all" || scope === "root"),
+          options?.refreshSidebar ??
+          (scope === "all" || scope === "root" || scope === assetScope),
       });
+      if (!isCurrentLibraryView(viewSession)) return;
       recordNavigation(
         scope === "all"
           ? { kind: "all" }
@@ -4064,9 +4484,11 @@ function AppInner() {
             : { kind: "folder", folderId: scope },
       );
     } catch (caught) {
-      setError(toMessage(caught, t("toast.readAssetsFailed"), locale));
+      if (isCurrentLibraryView(viewSession)) {
+        setError(toMessage(caught, t("toast.readAssetsFailed"), locale));
+      }
     } finally {
-      setUiState("ready");
+      if (isCurrentLibraryView(viewSession)) setUiState("ready");
     }
   }
   chooseFolderRef.current = chooseFolder;
@@ -4077,7 +4499,12 @@ function AppInner() {
 
   async function enterTrashAt(tombstoneId: string | null) {
     if (!library) return;
+    const targetLibraryId = library.libraryId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
+    managedImportTargetFolderIdRef.current = undefined;
     await closeAssetPreview(false);
+    if (!isCurrentLibraryView(viewSession)) return;
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     if (showTrash) {
       setTrashBrowseTombstoneId(tombstoneId);
@@ -4101,27 +4528,35 @@ function AppInner() {
     clearAssetSelection();
     setAssetScope("all");
     clearDiscoveryControls();
-    api?.setActiveContext(library.libraryId);
+    api?.setActiveContext(targetLibraryId);
     setUiState("loading");
     try {
-      await loadContent(library, "all", {
+      await loadContent({ ...library, libraryId: targetLibraryId }, "all", {
         trashMode: true,
         // Trash browse renders folder tombstone cards from the sidebar query;
         // unlike ordinary folder navigation, this transition must refresh
         // that list after a destructive mutation.
         refreshSidebar: true,
       });
+      if (!isCurrentLibraryView(viewSession)) return;
       recordNavigation({ kind: "trash", tombstoneId });
     } catch (caught) {
-      setError(toMessage(caught, t("toast.readTrashFailed"), locale));
+      if (isCurrentLibraryView(viewSession)) {
+        setError(toMessage(caught, t("toast.readTrashFailed"), locale));
+      }
     } finally {
-      setUiState("ready");
+      if (isCurrentLibraryView(viewSession)) setUiState("ready");
     }
   }
 
   async function enterTagManagement() {
     if (!library) return;
+    const targetLibraryId = library.libraryId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
+    managedImportTargetFolderIdRef.current = undefined;
     await closeAssetPreview(false);
+    if (!isCurrentLibraryView(viewSession)) return;
     closeContextMenu();
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTagManagement(true);
@@ -4135,23 +4570,31 @@ function AppInner() {
     clearDiscoveryControls();
     setSearchTotal(null);
     setSearchSnippets(new Map());
-    api?.setActiveContext(library.libraryId);
+    api?.setActiveContext(targetLibraryId);
     setUiState("loading");
     try {
       if (!api) return;
-      const tagResult = await api.listTags({ libraryId: library.libraryId });
+      const tagResult = await api.listTags({ libraryId: targetLibraryId });
       if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
+      if (!isCurrentLibraryView(viewSession)) return;
       setTags(tagResult.value);
     } catch (caught) {
-      setError(toMessage(caught, t("toast.readTagAssetsFailed"), locale));
+      if (isCurrentLibraryView(viewSession)) {
+        setError(toMessage(caught, t("toast.readTagAssetsFailed"), locale));
+      }
     } finally {
-      setUiState("ready");
+      if (isCurrentLibraryView(viewSession)) setUiState("ready");
     }
   }
 
   async function enterPluginSidebarView(viewId: string) {
     if (!library) return;
+    const targetLibraryId = library.libraryId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
+    managedImportTargetFolderIdRef.current = undefined;
     await closeAssetPreview(false);
+    if (!isCurrentLibraryView(viewSession)) return;
     closeContextMenu();
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
@@ -4165,7 +4608,7 @@ function AppInner() {
     clearDiscoveryControls();
     setSearchTotal(null);
     setSearchSnippets(new Map());
-    api?.setActiveContext(library.libraryId);
+    api?.setActiveContext(targetLibraryId);
   }
 
   async function handleCreateTagInManagement(name: string): Promise<boolean> {
@@ -4270,7 +4713,12 @@ function AppInner() {
     match: "all" | "any",
   ) {
     if (!api || !library || tagNames.length === 0) return;
+    const targetLibraryId = library.libraryId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
+    managedImportTargetFolderIdRef.current = undefined;
     await closeAssetPreview(false);
+    if (!isCurrentLibraryView(viewSession)) return;
     closeContextMenu();
     const joined = tagNames.join(", ");
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
@@ -4285,7 +4733,7 @@ function AppInner() {
     setTagFilter(joined);
     setTagFilterMatch(match);
     setSearchOffset(0);
-    api.setActiveContext(library.libraryId);
+    api.setActiveContext(targetLibraryId);
     resetBrowsePagination();
     setAssets([]);
     setUiState("loading");
@@ -4295,7 +4743,7 @@ function AppInner() {
         tagFilterMatch: match,
       });
       const result = await api.openBrowseSession({
-        libraryId: library.libraryId,
+        libraryId: targetLibraryId,
         query: definition.search ?? null,
         filters: definition.filters,
         sort: definition.sort,
@@ -4304,9 +4752,10 @@ function AppInner() {
         showIgnored: showIgnoredItems,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      if (!isCurrentLibraryView(viewSession)) return;
       applySearchResult(result.value);
       registerBrowseSearchPage(beginBrowsePage, {
-        libraryId: library.libraryId,
+        libraryId: targetLibraryId,
         query: definition.search ?? null,
         filters: definition.filters,
         sort: definition.sort,
@@ -4320,15 +4769,22 @@ function AppInner() {
         snippets: result.value.snippets,
       });
     } catch (caught) {
-      setError(toMessage(caught, t("toast.readTagAssetsFailed"), locale));
+      if (isCurrentLibraryView(viewSession)) {
+        setError(toMessage(caught, t("toast.readTagAssetsFailed"), locale));
+      }
     } finally {
-      setUiState("ready");
+      if (isCurrentLibraryView(viewSession)) setUiState("ready");
     }
   }
 
   async function chooseTag(tagId: string) {
     if (!api || !library) return;
+    const targetLibraryId = library.libraryId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
+    managedImportTargetFolderIdRef.current = undefined;
     await closeAssetPreview(false);
+    if (!isCurrentLibraryView(viewSession)) return;
     closeContextMenu();
     const tag = tags.find((candidate) => candidate.tagId === tagId);
     if (!tag) return;
@@ -4351,7 +4807,7 @@ function AppInner() {
     try {
       const definition = currentQueryDefinition({ tagFilter: tag.name });
       const result = await api.openBrowseSession({
-        libraryId: library.libraryId,
+        libraryId: targetLibraryId,
         query: definition.search ?? null,
         filters: definition.filters,
         sort: definition.sort,
@@ -4360,9 +4816,10 @@ function AppInner() {
         showIgnored: showIgnoredItems,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      if (!isCurrentLibraryView(viewSession)) return;
       applySearchResult(result.value);
       registerBrowseSearchPage(beginBrowsePage, {
-        libraryId: library.libraryId,
+        libraryId: targetLibraryId,
         query: definition.search ?? null,
         filters: definition.filters,
         sort: definition.sort,
@@ -4377,9 +4834,11 @@ function AppInner() {
       });
       recordNavigation({ kind: "tag", tagId });
     } catch (caught) {
-      setError(toMessage(caught, t("toast.readTagAssetsFailed"), locale));
+      if (isCurrentLibraryView(viewSession)) {
+        setError(toMessage(caught, t("toast.readTagAssetsFailed"), locale));
+      }
     } finally {
-      setUiState("ready");
+      if (isCurrentLibraryView(viewSession)) setUiState("ready");
     }
   }
 
@@ -4464,10 +4923,13 @@ function AppInner() {
   async function refreshTagAndMetadataState(assetId: string) {
     if (!api || !library) return;
     const targetLibraryId = library.libraryId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
     const [tagResult, metadataResult] = await Promise.all([
       api.listTags({ libraryId: targetLibraryId }),
       api.getAssetMetadata({ libraryId: targetLibraryId, assetId }),
     ]);
+    if (!isCurrentLibraryView(viewSession)) return;
     if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
     if (!metadataResult.ok) throw new LibraryOperationError(metadataResult.error);
     setTags(tagResult.value);
@@ -4538,6 +5000,9 @@ function AppInner() {
 
   async function createCollection() {
     if (!api || !library) return;
+    const targetLibraryId = library.libraryId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
     const name = collectionInputValue.trim();
     if (!name) {
       setShowCollectionInput(false);
@@ -4548,34 +5013,41 @@ function AppInner() {
     setUiState("loading");
     try {
       const result = await api.createCollection({
-        libraryId: library.libraryId,
+        libraryId: targetLibraryId,
         parentId: newCollectionParentId ?? undefined,
         name,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      if (!isCurrentLibraryView(viewSession)) return;
       setShowCollectionInput(false);
       setCollectionInputValue("");
       setNewCollectionParentId(null);
       const collectionResult = await api.listCollections({
-        libraryId: library.libraryId,
+        libraryId: targetLibraryId,
       });
       if (!collectionResult.ok) {
         throw new LibraryOperationError(collectionResult.error);
       }
+      if (!isCurrentLibraryView(viewSession)) return;
       setCollections(collectionResult.value);
       // Creation should land in the new collection immediately, matching
       // folder and smart-collection creation instead of leaving the user in
       // the previous browse scope.
       await chooseCollection(result.value.collectionId);
     } catch (caught) {
-      setError(toOrganizationMessage(caught, "collection", "create", locale));
+      if (isCurrentLibraryView(viewSession)) {
+        setError(toOrganizationMessage(caught, "collection", "create", locale));
+      }
     } finally {
-      setUiState("ready");
+      if (isCurrentLibraryView(viewSession)) setUiState("ready");
     }
   }
 
   async function deleteCollection(collectionId: string) {
     if (!api || !library) return;
+    const targetLibraryId = library.libraryId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
     const deletedCollectionIds = new Set([collectionId]);
     let foundDescendant = true;
     while (foundDescendant) {
@@ -4594,27 +5066,32 @@ function AppInner() {
     setUiState("loading");
     try {
       const result = await api.deleteCollection({
-        libraryId: library.libraryId,
+        libraryId: targetLibraryId,
         collectionId,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      if (!isCurrentLibraryView(viewSession)) return;
       if (activeCollectionId && deletedCollectionIds.has(activeCollectionId)) {
         await closeAssetPreview(false);
         setActiveCollectionId(null);
         await loadContent(library, assetScope);
       } else {
         const colResult = await api.listCollections({
-          libraryId: library.libraryId,
+          libraryId: targetLibraryId,
         });
         if (!colResult.ok) throw new LibraryOperationError(colResult.error);
+        if (!isCurrentLibraryView(viewSession)) return;
         setCollections(colResult.value);
       }
+      if (!isCurrentLibraryView(viewSession)) return;
       setError(null);
       setNotice(t("toast.collectionDeleted"), result.value.historyEntryId);
     } catch (caught) {
-      setError(toOrganizationMessage(caught, "collection", "delete", locale));
+      if (isCurrentLibraryView(viewSession)) {
+        setError(toOrganizationMessage(caught, "collection", "delete", locale));
+      }
     } finally {
-      setUiState("ready");
+      if (isCurrentLibraryView(viewSession)) setUiState("ready");
     }
   }
 
@@ -4627,14 +5104,18 @@ function AppInner() {
       !renameTarget.name.trim()
     )
       return;
+    const targetLibraryId = library.libraryId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
     setUiState("loading");
     try {
       const result = await api.updateCollection({
-        libraryId: library.libraryId,
+        libraryId: targetLibraryId,
         collectionId: renameTarget.id,
         name: renameTarget.name.trim(),
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      if (!isCurrentLibraryView(viewSession)) return;
       setCollections((current) =>
         current.map((collection) =>
           collection.collectionId === result.value.collectionId
@@ -4646,9 +5127,11 @@ function AppInner() {
       setError(null);
       setNotice(t("toast.collectionRenamed"), result.value.historyEntryId);
     } catch (caught) {
-      setError(toOrganizationMessage(caught, "collection", "rename", locale));
+      if (isCurrentLibraryView(viewSession)) {
+        setError(toOrganizationMessage(caught, "collection", "rename", locale));
+      }
     } finally {
-      setUiState("ready");
+      if (isCurrentLibraryView(viewSession)) setUiState("ready");
     }
   }
 
@@ -4658,10 +5141,13 @@ function AppInner() {
       (collection) => collection.collectionId === collectionEditor.collectionId,
     );
     if (!existing) return;
+    const targetLibraryId = library.libraryId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
     setUiState("loading");
     try {
       const result = await api.updateCollection({
-        libraryId: library.libraryId,
+        libraryId: targetLibraryId,
         collectionId: collectionEditor.collectionId,
         ...(collectionEditor.description.trim() !== (existing.description ?? "")
           ? { description: collectionEditor.description.trim() || null }
@@ -4671,6 +5157,7 @@ function AppInner() {
           : {}),
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      if (!isCurrentLibraryView(viewSession)) return;
       setCollections((current) =>
         current.map((collection) =>
           collection.collectionId === result.value.collectionId
@@ -4681,14 +5168,19 @@ function AppInner() {
       setCollectionEditor(null);
       setNotice(t("toast.collectionDetailsUpdated"), result.value.historyEntryId);
     } catch (caught) {
-      setError(toOrganizationMessage(caught, "collection", "rename", locale));
+      if (isCurrentLibraryView(viewSession)) {
+        setError(toOrganizationMessage(caught, "collection", "rename", locale));
+      }
     } finally {
-      setUiState("ready");
+      if (isCurrentLibraryView(viewSession)) setUiState("ready");
     }
   }
 
   async function reorderCollectionSibling(sourceId: string, targetId: string) {
     if (!api || !library || sourceId === targetId) return;
+    const targetLibraryId = library.libraryId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
     const source = collections.find(
       (collection) => collection.collectionId === sourceId,
     );
@@ -4713,37 +5205,46 @@ function AppInner() {
     setUiState("loading");
     try {
       const reordered = await api.reorderCollections({
-        libraryId: library.libraryId,
+        libraryId: targetLibraryId,
         orderedCollectionIds: siblings.map(
           (collection) => collection.collectionId,
         ),
       });
       if (!reordered.ok) throw new LibraryOperationError(reordered.error);
+      if (!isCurrentLibraryView(viewSession)) return;
       const result = await api.listCollections({
-        libraryId: library.libraryId,
+        libraryId: targetLibraryId,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      if (!isCurrentLibraryView(viewSession)) return;
       setCollections(result.value);
       setNotice(t("toast.collectionOrderUpdated"), reordered.value.historyEntryId);
     } catch (caught) {
-      setError(toMessage(caught, t("toast.collectionReorderFailed"), locale));
+      if (isCurrentLibraryView(viewSession)) {
+        setError(toMessage(caught, t("toast.collectionReorderFailed"), locale));
+      }
     } finally {
-      setUiState("ready");
+      if (isCurrentLibraryView(viewSession)) setUiState("ready");
     }
   }
 
   async function reorderCollectionMember(sourceId: string, targetId: string) {
     if (!api || !library || !activeCollectionId || sourceId === targetId)
       return;
+    const targetLibraryId = library.libraryId;
+    const targetCollectionId = activeCollectionId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
     setDraggedMemberId(null);
     setUiState("loading");
     try {
       const members = await api.listCollectionAssets({
-        libraryId: library.libraryId,
-        collectionId: activeCollectionId,
+        libraryId: targetLibraryId,
+        collectionId: targetCollectionId,
         recursive: false,
       });
       if (!members.ok) throw new LibraryOperationError(members.error);
+      if (!isCurrentLibraryView(viewSession)) return;
       const orderedIds = members.value.map((asset) => asset.assetId);
       const sourceIndex = orderedIds.indexOf(sourceId);
       const targetIndex = orderedIds.indexOf(targetId);
@@ -4753,11 +5254,12 @@ function AppInner() {
       if (!moved) return;
       orderedIds.splice(targetIndex, 0, moved);
       const result = await api.reorderCollectionAssets({
-        libraryId: library.libraryId,
-        collectionId: activeCollectionId,
+        libraryId: targetLibraryId,
+        collectionId: targetCollectionId,
         orderedAssetIds: orderedIds,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      if (!isCurrentLibraryView(viewSession)) return;
       setAssets((current) => {
         const next = [...current];
         const currentSourceIndex = next.findIndex(
@@ -4774,9 +5276,11 @@ function AppInner() {
       });
       setNotice(t("toast.collectionMemberOrderUpdated"), result.value.historyEntryId);
     } catch (caught) {
-      setError(toMessage(caught, t("toast.collectionMemberReorderFailed"), locale));
+      if (isCurrentLibraryView(viewSession)) {
+        setError(toMessage(caught, t("toast.collectionMemberReorderFailed"), locale));
+      }
     } finally {
-      setUiState("ready");
+      if (isCurrentLibraryView(viewSession)) setUiState("ready");
     }
   }
 
@@ -4785,7 +5289,12 @@ function AppInner() {
     recursive = collectionRecursive,
   ) {
     if (!api || !library) return;
+    const targetLibraryId = library.libraryId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
+    managedImportTargetFolderIdRef.current = undefined;
     await closeAssetPreview(false);
+    if (!isCurrentLibraryView(viewSession)) return;
     closeContextMenu();
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
@@ -4797,13 +5306,13 @@ function AppInner() {
     setAssetScope("all");
     clearAssetSelection();
     clearDiscoveryControls();
-    api?.setActiveContext(library.libraryId);
+    api?.setActiveContext(targetLibraryId);
     resetBrowsePagination();
     setAssets([]);
     setUiState("loading");
     try {
       const result = await api.openBrowseSession({
-        libraryId: library.libraryId,
+        libraryId: targetLibraryId,
         query: null,
         scope: {
           kind: "collection",
@@ -4815,9 +5324,10 @@ function AppInner() {
         showIgnored: showIgnoredItems,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      if (!isCurrentLibraryView(viewSession)) return;
       applySearchResult(result.value);
       registerBrowseSearchPage(beginBrowsePage, {
-        libraryId: library.libraryId,
+        libraryId: targetLibraryId,
         query: null,
         scope: { kind: "collection", collectionId, recursive },
         sort: null,
@@ -4836,25 +5346,34 @@ function AppInner() {
         recursive,
       });
     } catch (caught) {
-      setError(toMessage(caught, t("toast.readCollectionFailed"), locale));
+      if (isCurrentLibraryView(viewSession)) {
+        setError(toMessage(caught, t("toast.readCollectionFailed"), locale));
+      }
     } finally {
-      setUiState("ready");
+      if (isCurrentLibraryView(viewSession)) setUiState("ready");
     }
   }
 
   async function addAssetToCollection(assetId: string, collectionId: string) {
     if (!api || !library) return;
+    const targetLibraryId = library.libraryId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
     try {
       const result = await api.addCollectionAssets({
-        libraryId: library.libraryId,
+        libraryId: targetLibraryId,
         collectionId,
         assetIds: [assetId],
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      if (!isCurrentLibraryView(viewSession)) return;
       const collectionResult = await api.listCollections({
-        libraryId: library.libraryId,
+        libraryId: targetLibraryId,
       });
-      if (collectionResult.ok) setCollections(collectionResult.value);
+      if (collectionResult.ok && isCurrentLibraryView(viewSession)) {
+        setCollections(collectionResult.value);
+      }
+      if (!isCurrentLibraryView(viewSession)) return;
       setNotice(t("toast.addedToCollection"), result.value.historyEntryId);
     } catch (caught) {
       setError(toMessage(caught, t("toast.addToCollectionFailed"), locale));
@@ -4864,14 +5383,17 @@ function AppInner() {
   const loadCollectionMemberships = useCallback(
     async (assetIds: string[]) => {
       if (!api || !library || assetIds.length === 0) return [];
+      const targetLibraryId = library.libraryId;
+      const viewSession = ensureLibraryView(targetLibraryId);
+      if (!viewSession) return [];
       const result = await api.listAssetCollectionMemberships({
-        libraryId: library.libraryId,
+        libraryId: targetLibraryId,
         assetIds,
       });
-      if (!result.ok) return [];
+      if (!result.ok || !isCurrentLibraryView(viewSession)) return [];
       return result.value;
     },
-    [api, library],
+    [api, ensureLibraryView, isCurrentLibraryView, library],
   );
 
   async function removeAssetFromCollection(
@@ -4879,45 +5401,55 @@ function AppInner() {
     collectionId: string,
   ) {
     if (!api || !library) return;
+    const targetLibraryId = library.libraryId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
+    const targetCollectionId = collectionId;
     setUiState("loading");
     try {
       const directMembers = await api.listCollectionAssets({
-        libraryId: library.libraryId,
-        collectionId,
+        libraryId: targetLibraryId,
+        collectionId: targetCollectionId,
         recursive: false,
       });
       if (!directMembers.ok)
         throw new LibraryOperationError(directMembers.error);
+      if (!isCurrentLibraryView(viewSession)) return;
       if (!directMembers.value.some((asset) => asset.assetId === assetId)) {
         setError(t("toast.removeFromChildCollection"));
         return;
       }
       const result = await api.removeCollectionAssets({
-        libraryId: library.libraryId,
-        collectionId,
+        libraryId: targetLibraryId,
+        collectionId: targetCollectionId,
         assetIds: [assetId],
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      if (!isCurrentLibraryView(viewSession)) return;
       const collectionResult = await api.listCollections({
-        libraryId: library.libraryId,
+        libraryId: targetLibraryId,
       });
       if (!collectionResult.ok)
         throw new LibraryOperationError(collectionResult.error);
+      if (!isCurrentLibraryView(viewSession)) return;
       setCollections(collectionResult.value);
       // CU-B1: refresh the *current* browse scope — do not force a collection search
       // when the user is still on All assets / a folder (that emptied the grid).
-      if (activeCollectionId === collectionId) {
-        await chooseCollection(collectionId);
+      if (activeCollectionId === targetCollectionId) {
+        await chooseCollection(targetCollectionId);
       } else {
         await reloadCurrentContent();
       }
+      if (!isCurrentLibraryView(viewSession)) return;
       clearAssetSelection();
       setError(null);
       setNotice(t("toast.removedFromCollection"), result.value.historyEntryId);
     } catch (caught) {
-      setError(toOrganizationMessage(caught, "collection", "removeAsset", locale));
+      if (isCurrentLibraryView(viewSession)) {
+        setError(toOrganizationMessage(caught, "collection", "removeAsset", locale));
+      }
     } finally {
-      setUiState("ready");
+      if (isCurrentLibraryView(viewSession)) setUiState("ready");
     }
   }
 
@@ -5135,7 +5667,10 @@ function AppInner() {
     return undefined;
   }
 
-  async function reloadCurrentContent() {
+  async function reloadCurrentContent(options?: {
+    /** Wait for the navigation snapshot before resolving the operation. */
+    blockingNavigation?: boolean;
+  }) {
     if (!library) return;
     if (activeSmartCollectionId) {
       await chooseSmartCollection(activeSmartCollectionId);
@@ -5157,6 +5692,7 @@ function AppInner() {
     await loadContent(library, assetScope, {
       discovery,
       searchScope: currentSearchScope(),
+      blockingLibraryLoad: options?.blockingNavigation,
     });
   }
 
@@ -5167,7 +5703,17 @@ function AppInner() {
   // fresh without blocking the user).
   const deferredReconcileTimerRef = useRef<number | undefined>(undefined);
   const applyLocalAssetRemoval = useCallback(
-    (assetIds: string[], options?: { removedCount?: number }) => {
+    (
+      assetIds: string[],
+      options?: { removedCount?: number; libraryId?: string },
+    ): (() => void) => {
+      const operationLibraryId = options?.libraryId ?? libraryRef.current?.libraryId;
+      const removalGeneration = ++localAssetRemovalGenerationRef.current;
+      let restored = false;
+      const previousAssets = assets;
+      const previousTrashedAssets = trashedAssets;
+      const previousSearchTotal = searchTotal;
+      const previousAllAssetCount = allAssetCount;
       const removed = new Set(assetIds);
       const removedCount = options?.removedCount ?? assetIds.length;
       setAssets((current) => removeAssetIdsLocally(current, removed));
@@ -5176,12 +5722,16 @@ function AppInner() {
       setAllAssetCount((current) => Math.max(0, current - removedCount));
       // Serpent-关联刷新: fold the deletion into the pagination bookkeeping so
       // an in-flight append cannot resurrect the removed rows.
-      removeLocallyFromBrowse(assetIds, removedCount);
+      const restoreBrowseState = removeLocallyFromBrowse(assetIds, removedCount);
       if (deferredReconcileTimerRef.current !== undefined) {
         window.clearTimeout(deferredReconcileTimerRef.current);
       }
       deferredReconcileTimerRef.current = window.setTimeout(() => {
         deferredReconcileTimerRef.current = undefined;
+        if (
+          operationLibraryId !== undefined &&
+          libraryRef.current?.libraryId !== operationLibraryId
+        ) return;
         // Keep the user's scroll position across the silent reconcile — a
         // replaced first page must not yank the canvas to the bottom.
         const canvas = workspaceCanvasRef.current;
@@ -5189,14 +5739,44 @@ function AppInner() {
         void reloadCurrentContentRef.current()
           .catch(() => undefined)
           .finally(() => {
+            if (
+              operationLibraryId !== undefined &&
+              libraryRef.current?.libraryId !== operationLibraryId
+            ) return;
             const nextCanvas = workspaceCanvasRef.current;
             if (nextCanvas && nextCanvas.scrollTop !== scrollTopBefore) {
               nextCanvas.scrollTo({ top: scrollTopBefore });
             }
           });
       }, 1500);
+      return () => {
+        if (
+          restored ||
+          removalGeneration !== localAssetRemovalGenerationRef.current
+        ) return;
+        if (
+          operationLibraryId !== undefined &&
+          libraryRef.current?.libraryId !== operationLibraryId
+        ) return;
+        restored = true;
+        if (deferredReconcileTimerRef.current !== undefined) {
+          window.clearTimeout(deferredReconcileTimerRef.current);
+          deferredReconcileTimerRef.current = undefined;
+        }
+        restoreBrowseState();
+        setAssets(previousAssets);
+        setTrashedAssets(previousTrashedAssets);
+        setSearchTotal(previousSearchTotal);
+        setAllAssetCount(previousAllAssetCount);
+      };
     },
-    [removeLocallyFromBrowse],
+    [
+      allAssetCount,
+      assets,
+      removeLocallyFromBrowse,
+      searchTotal,
+      trashedAssets,
+    ],
   );
 
   function openInlineCollectionRename(collectionId: string, currentName: string) {
@@ -5220,13 +5800,17 @@ function AppInner() {
       return;
     }
     if (!api || !library) return;
+    const targetLibraryId = library.libraryId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
     try {
       const result = await api.updateCollection({
-        libraryId: library.libraryId,
+        libraryId: targetLibraryId,
         collectionId: session.collectionId,
         name,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      if (!isCurrentLibraryView(viewSession)) return;
       setCollections((current) =>
         current.map((collection) =>
           collection.collectionId === result.value.collectionId
@@ -5238,7 +5822,9 @@ function AppInner() {
       setError(null);
       setNotice(t("toast.collectionRenamed"), result.value.historyEntryId);
     } catch (caught) {
-      setError(toOrganizationMessage(caught, "collection", "rename", locale));
+      if (isCurrentLibraryView(viewSession)) {
+        setError(toOrganizationMessage(caught, "collection", "rename", locale));
+      }
     }
   }
 
@@ -5266,8 +5852,13 @@ function AppInner() {
 
   async function refreshCollectionSummaries() {
     if (!api || !library) return;
-    const result = await api.listCollections({ libraryId: library.libraryId });
-    if (result.ok) setCollections(result.value);
+    const targetLibraryId = library.libraryId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
+    const result = await api.listCollections({ libraryId: targetLibraryId });
+    if (result.ok && isCurrentLibraryView(viewSession)) {
+      setCollections(result.value);
+    }
   }
 
   async function createSelectedImageSequence() {
@@ -5385,8 +5976,12 @@ function AppInner() {
     setCollections,
     setNotice,
     setError,
-    reloadCurrentContent,
+    // Batch callbacks may outlive the render that started them. Resolve the
+    // latest guarded reload function at call time so a completed old-library
+    // mutation cannot reload a stale scope after a switch.
+    reloadCurrentContent: () => reloadCurrentContentRef.current(),
     applyLocalAssetRemoval,
+    isCurrentLibrary: (libraryId) => libraryRef.current?.libraryId === libraryId,
     chooseTag,
     chooseCollection,
     clearAssetSelection,
@@ -5884,19 +6479,25 @@ function AppInner() {
 
   async function chooseSmartCollection(collectionId: string) {
     if (!api || !library) return;
+    const targetLibraryId = library.libraryId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
+    managedImportTargetFolderIdRef.current = undefined;
     await closeAssetPreview(false);
+    if (!isCurrentLibraryView(viewSession)) return;
     closeContextMenu();
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     resetBrowsePagination();
     setAssets([]);
     try {
       const result = await api.openBrowseSession({
-        libraryId: library.libraryId,
+        libraryId: targetLibraryId,
         query: null,
         smartCollectionId: collectionId,
         limit: BROWSE_PAGE_SIZE,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      if (!isCurrentLibraryView(viewSession)) return;
       setShowTrash(false);
       setShowTagManagement(false);
     setActivePluginSidebarViewId(null);
@@ -5916,7 +6517,7 @@ function AppInner() {
       );
       applySearchResult(result.value);
       registerBrowseSmartCollectionPage(beginBrowsePage, {
-        libraryId: library.libraryId,
+        libraryId: targetLibraryId,
         collectionId,
         sessionId: result.value.sessionId,
         items: result.value.items,
@@ -5925,7 +6526,9 @@ function AppInner() {
         snippets: result.value.snippets,
       });
     } catch (caught) {
-      setError(toMessage(caught, t("toast.smartCollectionRunFailed"), locale));
+      if (isCurrentLibraryView(viewSession)) {
+        setError(toMessage(caught, t("toast.smartCollectionRunFailed"), locale));
+      }
     }
   }
 
@@ -6050,6 +6653,7 @@ function AppInner() {
 
   async function importAssets(kind: "files" | "folder") {
     if (!api || !library) return;
+    const startedAt = Date.now();
     setUiState("importing");
     setError(null);
     setNotice(null);
@@ -6058,12 +6662,12 @@ function AppInner() {
         kind === "files"
           ? await api.importFiles({
               libraryId: library.libraryId,
-              targetFolderId: selectedFolderId,
+              targetFolderId: managedImportTargetFolderIdRef.current,
               autoDetectImageSequences: imageSequencePrefs.autoDetectOnImport,
             })
           : await api.importFolder({
               libraryId: library.libraryId,
-              targetFolderId: selectedFolderId,
+              targetFolderId: managedImportTargetFolderIdRef.current,
               autoDetectImageSequences: imageSequencePrefs.autoDetectOnImport,
             });
       if (!result.ok) {
@@ -6080,7 +6684,9 @@ function AppInner() {
       }
       setNotice(importSummaryMessage(result.value, locale));
       await revealAfterImport(result.value);
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
+      playTaskCompletionSound(startedAt);
       showBlockingError(
         t("dialog.blockingError.importFailed"),
         toMessage(caught, t("toast.importFailed"), locale),
@@ -6092,6 +6698,7 @@ function AppInner() {
 
   async function importEagleLibrary() {
     if (!api || !library || importProgress) return;
+    const startedAt = Date.now();
     setLibraryTransferKind("import");
     setImportProgress({
       type: "import.progress",
@@ -6113,7 +6720,9 @@ function AppInner() {
       }
       setNotice(importSummaryMessage(result.value, locale));
       await reloadCurrentContent();
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
+      playTaskCompletionSound(startedAt);
       showBlockingError(
         t("dialog.blockingError.importFailed"),
         toMessage(caught, t("toast.importFailed"), locale),
@@ -6125,6 +6734,7 @@ function AppInner() {
 
   async function importBillfishLibrary() {
     if (!api || !library || importProgress) return;
+    const startedAt = Date.now();
     setLibraryTransferKind("import");
     setImportProgress({
       type: "import.progress",
@@ -6146,7 +6756,9 @@ function AppInner() {
       }
       setNotice(importSummaryMessage(result.value, locale));
       await reloadCurrentContent();
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
+      playTaskCompletionSound(startedAt);
       showBlockingError(
         t("dialog.blockingError.importFailed"),
         toMessage(caught, t("toast.importFailed"), locale),
@@ -6165,6 +6777,7 @@ function AppInner() {
     applyToRest: boolean;
   }) {
     if (!api || !library || !imageSequenceImportOffer) return;
+    const startedAt = Date.now();
     setImageSequenceImportSubmitting(true);
     setImageSequenceImportError(null);
     setUiState("importing");
@@ -6195,8 +6808,10 @@ function AppInner() {
         setImageSequenceImportIndex(nextSequenceIndex);
       } else {
         setImageSequenceImportOffer(null);
+        playTaskCompletionSound(startedAt);
       }
     } catch (caught) {
+      playTaskCompletionSound(startedAt);
       setImageSequenceImportError(
         toMessage(caught, t("toast.importFailed"), locale),
       );
@@ -6212,6 +6827,7 @@ function AppInner() {
     duplicate: RememberedDuplicateDecision,
   ) {
     if (!api || !library) return;
+    const startedAt = Date.now();
     setUiState("importing");
     try {
       const result = await api.resolveImport({
@@ -6223,7 +6839,9 @@ function AppInner() {
       clearImportConflictsUi();
       setNotice(importSummaryMessage(result.value, locale));
       await revealAfterImport(result.value);
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
+      playTaskCompletionSound(startedAt);
       showBlockingError(
         t("dialog.blockingError.importContinueFailed"),
         toMessage(caught, t("toast.continueImportFailed"), locale),
@@ -6278,6 +6896,7 @@ function AppInner() {
 
   async function refreshAssets() {
     if (!api || !library) return;
+    const startedAt = Date.now();
     setUiState("loading");
     try {
       const result = await api.refreshAssets({ libraryId: library.libraryId });
@@ -6288,7 +6907,9 @@ function AppInner() {
           ? t("toast.diskSynced", { count: result.value.changedCount })
           : t("toast.diskUpToDate"),
       );
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
+      playTaskCompletionSound(startedAt);
       setError(toMessage(caught, t("toast.refreshFailed"), locale));
     } finally {
       setUiState("ready");
@@ -6297,6 +6918,7 @@ function AppInner() {
 
   async function importFolderAsLinked() {
     if (!api || !library) return;
+    const startedAt = Date.now();
     setUiState("importing");
     setError(null);
     setNotice(null);
@@ -6310,8 +6932,13 @@ function AppInner() {
         throw new LibraryOperationError(result.error);
       }
       setNotice(t("toast.linkedFolderCreated", { name: result.value.displayName }));
-      await reloadCurrentContent();
+      // The new linked-folder row is part of the navigation snapshot, not the
+      // primary asset page. Wait for that snapshot here so the completed
+      // operation never reports success while the sidebar still looks stale.
+      await reloadCurrentContent({ blockingNavigation: true });
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
+      playTaskCompletionSound(startedAt);
       setError(toMessage(caught, t("toast.linkFolderFailed"), locale));
     } finally {
       setUiState("ready");
@@ -6320,6 +6947,7 @@ function AppInner() {
 
   async function relinkFolder(folderId: string) {
     if (!api || !library) return;
+    const startedAt = Date.now();
     setUiState("loading");
     try {
       const result = await api.relinkMissingFolder({
@@ -6332,7 +6960,9 @@ function AppInner() {
       }
       setNotice(t("toast.linkedFolderRelocated", { name: result.value.displayName }));
       await reloadCurrentContent();
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
+      playTaskCompletionSound(startedAt);
       setError(toMessage(caught, t("toast.relocateFailed"), locale));
     } finally {
       setUiState("ready");
@@ -6391,6 +7021,7 @@ function AppInner() {
       )
     )
       return;
+    const startedAt = Date.now();
     setUiState("importing");
     try {
       const result = await api.convertLinkedFolderToManaged({
@@ -6404,7 +7035,9 @@ function AppInner() {
         t("toast.convertLinkedDone", { count: result.value.convertedCount }),
       );
       await reloadCurrentContent();
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
+      playTaskCompletionSound(startedAt);
       setError(toMessage(caught, t("toast.convertLinkedFailed"), locale));
     } finally {
       setUiState("ready");
@@ -6412,44 +7045,62 @@ function AppInner() {
   }
 
   async function closeLibrary() {
-    if (!api || !library) return;
-    setUiState("closing");
-    let closed = false;
-    try {
-      await closeAssetPreview(false);
-      const result = await api.close({ libraryId: library.libraryId });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      closed = true;
-      applyClosedLibraryUi();
-      await refreshRecentLibraries(null);
-    } catch (caught) {
-      setError(toMessage(caught, t("toast.closeFailed"), locale));
-    } finally {
-      setUiState(closed ? "idle" : "ready");
-    }
+    if (!api) return;
+    if (libraryTransitionLock.hasTransitionPending() || !confirmLibrarySwitch()) return;
+    await libraryTransitionLock(async () => {
+      const currentLibrary = libraryRef.current;
+      if (!currentLibrary) return;
+      beginLibraryTransition();
+      setUiState("closing");
+      const closeGeneration = markLibraryClosePending(currentLibrary.libraryId);
+      let closed = false;
+      try {
+        await closeAssetPreview(false);
+        const result = await api.close({ libraryId: currentLibrary.libraryId });
+        clearLibraryClosePending(currentLibrary.libraryId, closeGeneration);
+        if (!result.ok) throw new LibraryOperationError(result.error);
+        closed = true;
+        applyClosedLibraryUi();
+        await refreshRecentLibraries(null);
+      } catch (caught) {
+        clearLibraryClosePending(currentLibrary.libraryId, closeGeneration);
+        setError(toMessage(caught, t("toast.closeFailed"), locale));
+      } finally {
+        setUiState(closed ? "idle" : "ready");
+      }
+    });
   }
 
   async function removeLibrary() {
-    if (!api || !library) return;
-    const removedName = library.displayName;
-    const removedPath = library.displayPath;
-    setUiState("closing");
-    let removed = false;
-    try {
-      await closeAssetPreview(false);
-      const result = await api.close({ libraryId: library.libraryId });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      const forgotten = await api.forgetRecent({ path: removedPath });
-      if (!forgotten.ok) throw new LibraryOperationError(forgotten.error);
-      removed = true;
-      applyClosedLibraryUi();
-      await refreshRecentLibraries(null);
-      setNotice(t("toast.libraryRemoved", { name: removedName }));
-    } catch (caught) {
-      setError(toMessage(caught, t("toast.libraryRemoveFailed"), locale));
-    } finally {
-      setUiState(removed ? "idle" : "ready");
-    }
+    if (!api) return;
+    if (libraryTransitionLock.hasTransitionPending() || !confirmLibrarySwitch()) return;
+    await libraryTransitionLock(async () => {
+      const currentLibrary = libraryRef.current;
+      if (!currentLibrary) return;
+      beginLibraryTransition();
+      const removedName = currentLibrary.displayName;
+      const removedPath = currentLibrary.displayPath;
+      setUiState("closing");
+      const closeGeneration = markLibraryClosePending(currentLibrary.libraryId);
+      let removed = false;
+      try {
+        await closeAssetPreview(false);
+        const result = await api.close({ libraryId: currentLibrary.libraryId });
+        clearLibraryClosePending(currentLibrary.libraryId, closeGeneration);
+        if (!result.ok) throw new LibraryOperationError(result.error);
+        const forgotten = await api.forgetRecent({ path: removedPath });
+        if (!forgotten.ok) throw new LibraryOperationError(forgotten.error);
+        removed = true;
+        applyClosedLibraryUi();
+        await refreshRecentLibraries(null);
+        setNotice(t("toast.libraryRemoved", { name: removedName }));
+      } catch (caught) {
+        clearLibraryClosePending(currentLibrary.libraryId, closeGeneration);
+        setError(toMessage(caught, t("toast.libraryRemoveFailed"), locale));
+      } finally {
+        setUiState(removed ? "idle" : "ready");
+      }
+    });
   }
 
   async function forgetRecentLibrary(libraryPath: string) {
@@ -6458,19 +7109,38 @@ function AppInner() {
       const result = await api.forgetRecent({ path: libraryPath });
       if (!result.ok) throw new LibraryOperationError(result.error);
       await refreshRecentLibraries(library?.displayPath ?? null);
-    } catch (caught) {
+      } catch (caught) {
       setError(toMessage(caught, t("toast.libraryRemoveFailed"), locale));
     }
   }
 
-  function applyClosedLibraryUi() {
-    setLibrary(null);
+  /**
+   * Drop every piece of browse/inspector state that belongs to the previous
+   * library before publishing a new library identity. Keeping the old rows
+   * until the delayed navigation summary arrives makes the sidebar lie about
+   * the active database for one or more paints.
+   */
+  function clearLibraryScopedView() {
+    cancelPendingLibraryReads();
+    localAssetRemovalGenerationRef.current += 1;
+    if (deferredReconcileTimerRef.current !== undefined) {
+      window.clearTimeout(deferredReconcileTimerRef.current);
+      deferredReconcileTimerRef.current = undefined;
+    }
+    managedImportTargetFolderIdRef.current = undefined;
     setPluginJobs(null);
     setHiddenPluginJobActivityId(null);
     setFolders([]);
     setLinkedFolders([]);
     setAssets([]);
+    setBrowseLayout([]);
+    setVirtualBrowseLayout(null);
+    setLayoutThumbnailArtifacts({ libraryId: "", ids: new Map() });
+    setFolderBrowseEntries([]);
+    setTrashedFolders([]);
+    setTrashBrowseTombstoneId(null);
     setAllAssetCount(0);
+    setRootAssetCount(0);
     setAssetScope("all");
     setShowTrash(false);
     setShowTagManagement(false);
@@ -6483,11 +7153,49 @@ function AppInner() {
     setActiveTagId(null);
     setActiveCollectionId(null);
     setActiveSmartCollectionId(null);
+    setSelectedFolderIds([]);
+    setSelectedAssetId(undefined);
+    setSelectedAssetIds([]);
+    setAssetSelectionAnchor(null);
+    if (hoveredAssetIdRef.current) {
+      clearHoveredAssetId(hoveredAssetIdRef.current);
+    }
+    setAssetMetadata(null);
+    setVersionConflict(false);
+    setDescriptionIsAi(false);
+    setAiContent(null);
+    metadataByAssetRef.current.clear();
+    metadataConflictAssetIdsRef.current.clear();
     setSearchTotal(null);
+    setSearchOffset(0);
     setSearchSnippets(new Map());
-    resetBrowsePagination();
+    setThumbnailFailures(new Map());
+    setOperationHistory(null);
+    setCollectionEditor(null);
+    setInlineCollectionRename(null);
+    setRenameTarget(null);
+    setShowCollectionInput(false);
+    setCollectionInputValue("");
+    setNewCollectionParentId(null);
+    setRestoreDialog(null);
     setMoveDialog(null);
+    setImageSequenceDialog(null);
+    setImageSequenceImportOffer(null);
+    setImageSequenceImportError(null);
+    setBatchRelinkPreview(null);
+    resetBrowsePagination();
     resetNavHistory({ kind: "all" });
+  }
+
+  function applyClosedLibraryUi() {
+    cancelPendingLibraryReads();
+    libraryViewSessionRef.current = advanceLibraryViewSession(
+      libraryViewSessionRef.current,
+      null,
+    );
+    clearLibraryScopedView();
+    libraryRef.current = null;
+    setLibrary(null);
     api?.setActiveContext(null);
   }
 
@@ -6497,13 +7205,20 @@ function AppInner() {
   }
 
   async function confirmDeleteLibraryFromDisk() {
-    if (!api || !library) return;
-    const deletedName = library.displayName;
-    const openLibrary = library;
-    const openScope = assetScope;
-    setUiState("closing");
-    let toreDown = false;
-    try {
+    if (!api) return;
+    if (libraryTransitionLock.hasTransitionPending() || !confirmLibrarySwitch()) return;
+    await libraryTransitionLock(async () => {
+      const currentLibrary = libraryRef.current;
+      if (!currentLibrary) return;
+      beginLibraryTransition();
+      const deletedName = currentLibrary.displayName;
+      const openLibrary = currentLibrary;
+      const openScope = assetScope;
+      const startedAt = Date.now();
+      setUiState("closing");
+      const closeGeneration = markLibraryClosePending(openLibrary.libraryId);
+      let toreDown = false;
+      try {
       await closeAssetPreview(false);
       // Serpent-dfgg: Chromium keeps serpent:// thumbnail/source files mapped
       // until <img> unmounts. Drop the browse canvas before asking the Worker
@@ -6528,6 +7243,7 @@ function AppInner() {
       const result = await api.deleteLibraryFromDisk({
         libraryId: openLibrary.libraryId,
       });
+      clearLibraryClosePending(openLibrary.libraryId, closeGeneration);
       if (!result.ok) throw new LibraryOperationError(result.error);
       toreDown = true;
       applyClosedLibraryUi();
@@ -6539,7 +7255,9 @@ function AppInner() {
       } else {
         setNotice(t("toast.libraryDeletedFromDisk", { name: deletedName }));
       }
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
+      clearLibraryClosePending(openLibrary.libraryId, closeGeneration);
       // Serpent-qgm1: a failed disk deletion must NOT masquerade as success.
       // The worker reopens a still-valid library; a half-deleted tree comes
       // back as LIBRARY_NOT_FOUND and the UI must close.
@@ -6549,6 +7267,7 @@ function AppInner() {
         caught instanceof LibraryOperationError &&
         (caught.code === "LIBRARY_NOT_FOUND" || caught.code === "NOT_A_LIBRARY");
       if (!cancelled) {
+        playTaskCompletionSound(startedAt);
         setError(toMessage(caught, t("toast.libraryDeleteFailed"), locale));
       }
       if (gone) {
@@ -6564,9 +7283,10 @@ function AppInner() {
         }
         void refreshRecentLibraries(openLibrary.displayPath);
       }
-    } finally {
-      setUiState(toreDown ? "idle" : "ready");
-    }
+      } finally {
+        setUiState(toreDown ? "idle" : "ready");
+      }
+    });
   }
 
   async function requestRestoreTrashedAssets(assetIds: string[]) {
@@ -6780,6 +7500,7 @@ function AppInner() {
 
   async function deletePermanentFromTrash(assetIds: string[]) {
     if (!api || !library || assetIds.length === 0) return;
+    const startedAt = Date.now();
     setUiState("loading");
     try {
       const result = await api.deleteAssetsPermanent({
@@ -6811,7 +7532,9 @@ function AppInner() {
       applyLocalAssetRemoval(assetIds, {
         removedCount: result.value.deletedCount,
       });
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
+      playTaskCompletionSound(startedAt);
       setError(toMessage(caught, t("toast.permanentDeleteFailed"), locale));
     } finally {
       setUiState("ready");
@@ -6911,6 +7634,7 @@ function AppInner() {
   ) {
     if (!api || !library) return;
     if (assetIds.length === 0 && folderIds.length === 0) return;
+    const startedAt = Date.now();
     await releaseAssetPreviewsBeforeDiskDelete();
     setUiState("loading");
     try {
@@ -6945,7 +7669,9 @@ function AppInner() {
       );
       clearAssetSelection();
       applyLocalAssetRemoval(assetIds, { removedCount: deletedAssets });
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
+      playTaskCompletionSound(startedAt);
       setError(toMessage(caught, t("toast.folderDeleteFromDiskFailed"), locale));
     } finally {
       setUiState("ready");
@@ -6958,6 +7684,7 @@ function AppInner() {
   ) {
     if (!api || !library) return;
     if (assetIds.length === 0 && folderIds.length === 0) return;
+    const startedAt = Date.now();
 
     const assetById = new Map(assets.map((asset) => [asset.assetId, asset]));
     const linkedAssetIds = assetIds.filter(
@@ -7049,7 +7776,9 @@ function AppInner() {
       } else {
         await reloadCurrentContent();
       }
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
+      playTaskCompletionSound(startedAt);
       setError(toMessage(caught, t("toast.batchDeleteFailed"), locale));
     } finally {
       setUiState("ready");
@@ -7058,6 +7787,7 @@ function AppInner() {
 
   async function emptyTrash() {
     if (!api || !library) return;
+    const startedAt = Date.now();
     setUiState("loading");
     try {
       const result = await api.purgeTrash({ libraryId: library.libraryId });
@@ -7080,7 +7810,9 @@ function AppInner() {
           t("common.sentenceEnd"),
       );
       await loadContent(library, "all", { trashMode: true });
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
+      playTaskCompletionSound(startedAt);
       setError(toMessage(caught, t("toast.emptyTrashFailed"), locale));
     } finally {
       setUiState("ready");
@@ -7163,6 +7895,7 @@ function AppInner() {
 
   async function applyBatchRelink() {
     if (!api || !library || !batchRelinkPreview) return;
+    const startedAt = Date.now();
     setUiState("loading");
     try {
       const result = await api.relinkBatchApply({
@@ -7191,7 +7924,9 @@ function AppInner() {
           missing: result.value.unchangedMissingCount,
         }),
       );
+      playTaskCompletionSound(startedAt);
     } catch (caught) {
+      playTaskCompletionSound(startedAt);
       setBatchRelinkPreview(null);
       setError(toMessage(caught, t("toast.batchRelinkFailed"), locale));
     } finally {
@@ -7220,6 +7955,7 @@ function AppInner() {
 
   async function exportLibrary(format: "folder" | "zip", includeLinkedContent: boolean) {
     if (!api || !library) return;
+    exportStartedAtRef.current = Date.now();
     setExportDialogOpen(false);
     setExportProgress({
       type: "export.progress",
@@ -7242,13 +7978,17 @@ function AppInner() {
         if (result.error.code === "CANCELLED") {
           // Serpent-tye: folder/save dialog cancel must clear the optimistic strip.
           setExportProgress(null);
+          exportStartedAtRef.current = null;
           setNotice(t("toast.exportCancelled"));
         } else {
           throw new LibraryOperationError(result.error);
         }
       }
     } catch (caught) {
+      const startedAt = exportStartedAtRef.current;
+      exportStartedAtRef.current = null;
       setExportProgress(null);
+      if (startedAt !== null) playTaskCompletionSound(startedAt);
       setError(toMessage(caught, t("toast.exportFailed"), locale));
     } finally {
       setTimeout(() => {
@@ -7276,6 +8016,7 @@ function AppInner() {
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setNotice(t("toast.cancellingExport"));
+      exportStartedAtRef.current = null;
     } catch (caught) {
       setError(toMessage(caught, t("toast.cancelExportFailed"), locale));
     }
@@ -7333,6 +8074,7 @@ function AppInner() {
 
   async function startImportZip() {
     if (!api) return;
+    const startedAt = Date.now();
     setImportProgress({
       type: "import.progress",
       importId: "",
@@ -7353,8 +8095,11 @@ function AppInner() {
         throw new LibraryOperationError(result.error);
       }
       setImportProgress(null);
-      await activateImportedLibrary(result.value);
+      if (await activateImportedLibrary(result.value)) {
+        playTaskCompletionSound(startedAt);
+      }
     } catch (caught) {
+      playTaskCompletionSound(startedAt);
       showBlockingError(
         t("dialog.blockingError.libraryImportFailed"),
         toMessage(caught, t("toast.zipImportFailed"), locale),
@@ -7363,43 +8108,80 @@ function AppInner() {
     }
   }
 
-  async function activateImportedLibrary(imported: { libraryId: string }) {
+  async function activateImportedLibrary(imported: { libraryId: string }): Promise<boolean> {
     if (!api) {
       throw new Error(t("toast.bridgeUnavailable"));
     }
-    let activated = false;
-    try {
-      const openResult = await api.listOpen();
-      if (!openResult.ok) throw new LibraryOperationError(openResult.error);
-      const summary =
-        openResult.value.find((entry) => entry.libraryId === imported.libraryId) ??
-        null;
-      if (!summary) {
-        throw new Error(t("toast.importFailed"));
-      }
-      await closeAssetPreview(false);
-      setLibrary(summary);
-      setPluginJobs(null);
-      setHiddenPluginJobActivityId(null);
-      setShowTrash(false);
-      setShowTagManagement(false);
-      setActivePluginSidebarViewId(null);
-      setTrashedAssets([]);
-      setTrashedAssetCount(0);
-      setAssetScope("all");
-      setActiveTagId(null);
-      setActiveCollectionId(null);
-      setActiveSmartCollectionId(null);
-      resetNavHistory({ kind: "all" });
-      clearDiscoveryControls();
-      api.setActiveContext(summary.libraryId);
-      await loadContent(summary, "all");
-      await refreshRecentLibraries(summary.displayPath);
-      activated = true;
-      setNotice(t("toast.libraryImportComplete", { name: summary.displayName }));
-    } finally {
-      setUiState(activated ? "ready" : "idle");
+    // The zip import itself is a tracked write. If the user requested a
+    // library transition while it was running, do not let its late
+    // activation overwrite the library the user chose next.
+    if (libraryTransitionLock.hasTransitionPending() || !confirmLibrarySwitch()) {
+      return false;
     }
+    let activated = false;
+    await libraryTransitionLock(async () => {
+      try {
+        setLibraryLoading({ name: null });
+        const openResult = await api.listOpen();
+        if (!openResult.ok) throw new LibraryOperationError(openResult.error);
+        const summary =
+          openResult.value.find((entry) => entry.libraryId === imported.libraryId) ??
+          null;
+        if (!summary) {
+          throw new Error(t("toast.importFailed"));
+        }
+        const previousLibraryId = libraryRef.current?.libraryId;
+        beginLibraryTransition();
+        await closeAssetPreview(false);
+        clearLibraryScopedView();
+        libraryRef.current = summary;
+        activateLibraryView(summary.libraryId);
+        setLibrary(summary);
+        setLibraryLoading({ name: summary.displayName });
+        clearDiscoveryControls();
+        api.setActiveContext(summary.libraryId);
+        const firstPagePromise = loadContent(summary, "all", {
+          navigationPriority: "library-switch",
+          blockingLibraryLoad: true,
+        });
+        const previousLibraryWillClose =
+          previousLibraryId !== undefined &&
+          previousLibraryId !== summary.libraryId;
+        const previousCloseGeneration = previousLibraryWillClose
+          ? markLibraryClosePending(previousLibraryId!)
+          : undefined;
+        const previousClosePromise = previousLibraryWillClose
+          ? api.close({ libraryId: previousLibraryId! })
+          : undefined;
+        if (previousClosePromise) {
+          void previousClosePromise
+            .then((closeResult) => {
+              if (!closeResult.ok) {
+                setWarning(t("toast.previousLibraryCloseFailed"));
+              }
+            })
+            .catch(() => {
+              setWarning(t("toast.previousLibraryCloseFailed"));
+            })
+            .finally(() => {
+              if (previousCloseGeneration !== undefined) {
+                clearLibraryClosePending(
+                  previousLibraryId!,
+                  previousCloseGeneration,
+                );
+              }
+            });
+        }
+        await firstPagePromise;
+        await refreshRecentLibraries(summary.displayPath);
+        activated = true;
+        setNotice(t("toast.libraryImportComplete", { name: summary.displayName }));
+      } finally {
+        setLibraryLoading(null);
+        setUiState(activated ? "ready" : "idle");
+      }
+    });
+    return activated;
   }
 
   async function completeImportCopy() {
@@ -7408,6 +8190,7 @@ function AppInner() {
     // starts; the persistent activity strip (正在导入资源库) is the only
     // indicator from here until completion.
     const validated = importValidated;
+    const startedAt = Date.now();
     setImportValidated(null);
     setImportProgress({
       type: "import.progress",
@@ -7431,8 +8214,11 @@ function AppInner() {
         return;
       }
       setImportProgress(null);
-      await activateImportedLibrary(result.value);
+      if (await activateImportedLibrary(result.value)) {
+        playTaskCompletionSound(startedAt);
+      }
     } catch (caught) {
+      playTaskCompletionSound(startedAt);
       showBlockingError(
         t("dialog.blockingError.libraryImportFailed"),
         toMessage(caught, t("toast.importFailed"), locale),
@@ -7447,6 +8233,7 @@ function AppInner() {
     // the validated dialog closes as soon as the import starts and the
     // persistent activity strip (正在导入资源库) becomes the only indicator.
     const validated = importValidated;
+    const startedAt = Date.now();
     setImportValidated(null);
     setImportProgress({
       type: "import.progress",
@@ -7470,8 +8257,11 @@ function AppInner() {
         return;
       }
       setImportProgress(null);
-      await activateImportedLibrary(result.value);
+      if (await activateImportedLibrary(result.value)) {
+        playTaskCompletionSound(startedAt);
+      }
     } catch (caught) {
+      playTaskCompletionSound(startedAt);
       showBlockingError(
         t("dialog.blockingError.libraryImportFailed"),
         toMessage(caught, t("toast.importFailed"), locale),
@@ -7482,6 +8272,9 @@ function AppInner() {
 
   useEffect(() => {
     if (!api || !library) return;
+    const effectLibraryId = library.libraryId;
+    const isEffectLibraryCurrent = () =>
+      libraryRef.current?.libraryId === effectLibraryId;
     let reloadTimer: number | undefined;
     let reloadInFlight = false;
     let reloadQueued = false;
@@ -7492,6 +8285,7 @@ function AppInner() {
       if (reloadTimer !== undefined) window.clearTimeout(reloadTimer);
       reloadTimer = window.setTimeout(() => {
         reloadTimer = undefined;
+        if (!isEffectLibraryCurrent()) return;
         if (reloadInFlight) {
           reloadQueued = true;
           return;
@@ -7502,6 +8296,7 @@ function AppInner() {
           .catch(() => undefined)
           .finally(() => {
             reloadInFlight = false;
+            if (!isEffectLibraryCurrent()) return;
             if (reloadQueued) {
               reloadQueued = false;
               scheduleSilentReload();
@@ -7528,7 +8323,7 @@ function AppInner() {
       }, NETWORK_LIBRARY_RELOAD_INTERVAL_MS - elapsed);
     };
     const unsubscribe = api.onAssetsChanged((event) => {
-      if (event.libraryId !== library.libraryId) return;
+      if (event.libraryId !== effectLibraryId || !isEffectLibraryCurrent()) return;
       setLayoutThumbnailArtifacts({
         libraryId: library.libraryId,
         ids: new Map(),
@@ -7552,16 +8347,21 @@ function AppInner() {
         assetChangeDebounceTimer = undefined;
         void Promise.resolve().then(async () => {
           try {
+            if (!isEffectLibraryCurrent()) return;
             await reloadCurrentContentRef.current();
-            if (selectedAssetId) {
+            if (!isEffectLibraryCurrent()) return;
+            const currentSelectedAssetId = selectedAssetIdRef.current;
+            if (currentSelectedAssetId) {
               const metadata = await api.getAssetMetadata({
-                libraryId: library.libraryId,
-                assetId: selectedAssetId,
+                libraryId: effectLibraryId,
+                assetId: currentSelectedAssetId,
               });
-              if (metadata.ok) {
-                applyLoadedMetadata(selectedAssetId, metadata.value);
+              if (isEffectLibraryCurrent() && metadata.ok &&
+                selectedAssetIdRef.current === currentSelectedAssetId) {
+                applyLoadedMetadata(currentSelectedAssetId, metadata.value);
               }
             }
+            if (!isEffectLibraryCurrent()) return;
             if (latestEvent.source === "text-save") {
               setNotice(t("toast.textFileSaved"));
             } else if (latestEvent.source === "watcher") {
@@ -7577,7 +8377,9 @@ function AppInner() {
             }
             // source === 'client' / 'content-replace' (or omitted): silent canvas refresh only.
           } catch (caught) {
-            setError(toMessage(caught, t("toast.diskChangedRefreshFailed"), locale));
+            if (isEffectLibraryCurrent()) {
+              setError(toMessage(caught, t("toast.diskChangedRefreshFailed"), locale));
+            }
           }
         });
       }, 300);
@@ -7591,7 +8393,7 @@ function AppInner() {
       }, 1500);
     };
     const unsubscribeLibraryChanged = api.onLibraryChanged((event) => {
-      if (event.libraryId !== library.libraryId) return;
+      if (event.libraryId !== effectLibraryId || !isEffectLibraryCurrent()) return;
       scheduleHistoryRefresh();
       // Cross-process change-sequence bumps are not asset mutation counts.
       // Refresh silently without forging an asset.changed payload.
@@ -7627,7 +8429,7 @@ function AppInner() {
       unsubscribe();
       unsubscribeLibraryChanged();
     };
-  }, [api, applyLoadedMetadata, library, locale, refreshOperationHistory, selectedAssetId, setError, setNotice, t]);
+  }, [api, applyLoadedMetadata, library, locale, refreshOperationHistory, setError, setNotice, t]);
 
   useEffect(() => {
     if (!api) return;
@@ -7635,6 +8437,9 @@ function AppInner() {
       if (event.type === "export.progress") {
         setExportProgress(event);
         if (event.phase === "complete") {
+          const startedAt = exportStartedAtRef.current;
+          exportStartedAtRef.current = null;
+          if (startedAt !== null) playTaskCompletionSound(startedAt);
           setNotice(
             t("toast.exportComplete", {
               files: event.totalFiles,
@@ -7642,7 +8447,12 @@ function AppInner() {
             }),
           );
         } else if (event.phase === "cancelled") {
+          exportStartedAtRef.current = null;
           setNotice(t("toast.exportCancelled"));
+        } else if (event.phase === "failed") {
+          const startedAt = exportStartedAtRef.current;
+          exportStartedAtRef.current = null;
+          if (startedAt !== null) playTaskCompletionSound(startedAt);
         }
       } else if (event.type === "import.progress") {
         setImportProgress(event);
@@ -7653,11 +8463,14 @@ function AppInner() {
       } else if (event.type === "sync.progress") {
         if (event.phase === "complete") {
           setSyncProgress(null);
+          const startedAt = syncRunStartedAtRef.current;
+          syncRunStartedAtRef.current = null;
           // 完成事件 filesDone=0（worker 不携带 report），只弹中性
           // 「已同步」toast；仅当本次同步实际发生过传输（progress 曾
           // 显示 filesTotal>0）才提示，空跑同步不打扰。
           if (syncRunNotifiedRef.current) {
             syncRunNotifiedRef.current = false;
+            if (startedAt !== null) playTaskCompletionSound(startedAt);
             setNotice(t("settings.sync.statusSynced"));
           }
         } else {
@@ -7796,9 +8609,13 @@ function AppInner() {
       aiConnectionFailureGate.open ||
       (mediaJobsOpen && library !== null) ||
       linkedRulesEditor ||
-      convertLinkedDialog.folderId,
+      convertLinkedDialog.folderId ||
+      libraryLoadingVisible,
   );
-  useDialogFocusTrap(dialogFocusTrapActive);
+  useDialogFocusTrap(
+    dialogFocusTrapActive,
+    resolveDialogEscapeAction(dialogEscapeSnapshot).kind,
+  );
 
   useWindowsBrowseShortcutBridge({
     shell: shellApi,
@@ -8987,6 +9804,8 @@ function AppInner() {
       revealAppLog,
     },
   });
+  const mainMenuSectionsRef = useRef(mainMenuSections);
+  mainMenuSectionsRef.current = mainMenuSections;
 
   // macOS keeps a native menu bar. Route its commands through the same
   // canonical renderer menu actions used by the Windows in-app menu so the
@@ -9007,11 +9826,12 @@ function AppInner() {
       return undefined;
     };
     return shellApi.onApplicationMenuCommand((command: ApplicationMenuCommand) => {
+      const currentMenuSections = mainMenuSectionsRef.current;
       if (command === "settings") {
-        mainMenuSections.find((section) => section.id === "settings")?.onSelect?.();
+        currentMenuSections.find((section) => section.id === "settings")?.onSelect?.();
         return;
       }
-      const item = mainMenuSections.reduce<MainMenuItem | undefined>(
+      const item = currentMenuSections.reduce<MainMenuItem | undefined>(
         (found, section) => found ?? findMenuItem(section.items ?? [], command),
         undefined,
       );
@@ -9019,6 +9839,13 @@ function AppInner() {
       // renders greyed out — a native macOS item stays clickable otherwise.
       if (item && !item.disabled) item.onSelect();
     });
+  }, [shellApi]);
+
+  useEffect(() => {
+    if (!shellApi) return;
+    for (const { command, enabled } of collectMainMenuCommandStates(mainMenuSections)) {
+      shellApi.setApplicationMenuCommandEnabled(command, enabled);
+    }
   }, [mainMenuSections, shellApi]);
 
   useEffect(() => {
@@ -9079,6 +9906,16 @@ function AppInner() {
     <>
     <HoverTipHost />
     <EditTextContextMenuHost />
+    {libraryLoading && libraryLoadingVisible ? (
+      <LibraryLoadingOverlay
+        name={libraryLoading.name}
+        onSwitchLibrary={() => {
+          setDialog(null);
+          setImportLibraryChooserOpen(false);
+          setOpenLibraryChooserOpen(true);
+        }}
+      />
+    ) : null}
     <main
       className={`app-shell${leftOpen ? "" : " left-collapsed"}${rightOpen ? "" : " right-collapsed"}${panelResizing ? " is-resizing" : ""}`}
       style={panelResizeShellStyle as React.CSSProperties}
@@ -9113,7 +9950,7 @@ function AppInner() {
             )}
             <LibrarySwitcher
               busy={busy}
-              disabled={busy}
+              disabled={!api}
               syncStatus={syncBindingStatus}
               importMenuCopy={importMenuCopy}
               libraryName={library?.displayName ?? null}
@@ -10794,7 +11631,6 @@ function AppInner() {
             api={api}
             asset={previewAsset}
             chromeIdle={viewerChromeIdle}
-            key={previewAsset.assetId}
             libraryId={library.libraryId}
             onChromeActivity={onViewerChromeActivity}
             onSetColorSpace={(assetId, colorSpace) => {
@@ -11193,8 +12029,14 @@ function AppInner() {
           },
           async syncRun(input) {
             if (!api) return { ok: false, message: t("common.unavailable") };
+            const startedAt = Date.now();
+            syncRunStartedAtRef.current = startedAt;
             const result = await api.syncRun(input);
-            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
+            if (!result.ok) {
+              syncRunStartedAtRef.current = null;
+              playTaskCompletionSound(startedAt);
+              return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
+            }
             return { ok: true, value: result.value };
           },
           async syncSaveBinding(input) {
@@ -11294,6 +12136,11 @@ function AppInner() {
           const bridge = (window as RendererWindow).serpent?.shell;
           if (!bridge?.openExternalUrl) return;
           void bridge.openExternalUrl("https://github.com/dolag233/Serpent");
+        }}
+        onOpenReleaseNotes={(url) => {
+          const bridge = (window as RendererWindow).serpent?.shell;
+          if (!bridge?.openExternalUrl) return;
+          void bridge.openExternalUrl(url);
         }}
       />
       <OpenSourceLicensesDialog
@@ -11514,6 +12361,7 @@ function AppInner() {
         message={fatalAlertMessage}
         title={fatalDialogTitle}
         onDismiss={dismissFatalAlert}
+        onSwitchLibrary={openLibraryChooserFromError}
       />
       <MediaJobsDialog
         open={mediaJobsOpen && library !== null}

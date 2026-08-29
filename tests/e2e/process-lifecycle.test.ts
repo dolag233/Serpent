@@ -30,6 +30,32 @@ function createIsolatedProfile(): { temporaryRoot: string; profilePath: string }
   return { temporaryRoot, profilePath };
 }
 
+async function closeApplicationForTest(
+  application: Awaited<ReturnType<typeof electron.launch>>,
+): Promise<void> {
+  const childProcess = application.process();
+  if (childProcess.exitCode === null) {
+    // macOS deliberately keeps the process alive after its last window closes.
+    // Ask the app to quit explicitly before closing the Playwright transport;
+    // otherwise ElectronApplication.close() can wait forever in this test's
+    // finally block even though the second-instance assertion already passed.
+    try {
+      await application.evaluate(({ app }) => app.quit());
+    } catch {
+      // The process may have exited between the check and the evaluation.
+    }
+    await Promise.race([
+      once(childProcess, 'exit').then(() => undefined),
+      new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
+    ]);
+  }
+  if (childProcess.exitCode === null) {
+    childProcess.kill('SIGKILL');
+    await once(childProcess, 'exit').catch(() => undefined);
+  }
+  await application.close().catch(() => undefined);
+}
+
 test('a second instance restores the existing window', async () => {
   const executablePath = resolveElectronExecutablePath();
   const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
@@ -74,7 +100,7 @@ test('a second instance restores the existing window', async () => {
       )
       .toBe(false);
   } finally {
-    await application.close();
+    await closeApplicationForTest(application);
     rmSync(temporaryRoot, { force: true, recursive: true });
   }
 });

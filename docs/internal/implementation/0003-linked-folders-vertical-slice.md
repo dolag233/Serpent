@@ -69,7 +69,7 @@ assets (扩展)
 不变量：
 
 - `absolute_root_path` 存用户选择的原值；打开资源库时用 `realpathSync` 解析，失效则 `status = offline` 且整组资产 `availability = missing`。
-- `source_device_hint` 记录设备信息（macOS 用 `stat.dev`/卷名，Windows 用卷标），用于跨设备重新指定时的提示；不作为身份键。
+- `source_device_hint` 记录带主机维度的设备提示（当前实现为主机名与文件系统设备号的哈希；旧版纯数字设备号仍兼容），用于跨设备重新指定时的提示；不作为资源库身份键。打开 NAS 资源库时，如果链接路径仍存在但设备提示已变化，会把它作为安全信号拒绝静默使用错误的同路径目录，并通过 `LINKED_FOLDER_FOREIGN_DEVICE` 提示重新链接。
 - `linked_folders.path_identity` 用 `portablePathIdentity(absolute_root_path)` 规范化，避免同一根重复链接；跨平台路径等价见 `library-rules.ts`。
 - linked 资产的 `relative_file_path` 始终相对其链接根，使用 `/` 规范分隔；实际路径通过 Worker 安全解析（`path.resolve(root, ...relative)` 并验证仍位于根内、无符号链接逃逸）。
 - CHECK 约束强制 `managed_folder_id` 与 `linked_folder_id` 互斥：`CASE WHEN location_kind='managed' THEN linked_folder_id IS NULL WHEN location_kind='linked' THEN managed_folder_id IS NULL AND linked_folder_id IS NOT NULL END`。

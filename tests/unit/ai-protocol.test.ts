@@ -4,16 +4,27 @@ import { DEFAULT_AI_ANALYSIS_SETTINGS } from '../../src/shared/ai-analysis-setti
 import {
   aiAnalysisResultSchema,
   aiStructuredOutputSchema,
+  applyAiOutputPolicy,
   parseAiAnalysisResult,
   parseAiAnalysisResultFromModelText,
 } from '../../src/worker/ai/protocol';
 import type { AiAnalysisRequest } from '../../src/worker/ai/protocol';
 import { DashScopeVendorAdapter } from '../../src/worker/ai/dashscope-adapter';
-import { OpenAIVendorAdapter } from '../../src/worker/ai/openai-adapter';
+import {
+  buildOpenAiStructuredResponseFormat,
+  isStructuredOutputFormatRejection,
+  OpenAIVendorAdapter,
+} from '../../src/worker/ai/openai-adapter';
+import {
+  normalizeOpenAiChatResponse,
+  normalizeOpenAiResponsesResponse,
+  parseOpenAiAnalysisResponse,
+} from '../../src/worker/ai/openai-response';
 import { VendorAdapterError } from '../../src/worker/ai/vendor-adapter';
 import {
   safeAiConnectionFailure,
   safeAiDiagnostic,
+  safeAiErrorDetail,
   vendorFailure,
 } from '../../src/worker/ai/error-mapping';
 
@@ -189,6 +200,31 @@ describe('vendorFailure', () => {
     expect(String(nested)).not.toContain('AIza-secret');
     expect(String(nested)).not.toContain('top-secret');
   });
+
+  it('keeps structured provider error fields in safe diagnostics', () => {
+    const error = new VendorAdapterError(
+      'invalid_response',
+      'AI service returned HTTP 400',
+      {
+        details: {
+          httpStatus: 400,
+          providerCode: 'invalid_parameter',
+          providerType: 'invalid_request_error',
+          providerParam: 'response_format.type',
+          providerMessage: 'response format is not supported',
+        },
+      },
+    );
+
+    const diagnostic = safeAiDiagnostic('AI_INVALID_RESPONSE', error);
+    expect(String(diagnostic.cause)).toContain('providerCode=invalid_parameter');
+    expect(String(diagnostic.cause)).toContain('providerParam=response_format.type');
+
+    const detail = safeAiErrorDetail('AI_INVALID_RESPONSE', error);
+    expect(detail).toContain('provider=invalid_parameter');
+    expect(detail).toContain('param=response_format.type');
+    expect(detail).toContain('response format is not supported');
+  });
 });
 
 describe('aiAnalysisResultSchema', () => {
@@ -260,6 +296,48 @@ describe('parseAiAnalysisResult', () => {
       'm2',
     );
     expect(prose).toEqual({ tags: ['b'], modelVersion: 'm2' });
+  });
+});
+
+describe('applyAiOutputPolicy', () => {
+  it('enforces the tag count and existing-tag policy at the write boundary', () => {
+    const result = applyAiOutputPolicy(
+      {
+        modelVersion: 'provider',
+        tags: ['已有', '新增', ' 已有 ', 'x'.repeat(201)],
+      },
+      {
+        settings: {
+          ...DEFAULT_AI_ANALYSIS_SETTINGS,
+          forceExistingTags: true,
+          maxTags: 2,
+        },
+        existingTagNames: ['已有'],
+        language: 'zh-CN',
+      },
+    );
+
+    expect(result.tags).toEqual(['已有']);
+  });
+
+  it('bounds provider descriptions according to the selected language policy', () => {
+    const result = applyAiOutputPolicy(
+      {
+        modelVersion: 'provider',
+        tags: [],
+        description: '一'.repeat(200),
+      },
+      {
+        settings: {
+          ...DEFAULT_AI_ANALYSIS_SETTINGS,
+          maxDescriptionCharsZh: 20,
+        },
+        existingTagNames: [],
+        language: 'zh-CN',
+      },
+    );
+
+    expect(result.description).toHaveLength(20);
   });
 });
 
@@ -423,7 +501,159 @@ describe('safe AI connection failures', () => {
 // ---------------------------------------------------------------------------
 
 describe('OpenAIVendorAdapter', () => {
-  it('requests json_object (not strict json_schema) for midstream compatibility', async () => {
+  it('builds a nullable schema without JSON Schema type arrays for local backends', () => {
+    const format = buildOpenAiStructuredResponseFormat('json_schema', 'zh-CN');
+    const schema = (format.json_schema as Record<string, unknown>).schema as Record<string, unknown>;
+    const properties = schema.properties as Record<string, Record<string, unknown>>;
+
+    expect(properties.description!.anyOf).toEqual([
+      { type: 'string' },
+      { type: 'null' },
+    ]);
+    expect(properties.rating!.anyOf).toEqual([
+      { type: 'integer' },
+      { type: 'null' },
+    ]);
+    expect(properties.description!.type).not.toEqual(expect.any(Array));
+    expect(properties.rating!.type).not.toEqual(expect.any(Array));
+  });
+
+  it('falls back to plain text when LM Studio rejects the nullable schema shape', async () => {
+    const requestFormats: unknown[] = [];
+    const fetchStub: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requestFormats.push(body.response_format ?? null);
+      if (requestFormats.length === 1) {
+        return new Response(
+          JSON.stringify({
+            error: { message: "ValueError: 'type' must be a string" },
+          }),
+          { status: 400, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response(
+        JSON.stringify(openAiChatResponse({ tags: ['lm-studio-text'] })),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const adapter = new OpenAIVendorAdapter(
+      'test-api-key',
+      'qwen3.5-4b-mlx',
+      fetchStub,
+      'http://lm-studio-schema-shape.local/v1',
+    );
+
+    await expect(adapter.analyze(TEST_IMAGE_REQUEST)).resolves.toMatchObject({
+      tags: ['lm-studio-text'],
+    });
+    expect(requestFormats).toHaveLength(2);
+    expect(requestFormats[1]).toBeNull();
+  });
+
+  it('falls back to plain text when a provider rejects the schema envelope as null', async () => {
+    const requestFormats: unknown[] = [];
+    const fetchStub: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requestFormats.push(body.response_format ?? null);
+      if (requestFormats.length === 1) {
+        return new Response(
+          JSON.stringify({
+            error: {
+              code: 'invalid_parameter_error',
+              type: 'invalid_request_error',
+              param: 'response_format.json_schema.schema',
+              message: "Format error : 'response_format.json_schema.schema'. the specific reason is as follows: None is not of type 'object', 'boolean'.",
+            },
+          }),
+          { status: 400, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response(
+        JSON.stringify(openAiChatResponse({ tags: ['schema-envelope-text'] })),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const adapter = new OpenAIVendorAdapter(
+      'test-api-key',
+      'qwen3.5-4b-mlx',
+      fetchStub,
+      'http://lm-studio-schema-envelope.local/v1',
+    );
+
+    await expect(adapter.analyze(TEST_IMAGE_REQUEST)).resolves.toMatchObject({
+      tags: ['schema-envelope-text'],
+    });
+    expect(requestFormats).toHaveLength(2);
+    expect(requestFormats[0]).toMatchObject({ type: 'json_schema' });
+    expect(requestFormats[1]).toBeNull();
+  });
+
+  it('retries without structured output when Qwen returns JSON only in reasoning_content', async () => {
+    const requestFormats: unknown[] = [];
+    const fetchStub: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requestFormats.push(body.response_format ?? null);
+      if (requestFormats.length === 1) {
+        return new Response(JSON.stringify({
+          model: 'qwen3.5-4b-mlx',
+          choices: [{
+            message: {
+              role: 'assistant',
+              content: '',
+              reasoning_content: JSON.stringify({ tags: ['reasoning-only'] }),
+              tool_calls: [],
+            },
+            finish_reason: 'stop',
+          }],
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return new Response(
+        JSON.stringify(openAiChatResponse({ tags: ['qwen-recovered'] }, 'qwen3.5-4b-mlx')),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const adapter = new OpenAIVendorAdapter(
+      'test-api-key',
+      'qwen3.5-4b-mlx',
+      fetchStub,
+      'http://lm-studio-reasoning.local/v1',
+    );
+
+    await expect(adapter.analyze(TEST_IMAGE_REQUEST)).resolves.toMatchObject({
+      tags: ['qwen-recovered'],
+    });
+    expect(requestFormats).toHaveLength(2);
+    expect(requestFormats[0]).toMatchObject({ type: 'json_schema' });
+    expect(requestFormats[1]).toBeNull();
+  });
+
+  it('accepts Chat content-part arrays and still validates their JSON text', async () => {
+    const adapter = new OpenAIVendorAdapter(
+      'test-api-key',
+      'content-parts-model',
+      okFetch({
+        model: 'content-parts-model',
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: [{
+              type: 'text',
+              text: JSON.stringify({ tags: ['content-part'] }),
+            }],
+          },
+          finish_reason: 'stop',
+        }],
+      }),
+      'http://content-parts.local/v1',
+    );
+
+    await expect(adapter.analyze(TEST_IMAGE_REQUEST)).resolves.toMatchObject({
+      tags: ['content-part'],
+      modelVersion: 'content-parts-model',
+    });
+  });
+
+  it('starts OpenAI-compatible analysis with strict json_schema', async () => {
     let requestBody: Record<string, unknown> | undefined;
     const fetchStub: typeof fetch = async (_input, init) => {
       requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
@@ -437,10 +667,264 @@ describe('OpenAIVendorAdapter', () => {
 
     const result = await adapter.analyze(TEST_IMAGE_REQUEST);
 
-    expect(requestBody?.response_format).toEqual({ type: 'json_object' });
+    expect(requestBody?.response_format).toMatchObject({
+      type: 'json_schema',
+      json_schema: {
+        name: 'serpent_asset_analysis',
+        strict: true,
+        schema: {
+          required: ['description', 'tags', 'rating'],
+          additionalProperties: false,
+        },
+      },
+    });
     const messages = requestBody?.messages as Array<{ role: string; content: string }>;
     expect(messages[0]?.content).toContain('Return ONLY one JSON object');
     expect(result).toEqual({ tags: ['asset'], modelVersion: 'gpt-4o-2024-05-13' });
+  });
+
+  it('does not let a concurrent text fallback downgrade a schema capability', async () => {
+    const requestFormats: unknown[] = [];
+    let releaseSchemaProbe: (() => void) | undefined;
+    let releaseTextFollower: (() => void) | undefined;
+    let schemaProbeStartedResolve: (() => void) | undefined;
+    let textFollowerStartedResolve: (() => void) | undefined;
+    const schemaProbeStarted = new Promise<void>((resolve) => {
+      schemaProbeStartedResolve = resolve;
+    });
+    const textFollowerStarted = new Promise<void>((resolve) => {
+      textFollowerStartedResolve = resolve;
+    });
+    const schemaProbeGate = new Promise<void>((resolve) => {
+      releaseSchemaProbe = resolve;
+    });
+    const textFollowerGate = new Promise<void>((resolve) => {
+      releaseTextFollower = resolve;
+    });
+    const fetchStub: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      const format = body.response_format ?? null;
+      requestFormats.push(format);
+      if (requestFormats.length === 1) {
+        schemaProbeStartedResolve?.();
+        await schemaProbeGate;
+      } else if (requestFormats.length === 2) {
+        textFollowerStartedResolve?.();
+        await textFollowerGate;
+      }
+      return new Response(
+        JSON.stringify(openAiChatResponse({ tags: ['concurrent'] })),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const baseUrl = 'https://concurrent-capability-relay.example/v1';
+    const leader = new OpenAIVendorAdapter('test-api-key', 'vision-model', fetchStub, baseUrl);
+    const follower = new OpenAIVendorAdapter('test-api-key', 'vision-model', fetchStub, baseUrl);
+
+    const leaderResult = leader.analyze(TEST_IMAGE_REQUEST);
+    await schemaProbeStarted;
+    const followerResult = follower.analyze(TEST_IMAGE_REQUEST);
+    await textFollowerStarted;
+    releaseSchemaProbe?.();
+    await leaderResult;
+    releaseTextFollower?.();
+    await followerResult;
+
+    await new OpenAIVendorAdapter(
+      'test-api-key',
+      'vision-model',
+      fetchStub,
+      baseUrl,
+    ).analyze(TEST_IMAGE_REQUEST);
+
+    expect(requestFormats).toHaveLength(3);
+    expect(requestFormats[2]).toMatchObject({ type: 'json_schema' });
+  });
+
+  it('negotiates json_schema to json_object to text for older local relays', async () => {
+    const requestFormats: unknown[] = [];
+    const fetchStub: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requestFormats.push(body.response_format ?? null);
+      if (requestFormats.length < 3) {
+        return new Response(
+          JSON.stringify({ error: { message: 'response_format must be json_object or text' } }),
+          { status: 400, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response(
+        JSON.stringify(openAiChatResponse({ tags: ['local-qwen'] })),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const adapter = new OpenAIVendorAdapter(
+      'test-api-key',
+      'Qwen2.5-VL-7B-Instruct',
+      fetchStub,
+      'http://lm-studio.local/v1',
+    );
+
+    const result = await adapter.analyze(TEST_IMAGE_REQUEST);
+
+    expect(requestFormats).toEqual([
+      expect.objectContaining({ type: 'json_schema' }),
+      { type: 'json_object' },
+      null,
+    ]);
+    expect(result.tags).toEqual(['local-qwen']);
+  });
+
+  it('uses json_object after a legacy relay explicitly rejects json_schema', async () => {
+    const requestFormats: unknown[] = [];
+    const fetchStub: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requestFormats.push(body.response_format ?? null);
+      if (requestFormats.length === 1) {
+        return new Response('unsupported response_format json_schema', { status: 422 });
+      }
+      return new Response(
+        JSON.stringify(openAiChatResponse({ tags: ['legacy-relay'] })),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const adapter = new OpenAIVendorAdapter(
+      'test-api-key',
+      'qwen-legacy',
+      fetchStub,
+      'http://legacy-relay.local/v1',
+    );
+
+    await expect(adapter.analyze(TEST_IMAGE_REQUEST)).resolves.toMatchObject({
+      tags: ['legacy-relay'],
+    });
+    expect(requestFormats).toEqual([
+      expect.objectContaining({ type: 'json_schema' }),
+      { type: 'json_object' },
+    ]);
+  });
+
+  it('invalidates a cached structured mode when a relay changes capabilities', async () => {
+    const requestFormats: unknown[] = [];
+    let requestCount = 0;
+    const fetchStub: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requestFormats.push(body.response_format ?? null);
+      requestCount += 1;
+      if (requestCount === 2) {
+        return new Response('unsupported response_format json_schema', { status: 400 });
+      }
+      return new Response(
+        JSON.stringify(openAiChatResponse({ tags: [`cache-${requestCount}`] })),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const baseUrl = 'http://capability-flap-relay.local/v1';
+    const first = new OpenAIVendorAdapter(
+      'test-api-key',
+      'cache-flap-model',
+      fetchStub,
+      baseUrl,
+    );
+    await expect(first.analyze(TEST_IMAGE_REQUEST)).resolves.toMatchObject({
+      tags: ['cache-1'],
+    });
+
+    const second = new OpenAIVendorAdapter(
+      'test-api-key',
+      'cache-flap-model',
+      fetchStub,
+      baseUrl,
+    );
+    await expect(second.analyze(TEST_IMAGE_REQUEST)).resolves.toMatchObject({
+      tags: ['cache-3'],
+    });
+    await expect(new OpenAIVendorAdapter(
+      'test-api-key',
+      'cache-flap-model',
+      fetchStub,
+      baseUrl,
+    ).analyze(TEST_IMAGE_REQUEST)).resolves.toMatchObject({
+      tags: ['cache-4'],
+    });
+
+    expect(requestFormats).toEqual([
+      expect.objectContaining({ type: 'json_schema' }),
+      expect.objectContaining({ type: 'json_schema' }),
+      { type: 'json_object' },
+      { type: 'json_object' },
+    ]);
+  });
+
+  it('does not reuse a capability learned with another API key', async () => {
+    const requestFormats: unknown[] = [];
+    const fetchStub: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requestFormats.push(body.response_format ?? null);
+      return new Response(
+        JSON.stringify(openAiChatResponse({ tags: ['isolated-key'] })),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const endpoint = 'http://key-isolation-relay.local/v1';
+    await new OpenAIVendorAdapter(
+      'key-a', 'same-model', fetchStub, endpoint,
+    ).analyze(TEST_IMAGE_REQUEST);
+    await new OpenAIVendorAdapter(
+      'key-b', 'same-model', fetchStub, endpoint,
+    ).analyze(TEST_IMAGE_REQUEST);
+
+    expect(requestFormats).toHaveLength(2);
+    expect(requestFormats[0]).toMatchObject({ type: 'json_schema' });
+    expect(requestFormats[1]).toMatchObject({ type: 'json_schema' });
+  });
+
+  it('lets a concurrent follower recover when a text-only request is rejected', async () => {
+    const requestFormats: unknown[] = [];
+    let releaseLeader!: () => void;
+    let leaderStarted!: () => void;
+    const leaderGate = new Promise<void>((resolve) => { releaseLeader = resolve; });
+    const leaderStartedPromise = new Promise<void>((resolve) => { leaderStarted = resolve; });
+    const fetchStub: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requestFormats.push(body.response_format ?? null);
+      if (requestFormats.length === 1) {
+        leaderStarted();
+        await leaderGate;
+        return new Response(
+          JSON.stringify(openAiChatResponse({ tags: ['leader'] })),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (requestFormats.length === 2) {
+        return new Response('unsupported response_format text', { status: 400 });
+      }
+      return new Response(
+        JSON.stringify(openAiChatResponse({ tags: ['follower'] })),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const endpoint = 'http://concurrent-text-rejection.local/v1';
+    const leader = new OpenAIVendorAdapter(
+      'same-key', 'same-model', fetchStub, endpoint,
+    ).analyze(TEST_IMAGE_REQUEST);
+    await leaderStartedPromise;
+    const follower = new OpenAIVendorAdapter(
+      'same-key', 'same-model', fetchStub, endpoint,
+    ).analyze(TEST_IMAGE_REQUEST);
+
+    releaseLeader();
+    await expect(leader).resolves.toMatchObject({ tags: ['leader'] });
+    await expect(follower).resolves.toMatchObject({ tags: ['follower'] });
+    expect(requestFormats).toHaveLength(3);
+    expect(requestFormats[1]).toBeNull();
+    expect(requestFormats[2]).toMatchObject({ type: 'json_schema' });
+  });
+
+  it('only classifies explicit response-format compatibility failures', () => {
+    expect(isStructuredOutputFormatRejection('response_format must be json_object')).toBe(true);
+    expect(isStructuredOutputFormatRejection('unsupported json_schema response format')).toBe(true);
+    expect(isStructuredOutputFormatRejection('unknown model: qwen-7b')).toBe(false);
+    expect(isStructuredOutputFormatRejection('invalid API key')).toBe(false);
   });
 
   it('posts to a custom OpenAI-compatible base URL when provided', async () => {
@@ -769,6 +1253,121 @@ describe('OpenAIVendorAdapter', () => {
     await expect(adapter.analyze(TEST_IMAGE_REQUEST)).rejects.toMatchObject({
       kind: 'invalid_response',
       retryable: true,
+    });
+  });
+});
+
+describe('OpenAI response envelope normalization', () => {
+  it('keeps refusal and tool calls separate from assistant JSON text', () => {
+    const refusal = normalizeOpenAiChatResponse({
+      model: 'qwen-local',
+      choices: [{
+        message: { content: null, refusal: '拒绝处理此请求' },
+        finish_reason: 'stop',
+      }],
+    }, 'fallback-model');
+    expect(refusal).toMatchObject({
+      kind: 'refusal',
+      text: '拒绝处理此请求',
+      modelVersion: 'qwen-local',
+    });
+    expect(() => parseOpenAiAnalysisResponse(refusal)).toThrow();
+
+    const toolCall = normalizeOpenAiChatResponse({
+      model: 'qwen-local',
+      choices: [{
+        message: {
+          content: null,
+          tool_calls: [{
+            type: 'function',
+            function: { name: 'asset_analysis', arguments: '{"tags":["tool"]}' },
+          }],
+        },
+        finish_reason: 'tool_calls',
+      }],
+    }, 'fallback-model');
+    expect(toolCall).toMatchObject({
+      kind: 'tool_call',
+      name: 'asset_analysis',
+      arguments: { tags: ['tool'] },
+    });
+    expect(() => parseOpenAiAnalysisResponse(toolCall)).toThrow();
+  });
+
+  it('keeps Responses incomplete status out of the structured-output fallback path', () => {
+    const response = normalizeOpenAiResponsesResponse({
+      model: 'responses-model',
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      output: [],
+    }, 'fallback-model');
+
+    expect(response).toMatchObject({
+      kind: 'incomplete',
+      reason: 'max_output_tokens',
+    });
+    let error: unknown;
+    try {
+      parseOpenAiAnalysisResponse(response);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({
+      details: {
+        responseKind: 'incomplete',
+        canRetryWithoutStructuredOutput: false,
+      },
+    });
+  });
+
+  it('keeps a Responses failed envelope distinct while retaining provider details', () => {
+    const response = normalizeOpenAiResponsesResponse({
+      model: 'responses-model',
+      status: 'failed',
+      error: {
+        code: 'server_error',
+        type: 'server_error',
+        message: 'provider failed to generate output',
+      },
+      output: [],
+    }, 'fallback-model');
+
+    expect(response).toMatchObject({
+      kind: 'failed',
+      message: 'provider failed to generate output',
+      providerError: { code: 'server_error' },
+    });
+    let error: unknown;
+    try {
+      parseOpenAiAnalysisResponse(response);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({
+      details: {
+        responseKind: 'failed',
+        providerCode: 'server_error',
+        canRetryWithoutStructuredOutput: false,
+      },
+    });
+  });
+
+  it('reads Responses output message parts and validates their JSON', () => {
+    const response = normalizeOpenAiResponsesResponse({
+      model: 'responses-model',
+      status: 'completed',
+      output: [{
+        type: 'message',
+        content: [{
+          type: 'output_text',
+          text: JSON.stringify({ tags: ['responses-part'] }),
+        }],
+      }],
+    }, 'fallback-model');
+
+    expect(parseOpenAiAnalysisResponse(response)).toEqual({
+      tags: ['responses-part'],
+      modelVersion: 'responses-model',
     });
   });
 });

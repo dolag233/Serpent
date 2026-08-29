@@ -16,6 +16,8 @@ export type ScheduledRequest = {
   libraryGeneration?: number;
   interactionKey?: string;
   interactionGeneration?: number;
+  /** Lifecycle cleanup owns one library and may coexist with other-library reads. */
+  lifecycleBoundary?: boolean;
   /** Re-check lifecycle ownership immediately before the handler starts. */
   isCurrent?: () => boolean;
 };
@@ -294,7 +296,9 @@ export class InteractiveScheduler {
 
   private nextRunnableIndex(): number {
     if (this.#queue.length === 0) return -1;
-    const hasActiveMutation = [...this.#active].some((entry) => entry.request.lane === 'mutation');
+    const activeMutations = [...this.#active]
+      .filter((entry) => entry.request.lane === 'mutation');
+    const hasActiveMutation = activeMutations.length > 0;
     const hasQueuedMutation = this.#queue.some((entry) => entry.request.lane === 'mutation');
     const activeInteractive = [...this.#active]
       .filter((entry) => isInteractivePerformanceLane(entry.request.lane)).length;
@@ -305,10 +309,20 @@ export class InteractiveScheduler {
     let bestPriority = -1;
     for (let index = 0; index < this.#queue.length; index += 1) {
       const lane = this.#queue[index]!.request.lane;
+      const requestLibraryId = this.#queue[index]!.request.libraryId;
+      const mayReadDuringOtherLibraryClose =
+        lane !== 'mutation' &&
+        requestLibraryId !== undefined &&
+        activeMutations.length > 0 &&
+        activeMutations.every((entry) =>
+          entry.request.lifecycleBoundary === true &&
+          entry.request.libraryId !== undefined &&
+          entry.request.libraryId !== requestLibraryId,
+        );
       const canStart = lane === 'mutation'
         ? !hasActiveMutation && this.#active.size === 0
         : hasActiveMutation
-          ? false
+          ? mayReadDuringOtherLibraryClose
           : isInteractivePerformanceLane(lane)
             ? activeInteractive < 1
             : activeBackground < 1 && !hasQueuedMutation;

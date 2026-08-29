@@ -33,6 +33,10 @@ export type PdfViewerSurfaceProps = {
   /** Aborted when the owning viewer session closes or changes revision. */
   sessionSignal?: AbortSignal | null;
   isFullscreen: boolean;
+  /** Preloaded navigation surfaces must not own global zoom shortcuts. */
+  keyboardShortcutsDisabled?: boolean;
+  /** Called when a placeholder, first page, or error can be shown. */
+  onPresentationReady?: () => void;
 };
 
 /** Zoom bounds (1 = fit viewer width). */
@@ -72,6 +76,8 @@ export function PdfViewerSurface({
   placeholderUrl,
   sessionSignal,
   isFullscreen,
+  keyboardShortcutsDisabled = false,
+  onPresentationReady,
 }: PdfViewerSurfaceProps) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement>(null);
@@ -89,6 +95,12 @@ export function PdfViewerSurface({
   const [zoom, setZoom] = useState(1);
   const [hostClientWidth, setHostClientWidth] = useState(0);
   const [pdfLoading, setPdfLoading] = useState(Boolean(sourceUrl));
+
+  useEffect(() => {
+    if (error || loadedPages > 0 || (placeholderUrl && !sourceUrl)) {
+      onPresentationReady?.();
+    }
+  }, [error, loadedPages, onPresentationReady, placeholderUrl, sourceUrl]);
   /**
    * Page-local zoom anchor. Flex gap and padding do not scale with zoom, so
    * later pages cannot use origin-uniform `(scroll + pointer) * ratio`.
@@ -543,6 +555,7 @@ export function PdfViewerSurface({
   // Cmd/Ctrl+= / - / 0 — same global chords as the image/video viewer
   // (0 resets to fit width). Ignore while typing in an editable target.
   useEffect(() => {
+    if (keyboardShortcutsDisabled) return;
     const platform = isMacPlatform(navigator.userAgent) ? "mac" : "windows";
     const onKeyDown = (event: KeyboardEvent) => {
       if (shouldIgnoreGlobalZoomShortcut(event.target)) return;
@@ -559,7 +572,7 @@ export function PdfViewerSurface({
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zoom]);
+  }, [keyboardShortcutsDisabled, zoom]);
 
   return (
     <div
@@ -569,7 +582,10 @@ export function PdfViewerSurface({
     >
       {placeholderUrl && loadedPages === 0 ? (
         <div className="pdf-viewer-placeholder" aria-hidden="true">
-          <img alt="" src={placeholderUrl} />
+          <img
+            alt=""
+            src={placeholderUrl}
+          />
         </div>
       ) : null}
       {pageCount !== null ? (

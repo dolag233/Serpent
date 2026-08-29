@@ -95,6 +95,7 @@ function enrichMenuTemplate(
           ? INVERT_SELECTION_CHANNEL
           : COPY_SELECTION_CHANNEL;
       return {
+        id: item.command,
         label: resolvedLabel,
         accelerator: acceleratorForCommand(item.command),
         click: (_menuItem, window) => {

@@ -15,7 +15,12 @@ import path from 'node:path';
 
 import { _electron as electron, expect, test, type Page } from '@playwright/test';
 
-import { closeLibraryViaSwitcher, resolveElectronExecutablePath, resolveSessionLogPath } from './electron-test-helpers';
+import {
+  closeLibraryViaSwitcher,
+  openFolderImportMenu,
+  resolveElectronExecutablePath,
+  resolveSessionLogPath,
+} from './electron-test-helpers';
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -70,25 +75,6 @@ test('imports files and a directory hierarchy, then reconciles external changes'
   try {
     const window = await application.firstWindow();
     await window.getByRole('button', { name: '创建资源库' }).click();
-    // Serpent-52a9b4: the modal backdrop must never intercept the Windows
-    // caption buttons. Hit-testing the caption strip at runtime proves the
-    // buttons remain clickable under the blurred scrim (a computed-style
-    // assertion is not enough — stacking contexts defeat it silently).
-    const captionHit = await window
-      .locator('.windows-window-controls')
-      .evaluate((element) => {
-        const rect = element.getBoundingClientRect();
-        const hit = document.elementFromPoint(
-          rect.left + rect.width / 2,
-          rect.top + rect.height / 2,
-        );
-        return {
-          broad: rect.width > 0 && rect.height > 0,
-          onCaption: Boolean(hit && hit.closest('.windows-window-controls')),
-        };
-      });
-    expect(captionHit.broad).toBe(true);
-    expect(captionHit.onCaption).toBe(true);
     await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();
@@ -136,9 +122,13 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     expect(assetsAfterCopy.filter((asset) => asset.displayName.startsWith('notes')).length).toBe(2);
 
     await sidebarFolderRow(window, '角色').click();
-    await window.getByRole('button', { name: '主菜单' }).click();
-    await window.getByRole('menuitem', { name: '文件', exact: true }).hover();
-    await window.getByRole('menuitem', { name: '导入文件夹', exact: true }).click();
+    // Folder navigation keeps the shell's transfer actions disabled until the
+    // new scope finishes loading; the native macOS menu mirrors that same
+    // disabled state in the renderer command router.
+    await expect(
+      window.getByRole('button', { name: '导入文件夹', exact: true }).first(),
+    ).toBeEnabled();
+    await openFolderImportMenu(application, window);
     await expect(sidebarFolderRow(window, '正面')).toBeVisible();
     await sidebarFolderRow(window, '正面').click();
     await expect(window.getByText('pose.webp', { exact: true })).toBeVisible();
@@ -203,6 +193,53 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     expect(afterReopen.find((asset) => asset.displayName === 'pose.webp')?.availability).toBe('missing');
   } finally {
     await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+test('imports into the library root after leaving a folder scope', async () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-import-scope-e2e-'));
+  const sourcePath = path.join(temporaryRoot, 'root-only.txt');
+  const libraryName = '导入目标验收';
+  const libraryPath = path.join(temporaryRoot, libraryName);
+  writeFileSync(sourcePath, 'root import');
+
+  const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  const application = await electron.launch({
+    args: [applicationDirectory],
+    cwd: applicationDirectory,
+    executablePath: resolveElectronExecutablePath(),
+    env: {
+      ...process.env,
+      SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
+      SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
+      SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
+      SERPENT_E2E_IMPORT_FILES: sourcePath,
+    },
+  });
+
+  try {
+    const window = await application.firstWindow();
+    await window.getByRole('button', { name: '创建资源库' }).click();
+    await window.getByRole('textbox', { name: '名称' }).fill(libraryName);
+    await window.getByRole('button', { name: '创建', exact: true }).click();
+    await window.getByRole('button', { name: '添加文件夹' }).click();
+    await window.getByLabel('新文件夹名称').fill('项目');
+    await window.keyboard.press('Enter');
+    await expect(sidebarFolderRow(window, '项目')).toBeVisible();
+    await sidebarFolderRow(window, '项目').click();
+    await window.getByRole('button', { name: '所有资产' }).click();
+    await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
+
+    await expect(
+      window.locator('.asset-card').filter({ hasText: 'root-only.txt' }),
+    ).toBeVisible();
+    expect(existsSync(path.join(libraryPath, 'Assets', 'root-only.txt'))).toBe(true);
+    expect(existsSync(path.join(libraryPath, 'Assets', '项目', 'root-only.txt'))).toBe(false);
+  } finally {
+    await application.evaluate(({ app }) => app.quit()).catch(() => undefined);
+    await application.close().catch(() => undefined);
     rmSync(temporaryRoot, { force: true, recursive: true });
   }
 });

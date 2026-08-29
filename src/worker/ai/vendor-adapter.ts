@@ -18,6 +18,19 @@ export type VendorAdapterErrorKind =
   | 'invalid_response'
   | 'timeout';
 
+/** Sanitized provider metadata retained for diagnostics and retry decisions. */
+export interface VendorAdapterErrorDetails {
+  httpStatus?: number;
+  providerCode?: string;
+  providerType?: string;
+  providerParam?: string;
+  providerMessage?: string;
+  requestId?: string;
+  responseKind?: string;
+  canRetryWithoutStructuredOutput?: boolean;
+  formatRejected?: boolean;
+}
+
 /**
  * An error raised by a vendor adapter when an AI analysis fails.
  * The `kind` discriminator allows the caller to make retry / fallback
@@ -27,16 +40,22 @@ export class VendorAdapterError extends Error {
   readonly kind: VendorAdapterErrorKind;
   /** Explicitly opt a normally terminal category into bounded queue retry. */
   readonly retryable?: boolean;
+  readonly details?: VendorAdapterErrorDetails;
 
   constructor(
     kind: VendorAdapterErrorKind,
     message: string,
-    options?: { cause?: unknown; retryable?: boolean },
+    options?: {
+      cause?: unknown;
+      retryable?: boolean;
+      details?: VendorAdapterErrorDetails;
+    },
   ) {
     super(message, options);
     this.name = 'VendorAdapterError';
     this.kind = kind;
     this.retryable = options?.retryable;
+    this.details = options?.details;
   }
 }
 

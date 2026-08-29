@@ -61,6 +61,13 @@ describe("format-filter-presets", () => {
     );
   });
 
+  it("keeps JFIF in the image filter group", () => {
+    const imageGroup = FORMAT_FILTER_GROUPS.find(
+      (group) => group.labelKey === "filter.formatGroupImage",
+    );
+    expect(imageGroup?.extensions).toContain("jfif");
+  });
+
   it("ships the special text token separately from extension groups", () => {
     expect(FORMAT_TEXT_TOKEN).toBe("text");
     expect(allChipTokens()).not.toContain(FORMAT_TEXT_TOKEN);

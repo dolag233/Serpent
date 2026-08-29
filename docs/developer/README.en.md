@@ -10,6 +10,7 @@ For developers working on Serpent itself: architecture, building from source, te
 - [Build & packaging](build-packaging.en.md) — package / make / release pipeline / signing
 - [Architecture](architecture.en.md) — process model, directory layout, key design
 - [Testing](testing.en.md) — test layers and how to run them
+- [Adding media format support](media-format-support.en.md) — registry, import, preview, filters, protocols, and acceptance
 - [Branches and workflow](workflow.en.md) — `main`/`dev`, Beads tickets, development records, acceptance, and handoff
 
 Other software docs:

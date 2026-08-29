@@ -180,6 +180,7 @@ describe("macOS product menu mirror (Serpent-q0b1)", () => {
       "about.serpent",
       "about.github",
       "about.open-source",
+      "about.diagnostics",
       "settings",
     ]));
     // invert/copy stay on their dedicated channels via the edit menu.

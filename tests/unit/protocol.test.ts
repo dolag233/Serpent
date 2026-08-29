@@ -2302,6 +2302,16 @@ describe('renderer lifecycle events', () => {
         displayPath: '/libraries/restored',
       },
     })).toMatchObject({ type: 'library.opened', source: 'replacement-restore' });
+    expect(parseRendererLifecycleEvent({
+      type: 'library.opening',
+      operation: 'open',
+      source: 'mcp',
+    })).toEqual({ type: 'library.opening', operation: 'open', source: 'mcp' });
+    expect(parseRendererLifecycleEvent({
+      type: 'library.closed',
+      libraryId: 'mcp-library',
+      source: 'mcp',
+    })).toEqual({ type: 'library.closed', libraryId: 'mcp-library', source: 'mcp' });
     expect(() =>
       parseRendererLifecycleEvent({ type: 'library.opened', libraryPath: '/private/path' }),
     ).toThrow();

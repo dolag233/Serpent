@@ -1,4 +1,5 @@
 import appIcon from "../../assets/icons/app.png";
+import { useState } from "react";
 
 import type {
   AppUpdateCheckResult,
@@ -9,7 +10,7 @@ import type {
 import { formatBytes } from "./format-file-meta";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
-import { useT } from "./i18n";
+import { useLocale, useT } from "./i18n";
 import { Progress } from "./ui/primitives/Progress";
 import { type ReactNode } from "react";
 
@@ -18,6 +19,7 @@ export type AboutDialogProps = {
   readonly version: string;
   readonly onClose: () => void;
   readonly onOpenGitHub: () => void;
+  readonly onOpenReleaseNotes?: (url: string) => void;
   readonly updateCheck: AppUpdateCheckResult | null;
   readonly updateInstall: AppUpdateInstallResult | null;
   readonly updateChecking: boolean;
@@ -44,6 +46,7 @@ export function AboutDialog({
   version,
   onClose,
   onOpenGitHub,
+  onOpenReleaseNotes,
   updateCheck,
   updateInstall,
   updateChecking,
@@ -54,6 +57,8 @@ export function AboutDialog({
   onCancelDownload,
 }: AboutDialogProps): ReactNode {
   const t = useT();
+  const { locale } = useLocale();
+  const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
   if (!open) return null;
 
   const updateErrorMessage = (code: AppUpdateErrorCode): string => {
@@ -68,6 +73,20 @@ export function AboutDialog({
     return t("dialog.about.updateFailed");
   };
   const updateBusy = updateChecking || updateInstalling;
+  const releaseMeta = updateCheck?.ok === true && updateCheck.status === "available"
+    ? updateCheck.releaseMeta
+    : undefined;
+  const releaseNoteLines = releaseMeta?.changelog?.flatMap((note) => {
+    if (typeof note === "string") return [note];
+    const localized = locale === "zh-CN" ? note.zhCN ?? note.en : note.en ?? note.zhCN;
+    return localized === undefined ? [] : [localized];
+  }) ?? [];
+  const releaseNotesText = releaseNoteLines.length > 0
+    ? releaseNoteLines
+    : (updateCheck?.ok === true && updateCheck.status === "available" && updateCheck.releaseNotes.trim() !== ""
+      ? [updateCheck.releaseNotes]
+      : []);
+  const hasReleaseNotes = releaseNotesText.length > 0 || releaseMeta?.changelogUrl !== undefined;
   const showDownloadProgress = updateInstalling;
   const canCancelDownload = updateInstalling
     && (updateProgress === null
@@ -163,6 +182,57 @@ export function AboutDialog({
               >
                 <Icon name="download" size={15} />
               </button>
+            </div>
+          ) : null}
+          {hasReleaseNotes ? (
+            <div className="about-dialog-release-notes">
+              <button
+                aria-controls="about-release-notes-panel"
+                aria-expanded={releaseNotesOpen}
+                className="about-dialog-release-notes-toggle"
+                id="about-release-notes-toggle"
+                onClick={() => setReleaseNotesOpen((current) => !current)}
+                type="button"
+              >
+                {releaseNotesOpen
+                  ? t("dialog.about.hideReleaseNotes")
+                  : t("dialog.about.viewReleaseNotes")}
+              </button>
+              {releaseNotesOpen ? (
+                <div
+                  className="about-dialog-release-notes-panel"
+                  id="about-release-notes-panel"
+                  aria-labelledby="about-release-notes-toggle"
+                  role="region"
+                >
+                  {releaseMeta?.date ? (
+                    <p className="about-dialog-release-notes-date">
+                      {t("dialog.about.releaseDate", { date: releaseMeta.date })}
+                    </p>
+                  ) : null}
+                  {releaseMeta?.mandatory ? (
+                    <p className="about-dialog-release-notes-mandatory">
+                      {t("dialog.about.mandatoryUpdate")}
+                    </p>
+                  ) : null}
+                  {releaseNotesText.length > 0 ? (
+                    <ul>
+                      {releaseNotesText.map((line, index) => (
+                        <li key={`${index}:${line}`}>{line}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {releaseMeta?.changelogUrl && onOpenReleaseNotes ? (
+                    <button
+                      className="about-dialog-release-notes-link"
+                      onClick={() => onOpenReleaseNotes(releaseMeta.changelogUrl!)}
+                      type="button"
+                    >
+                      {t("dialog.about.openReleaseNotes")}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           ) : null}
           {showDownloadProgress ? (

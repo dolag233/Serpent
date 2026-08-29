@@ -110,14 +110,12 @@ export async function removeExternalLibraryStagingDirectory(directoryPath: strin
       publicCode: 'INTERNAL_ERROR',
     });
   }
-  let lastError: unknown;
   for (let attempt = 0; ; attempt += 1) {
     try {
       await rm(resolved, { recursive: true, force: true });
       return;
     } catch (error) {
       if (errorHasCode(error, 'ENOENT')) return;
-      lastError = error;
       const delayMs = REMOVE_RETRY_DELAYS_MS[attempt];
       if (!isRetryableDirectoryRemoveError(error) || delayMs === undefined) {
         throw error;

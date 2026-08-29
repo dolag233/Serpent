@@ -1,8 +1,10 @@
 # 打开资源库渐进化方案（Serpent-tumv / LIB-018）
 
+> 产品修订（2026-08-28）：本研究中的“打开后立即展示首屏、后台补齐导航”仅保留为历史性能分析，不再作为资源库打开/切换的交互方案。资源库身份边界以 [UI direction 0006](../ui/0006-progressive-loading-ux-principles.md) 为准：先显示资源库身份与进度，结构一致后再进入主界面；普通浏览路径仍可渐进。
+
 > 日期：2026-08-15
 > 触发：用户反馈 7000+ 资产的默认资源库启动 >25 秒，小库秒开。
-> 原则：`docs/internal/ui/0006-progressive-loading-ux-principles.md`（禁止同步阻塞加载）。
+> 历史原则：`docs/internal/ui/0006-progressive-loading-ux-principles.md`（原“禁止同步阻塞加载”口径）；当前资源库打开/切换以安全边界加载为准。
 
 ## 根因（代码证据）
 

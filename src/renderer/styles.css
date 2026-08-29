@@ -3640,8 +3640,23 @@ input[type="range"] {
   pointer-events: auto;
 }
 
-/* While a modal is open, freeze shell chrome so hover popovers (filters) cannot open.
-   The portaled caption buttons live outside `.app-shell`, so they are exempt. */
+/* A library switch is a safety boundary: hide the old and not-yet-coherent
+ * navigation model until the replacement library has been read completely. */
+.library-loading-backdrop {
+  background: var(--ui-surface-canvas);
+  backdrop-filter: none;
+}
+
+.library-loading-dialog {
+  width: 100%;
+  max-width: 36rem;
+}
+
+.library-loading-dialog > [data-dialog-content="true"] {
+  display: none;
+}
+
+/* While a modal is open, freeze shell chrome so hover popovers (filters) cannot open. */
 body.serpent-modal-open .app-shell {
   pointer-events: none;
 }
@@ -4061,6 +4076,31 @@ body.serpent-modal-open .app-shell {
      paint the --ui-backdrop layer itself. */
   background: transparent;
   outline: none;
+}
+
+/* Keep the already decoded viewer in place while the next asset resolves.
+   Both surfaces occupy the same paint box; the target is hidden until its
+   first decoded frame or error surface is ready, so navigation never exposes
+   a blank/black intermediate frame. */
+.workspace-viewer-transition {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace-viewer-transition > .workspace-viewer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  flex: none;
+}
+
+.workspace-viewer-transition > .workspace-viewer.is-preview-preloading {
+  visibility: hidden;
+  pointer-events: none;
 }
 .workspace-viewer:focus,
 .workspace-viewer:focus-visible {
@@ -8800,6 +8840,64 @@ select.ai-config-input.ai-config-languages {
   width: 26px;
   height: 26px;
   border-color: color-mix(in srgb, var(--accent) 36%, var(--divider-soft));
+}
+
+.about-dialog-release-notes {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  width: min(100%, 300px);
+  margin-top: 2px;
+}
+
+.about-dialog-release-notes-toggle,
+.about-dialog-release-notes-link {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.about-dialog-release-notes-toggle:hover,
+.about-dialog-release-notes-toggle:focus-visible,
+.about-dialog-release-notes-link:hover,
+.about-dialog-release-notes-link:focus-visible {
+  color: var(--text);
+  outline: none;
+  text-decoration: underline;
+}
+
+.about-dialog-release-notes-panel {
+  width: 100%;
+  max-height: 150px;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--divider-soft);
+  border-radius: 8px;
+  background: var(--raised-2);
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.about-dialog-release-notes-panel ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.about-dialog-release-notes-panel li + li {
+  margin-top: 4px;
+}
+
+.about-dialog-release-notes-date,
+.about-dialog-release-notes-mandatory {
+  margin: 0 0 6px;
+}
+
+.about-dialog-release-notes-mandatory {
+  color: var(--warning);
 }
 
 .about-dialog-update-status {

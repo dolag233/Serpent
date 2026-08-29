@@ -15,6 +15,7 @@ import {
   clearActiveRecentLibrary,
   readActiveLibraryPath,
   readRecentLibraryEntries,
+  recentLibraryAutoOpenEnabled,
   recentLibraryPersistenceEnabled,
   rememberRecentLibrary,
   removeRecentLibrary,
@@ -185,6 +186,16 @@ describe('recent libraries store (main)', () => {
     rememberRecentLibrary(storePath, { path: '/libraries/a', name: 'A' });
     expect(readRecentLibraryEntries(storePath)).toHaveLength(1);
     expect(readActiveLibraryPath(storePath)).toBe('/libraries/a');
+  });
+
+  it('keeps automatic recent-library opening opt-in to isolated restart tests', () => {
+    expect(recentLibraryAutoOpenEnabled()).toBe(false);
+
+    process.env.SERPENT_E2E = '1';
+    expect(recentLibraryAutoOpenEnabled()).toBe(false);
+
+    process.env.SERPENT_E2E_RESTORE_RECENT = '1';
+    expect(recentLibraryAutoOpenEnabled()).toBe(true);
   });
 
   it('treats malformed or unknown-shape files as an empty store', () => {

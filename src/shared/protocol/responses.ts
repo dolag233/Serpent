@@ -2360,6 +2360,7 @@ export const rendererLifecycleEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('library.opening'),
     operation: libraryLifecycleOperationSchema,
+    source: z.enum(['mcp']).optional(),
   }),
   z.strictObject({
     type: z.literal('library.opened'),
@@ -2377,6 +2378,7 @@ export const rendererLifecycleEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('library.closed'),
     libraryId: nonBlankString,
+    source: z.enum(['mcp']).optional(),
   }),
 ]);
 
