@@ -58,6 +58,13 @@
 | VIEWER-ZOOM-BOUNDARY-001 | 查看器缩放滑块覆盖完整范围 | 待人类验收 | 打开图片查看器；把缩放滑块拖到最小和最右端，再在最右端继续滚轮放大；观察滑块和图像 | 最小为 `0.05`，最大为 `8×`；滑块 End 能精确到最大值；已到最大值后滚轮不再继续放大；滑块与滚轮/键盘缩放边界一致 | [viewer-fit](../../../src/renderer/viewer-fit.ts) / [ZoomableImage](../../../src/renderer/zoomable-preview-image.tsx) / [媒体 E2E](../../../tests/e2e/media-preview.test.ts) / [开发日志](../development/2026-08-29-library-delete-import-zoom-fbx-development-log.md) | 自动化：媒体查看器 E2E 1 passed，覆盖 `0.05–8×`、End 到 `8` 与滚轮上限；真实体感与不同窗口尺寸待用户验收。 |
 | MODEL-FBX-THUMBNAIL-001 | FBX 缩略图生成与失败诊断 | 待人类验收 | 导入一个可渲染的 FBX；观察卡片缩略图，再双击查看；若本机禁用 WebGL，观察失败提示/日志是否明确区分 WebGL 不可用与 FBX 格式失败 | FBX 缩略图真实解码；FBX 转换、模型加载、WebGL 不可用分别给出准确诊断，不再等待超时后笼统显示格式失败 | [离屏渲染器](../../../src/renderer/offscreen-thumbnail/main.ts) / [模型 E2E](../../../tests/e2e/model-thumbnail.test.ts) / [FBX Worker 测试](../../../tests/worker/fbx-conversion.test.ts) / [开发日志](../development/2026-08-29-library-delete-import-zoom-fbx-development-log.md) | 自动化：FBX Electron E2E 1 passed，FBX Worker 20/20 passed；当前使用 SwiftShader 验证，真实 GPU/WebGL、Windows、packaged 未执行，待用户验收。 |
 
+### 2026-08-29 视频全屏 chrome 与 Space 快捷键
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `Serpent-ec11d0` | 视频全屏后鼠标静止时自动隐藏进度条 | 待人类验收 | 打开可播放视频并进入全屏；鼠标移动唤醒控件后保持静止超过 2 秒；再移动鼠标观察恢复 | 全屏视频控制条在闲置后隐藏；鼠标再次移动时恢复；不会因全屏按钮或进度条保留焦点而永久显示 | [视频控件样式](../../../src/renderer/styles.css) / [视频 E2E](../../../tests/e2e/media-video-playback.test.ts) / [开发日志](../development/2026-08-29-video-fullscreen-chrome-space-development-log.md) | 自动化：修复前 `opacity=1` 红测，修复后视频 Electron E2E 1 passed；全量 E2E 86 passed、3 skipped；macOS 开发态自动化，Windows、packaged 和视觉验收待执行。 |
+| `Serpent-8e681a` | 拖动视频进度条后 Space 优先播放/暂停 | 待人类验收 | 播放视频并拖动底部进度条；保持进度条焦点按 Space；重复按一次 | Space 直接切换视频播放/暂停，不触发进度条控件自身的选择/默认 Space 行为；真正的文本输入区域仍可正常输入 | [视频 Space 判定](../../../src/renderer/video-player-controls.ts) / [视频控件](../../../src/renderer/VideoPlayerControls.tsx) / [逻辑单测](../../../tests/unit/video-player-controls.test.ts) / [视频 E2E](../../../tests/e2e/media-video-playback.test.ts) / [开发日志](../development/2026-08-29-video-fullscreen-chrome-space-development-log.md) | 自动化：39 个查看器逻辑单测通过，真实视频拖动后 Space E2E 通过；全量 E2E 86 passed、3 skipped；macOS 开发态自动化，Windows、packaged 和视觉验收待执行。 |
+
 ### 2026-08-27 导入 ZIP 后卡片损坏
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

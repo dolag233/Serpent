@@ -4938,9 +4938,11 @@ body.serpent-modal-open .app-shell {
   opacity: 0;
   pointer-events: none;
 }
-/* Volume/scrub chrome must stay interactive while idle-faded (Serpent-jy9z). */
+/* Volume/scrub chrome must stay interactive while idle-faded (Serpent-jy9z).
+   In fullscreen, pointer movement wakes the whole viewer; focus alone must
+   not keep the transport bar visible after the idle timer expires. */
 .workspace-viewer.is-chrome-idle .preview-chrome-fade:hover,
-.workspace-viewer.is-chrome-idle .preview-chrome-fade:focus-within,
+.workspace-viewer.is-chrome-idle:not(:fullscreen) .preview-chrome-fade:focus-within,
 .workspace-viewer.is-chrome-idle .preview-chrome-fade:has(.preview-viewer-volume.is-adjusting) {
   opacity: 1;
   pointer-events: auto;

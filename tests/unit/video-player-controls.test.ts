@@ -114,14 +114,25 @@ describe("shouldHandleVideoSpaceKey", () => {
     ).toBe(false);
   });
 
-  it("does not steal Space from focused chrome buttons", () => {
+  it("owns Space from focused viewer controls", () => {
     expect(
       shouldHandleVideoSpaceKey({
         key: " ",
         repeat: false,
         target: { tagName: "BUTTON" },
       }),
-    ).toBe(false);
+    ).toBe(true);
+  });
+
+  it("owns Space after the video scrubber receives focus", () => {
+    expect(
+      shouldHandleVideoSpaceKey({
+        key: " ",
+        code: "Space",
+        repeat: false,
+        target: { tagName: "DIV", role: "slider" },
+      }),
+    ).toBe(true);
   });
 });
 
