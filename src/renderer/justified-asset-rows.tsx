@@ -16,6 +16,7 @@ import {
 } from "./asset-grid-layout";
 import {
   layoutJustifiedAssetRects,
+  overlayLiveAssetGeometry,
   publishCanvasAssetLayout,
   stackItemHeights,
 } from "./canvas-asset-layout";
@@ -116,11 +117,14 @@ function RegularJustifiedAssetRows({
       })),
     [assets],
   );
-  const layoutEntries = layout.length > 0 ? layout : fallbackLayout;
   const assetById = useMemo(
     () => new Map(assets.map((asset) => [asset.assetId, asset] as const)),
     [assets],
   );
+  const layoutEntries = useMemo(() => {
+    const source = layout.length > 0 ? layout : fallbackLayout;
+    return overlayLiveAssetGeometry(source, assetById);
+  }, [assetById, fallbackLayout, layout]);
   const layoutById = useMemo(
     () => new Map(layoutEntries.map((entry) => [entry.assetId, entry] as const)),
     [layoutEntries],

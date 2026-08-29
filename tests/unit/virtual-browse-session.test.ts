@@ -11,6 +11,7 @@ import {
   createVirtualBrowseLayout,
   evictVirtualSummaryPage,
   mergeVirtualSummaryPage,
+  patchVirtualLayoutGeometry,
   virtualLayoutEntryAt,
 } from "../../src/renderer/browse/virtual-browse-layout";
 
@@ -151,5 +152,30 @@ describe("virtual browse geometry", () => {
     }]);
     expect(geometryPatch.geometryRevision).toBeGreaterThan(current.geometryRevision);
     expect(geometryPatch.geometryEntries).not.toBe(current.geometryEntries);
+  });
+
+  it("patches live video dimensions onto loaded virtual slots (Serpent-9c9f97)", () => {
+    const current = createVirtualBrowseLayout({
+      total: 2_100,
+      firstPage: {
+        items: [{ ...asset("asset-0"), width: null, height: null }],
+        offset: 0,
+      },
+    });
+    const patched = patchVirtualLayoutGeometry(
+      current,
+      new Map([["asset-0", { width: 1920, height: 1080 }]]),
+    );
+    expect(patched).not.toBe(current);
+    expect(patched.geometryRevision).toBeGreaterThan(current.geometryRevision);
+    expect(virtualLayoutEntryAt(patched, 0)).toMatchObject({
+      assetId: "asset-0",
+      width: 1920,
+      height: 1080,
+    });
+    expect(patchVirtualLayoutGeometry(
+      patched,
+      new Map([["asset-0", { width: 1920, height: 1080 }]]),
+    )).toBe(patched);
   });
 });

@@ -42,6 +42,19 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-08-29 平铺选中描边与视频卡片尺寸
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| CANVAS-042 / `Serpent-ebff32` | 平铺选中描边是均匀圆角外环 | 人类验收通过 | 打开任意库切到平铺；单击一张卡片；再框选/多选几张。对照瀑布流 | 选中环是贴合卡片圆角的均匀 2px 描边，不是左侧一条粗蓝竖条；四边都看得见；顶部可见缩略图仍应解码（不要回归 CANVAS-041） | [开发日志](../development/2026-08-29-selection-stroke-and-video-card-dimensions-development-log.md) / `src/renderer/browse/virtual-browse-canvas.tsx` / `src/renderer/styles.css` / `tests/unit/virtual-browse-canvas.test.ts` | 2026-08-29 用户验收通过。自动化：单元 4 files / 20 passed。packaged 未执行。 |
+| CANVAS-043 / `Serpent-9c9f97` | 导入视频后卡片立刻有长宽比和分辨率 | 人类验收通过 | 向当前文件夹导入一段 16:9（或其它非 1:1）MP4；不要刷新资源库。等到海报缩略图出现后再等一两秒 | 卡片预览框随源视频长宽比收紧（不再接近方框+上下黑边）；caption 出现 `宽 × 高`；不必点刷新。再刷新一次，尺寸不应再跳变 | [开发日志](../development/2026-08-29-selection-stroke-and-video-card-dimensions-development-log.md) / `src/worker/library-service.ts` / `src/worker/index.ts` / `src/renderer/App.tsx` / `tests/worker/video-exr.test.ts` / `tests/unit/canvas-asset-layout.test.ts` | 2026-08-29 用户验收通过。自动化：Worker 视频元数据 2 passed。packaged 未执行。 |
+
+### 2026-08-29 不可直连视频的 proxy 预览
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| VIEWER-PROXY-001 / `Serpent-3902e7` | MOV/AVI/WMV/MKV 生成 proxy 后可预览 | 待人类验收 | 导入无法直接播放的视频（如 ProRes/HEVC `.mov`，或 `.avi`/`.wmv`）；双击打开查看器，等代理生成完成后确认画面能播；关闭后再打开同一资产；再悬停卡片 | 代理就绪后查看器立即播放代理（不是继续卡在无法解码的原片）；再次打开不必先失败一次；hover 同样能播；MP4/WebM 仍播原片 | [开发日志](../development/2026-08-29-non-direct-video-proxy-preview-development-log.md) / `src/shared/media-formats.ts` / `src/main/index.ts` / `src/worker/library-service.ts` / `tests/unit/media-formats.test.ts` / `tests/worker/video-exr.test.ts` | 自动化：`media-formats` + `video-exr` 2 files / 73 passed；`thumbnails` + `direct-play-capability` 2 files / 79 passed。根因：H.264 proxy 是 `.mp4`，协议曾以 `application/octet-stream` 下发。Electron 媒体 E2E、packaged 未执行。 |
+
 ### 2026-08-29 平铺模式可见缩略图窗口
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

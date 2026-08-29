@@ -27,6 +27,31 @@ const DEFAULT_JUSTIFIED_CAPTION_BAND_PX = resolveJustifiedCaptionBandPx({
   secondary: true,
 });
 
+/**
+ * Browse-session geometry is a snapshot. Live AssetSummary patches (image
+ * header probe, video ffprobe) must win so cards reflow without a full reload
+ * (Serpent-9c9f97).
+ */
+export function overlayLiveAssetGeometry(
+  layout: readonly BrowseLayoutEntry[],
+  assetsById: ReadonlyMap<string, Pick<AssetSummary, "width" | "height">>,
+): BrowseLayoutEntry[] {
+  if (layout.length === 0 || assetsById.size === 0) {
+    return layout as BrowseLayoutEntry[];
+  }
+  let changed = false;
+  const next = layout.map((entry) => {
+    const asset = assetsById.get(entry.assetId);
+    if (!asset) return entry;
+    const width = asset.width ?? entry.width;
+    const height = asset.height ?? entry.height;
+    if (width === entry.width && height === entry.height) return entry;
+    changed = true;
+    return { ...entry, width, height };
+  });
+  return changed ? next : (layout as BrowseLayoutEntry[]);
+}
+
 export type CanvasAssetLayoutRect = {
   id: string;
   x: number;

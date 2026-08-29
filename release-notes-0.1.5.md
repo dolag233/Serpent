@@ -30,11 +30,17 @@
 
 ## 修复 / Fixes
 
+- 修复平铺模式选中描边被裁成左侧粗蓝条、不跟随圆角的问题。
+- 修复导入视频后卡片长宽比与分辨率要刷新资源库才更新的问题。
+- 修复 MOV/AVI/WMV/MKV 等无法直连容器在已生成播放代理后仍无法预览的问题。
 - 修复平铺模式大库滚动时视口顶部缩略图不加载、越往下缺失越多的问题。
 - 修复导入后文件夹树不刷新、删除资源库缺少延迟进度反馈、合集/链接文件夹若干交互回归。
 - 修复模态面板遮挡窗口控制按钮、原生拖拽预览比例、AI OpenAI 兼容响应解析等问题。
 - 优化若干 UI 细节与稳定性问题。
 
+  - Fixed tiled-view selection rings being clipped into a thick left bar that ignored rounded corners.
+  - Fixed video cards keeping a square aspect ratio and missing resolution until a library refresh.
+  - Fixed MOV/AVI/WMV/MKV preview remaining blocked after a playback proxy was already generated.
   - Fixed tiled-view thumbnails failing to load at the top of the viewport in large libraries, worsening with scroll depth.
   - Fixed folder tree not refreshing after import, missing delayed progress when deleting libraries, and several collection/linked-folder interaction regressions.
   - Fixed modal panels blocking window controls, native drag-preview aspect ratio, and OpenAI-compatible AI response parsing.

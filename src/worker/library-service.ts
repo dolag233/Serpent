@@ -752,6 +752,7 @@ import {
   isSupportedVideoExtension,
   modelMimeForExtension,
   isRawImageExtension,
+  isChromiumDirectPlayVideoExtension,
   videoMimeForExtension,
 } from '../shared/media-formats';
 import {
@@ -24991,25 +24992,24 @@ export class LibraryService {
     // transcode was a long-standing Windows failure point, and on-demand
     // semantics have no trigger because <img> GIF decoding never fails.
     if (mediaType === 'video' || mediaType === 'audio') {
-      // Serpent-cljb: source playback is the only viewer starting point for
-      // every video container. A container/MIME hint is not proof that
-      // Chromium can decode the file, so the renderer mounts the original and
-      // requests a proxy only after the media element reports a real codec or
-      // decode failure. This keeps large imports from encoding every video.
-      // Hover (Serpent-c8a1a3): a ready WebM proxy wins so undecodable
-      // containers (e.g. some .mov) can still preview in-place; otherwise the
-      // original source stays, which keeps browser-decodable formats (mp4)
-      // playing their original file on hover as before.
+      // Serpent-cljb: source playback is the viewer starting point for
+      // Chromium-playable containers (mp4/webm/m4v). Other containers
+      // (mov/avi/wmv/mkv) are not a playback guarantee; a ready proxy is the
+      // viewer URL so generating a proxy actually unblocks preview.
+      // Hover (Serpent-c8a1a3): a ready proxy wins for every video so
+      // undecodable containers can still preview in-place.
       if (mediaType === 'video' && intent !== 'proxy-fallback' && asset.current_revision_id) {
-        if (intent === 'hover') {
-          const hoverProxy = this.getCurrentArtifact(libraryId, assetId, 'webm_proxy');
-          if (hoverProxy?.status === 'ready') {
+        const preferReadyProxy = intent === 'hover'
+          || !isChromiumDirectPlayVideoExtension(extension);
+        if (preferReadyProxy) {
+          const readyProxy = this.getCurrentArtifact(libraryId, assetId, 'webm_proxy');
+          if (readyProxy?.status === 'ready') {
             return {
               mediaType,
               status: 'ready',
               kind,
-              artifactId: hoverProxy.artifactId,
-              mimeType: hoverProxy.mimeType,
+              artifactId: readyProxy.artifactId,
+              mimeType: readyProxy.mimeType,
               playbackMode: 'proxy',
               ...(posterArtifactId ? { posterArtifactId } : {}),
             };
@@ -27827,7 +27827,13 @@ export class LibraryService {
       /** Fired once a durable visual input is ready for automatic AI. */
       onAiInputReady?: (event: { assetId: string; artifactId: string }) => void;
       /** Notify the renderer when a secondary artifact changes Inspector data. */
-      onDerivedReady?: (event: { assetId: string; kind: SecondaryMediaJobKind }) => void;
+      onDerivedReady?: (event: {
+        assetId: string;
+        kind: SecondaryMediaJobKind;
+        width?: number;
+        height?: number;
+        durationMs?: number;
+      }) => void;
       pluginMediaProvider?: (input: {
         assetId: string;
         signal: AbortSignal;
@@ -28607,9 +28613,41 @@ export class LibraryService {
           jobLease.assertCurrent();
         mediaResourceGuard.recordHealthyCompletion();
         if (!primaryPreviewKinds.has(job.kind)) {
+          let derivedWidth: number | undefined;
+          let derivedHeight: number | undefined;
+          let derivedDurationMs: number | undefined;
+          if (job.kind === 'extract_metadata' && processArtifactColumns.has('width')) {
+            const durationSelect = processArtifactColumns.has('duration_ms')
+              ? ', duration_ms'
+              : '';
+            const extracted = openLibrary.connection
+              .prepare(
+                `SELECT width, height${durationSelect}
+                   FROM revision_artifacts
+                  WHERE revision_id = ?
+                    AND kind = 'extracted_metadata'
+                    AND status = 'ready'
+                    ${processArtifactColumns.has('invalidated_at') ? 'AND invalidated_at IS NULL' : ''}
+                  ORDER BY generated_at DESC, artifact_id DESC
+                  LIMIT 1`,
+              )
+              .get(job.revision_id) as {
+                width: number | null;
+                height: number | null;
+                duration_ms?: number | null;
+              } | undefined;
+            if (extracted?.width && extracted.width > 0) derivedWidth = extracted.width;
+            if (extracted?.height && extracted.height > 0) derivedHeight = extracted.height;
+            if (extracted?.duration_ms != null && extracted.duration_ms >= 0) {
+              derivedDurationMs = extracted.duration_ms;
+            }
+          }
           options.onDerivedReady?.({
             assetId: job.asset_id,
             kind: job.kind as SecondaryMediaJobKind,
+            ...(derivedWidth === undefined ? {} : { width: derivedWidth }),
+            ...(derivedHeight === undefined ? {} : { height: derivedHeight }),
+            ...(derivedDurationMs === undefined ? {} : { durationMs: derivedDurationMs }),
           });
         }
         // Serpent-xoaz: deferred to the worker's batched flush (see

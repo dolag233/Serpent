@@ -352,6 +352,8 @@ export function useBrowsePagination(
     getLayout: getLoadedBrowseLayout,
     getLoadedSummaryAssetIds,
     removeEntries: removeVirtualLayoutEntries,
+    applyGeometryPatches: applyVirtualGeometryPatches,
+    isVirtualized: isVirtualBrowseSession,
     reset: resetVirtualBrowseSession,
     restoreLocalState: restoreVirtualBrowseLocalState,
     snapshotLocalState: snapshotVirtualBrowseLocalState,
@@ -753,6 +755,33 @@ export function useBrowsePagination(
     ],
   );
 
+  const applyGeometryPatches = useCallback((
+    patches: ReadonlyMap<string, { width: number; height: number }>,
+  ) => {
+    if (patches.size === 0) return;
+    if (isVirtualBrowseSession()) {
+      applyVirtualGeometryPatches(patches);
+      layoutRef.current = getLoadedBrowseLayout();
+      return;
+    }
+    let changed = false;
+    const next = layoutRef.current.map((entry) => {
+      const patch = patches.get(entry.assetId);
+      if (!patch) return entry;
+      if (entry.width === patch.width && entry.height === patch.height) return entry;
+      changed = true;
+      return { ...entry, width: patch.width, height: patch.height };
+    });
+    if (!changed) return;
+    layoutRef.current = next;
+    setBrowseLayout(next);
+  }, [
+    applyVirtualGeometryPatches,
+    getLoadedBrowseLayout,
+    isVirtualBrowseSession,
+    setBrowseLayout,
+  ]);
+
   const reset = useCallback(() => {
     const previous = definitionRef.current;
     if (api && previous?.kind === "search" && previous.sessionId) {
@@ -811,6 +840,7 @@ export function useBrowsePagination(
     appendNextPage,
     fetchScopeAssetIds,
     removeLocally,
+    applyGeometryPatches,
     reset,
     hasMorePages,
     loadingMore,

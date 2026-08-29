@@ -3,6 +3,11 @@
 > 更新时间：2026-08-29
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
+- **2026-08-29 `Serpent-ebff32` / `Serpent-9c9f97` 0.1.5 阻断**：平铺选中环被行
+  `overflow:hidden` 裁成左侧粗条；视频 `extract_metadata` 完成后未把宽高推到画布。
+  已改为行不 clip、metadata 就绪即更新卡片几何与分辨率。2026-08-29 用户真机验收通过。
+  详见 [开发日志](development/2026-08-29-selection-stroke-and-video-card-dimensions-development-log.md)。
+
 - **2026-08-29 `Serpent-614293` 平铺视口顶部缩略图**：大库 justified 用几何 offset 判定
   `loadImmediately`，但行高未锁、CSS `gap: 14px` 与 caption 自然撑开会让 DOM 高于模型；
   误差从 overscan 累积后，视口顶部被当成跑道外而不挂 URL。瀑布流已锁 body 高度故无此病。

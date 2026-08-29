@@ -387,6 +387,49 @@ describe('video (ffprobe + ffmpeg)', () => {
     service.closeAll();
   });
 
+  it('publishes source dimensions when extract_metadata finishes (Serpent-9c9f97)', async () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    const derived: Array<{
+      assetId: string;
+      kind: string;
+      width?: number;
+      height?: number;
+      durationMs?: number;
+    }> = [];
+    const service = new LibraryService({
+      spawnFn: createMockSpawn({ ffprobeStdout: CANNED_FFPROBE_JSON }),
+    });
+    const created = service.createLibrary({
+      displayName: 'VideoDimensionEvent',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'video.mp4');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const assetId = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!.assetId;
+
+    service.enqueueThumbnailJobs(created.libraryId);
+    await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['extract_metadata'],
+      onDerivedReady: (event) => {
+        derived.push(event);
+      },
+    });
+
+    expect(derived).toEqual([
+      expect.objectContaining({
+        assetId,
+        kind: 'extract_metadata',
+        width: 1920,
+        height: 1080,
+        durationMs: 30050,
+      }),
+    ]);
+    service.closeAll();
+  });
+
   it('returns missing extracted metadata safely before probe', () => {
     process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
     const root = temporaryRoot();
@@ -675,8 +718,9 @@ describe('video (ffprobe + ffmpeg)', () => {
     expect(service.getPreviewArtifact(created.libraryId, assets[0]!.assetId)).toMatchObject({
       mediaType: 'video',
       status: 'ready',
-      playbackMode: 'source',
-      sourceMimeType: 'video/x-msvideo',
+      playbackMode: 'proxy',
+      kind: 'webm_proxy',
+      mimeType: 'video/mp4',
     });
     expect(service.getPreviewArtifact(created.libraryId, assets[0]!.assetId, 'proxy-fallback')).toMatchObject({
       mediaType: 'video',
@@ -899,8 +943,9 @@ describe('video (ffprobe + ffmpeg)', () => {
     // Regression: the video resolution branch used to return playbackMode
     // 'proxy' whenever a ready webm_proxy artifact existed, so the viewer
     // played the WebM derivative instead of the original MP4. REQ-VIEW-002
-    // requires the viewer to always present the original source; the proxy
-    // stays for non-native containers (AVI/WMV) and hover derivatives.
+    // requires the viewer to present the original source for Chromium-playable
+    // containers; the proxy is for hover and for non-direct containers
+    // (MOV/AVI/WMV/MKV).
     process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
     const root = temporaryRoot();
     const service = new LibraryService({
@@ -968,8 +1013,8 @@ describe('video (ffprobe + ffmpeg)', () => {
       sourceCodecs: ['h264'],
     });
 
-    // An explicit fallback request uses the ready proxy; ordinary viewer and
-    // hover requests still start from the original source.
+    // An explicit fallback request uses the ready proxy; ordinary viewer
+    // requests still start from the original source for natively playable MP4.
     expect(
       service.getPreviewArtifact(created.libraryId, assets[0]!.assetId, 'proxy-fallback'),
     ).toMatchObject({
@@ -978,6 +1023,55 @@ describe('video (ffprobe + ffmpeg)', () => {
       kind: 'webm_proxy',
       mimeType: 'video/webm',
       playbackMode: 'proxy',
+    });
+
+    service.closeAll();
+  });
+
+  it('uses a ready proxy for MOV in the viewer so non-direct containers can actually preview', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({
+      displayName: 'MovProxyPreview',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'clip.mov');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const assets = service.listAssets({
+      libraryId: created.libraryId,
+      recursive: true,
+    });
+
+    expect(service.getPreviewArtifact(created.libraryId, assets[0]!.assetId)).toMatchObject({
+      mediaType: 'video',
+      status: 'ready',
+      playbackMode: 'source',
+      sourceMimeType: 'video/quicktime',
+    });
+
+    const proxyArtifact = service.writeDerivedArtifact({
+      libraryId: created.libraryId,
+      assetId: assets[0]!.assetId,
+      kind: 'webm_proxy',
+      mimeType: 'video/mp4',
+      bytes: Buffer.from('mock-h264-proxy-bytes'),
+      generatorVersion: 'test',
+      maxBytes: 1024 * 1024,
+    });
+    expect(proxyArtifact.artifactId).toBeTruthy();
+
+    expect(service.getPreviewArtifact(created.libraryId, assets[0]!.assetId)).toMatchObject({
+      mediaType: 'video',
+      status: 'ready',
+      kind: 'webm_proxy',
+      mimeType: 'video/mp4',
+      playbackMode: 'proxy',
+      artifactId: proxyArtifact.artifactId,
+    });
+    expect(service.getPreviewArtifact(created.libraryId, assets[0]!.assetId, 'hover')).toMatchObject({
+      playbackMode: 'proxy',
+      artifactId: proxyArtifact.artifactId,
     });
 
     service.closeAll();

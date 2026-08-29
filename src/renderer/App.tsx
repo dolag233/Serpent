@@ -1172,8 +1172,11 @@ function AppInner() {
     ensureVisibleRange: ensureBrowseVisibleRange,
     fetchScopeAssetIds: fetchBrowseScopeAssetIds,
     removeLocally: removeLocallyFromBrowse,
+    applyGeometryPatches: applyBrowseGeometryPatches,
     reset: resetBrowsePagination,
   } = browsePagination;
+  const applyBrowseGeometryPatchesRef = useRef(applyBrowseGeometryPatches);
+  applyBrowseGeometryPatchesRef.current = applyBrowseGeometryPatches;
 
   const {
     multiEdit,
@@ -3707,6 +3710,23 @@ function AppInner() {
       pending.clear();
       if (batch.size > 0) {
         setAssets((current) => applyAssetThumbnailPatches(current, batch));
+        const geometryPatches = new Map<string, { width: number; height: number }>();
+        for (const [assetId, patch] of batch) {
+          if (
+            typeof patch.width === "number" &&
+            patch.width > 0 &&
+            typeof patch.height === "number" &&
+            patch.height > 0
+          ) {
+            geometryPatches.set(assetId, {
+              width: patch.width,
+              height: patch.height,
+            });
+          }
+        }
+        if (geometryPatches.size > 0) {
+          applyBrowseGeometryPatchesRef.current(geometryPatches);
+        }
       }
       if (pendingLayoutArtifactIds.size > 0) {
         const layoutBatch = new Map(pendingLayoutArtifactIds);
@@ -3759,6 +3779,9 @@ function AppInner() {
         queuePatch(event.assetId, {
           width: event.width,
           height: event.height,
+          ...(event.durationMs === undefined
+            ? {}
+            : { durationMs: event.durationMs }),
         });
         return;
       }

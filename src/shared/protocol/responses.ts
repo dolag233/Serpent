@@ -419,6 +419,7 @@ export const thumbnailEventSchema = z.discriminatedUnion('type', [
     assetId: nonBlankString,
     width: z.number().int().positive(),
     height: z.number().int().positive(),
+    durationMs: z.number().int().nonnegative().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.derived.ready'),
