@@ -9534,12 +9534,16 @@ export class LibraryService {
       position: number;
     }>;
     const rootSet = new Set(roots);
-    if (rows.some((row) => rootSet.has(row.collection_id)) === false && !input.allowMissing) {
-      throw new LibraryServiceError('FOLDER_NOT_FOUND');
-    }
     const selected = new Set<string>(rows
       .filter((row) => rootSet.has(row.collection_id))
       .map((row) => row.collection_id));
+    // The snapshot intentionally includes every descendant of each requested
+    // root so undo/redo can restore a whole collection subtree.  Compare the
+    // requested roots themselves, not selected.size: a parent with children
+    // legitimately has more selected rows than requested roots.
+    if (roots.some((rootId) => !selected.has(rootId)) && !input.allowMissing) {
+      throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    }
     let changed = true;
     while (changed) {
       changed = false;
@@ -9549,9 +9553,6 @@ export class LibraryService {
           changed = true;
         }
       }
-    }
-    if (selected.size !== roots.length && !input.allowMissing) {
-      throw new LibraryServiceError('FOLDER_NOT_FOUND');
     }
     return rows
       .filter((row) => selected.has(row.collection_id))

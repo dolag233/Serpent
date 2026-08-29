@@ -702,6 +702,47 @@ describe('collections', () => {
     service.closeAll();
   });
 
+  it('renames a parent collection without breaking its child hierarchy', () => {
+    const { service, libraryId } = createLibraryWithAsset();
+    const parent = service.createCollection({ libraryId, name: 'Parent' });
+    const child = service.createCollection({
+      libraryId,
+      parentId: parent.collectionId,
+      name: 'Child',
+    });
+
+    expect(
+      service.getCollectionHistorySnapshot({
+        libraryId,
+        collectionIds: [parent.collectionId],
+      }).map((item) => item.collectionId),
+    ).toEqual(expect.arrayContaining([parent.collectionId, child.collectionId]));
+
+    const updated = service.updateCollection({
+      libraryId,
+      collectionId: parent.collectionId,
+      name: 'Renamed parent',
+    });
+
+    expect(updated).toMatchObject({
+      collectionId: parent.collectionId,
+      name: 'Renamed parent',
+      parentId: null,
+      childCollectionCount: 1,
+    });
+    expect(service.listCollections(libraryId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          collectionId: child.collectionId,
+          parentId: parent.collectionId,
+          name: 'Child',
+        }),
+      ]),
+    );
+
+    service.closeAll();
+  });
+
   it('throws FOLDER_NOT_FOUND when updating a missing collection', () => {
     const { service, libraryId } = createLibraryWithAsset();
     expectServiceCode(

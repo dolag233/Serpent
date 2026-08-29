@@ -1414,10 +1414,14 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             dropActive={assetDropTarget === `collection:${c.collectionId}`}
             onDragEnter={(event) => {
               if (supportsAssetDropTransfer(event.dataTransfer)) {
+                event.stopPropagation();
                 setAssetDropTarget(`collection:${c.collectionId}`);
               }
             }}
             onDragLeave={(event) => {
+              if (supportsAssetDropTransfer(event.dataTransfer)) {
+                event.stopPropagation();
+              }
               if (event.currentTarget.contains(event.relatedTarget as Node | null))
                 return;
               setAssetDropTarget((current) =>
@@ -1426,8 +1430,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             }}
             onDragOver={(event) => {
               if (supportsManagedAssetDrag(event.dataTransfer)) {
+                event.stopPropagation();
                 applyManagedAssetDragOver(event);
               } else if (supportsExternalImportTransfer(event.dataTransfer)) {
+                event.stopPropagation();
                 setAssetDropTarget(`collection:${c.collectionId}`);
               }
             }}

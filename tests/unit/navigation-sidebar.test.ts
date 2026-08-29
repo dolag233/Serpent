@@ -427,4 +427,65 @@ describe("NavigationSidebar virtual library root", () => {
     expect(trashRow?.classList.contains("is-drop-target")).toBe(true);
     expect(collectionRow?.classList.contains("is-drop-target")).toBe(false);
   });
+
+  it("keeps the child collection highlighted when a drag enters its row", async () => {
+    const parent = {
+      collectionId: "collection-parent",
+      parentId: null,
+      name: "Parent",
+      description: null,
+      coverAssetId: null,
+      position: 0,
+      assetCount: 1,
+      childCollectionCount: 1,
+    };
+    const child = {
+      collectionId: "collection-child",
+      parentId: parent.collectionId,
+      name: "Child",
+      description: null,
+      coverAssetId: null,
+      position: 0,
+      assetCount: 0,
+      childCollectionCount: 0,
+    };
+    const props = createNavigationProps({
+      collections: [parent, child],
+      collectionTree: new Map([
+        [null, [parent]],
+        [parent.collectionId, [child]],
+      ]),
+    });
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        createElement(
+          LocaleProvider,
+          null,
+          createElement(NavigationSidebar, props),
+        ),
+      );
+    });
+
+    const parentRow = container.querySelector<HTMLButtonElement>(
+      `button[data-nav-collection-id="${parent.collectionId}"]`,
+    );
+    const childRow = container.querySelector<HTMLButtonElement>(
+      `button[data-nav-collection-id="${child.collectionId}"]`,
+    );
+    expect(parentRow).not.toBeNull();
+    expect(childRow).not.toBeNull();
+
+    for (const types of [["Files"], ["application/x-serpent-managed-assets"]]) {
+      await act(async () => {
+        dispatchDragEvent(childRow!, "dragover", createDragTransfer(types));
+      });
+
+      expect(childRow?.classList.contains("is-drop-target")).toBe(true);
+      expect(parentRow?.classList.contains("is-drop-target")).toBe(false);
+    }
+  });
 });
