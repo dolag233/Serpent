@@ -1895,7 +1895,7 @@ export const en = {
     emptyTrashSkipped: ", {count} not cleaned: {reasons}",
     emptyTrashFailed: "Failed to empty Trash.",
     deleteLinkedPartial: "Linked asset delete incomplete: deleted {deleted}, kept {failed}. Reasons: {reasons}",
-    deleteLinkedWithTrash: "Moved {count} source files to the system Trash and removed linked asset records.",
+    deleteLinkedWithTrash: "Removed {count} linked asset records; source files that still existed were moved to the system Trash.",
     refreshListManually: "Please refresh the asset list manually.",
     deleteDoneRefreshFailed: "Delete finished, but refreshing the UI failed: {reason}",
     deleteOutcomeRefreshFailed: "{outcome} Also, refreshing the UI failed: {reason}",

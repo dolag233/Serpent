@@ -65,6 +65,12 @@
 | `Serpent-ec11d0` | 视频全屏后鼠标静止时自动隐藏进度条 | 人类验收通过 | 打开可播放视频并进入全屏；鼠标移动唤醒控件后保持静止超过 2 秒；再移动鼠标观察恢复 | 全屏视频控制条在闲置后隐藏；鼠标再次移动时恢复；不会因全屏按钮或进度条保留焦点而永久显示 | [视频控件样式](../../../src/renderer/styles.css) / [视频 E2E](../../../tests/e2e/media-video-playback.test.ts) / [开发日志](../development/2026-08-29-video-fullscreen-chrome-space-development-log.md) | 自动化：修复前 `opacity=1` 红测，修复后视频 Electron E2E 1 passed；全量 E2E 86 passed、3 skipped。2026-08-29 用户验收通过。 |
 | `Serpent-8e681a` | 拖动视频进度条后 Space 优先播放/暂停 | 人类验收通过 | 播放视频并拖动底部进度条；保持进度条焦点按 Space；重复按一次 | Space 直接切换视频播放/暂停，不触发进度条控件自身的选择/默认 Space 行为；真正的文本输入区域仍可正常输入 | [视频 Space 判定](../../../src/renderer/video-player-controls.ts) / [视频控件](../../../src/renderer/VideoPlayerControls.tsx) / [逻辑单测](../../../tests/unit/video-player-controls.test.ts) / [视频 E2E](../../../tests/e2e/media-video-playback.test.ts) / [开发日志](../development/2026-08-29-video-fullscreen-chrome-space-development-log.md) | 自动化：39 个查看器逻辑单测通过，真实视频拖动后 Space E2E 通过；全量 E2E 86 passed、3 skipped。2026-08-29 用户验收通过。 |
 
+### 2026-08-29 链接文件夹外部移动、残留清除与完整错误
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `Serpent-db0fdb` | 链接文件夹内移动资产自动识别、缺失索引清除与错误 hover | 待人类验收 | 建立链接文件夹并导入文件；在链接根内把文件移动到子目录，等待 watcher 或点「刷新磁盘变化」；再从系统外删除一个已入库文件，刷新后选中残留卡片并执行「移入回收站」；最后制造一个系统回收站拒绝场景并 hover 部分失败提示 | 移动后只保留一张卡片，asset_id、标签/合集/元数据保留且路径更新；源文件已不存在时可清除索引，不显示“删除失败”；源文件确实存在但回收站拒绝时保留记录并能 hover 看到完整原因；亮/暗主题文案均不截断 | [链接移动/删除开发日志](../development/2026-08-29-linked-folder-move-delete-diagnostics-development-log.md) / `src/worker/library-service.ts` / `src/renderer/WorkspaceNoticeBanner.tsx` / `tests/worker/library-watcher.test.ts` / `tests/worker/trash-relink.test.ts` / `tests/unit/workspace-notice-banner.test.ts` | 自动化：定向 Worker 100 passed、1 skipped；hover 单测 1 passed；真实 UI、Windows、packaged、NAS 未执行。 |
+
 ### 2026-08-27 导入 ZIP 后卡片损坏
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

@@ -1880,7 +1880,7 @@ export const zhCN = {
     emptyTrashSkipped: "，{count} 项未清理：{reasons}",
     emptyTrashFailed: "清空回收站失败。",
     deleteLinkedPartial: "删除链接资产未全部完成：已删除 {deleted} 项，另有 {failed} 项保留。原因：{reasons}",
-    deleteLinkedWithTrash: "已将 {count} 个源文件移入系统回收站，并移除链接资产记录。",
+    deleteLinkedWithTrash: "已移除 {count} 个链接资产记录；仍存在的源文件已移入系统回收站。",
     refreshListManually: "请手动刷新资产列表。",
     deleteDoneRefreshFailed: "删除已完成，但界面刷新失败：{reason}",
     deleteOutcomeRefreshFailed: "{outcome} 另外，界面刷新失败：{reason}",

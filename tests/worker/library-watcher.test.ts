@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -513,6 +513,70 @@ describe('linked folder watcher', () => {
     ]);
     service.closeAll();
     expect(observers.closed.sort()).toEqual([0, 1, 2, 3]);
+  });
+
+  it('keeps the same asset when a linked source is moved inside its root', async () => {
+    const root = temporaryRoot();
+    const linkedRoot = path.join(root, 'linked');
+    mkdirSync(linkedRoot);
+    writeFileSync(path.join(linkedRoot, 'moved.txt'), 'stable linked content');
+    const observers = observerHarness();
+    const scheduler = new ManualScheduler();
+    const service = newService({
+      observerFactory: observers.factory,
+      scheduler,
+      watcherStableFileWindowMs: 0,
+    });
+    const library = service.createLibrary({ displayName: 'Linked move', selectedParentPath: root });
+    const linked = service.importFolderAsLinked({
+      libraryId: library.libraryId,
+      sourceRootPath: linkedRoot,
+    });
+    const original = service.listAssets({
+      libraryId: library.libraryId,
+      folderId: linked.folderId,
+      recursive: true,
+    })[0]!;
+    const collection = service.createCollection({ libraryId: library.libraryId, name: 'Move metadata' });
+    service.addCollectionAssets({
+      libraryId: library.libraryId,
+      collectionId: collection.collectionId,
+      assetIds: [original.assetId],
+    });
+    service.setAssetMetadata({
+      libraryId: library.libraryId,
+      assetId: original.assetId,
+      expectedVersion: 0,
+      description: 'Preserve on move',
+    });
+
+    mkdirSync(path.join(linkedRoot, 'destination'));
+    renameSync(
+      path.join(linkedRoot, 'moved.txt'),
+      path.join(linkedRoot, 'destination', 'moved.txt'),
+    );
+    observers.callbacks[1]!();
+    await scheduler.flush();
+
+    const assets = service.listAssets({
+      libraryId: library.libraryId,
+      folderId: linked.folderId,
+      recursive: true,
+    });
+    expect(assets).toHaveLength(1);
+    expect(assets[0]).toMatchObject({
+      assetId: original.assetId,
+      availability: 'available',
+      relativeFilePath: 'destination/moved.txt',
+    });
+    expect(service.getAssetMetadata({ libraryId: library.libraryId, assetId: original.assetId })).toMatchObject({
+      description: 'Preserve on move',
+    });
+    expect(service.listCollectionAssets({
+      libraryId: library.libraryId,
+      collectionId: collection.collectionId,
+      recursive: false,
+    })).toEqual([expect.objectContaining({ assetId: original.assetId })]);
   });
 
   it('stops offline roots, restarts returned roots, and rebuilds an observer on relink', () => {

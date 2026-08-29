@@ -2,6 +2,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -97,6 +98,45 @@ test('imports a linked folder, reconciles external changes, and relinks after th
     expect(aAfterOverwrite?.currentRevisionId).not.toBe(aBefore?.currentRevisionId);
     expect(aAfterOverwrite?.availability).toBe('available');
 
+    // External move inside the linked root: the source identity should keep
+    // the catalog row and its metadata instead of creating a second asset.
+    const bBeforeMove = afterOverwrite.find((asset) => asset.displayName === 'b.png');
+    renameSync(path.join(sourceRoot, 'b.png'), path.join(sourceRoot, 'sub', 'moved-b.png'));
+    const refreshAfterMove = window.getByRole('button', { name: '刷新磁盘变化' });
+    await refreshAfterMove.click();
+    await expect(refreshAfterMove).toBeEnabled({ timeout: 15_000 });
+    await window.getByRole('button', { name: 'sub', exact: true }).click();
+    await expect(window.getByText('moved-b.png', { exact: true })).toBeVisible();
+    await window
+      .getByLabel('当前浏览范围')
+      .getByRole('button', { name: 'source', exact: true })
+      .click();
+    const afterMove = await listAllAssets(window);
+    const bAfterMove = afterMove.find((asset) => asset.displayName === 'moved-b.png');
+    expect(afterMove).toHaveLength(3);
+    expect(bAfterMove?.assetId).toBe(bBeforeMove?.assetId);
+    expect(bAfterMove?.availability).toBe('available');
+    expect(afterMove.some((asset) => asset.displayName === 'b.png')).toBe(false);
+
+    // If the source was removed outside Serpent, the missing linked record can
+    // still be cleared from the normal asset menu without reporting a trash
+    // failure for a path that no longer exists.
+    rmSync(path.join(sourceRoot, 'sub', 'c.png'));
+    const refreshAfterExternalDelete = window.getByRole('button', { name: '刷新磁盘变化' });
+    await refreshAfterExternalDelete.click();
+    await expect(refreshAfterExternalDelete).toBeEnabled({ timeout: 15_000 });
+    await window.getByRole('button', { name: 'sub', exact: true }).click();
+    const missingC = assetCard(window, 'c.png');
+    await expect(missingC).toBeVisible();
+    await missingC.click({ button: 'right' });
+    await window.getByRole('menuitem', { name: '移入回收站' }).click();
+    await expect(missingC).toHaveCount(0);
+    await window
+      .getByLabel('当前浏览范围')
+      .getByRole('button', { name: 'source', exact: true })
+      .click();
+    expect(await listAllAssets(window)).toHaveLength(2);
+
     // Source root removed: folder flips to offline, all linked assets missing.
     rmSync(sourceRoot, { recursive: true, force: true });
     await window.getByRole('button', { name: '刷新磁盘变化' }).click();
@@ -116,7 +156,7 @@ test('imports a linked folder, reconciles external changes, and relinks after th
     await offlineSource.click();
     const afterRelink = await listAllAssets(window);
     const aAfterRelink = afterRelink.find((asset) => asset.displayName === 'a.png');
-    const bAfterRelink = afterRelink.find((asset) => asset.displayName === 'b.png');
+    const bAfterRelink = afterRelink.find((asset) => asset.displayName === 'moved-b.png');
     expect(aAfterRelink?.assetId).toBe(aBefore?.assetId);
     expect(aAfterRelink?.availability).toBe('available');
     expect(aAfterRelink?.currentRevisionId).not.toBe(aAfterOverwrite?.currentRevisionId);

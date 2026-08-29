@@ -1443,6 +1443,28 @@ describe('deleteLinkedAssets', () => {
     service.closeAll();
   });
 
+  it('clears a missing linked source from the index without treating it as a trash failure', async () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Missing Linked Del', selectedParentPath: root });
+    const linkedRoot = path.join(root, 'missing-linked-del');
+    const sourcePath = path.join(linkedRoot, 'already-gone.txt');
+    mkdirSync(linkedRoot);
+    writeFileSync(sourcePath, 'already gone');
+    service.importFolderAsLinked({ libraryId: created.libraryId, sourceRootPath: linkedRoot });
+    const [linkedAsset] = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    rmSync(sourcePath);
+    expect(service.refreshManagedAssets(created.libraryId).missingCount).toBe(1);
+
+    await expect(service.deleteLinkedAssets({
+      libraryId: created.libraryId,
+      assetIds: [linkedAsset!.assetId],
+      deleteSourceFile: true,
+    })).resolves.toEqual({ deletedCount: 1, failedCount: 0, failures: [] });
+    expect(service.listAssets({ libraryId: created.libraryId, recursive: true })).toEqual([]);
+    service.closeAll();
+  });
+
   it('moves the linked source to the system trash before deleting its DB row', async () => {
     const root = temporaryRoot();
     const systemTrashPath = path.join(root, 'system-trash');

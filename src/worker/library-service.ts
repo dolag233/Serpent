@@ -2763,6 +2763,37 @@ const BROWSE_SEQUENCE_FRAME_SCHEMA_CHECKSUM = createHash('sha256')
   .update(BROWSE_SEQUENCE_FRAME_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v48: retain the source filesystem identity for linked assets.
+// Relative paths are presentation/index keys, not source identity: an
+// in-root rename keeps the same device/inode while changing the path. Keeping
+// these values on the asset row lets watcher reconciliation repair that move
+// without hashing every file in a large linked folder.
+const LINKED_SOURCE_IDENTITY_SCHEMA_SQL = `
+  ALTER TABLE assets ADD COLUMN source_device TEXT;
+  ALTER TABLE assets ADD COLUMN source_inode TEXT;
+  CREATE INDEX assets_source_identity_idx
+    ON assets(location_kind, linked_folder_id, source_device, source_inode)
+    WHERE deleted_at IS NULL;
+`;
+const LINKED_SOURCE_IDENTITY_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(LINKED_SOURCE_IDENTITY_SCHEMA_SQL)
+  .digest('hex');
+
+function ensureLinkedSourceIdentitySchema(connection: DatabaseConnection): void {
+  const columns = columnsFor(connection, 'assets');
+  if (!columns.has('source_device')) {
+    connection.exec('ALTER TABLE assets ADD COLUMN source_device TEXT');
+  }
+  if (!columns.has('source_inode')) {
+    connection.exec('ALTER TABLE assets ADD COLUMN source_inode TEXT');
+  }
+  connection.exec(`
+    CREATE INDEX IF NOT EXISTS assets_source_identity_idx
+      ON assets(location_kind, linked_folder_id, source_device, source_inode)
+      WHERE deleted_at IS NULL;
+  `);
+}
+
 // Migration v26: the thumbnail queue asks whether a job already exists for a
 // revision. Without a matching index, opening a large library performs a
 // quadratic NOT EXISTS scan over the jobs table before the visible batch is
@@ -3359,6 +3390,11 @@ export const MIGRATIONS = [
     sql: BROWSE_SEQUENCE_FRAME_SCHEMA_SQL,
     checksum: BROWSE_SEQUENCE_FRAME_SCHEMA_CHECKSUM,
   },
+  {
+    version: 48,
+    sql: LINKED_SOURCE_IDENTITY_SCHEMA_SQL,
+    checksum: LINKED_SOURCE_IDENTITY_SCHEMA_CHECKSUM,
+  },
 ] as const;
 export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -3482,6 +3518,9 @@ type DiscoveredSourceEntry = {
   assetId?: string;
   /** SHA-1 prepared during async reconciliation, before the SQLite batch. */
   contentFingerprint?: string;
+  /** Stable source identity used to detect an in-root external rename. */
+  sourceDevice?: string;
+  sourceInode?: string;
   relativePath: string;
   byteSize: number;
   modifiedAt: string;
@@ -3493,6 +3532,7 @@ interface RefreshManagedAssetsDiscovery {
   managedEntries: DiscoveredSourceEntry[];
   existingLinkedAssetIdsByFolder?: Map<string, Map<string, string>>;
   existingManagedAssetIdsByIdentity?: Map<string, string>;
+  movedLinkedAssetsReconciled?: boolean;
 }
 
 interface OpenReconciliationTask {
@@ -4706,6 +4746,20 @@ function isMissingPathError(error: unknown): boolean {
     'code' in error &&
     (error.code === 'ENOENT' || error.code === 'ENOTDIR')
   );
+}
+
+function sourceIdentityKey(device: string | null | undefined, inode: string | null | undefined): string | undefined {
+  if (
+    !device
+    || !inode
+    || device === '0'
+    || inode === '0'
+    || device === 'undefined'
+    || inode === 'undefined'
+    || device === 'null'
+    || inode === 'null'
+  ) return undefined;
+  return `${device}\u0000${inode}`;
 }
 
 const DISK_DELETE_RETRY_LIMIT = 12;
@@ -6085,6 +6139,8 @@ function migrateDatabaseUnserialized(connection: DatabaseConnection, allowFresh:
           ensureContentFingerprintColumn(connection);
         } else if (migration.version === 38) {
           ensureSyncSchema(connection);
+        } else if (migration.version === 48) {
+          ensureLinkedSourceIdentitySchema(connection);
         } else {
           connection.exec(migration.sql);
         }
@@ -6489,6 +6545,7 @@ export class LibraryService {
         await this.waitForStableWatcherDiscovery(task, discovery, existingAssets);
         this.assertReconciliationActive(task);
       }
+      this.reconcileMovedLinkedAssets(openLibrary, discovery);
       const networkFingerprint = openLibrary.summary.networkStorage
         ? this.networkDiscoveryFingerprint(discovery)
         : undefined;
@@ -6514,8 +6571,16 @@ export class LibraryService {
           new Set(entries.map((entry) => portablePathIdentity(entry.relativePath))),
         ]),
       );
+      const discoveredLinkedAssetIds = new Set(
+        [...discovery.linkedEntriesByFolder.values()]
+          .flat()
+          .flatMap((entry) => entry.assetId === undefined ? [] : [entry.assetId]),
+      );
       const staleExistingAssetIds = existingAssets
         .filter((asset) => {
+          if (asset.location_kind === 'linked' && discoveredLinkedAssetIds.has(asset.asset_id)) {
+            return false;
+          }
           if (asset.location_kind === 'managed') {
             return !discoveredManagedPaths.has(portablePathIdentity(asset.relative_file_path));
           }
@@ -6570,6 +6635,79 @@ export class LibraryService {
         { libraryId },
       );
     }
+  }
+
+  /**
+   * Relative paths identify catalog locations, not linked source files. A
+   * same-volume move keeps the source device/inode, so claim an unclaimed new
+   * path for the old asset before stale rows are marked missing. Ambiguous or
+   * unavailable identities are deliberately left as missing + new: guessing
+   * would silently attach the wrong file to the user's metadata.
+   */
+  private reconcileMovedLinkedAssets(
+    openLibrary: OpenLibrary,
+    discovery: RefreshManagedAssetsDiscovery,
+  ): void {
+    if (discovery.movedLinkedAssetsReconciled) return;
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, linked_folder_id, source_device, source_inode
+           FROM assets
+          WHERE location_kind = 'linked' AND deleted_at IS NULL`,
+      )
+      .all() as Array<{
+        asset_id: string;
+        linked_folder_id: string;
+        source_device: string | null;
+        source_inode: string | null;
+      }>;
+    const sourceAssetByIdentity = new Map<string, string | null>();
+    for (const row of rows) {
+      const sourceIdentity = sourceIdentityKey(row.source_device, row.source_inode);
+      const identity = sourceIdentity === undefined
+        ? undefined
+        : `${row.linked_folder_id}\u0000${sourceIdentity}`;
+      if (!identity) continue;
+      if (!sourceAssetByIdentity.has(identity)) {
+        sourceAssetByIdentity.set(identity, row.asset_id);
+      } else {
+        // Duplicate identities are not safe to reconcile automatically. This
+        // can happen on filesystems that report a zero/unstable inode; keep
+        // the key explicitly ambiguous instead of letting insertion order win.
+        sourceAssetByIdentity.set(identity, null);
+      }
+    }
+
+    for (const [folderId, entries] of discovery.linkedEntriesByFolder) {
+      const existingByPath = discovery.existingLinkedAssetIdsByFolder?.get(folderId)
+        ?? new Map(
+          (openLibrary.connection
+            .prepare('SELECT asset_id, path_identity FROM assets WHERE linked_folder_id = ?')
+            .all(folderId) as Array<{ asset_id: string; path_identity: string }>)
+            .map((row) => [row.path_identity, row.asset_id] as const),
+        );
+      discovery.existingLinkedAssetIdsByFolder ??= new Map();
+      discovery.existingLinkedAssetIdsByFolder.set(folderId, existingByPath);
+      const claimedAssetIds = new Set(
+        entries.flatMap((entry) => entry.assetId === undefined ? [] : [entry.assetId]),
+      );
+      for (const entry of entries) {
+        if (entry.assetId !== undefined) continue;
+        const sourceIdentity = sourceIdentityKey(entry.sourceDevice, entry.sourceInode);
+        const identity = sourceIdentity === undefined
+          ? undefined
+          : `${folderId}\u0000${sourceIdentity}`;
+        if (!identity) continue;
+        const assetId = sourceAssetByIdentity.get(identity);
+        if (assetId === undefined || assetId === null || claimedAssetIds.has(assetId)) continue;
+        const pathIdentity = portablePathIdentity(entry.relativePath);
+        if (existingByPath.has(pathIdentity)) continue;
+        entry.assetId = assetId;
+        existingByPath.set(pathIdentity, assetId);
+        claimedAssetIds.add(assetId);
+      }
+    }
+    discovery.movedLinkedAssetsReconciled = true;
   }
 
   /**
@@ -15674,8 +15812,9 @@ export class LibraryService {
       const insertAsset = openLibrary.connection.prepare(
         `INSERT INTO assets
            (asset_id, location_kind, managed_folder_id, linked_folder_id, relative_file_path,
-            path_identity, current_revision_id, availability, created_at, updated_at)
-         VALUES (?, 'linked', NULL, ?, ?, ?, NULL, 'available', ?, ?)`,
+            path_identity, current_revision_id, availability, source_device, source_inode,
+            created_at, updated_at)
+         VALUES (?, 'linked', NULL, ?, ?, ?, NULL, 'available', ?, ?, ?, ?)`,
       );
       const insertRevision = openLibrary.connection.prepare(
         `INSERT INTO revisions
@@ -15690,7 +15829,16 @@ export class LibraryService {
         const assetId = randomUUID();
         const revisionId = randomUUID();
         const assetPathIdentity = portablePathIdentity(entry.relativePath);
-        insertAsset.run(assetId, folderId, entry.relativePath, assetPathIdentity, now, now);
+        insertAsset.run(
+          assetId,
+          folderId,
+          entry.relativePath,
+          assetPathIdentity,
+          entry.sourceDevice,
+          entry.sourceInode,
+          now,
+          now,
+        );
         insertRevision.run(
           revisionId,
           assetId,
@@ -35274,10 +35422,24 @@ export class LibraryService {
           } | undefined;
         const linkedRootOnline = linkedFolder?.status === 'available' &&
           !this.linkedRootIsGone(linkedFolder.absolute_root_path);
-        const sourceMissing = trashAttempted && sourcePath !== undefined && !existsSync(sourcePath);
+        const sourceMissing = sourcePath !== undefined && isMissingPathError(error);
+        if (sourceMissing && linkedRootOnline) {
+          // A missing linked source has already been removed outside Serpent;
+          // there is nothing left to send to the system trash. The index row
+          // is still safe to remove because the linked root itself is online,
+          // so this is not an offline/uncertain-source case.
+          manifest.trashedAssetIds.push(row.asset_id);
+          manifest.inFlightAssetId = null;
+          openLibrary.connection
+            .prepare('UPDATE file_operations SET manifest_json = ?, updated_at = ? WHERE operation_id = ?')
+            .run(JSON.stringify(manifest), new Date().toISOString(), operationId);
+          trashedRows.push(row);
+          continue;
+        }
+        const sourceGoneAfterTrash = trashAttempted && sourcePath !== undefined && !existsSync(sourcePath);
         const sourceWasTrashed = manifest.trashedAssetIds.includes(row.asset_id) ||
-          (sourceMissing && linkedRootOnline);
-        const sourceStateUncertain = sourceMissing && !linkedRootOnline;
+          (sourceGoneAfterTrash && linkedRootOnline);
+        const sourceStateUncertain = sourceGoneAfterTrash && !linkedRootOnline;
         if (sourceWasTrashed && !manifest.trashedAssetIds.includes(row.asset_id)) {
           manifest.trashedAssetIds.push(row.asset_id);
         }
@@ -35515,13 +35677,16 @@ export class LibraryService {
           .prepare(
             `UPDATE assets
                 SET current_revision_id = ?, availability = 'available',
-                    relative_file_path = ?, path_identity = ?, updated_at = ?
+                    relative_file_path = ?, path_identity = ?, source_device = ?,
+                    source_inode = ?, updated_at = ?
               WHERE asset_id = ?`,
           )
           .run(
             revisionId,
             resolvedRelativePath,
             portablePathIdentity(resolvedRelativePath),
+            assetRow.location_kind === 'linked' ? String(fileStat.dev) : null,
+            assetRow.location_kind === 'linked' ? String(fileStat.ino) : null,
             now,
             input.assetId,
           );
@@ -36420,12 +36585,16 @@ export class LibraryService {
     byteSize: number;
     modifiedAt: string;
     originalFilename: string;
+    sourceDevice: string;
+    sourceInode: string;
   }> {
     const entries: Array<{
       relativePath: string;
       byteSize: number;
       modifiedAt: string;
       originalFilename: string;
+      sourceDevice: string;
+      sourceInode: string;
     }> = [];
     const rules = suppliedRules ?? (linkedFolderId
       ? this.getLinkedFolderRules({
@@ -36511,6 +36680,8 @@ export class LibraryService {
           byteSize,
           modifiedAt: stat.mtime.toISOString(),
           originalFilename: child.name,
+          sourceDevice: String(stat.dev),
+          sourceInode: String(stat.ino),
         });
       }
     };
@@ -36526,12 +36697,16 @@ export class LibraryService {
     byteSize: number;
     modifiedAt: string;
     originalFilename: string;
+    sourceDevice: string;
+    sourceInode: string;
   }> {
     const entries: Array<{
       relativePath: string;
       byteSize: number;
       modifiedAt: string;
       originalFilename: string;
+      sourceDevice: string;
+      sourceInode: string;
     }> = [];
     const visit = (directoryPath: string, relativeDirectory: string): void => {
       let children;
@@ -36611,6 +36786,8 @@ export class LibraryService {
           byteSize,
           modifiedAt: new Date(Number(stat.mtimeMs)).toISOString(),
           originalFilename: child.name,
+          sourceDevice: String(stat.dev),
+          sourceInode: String(stat.ino),
         });
       }
     };
@@ -39828,6 +40005,8 @@ export class LibraryService {
                   byteSize,
                   modifiedAt: stat.mtime.toISOString(),
                   originalFilename: child.name,
+                  sourceDevice: String(stat.dev),
+                  sourceInode: String(stat.ino),
                 });
               }
             }
@@ -39961,6 +40140,7 @@ export class LibraryService {
           managedEntries: linkedFolderId === undefined ? batch : [],
           existingLinkedAssetIdsByFolder: discovery.existingLinkedAssetIdsByFolder,
           existingManagedAssetIdsByIdentity: discovery.existingManagedAssetIdsByIdentity,
+          movedLinkedAssetsReconciled: true,
         };
         const result = this.refreshManagedAssets(task.libraryId, {
           assetIds: batch.flatMap((entry) => entry.assetId ?? []),
@@ -40000,6 +40180,7 @@ export class LibraryService {
     const discovery = discoverSources
       ? options?.discovery ?? this.collectManagedAssetDiscovery(openLibrary)
       : undefined;
+    if (discovery) this.reconcileMovedLinkedAssets(openLibrary, discovery);
     // Serpent-onch 风格分阶段计时：SERPENT_REFRESH_STAGE_LOG=1 时输出各阶段耗时，
     // 用于大库全量对账的归因（Serpent-4bdd26）。生产默认关闭。
     const stageLog = process.env.SERPENT_REFRESH_STAGE_LOG === '1';
@@ -40021,7 +40202,7 @@ export class LibraryService {
         `SELECT a.asset_id, a.location_kind, a.linked_folder_id, a.relative_file_path,
                 a.current_revision_id, r.revision_id AS revision_row_id,
                 a.availability, r.byte_size, r.modified_at,
-                r.content_fingerprint
+                r.content_fingerprint, a.source_device, a.source_inode
           FROM assets a
            LEFT JOIN revisions r ON r.revision_id = a.current_revision_id
           WHERE a.deleted_at IS NULL${assetFilter}
@@ -40038,6 +40219,8 @@ export class LibraryService {
         byte_size: number | null;
         modified_at: string | null;
         content_fingerprint: string | null;
+        source_device: string | null;
+        source_inode: string | null;
     }>;
     markStage('before-query');
 
@@ -40056,12 +40239,14 @@ export class LibraryService {
       ]),
     );
     const linkedPreflightByKey = new Map<string, DiscoveredSourceEntry>();
+    const linkedPreflightByAssetId = new Map<string, DiscoveredSourceEntry>();
     for (const [folderId, entries] of discovery?.linkedEntriesByFolder ?? []) {
       for (const entry of entries) {
         linkedPreflightByKey.set(
           `${folderId}\u0000${portablePathIdentity(entry.relativePath)}`,
           entry,
         );
+        if (entry.assetId !== undefined) linkedPreflightByAssetId.set(entry.assetId, entry);
       }
     }
     const preflightSourceByAssetId = new Map<string, {
@@ -40126,7 +40311,7 @@ export class LibraryService {
       const entry = asset.location_kind === 'linked'
         ? linkedPreflightByKey.get(
           `${asset.linked_folder_id ?? ''}\u0000${portablePathIdentity(asset.relative_file_path)}`,
-        )
+        ) ?? linkedPreflightByAssetId.get(asset.asset_id)
         : managedPreflightByIdentity.get(portablePathIdentity(asset.relative_file_path));
       preflightFingerprintFor(asset, entry);
     }
@@ -40175,8 +40360,9 @@ export class LibraryService {
         const insertAsset = openLibrary.connection.prepare(
           `INSERT INTO assets
              (asset_id, location_kind, managed_folder_id, linked_folder_id, relative_file_path,
-              path_identity, current_revision_id, availability, created_at, updated_at)
-           VALUES (?, 'linked', NULL, ?, ?, ?, NULL, 'available', ?, ?)`,
+              path_identity, current_revision_id, availability, source_device, source_inode,
+              created_at, updated_at)
+           VALUES (?, 'linked', NULL, ?, ?, ?, NULL, 'available', ?, ?, ?, ?)`,
         );
         const insertRevision = openLibrary.connection.prepare(
           `INSERT INTO revisions
@@ -40204,6 +40390,8 @@ export class LibraryService {
             folder.folder_id,
             entry.relativePath,
             pathIdentity,
+            entry.sourceDevice ?? null,
+            entry.sourceInode ?? null,
             folderNow,
             folderNow,
           );
@@ -40362,9 +40550,14 @@ export class LibraryService {
         const snapshotKey = asset.location_kind === 'linked'
           ? `${asset.linked_folder_id ?? ''}\u0000${portablePathIdentity(asset.relative_file_path)}`
           : portablePathIdentity(asset.relative_file_path);
-        const snapshotEntry = (asset.location_kind === 'linked'
-          ? linkedSnapshot.get(snapshotKey)
-          : managedSnapshot.get(snapshotKey));
+        const snapshotEntry = asset.location_kind === 'linked'
+          ? linkedPreflightByAssetId.get(asset.asset_id)
+            ?? linkedSnapshot.get(snapshotKey)
+          : managedSnapshot.get(snapshotKey);
+        const pathChanged = asset.location_kind === 'linked'
+          && snapshotEntry !== undefined
+          && portablePathIdentity(asset.relative_file_path)
+            !== portablePathIdentity(snapshotEntry.relativePath);
         const preflightSource = preflightSourceByAssetId.get(asset.asset_id);
         let snapshotByteSize: number | null = null;
         let snapshotModifiedAt: string | null = null;
@@ -40384,18 +40577,26 @@ export class LibraryService {
             : null;
           snapshotModifiedAt = snapshotEntry.modifiedAt;
         } else {
-        try {
-          fileStat = this.options.assetLstat
-            ? this.options.assetLstat(resolveAssetPath())
-            : lstatSync(resolveAssetPath(), { bigint: true });
-        } catch (error) {
-          if (isUnreadablePathError(error)) {
-            fileStat = undefined;
-          } else {
-            throw new LibraryServiceError('IMPORT_APPLY_FAILED', { cause: error });
+          try {
+            fileStat = this.options.assetLstat
+              ? this.options.assetLstat(resolveAssetPath())
+              : lstatSync(resolveAssetPath(), { bigint: true });
+          } catch (error) {
+            if (isUnreadablePathError(error)) {
+              fileStat = undefined;
+            } else {
+              throw new LibraryServiceError('IMPORT_APPLY_FAILED', { cause: error });
+            }
           }
         }
-        }
+        const sourceDevice = asset.location_kind === 'linked'
+          ? snapshotEntry?.sourceDevice
+            ?? (fileStat === undefined ? null : String(fileStat.dev))
+          : null;
+        const sourceInode = asset.location_kind === 'linked'
+          ? snapshotEntry?.sourceInode
+            ?? (fileStat === undefined ? null : String(fileStat.ino))
+          : null;
         const statIsFile = snapshotEntry
           ? true
           : Boolean(fileStat?.isFile() && !fileStat.isSymbolicLink());
@@ -40423,6 +40624,7 @@ export class LibraryService {
         // filesystem millisecond used when linked/import revisions are created.
         const modifiedAt = snapshotModifiedAt
           ?? new Date(Number(fileStat!.mtimeMs)).toISOString();
+        const currentRelativePath = snapshotEntry?.relativePath ?? asset.relative_file_path;
         if (!asset.revision_row_id) {
           // A dangling current_revision_id (or a NULL revision after a partial
           // write) must stay visible until this source-backed repair completes.
@@ -40442,7 +40644,7 @@ export class LibraryService {
               asset.asset_id,
               byteSize,
               modifiedAt,
-              path.posix.basename(asset.relative_file_path),
+              path.posix.basename(currentRelativePath),
               now,
               snapshotEntry?.contentFingerprint
                 ?? preflightSource?.fingerprint
@@ -40451,17 +40653,27 @@ export class LibraryService {
           openLibrary.connection
             .prepare(
               `UPDATE assets
-                  SET current_revision_id = ?, availability = 'available', updated_at = ?
+                  SET current_revision_id = ?, availability = 'available',
+                      relative_file_path = ?, path_identity = ?, source_device = ?,
+                      source_inode = ?, updated_at = ?
                 WHERE asset_id = ?`,
             )
-            .run(revisionId, now, asset.asset_id);
+            .run(
+              revisionId,
+              currentRelativePath,
+              portablePathIdentity(currentRelativePath),
+              sourceDevice,
+              sourceInode,
+              now,
+              asset.asset_id,
+            );
           if (
-            LibraryService.supportsThumbnail(asset.relative_file_path)
+            LibraryService.supportsThumbnail(currentRelativePath)
             && !this.isExplicitlyIgnored(
               openLibrary,
               asset.location_kind,
               asset.linked_folder_id,
-              asset.relative_file_path,
+              currentRelativePath,
               'asset',
             )
           ) {
@@ -40545,17 +40757,27 @@ export class LibraryService {
               asset.current_revision_id,
               byteSize,
               modifiedAt,
-              path.posix.basename(asset.relative_file_path),
+              path.posix.basename(currentRelativePath),
               now,
               fingerprint,
             );
           openLibrary.connection
             .prepare(
               `UPDATE assets
-                  SET current_revision_id = ?, availability = 'available', updated_at = ?
+                  SET current_revision_id = ?, availability = 'available',
+                      relative_file_path = ?, path_identity = ?, source_device = ?,
+                      source_inode = ?, updated_at = ?
                 WHERE asset_id = ?`,
             )
-            .run(revisionId, now, asset.asset_id);
+            .run(
+              revisionId,
+              currentRelativePath,
+              portablePathIdentity(currentRelativePath),
+              sourceDevice,
+              sourceInode,
+              now,
+              asset.asset_id,
+            );
           // Invalidate old revision artifacts
           openLibrary.connection
             .prepare(
@@ -40568,12 +40790,12 @@ export class LibraryService {
           // Enqueue only decodable media; unsupported assets keep their normal
           // file icon and never churn through a permanently failing queue.
           if (
-            LibraryService.supportsThumbnail(asset.relative_file_path)
+            LibraryService.supportsThumbnail(currentRelativePath)
             && !this.isExplicitlyIgnored(
               openLibrary,
               asset.location_kind,
               asset.linked_folder_id,
-              asset.relative_file_path,
+              currentRelativePath,
               'asset',
             )
           ) {
@@ -40588,12 +40810,31 @@ export class LibraryService {
           }
           changedCount += 1;
           this.syncAssetSearchContent(openLibrary.connection, asset.asset_id);
-        } else if (asset.availability === 'missing') {
+        } else if (
+          pathChanged
+          || (asset.location_kind === 'linked'
+            && (sourceDevice !== asset.source_device || sourceInode !== asset.source_inode))
+          || asset.availability === 'missing'
+        ) {
           openLibrary.connection
-            .prepare("UPDATE assets SET availability = 'available', updated_at = ? WHERE asset_id = ?")
-            .run(now, asset.asset_id);
-          changedCount += 1;
-          this.syncAssetSearchContent(openLibrary.connection, asset.asset_id);
+            .prepare(
+              `UPDATE assets
+                  SET relative_file_path = ?, path_identity = ?, source_device = ?,
+                      source_inode = ?, availability = 'available', updated_at = ?
+                WHERE asset_id = ?`,
+            )
+            .run(
+              currentRelativePath,
+              portablePathIdentity(currentRelativePath),
+              sourceDevice,
+              sourceInode,
+              now,
+              asset.asset_id,
+            );
+          if (pathChanged || asset.availability === 'missing') changedCount += 1;
+          if (pathChanged || asset.availability === 'missing') {
+            this.syncAssetSearchContent(openLibrary.connection, asset.asset_id);
+          }
         }
       }
       markStage('compare-loop');
