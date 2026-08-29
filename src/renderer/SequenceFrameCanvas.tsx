@@ -8,7 +8,7 @@ import {
 } from "react";
 
 import type { ImageSequenceSummary } from "../shared/asset-types";
-import { coverSrc } from "./asset-card-hover-preview";
+import { resolveSequenceFrameUrl } from "./sequence-frame-preview";
 
 interface SequenceFrameCanvasProps {
   alt: string;
@@ -16,6 +16,8 @@ interface SequenceFrameCanvasProps {
   frameIndex: number;
   frames: ImageSequenceSummary["frames"];
   libraryId: string;
+  onPresentationError?: () => void;
+  onPresentationReady?: () => void;
 }
 
 /**
@@ -32,6 +34,8 @@ export function SequenceFrameCanvas({
   frameIndex,
   frames,
   libraryId,
+  onPresentationError,
+  onPresentationReady,
 }: SequenceFrameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageCacheRef = useRef(new Map<string, HTMLImageElement>());
@@ -42,15 +46,15 @@ export function SequenceFrameCanvas({
   );
   const frameUrls = useMemo(
     () =>
-      frames.map((frame) =>
-        frame.thumbnailArtifactId
-          ? coverSrc(libraryId, frame.thumbnailArtifactId)
-          : null,
-      ),
+      frames.map((frame) => resolveSequenceFrameUrl(libraryId, frame)),
     [frames, libraryId],
   );
   const currentUrl = frameUrls[frameIndex] ?? null;
   const currentImageReady = Boolean(currentUrl && readyUrls.has(currentUrl));
+
+  useEffect(() => {
+    if (currentImageReady) onPresentationReady?.();
+  }, [currentImageReady, onPresentationReady]);
 
   useEffect(() => {
     let cancelled = false;
@@ -79,7 +83,9 @@ export function SequenceFrameCanvas({
         }
       };
       image.onload = markReady;
-      image.onerror = () => undefined;
+      image.onerror = () => {
+        if (!cancelled) onPresentationError?.();
+      };
       if (!image.src) image.src = url;
       if (image.complete) markReady();
     }
@@ -94,7 +100,7 @@ export function SequenceFrameCanvas({
         }
       }
     };
-  }, [frameUrls]);
+  }, [frameUrls, onPresentationError]);
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;

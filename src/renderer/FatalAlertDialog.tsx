@@ -9,6 +9,8 @@ export interface FatalAlertDialogProps {
   /** Optional title override (Serpent-4sw0: AI uses plain wording). */
   title?: string | null;
   onDismiss: () => void;
+  /** Keeps a failed library open recoverable without requiring a relaunch. */
+  onSwitchLibrary?: () => void;
 }
 
 /**
@@ -19,6 +21,7 @@ export function FatalAlertDialog({
   message,
   title,
   onDismiss,
+  onSwitchLibrary,
 }: FatalAlertDialogProps) {
   const t = useT();
   if (!message) return null;
@@ -52,6 +55,11 @@ export function FatalAlertDialog({
           {message}
         </p>
         <div className="dialog-actions">
+          {onSwitchLibrary ? (
+            <button className="secondary-button" onClick={onSwitchLibrary} type="button">
+              {t("dialog.blockingError.switchLibrary")}
+            </button>
+          ) : null}
           <button className="primary-button" onClick={onDismiss} type="button">
             {t("dialog.blockingError.confirm")}
           </button>

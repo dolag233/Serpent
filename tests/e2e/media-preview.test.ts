@@ -57,25 +57,67 @@ const configuredFfprobePath = configuredFfmpegPath
   : undefined;
 
 async function expectImageDecoded(image: Locator) {
-  await expect
-    .poll(
-      () =>
-        image.evaluate((element) => {
-          if (!(element instanceof HTMLImageElement)) return false;
-          return (
-            element.complete &&
-            element.naturalWidth > 0 &&
-            element.naturalHeight > 0
-          );
-        }),
-      {
-        message:
-          "expected the image resource to decode, not merely render a visible <img>",
-        timeout: 15_000,
-      },
-    )
-    .toBe(true);
+  try {
+    await expect
+      .poll(
+        () =>
+          image.evaluate((element) => {
+            if (!(element instanceof HTMLImageElement)) return { decoded: false };
+            return {
+              decoded:
+                element.complete &&
+                element.naturalWidth > 0 &&
+                element.naturalHeight > 0,
+              complete: element.complete,
+              naturalWidth: element.naturalWidth,
+              naturalHeight: element.naturalHeight,
+              currentSrc: element.currentSrc,
+              src: element.getAttribute("src"),
+            };
+          }),
+        {
+          message:
+            "expected the image resource to decode, not merely render a visible <img>",
+          timeout: 15_000,
+        },
+      )
+      .toMatchObject({ decoded: true });
+  } catch (error) {
+    let state = "unavailable";
+    try {
+      state = JSON.stringify(await image.evaluate((element) => ({
+        complete: element instanceof HTMLImageElement ? element.complete : null,
+        naturalWidth: element instanceof HTMLImageElement ? element.naturalWidth : null,
+        naturalHeight: element instanceof HTMLImageElement ? element.naturalHeight : null,
+        currentSrc: element instanceof HTMLImageElement ? element.currentSrc : null,
+        src: element.getAttribute("src"),
+      })));
+    } catch {
+      // Keep the original Playwright error when the element disappeared.
+    }
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}; final image state: ${state}`,
+      { cause: error },
+    );
+  }
 }
+
+type ImageTransitionTrace = {
+  done: boolean;
+  firstPlaceholder: HTMLImageElement | null;
+  placeholderReplacedAtFull: boolean | null;
+  samples: Array<{ visibleDecodedImages: number }>;
+  sawFull: boolean;
+  startedFromDecodedPlaceholder: boolean;
+  stableFullFrames: number;
+};
+
+type ImageDecodeGate = {
+  fullDecodeCalls: number;
+  released: boolean;
+  reset?: () => void;
+  releaseAll?: () => void;
+};
 
 test("generates a decoded thumbnail and keeps asset viewer context coherent", async () => {
   const temporaryRoot = mkdtempSync(
@@ -88,16 +130,20 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
   const libraryPath = path.join(temporaryRoot, libraryName);
   await sharp({
     create: {
-      width: 800,
-      height: 200,
+      // Keep this fixture above the source-direct admission edge so the
+      // viewer exercises the real thumbnail → source upgrade path.
+      width: 3000,
+      height: 750,
       channels: 4,
       background: { r: 48, g: 112, b: 160, alpha: 1 },
     },
   }).png().toFile(sourcePath);
   await sharp({
     create: {
-      width: 200,
-      height: 800,
+      // Keep the navigation target on the same thumbnail → source path so
+      // ArrowRight covers the regression as well as the initial open.
+      width: 750,
+      height: 3000,
       channels: 4,
       background: { r: 160, g: 84, b: 48, alpha: 1 },
     },
@@ -144,10 +190,20 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
     const thumbnail = assetCard.locator('img[alt="automatic.png"]');
     await expect(thumbnail).toBeVisible({ timeout: 15_000 });
     await expectImageDecoded(thumbnail);
+    await expect
+      .poll(() => thumbnail.getAttribute("src"))
+      .toMatch(/^serpent:\/\/preview\//);
     expect(
       await thumbnail.evaluate((image) => getComputedStyle(image).objectFit),
     ).toBe("contain");
 
+    // Import reveal selects the imported batch and reapplies it once the
+    // debounced browse refresh settles. Clear that intentional reveal before
+    // exercising single-asset Inspector/viewer behavior; otherwise a click
+    // during the 280ms settle window is correctly superseded by the reveal.
+    await expect(window.locator('.asset-card[aria-pressed="true"]')).toHaveCount(3);
+    await window.keyboard.press("Escape");
+    await expect(window.locator('.asset-card[aria-pressed="true"]')).toHaveCount(0);
     await assetCard.click();
     await expect(assetCard).toHaveAttribute("aria-pressed", "true");
     const inspectorThumbnail = window.locator(
@@ -188,15 +244,141 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
     await expect
       .poll(() => window.getByLabel("自动色卡预览").locator("span").count())
       .toBeGreaterThan(0);
+
+    // Hold the full-image decode before opening the viewer. A load event and a
+    // non-zero naturalWidth are not enough to prove that Chromium can paint
+    // the pixels in the next frame; the viewer must wait for decode before
+    // hiding the already-painted placeholder.
+    await window.evaluate(() => {
+      const global = globalThis as typeof globalThis & {
+        __serpentImageDecodeGate?: ImageDecodeGate;
+        __serpentRestoreImageDecode?: () => void;
+      };
+      const originalDecode = HTMLImageElement.prototype.decode;
+      const pending = new Set<() => void>();
+      const gate: ImageDecodeGate = {
+        fullDecodeCalls: 0,
+        released: false,
+      };
+      HTMLImageElement.prototype.decode = function gatedDecode() {
+        const source = this.getAttribute("src") ?? "";
+        if (!source.startsWith("serpent://source/")) {
+          return originalDecode.call(this);
+        }
+        gate.fullDecodeCalls += 1;
+        return new Promise<void>((resolve, reject) => {
+          const release = () => {
+            pending.delete(release);
+            void originalDecode.call(this).then(resolve, reject);
+          };
+          pending.add(release);
+          if (gate.released) release();
+        });
+      };
+      gate.releaseAll = () => {
+        gate.released = true;
+        for (const release of [...pending]) release();
+      };
+      gate.reset = () => {
+        gate.released = false;
+        gate.fullDecodeCalls = 0;
+      };
+      global.__serpentImageDecodeGate = gate;
+      global.__serpentRestoreImageDecode = () => {
+        HTMLImageElement.prototype.decode = originalDecode;
+      };
+    });
+
+    // Keep a handle to the first thumbnail element before the viewer resolves
+    // its source. Replacing that already-painted node with a new thumbnail
+    // during the placeholder → original transition creates the user-visible
+    // flash this test is intended to catch.
+    await window.evaluate(() => {
+      const trace: ImageTransitionTrace = {
+        done: false,
+        firstPlaceholder: null,
+        placeholderReplacedAtFull: null,
+        samples: [],
+        sawFull: false,
+        startedFromDecodedPlaceholder: false,
+        stableFullFrames: 0,
+      };
+      const global = globalThis as typeof globalThis & {
+        __serpentImageTransitionTrace?: ImageTransitionTrace;
+        __serpentImageTransitionObserver?: MutationObserver;
+      };
+      global.__serpentImageTransitionTrace = trace;
+      const inspect = () => {
+        const region = [...document.querySelectorAll<HTMLElement>('[role="region"]')]
+          .find((candidate) => candidate.getAttribute("aria-label")?.endsWith("查看页面"));
+        if (!region) return;
+        const images = [...region.querySelectorAll<HTMLImageElement>("img.preview-image")];
+        const placeholder = images.find((image) =>
+          image.getAttribute("src")?.startsWith("serpent://preview/"),
+        );
+        if (placeholder && trace.firstPlaceholder === null) {
+          trace.firstPlaceholder = placeholder;
+        }
+        const visibleDecodedImages = images.filter((image) => {
+          const style = getComputedStyle(image);
+          return !image.classList.contains("is-hidden") &&
+            style.visibility !== "hidden" &&
+            image.complete &&
+            image.naturalWidth > 0 &&
+            image.naturalHeight > 0;
+        }).length;
+        const placeholderIsVisibleAndDecoded = placeholder !== undefined &&
+          !placeholder.classList.contains("is-hidden") &&
+          getComputedStyle(placeholder).visibility !== "hidden" &&
+          placeholder.complete &&
+          placeholder.naturalWidth > 0 &&
+          placeholder.naturalHeight > 0;
+        if (!trace.startedFromDecodedPlaceholder &&
+          !placeholderIsVisibleAndDecoded &&
+          visibleDecodedImages === 0) {
+          return;
+        }
+        trace.startedFromDecodedPlaceholder = true;
+        trace.samples.push({ visibleDecodedImages });
+        const full = images.find((image) =>
+          image.getAttribute("src")?.startsWith("serpent://source/"),
+        );
+        const fullStyle = full ? getComputedStyle(full) : null;
+        const fullVisible = full !== undefined &&
+          !full.classList.contains("is-hidden") &&
+          fullStyle?.visibility !== "hidden" &&
+          full.complete &&
+          full.naturalWidth > 0 &&
+          full.naturalHeight > 0;
+        if (fullVisible) {
+          trace.sawFull = true;
+          if (trace.placeholderReplacedAtFull === null) {
+            trace.placeholderReplacedAtFull =
+              trace.firstPlaceholder !== null && !trace.firstPlaceholder.isConnected;
+          }
+          trace.stableFullFrames += 1;
+          if (trace.stableFullFrames >= 3) trace.done = true;
+        }
+      };
+      const observer = new MutationObserver(inspect);
+      observer.observe(document.body, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ["class", "src"],
+      });
+      global.__serpentImageTransitionObserver = observer;
+      inspect();
+    });
     await window.keyboard.press("Space");
     const preview = window.getByRole("region", {
       name: "automatic.png 查看页面",
     });
     await expect(preview).toBeVisible();
     await expect(preview).toBeAttached({ attached: true });
-    await expect(window.locator(".workspace > .workspace-viewer")).toHaveCount(
-      1,
-    );
+    await expect(
+      window.locator(".workspace > .workspace-viewer-transition > .workspace-viewer"),
+    ).toHaveCount(1);
     await expect(
       window.locator(".workspace-canvas").locator(".workspace-viewer"),
     ).toHaveCount(0);
@@ -204,7 +386,66 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
     await expect(
       window.getByRole("button", { name: "导入文件", exact: true }).first(),
     ).toBeHidden();
+    const fullPreviewImage = preview.locator("img.preview-image-full");
+    await expect(fullPreviewImage).toBeAttached({ timeout: 15_000 });
+    await expect
+      .poll(
+        () =>
+          window.evaluate(
+            () =>
+              (globalThis as typeof globalThis & {
+                __serpentImageDecodeGate?: ImageDecodeGate;
+              }).__serpentImageDecodeGate?.fullDecodeCalls ?? 0,
+          ),
+        { timeout: 15_000 },
+      )
+      .toBeGreaterThan(0);
+    await expect(fullPreviewImage).toHaveClass(/is-hidden/);
+    await expect(
+      preview.locator("img.preview-image-placeholder:not(.is-hidden)"),
+    ).toBeVisible();
+    await window.evaluate(() => {
+      const global = globalThis as typeof globalThis & {
+        __serpentImageDecodeGate?: ImageDecodeGate;
+      };
+      global.__serpentImageDecodeGate?.releaseAll?.();
+    });
     await expectImageDecoded(preview.locator("img.preview-image:not(.is-hidden)"));
+    await expect
+      .poll(() =>
+        window.evaluate(
+          () => (globalThis as typeof globalThis & {
+            __serpentImageTransitionTrace?: { done: boolean };
+          }).__serpentImageTransitionTrace?.done ?? false,
+        ),
+        { timeout: 15_000 },
+      )
+      .toBe(true);
+    const imageTransitionTrace = await window.evaluate(() => {
+      const global = globalThis as typeof globalThis & {
+        __serpentImageTransitionTrace?: ImageTransitionTrace;
+        __serpentImageTransitionObserver?: MutationObserver;
+      };
+      global.__serpentImageTransitionObserver?.disconnect();
+      const trace = global.__serpentImageTransitionTrace;
+      delete global.__serpentImageTransitionObserver;
+      delete global.__serpentImageTransitionTrace;
+      return {
+        placeholderReplacedAtFull: trace?.placeholderReplacedAtFull ?? null,
+        samples: trace?.samples ?? [],
+        sawFull: trace?.sawFull ?? false,
+        startedFromDecodedPlaceholder: trace?.startedFromDecodedPlaceholder ?? false,
+      };
+    });
+    expect(imageTransitionTrace.startedFromDecodedPlaceholder).toBe(true);
+    expect(imageTransitionTrace.sawFull).toBe(true);
+    expect(imageTransitionTrace.placeholderReplacedAtFull).toBe(false);
+    expect(
+      imageTransitionTrace.samples.every(
+        (sample) => sample.visibleDecodedImages > 0,
+      ),
+      JSON.stringify(imageTransitionTrace),
+    ).toBe(true);
     // Viewing keeps the host mounted so notices/activity strips remain
     // available, but removes it from normal flex flow with the viewing class.
     await expect(window.locator(".workspace-canvas-host")).toHaveClass(/is-viewing/);
@@ -288,11 +529,123 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
     await expect
       .poll(async () => (await imageLocator.boundingBox())?.width ?? 0)
       .toBeCloseTo(fitBox!.width, 0);
+    const zoomSlider = preview.locator('input[type="range"][aria-label="图像缩放"]');
+    await expect(zoomSlider).toHaveAttribute("min", "0.05");
+    await expect(zoomSlider).toHaveAttribute("max", "8");
+    await zoomSlider.focus();
+    await zoomSlider.press("End");
+    await expect(zoomSlider).toHaveValue("8");
+    await viewportLocator.hover({ position: { x: viewportBox!.width / 2, y: viewportBox!.height / 2 } });
+    await window.mouse.wheel(0, -4_000);
+    // Wheel/keyboard zoom and the range input share the same 8× ceiling.
+    await expect(zoomSlider).toHaveValue("8");
+    await preview.getByRole("button", { name: "适应" }).click();
+    await window.evaluate(() => {
+      const global = globalThis as typeof globalThis & {
+        __serpentImageDecodeGate?: ImageDecodeGate;
+      };
+      global.__serpentImageDecodeGate?.reset?.();
+    });
+    await window.evaluate(() => {
+      type ViewerTraceSample = {
+        visibleRoots: number;
+        visibleDecodedImages: number;
+      };
+      type ViewerTrace = { done: boolean; samples: ViewerTraceSample[] };
+      const trace: ViewerTrace = { done: false, samples: [] };
+      (globalThis as typeof globalThis & { __serpentViewerTrace?: ViewerTrace }).__serpentViewerTrace = trace;
+      let frame = 0;
+      const sample = () => {
+        const roots = [...document.querySelectorAll<HTMLElement>(
+          ".workspace-viewer-transition > .workspace-viewer",
+        )];
+        const visible = (element: HTMLElement) => {
+          const style = getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          return style.visibility !== "hidden" && Number(style.opacity) > 0 &&
+            rect.width > 0 && rect.height > 0;
+        };
+        const visibleRoots = roots.filter(visible);
+        trace.samples.push({
+          visibleRoots: visibleRoots.length,
+          visibleDecodedImages: visibleRoots.reduce(
+            (count, root) =>
+              count +
+              [...root.querySelectorAll<HTMLImageElement>(
+                "img.preview-image:not(.is-hidden)",
+              )].filter(
+                (image) =>
+                  image.complete &&
+                  getComputedStyle(image).visibility !== "hidden" &&
+                  Number(getComputedStyle(image).opacity) > 0 &&
+                  image.naturalWidth > 0 &&
+                  image.naturalHeight > 0,
+              ).length,
+            0,
+          ),
+        });
+        frame += 1;
+        if (frame < 45) globalThis.requestAnimationFrame(sample);
+        else trace.done = true;
+      };
+      globalThis.requestAnimationFrame(sample);
+    });
     await window.keyboard.press("ArrowRight");
+    await expect
+      .poll(() =>
+        window.evaluate(
+          () => (globalThis as typeof globalThis & { __serpentViewerTrace?: { done: boolean } }).__serpentViewerTrace?.done ?? false,
+        ),
+      )
+      .toBe(true);
+    const viewerTrace = await window.evaluate(() => {
+      const trace = (globalThis as typeof globalThis & {
+        __serpentViewerTrace?: { done: boolean; samples: Array<{ visibleRoots: number; visibleDecodedImages: number }> };
+      }).__serpentViewerTrace;
+      delete (globalThis as typeof globalThis & { __serpentViewerTrace?: unknown }).__serpentViewerTrace;
+      return trace?.samples ?? [];
+    });
+    expect(viewerTrace.length).toBeGreaterThan(0);
+    expect(
+      viewerTrace.every(
+        (sample) => sample.visibleRoots > 0 && sample.visibleDecodedImages > 0,
+      ),
+    ).toBe(true);
+    expect(viewerTrace.every((sample) => sample.visibleDecodedImages > 0)).toBe(true);
     const nextPreview = window.getByRole("region", {
       name: "next-automatic.png 查看页面",
     });
+    const nextFullPreviewImage = nextPreview.locator("img.preview-image-full");
+    await expect(nextFullPreviewImage).toBeAttached({ timeout: 15_000 });
+    await expect
+      .poll(
+        () =>
+          window.evaluate(
+            () =>
+              (globalThis as typeof globalThis & {
+                __serpentImageDecodeGate?: ImageDecodeGate;
+              }).__serpentImageDecodeGate?.fullDecodeCalls ?? 0,
+          ),
+        { timeout: 15_000 },
+      )
+      .toBeGreaterThan(0);
+    await expect(nextFullPreviewImage).toHaveClass(/is-hidden/);
+    await window.evaluate(() => {
+      const global = globalThis as typeof globalThis & {
+        __serpentImageDecodeGate?: ImageDecodeGate;
+      };
+      global.__serpentImageDecodeGate?.releaseAll?.();
+    });
     await expectImageDecoded(nextPreview.locator("img.preview-image:not(.is-hidden)"));
+    await window.evaluate(() => {
+      const global = globalThis as typeof globalThis & {
+        __serpentImageDecodeGate?: ImageDecodeGate;
+        __serpentRestoreImageDecode?: () => void;
+      };
+      global.__serpentRestoreImageDecode?.();
+      delete global.__serpentImageDecodeGate;
+      delete global.__serpentRestoreImageDecode;
+    });
     await expect(
       window
         .locator(".inspector-hero-compact")

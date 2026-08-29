@@ -182,6 +182,10 @@
   --ui-layer-activity: 500;
   --ui-layer-notice: 600;
   --ui-layer-modal-backdrop: 700;
+  /* Serpent-52a9b4: window caption buttons (frameless minimize/maximize/close)
+     stay above the modal backdrop so a modal never traps the window — any
+     caption chrome component must use this token, never a raw z-index. */
+  --ui-layer-window-caption: calc(var(--ui-layer-modal-backdrop) + 1);
   --ui-layer-modal: 800;
   --ui-layer-tooltip: 900;
 }

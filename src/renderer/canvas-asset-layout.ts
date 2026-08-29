@@ -35,23 +35,53 @@ export type CanvasAssetLayoutRect = {
   height: number;
 };
 
+/**
+ * Sparse layout index used by very large BrowseSessions. It can enumerate all
+ * centers for shift-selection, but marquee hits are restricted to the box's
+ * local geometry range so no 100k-element rect array is retained.
+ */
+export type CanvasAssetLayoutIndex = {
+  total: number;
+  forEachIntersecting: (
+    localBox: MarqueeRect,
+    visit: (item: CanvasAssetLayoutRect) => void,
+  ) => void;
+  forEachAll: (visit: (item: CanvasAssetLayoutRect) => void) => void;
+};
+
 export const MASONRY_CAPTION_BAND_PX = 42;
 /** Three caption rows: resolution, filename, and size/date. */
 export const MASONRY_DIMENSIONS_CAPTION_BAND_PX = 56;
 
 const publishedLayouts = new WeakMap<HTMLElement, readonly CanvasAssetLayoutRect[]>();
+const publishedLayoutIndexes = new WeakMap<HTMLElement, CanvasAssetLayoutIndex>();
 
 export function publishCanvasAssetLayout(
   element: HTMLElement,
   rects: readonly CanvasAssetLayoutRect[],
 ): void {
   publishedLayouts.set(element, rects);
+  publishedLayoutIndexes.delete(element);
 }
 
 export function readPublishedCanvasAssetLayout(
   element: HTMLElement,
 ): readonly CanvasAssetLayoutRect[] | undefined {
   return publishedLayouts.get(element);
+}
+
+export function publishCanvasAssetLayoutIndex(
+  element: HTMLElement,
+  index: CanvasAssetLayoutIndex,
+): void {
+  publishedLayouts.delete(element);
+  publishedLayoutIndexes.set(element, index);
+}
+
+export function readPublishedCanvasAssetLayoutIndex(
+  element: HTMLElement,
+): CanvasAssetLayoutIndex | undefined {
+  return publishedLayoutIndexes.get(element);
 }
 
 export function masonryColumnWidthPx(
@@ -197,6 +227,7 @@ function eachPublishedGridLayout(
   canvas: HTMLElement,
   viewport: CanvasViewport,
   scroll: CanvasScrollOffset,
+  box: MarqueeRect | null,
   visit: (item: CanvasAssetLayoutRect, originLeft: number, originTop: number) => void,
 ): boolean {
   const grids = canvas.querySelectorAll<HTMLElement>(
@@ -206,8 +237,6 @@ function eachPublishedGridLayout(
   let published = false;
   for (const grid of grids) {
     const layout = readPublishedCanvasAssetLayout(grid);
-    if (!layout || layout.length === 0) continue;
-    published = true;
     const rect = grid.getBoundingClientRect();
     const origin = viewportRectToContent(
       {
@@ -219,8 +248,28 @@ function eachPublishedGridLayout(
       viewport,
       scroll,
     );
-    for (const item of layout) {
-      visit(item, origin.left, origin.top);
+    if (layout && layout.length > 0) {
+      published = true;
+      for (const item of layout) {
+        visit(item, origin.left, origin.top);
+      }
+      continue;
+    }
+    const layoutIndex = readPublishedCanvasAssetLayoutIndex(grid);
+    if (!layoutIndex || layoutIndex.total <= 0) continue;
+    published = true;
+    if (box) {
+      const localBox = {
+        left: box.left - origin.left,
+        top: box.top - origin.top,
+        right: box.right - origin.left,
+        bottom: box.bottom - origin.top,
+      };
+      layoutIndex.forEachIntersecting(localBox, (item) =>
+        visit(item, origin.left, origin.top),
+      );
+    } else {
+      layoutIndex.forEachAll((item) => visit(item, origin.left, origin.top));
     }
   }
   return published;
@@ -238,6 +287,7 @@ export function collectPublishedAssetHits(
     canvas,
     viewport,
     scroll,
+    box,
     (item, originLeft, originTop) => {
       if (rectsIntersect(layoutRectToContent(item, originLeft, originTop), box)) {
         hits.push(item.id);
@@ -257,6 +307,7 @@ export function collectPublishedAssetCenters(
     canvas,
     viewport,
     scroll,
+    null,
     (item, originLeft, originTop) => {
       items.push({
         id: item.id,

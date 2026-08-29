@@ -83,7 +83,10 @@ export interface ModelViewerSurfaceProps {
   /** `serpent://source/...` URL of the model asset. */
   readonly sourceUrl: string;
   readonly isFullscreen: boolean;
+  /** Preloaded navigation surfaces only need one decoded frame. */
+  readonly preloadOnly?: boolean;
   onFullscreen(): void;
+  onPresentationReady?(): void;
   /** Emit non-blocking load notices into the shell Info stack (MODEL-004). */
   onInfoNotice?(message: string): void;
 }
@@ -98,6 +101,7 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
   const { locale, t } = useLocale();
   const { resolved: themeMode, themeRevision } = useTheme();
   const onInfoNotice = props.onInfoNotice;
+  const onPresentationReady = props.onPresentationReady;
   const containerRef = useRef<HTMLDivElement>(null);
   const [phase, setPhase] = useState<ViewPhase>('loading');
   const [viewError, setViewError] = useState<ViewError | null>(null);
@@ -117,6 +121,26 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
   const controlsRef = useRef<OrbitControls | null>(null);
   const environmentRef = useRef<EnvironmentHandle | null>(null);
   const environmentDragRef = useRef<{ pointerId: number; lastX: number } | null>(null);
+  const preloadOnlyRef = useRef(Boolean(props.preloadOnly));
+  const renderFrameRef = useRef<(() => void) | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+
+  // Promotion changes visibility, not the WebGL session. A preloaded model
+  // already has its scene and first paint; changing preloadOnly must only
+  // start/stop the render loop instead of disposing and reloading everything.
+  useEffect(() => {
+    preloadOnlyRef.current = Boolean(props.preloadOnly);
+    if (props.preloadOnly) {
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      return;
+    }
+    if (renderFrameRef.current && animationFrameRef.current === null) {
+      animationFrameRef.current = requestAnimationFrame(renderFrameRef.current);
+    }
+  }, [props.preloadOnly]);
 
   const presetId = preferences.presetId;
   const lightIntensity = preferences.lightIntensity;
@@ -171,7 +195,6 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
     const container = containerRef.current;
     if (!container) return;
     let cancelled = false;
-    let frame = 0;
     const resizeObserver = new ResizeObserver(() => {
       const composer = composerRef.current;
       if (!composer) return;
@@ -388,18 +411,28 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
       // Render loop: damping needs continuous frames while orbiting.
       const renderFrame = () => {
         if (cancelled) return;
+        animationFrameRef.current = null;
         controls.update();
         composer.renderOnce();
-        frame = requestAnimationFrame(renderFrame);
+        if (!preloadOnlyRef.current) {
+          animationFrameRef.current = requestAnimationFrame(renderFrame);
+        }
       };
-      frame = requestAnimationFrame(renderFrame);
+      renderFrameRef.current = renderFrame;
+      // Always paint one frame after the model is ready. A preloaded surface
+      // stops here; the promotion effect above resumes the loop if needed.
+      renderFrame();
     };
 
     void run();
 
     return () => {
       cancelled = true;
-      cancelAnimationFrame(frame);
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      renderFrameRef.current = null;
       resizeObserver.disconnect();
       renderer.domElement.removeEventListener('dblclick', onDoubleClick);
       renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
@@ -493,6 +526,12 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
     : { code: openLimit.code };
   const effectivePhase: ViewPhase = refusalError ? 'error' : phase;
   const effectiveError = viewError ?? refusalError;
+
+  useEffect(() => {
+    if (effectivePhase === 'ready' || effectivePhase === 'error') {
+      onPresentationReady?.();
+    }
+  }, [effectivePhase, onPresentationReady]);
 
   const errorMessage = effectiveError
     ? t(

@@ -171,4 +171,39 @@ describe('removeLibraryRootWithRetry (Serpent-dfgg)', () => {
       }),
     ).toThrow(busy);
   });
+
+  it('reports the aside path when the aside removal still fails (Serpent-65d837)', () => {
+    const busy = Object.assign(new Error('not empty'), { code: 'ENOTEMPTY' });
+    const rmFn = vi.fn(() => {
+      throw busy;
+    });
+    const renameFn = vi.fn();
+    const waitFn = vi.fn();
+    const existsFn = vi.fn((targetPath: string) => targetPath === '/library.del-99');
+    const result = removeLibraryRootWithRetry('/library', {
+      rmFn,
+      waitFn,
+      renameFn,
+      existsFn,
+      nowFn: () => 99,
+      retryLimit: 1,
+      retryDelayMs: 10,
+    });
+    expect(renameFn).toHaveBeenCalledWith('/library', '/library.del-99');
+    expect(result).toEqual({ asidePath: '/library.del-99' });
+  });
+
+  it('returns a null aside when everything is removed', () => {
+    const rmFn = vi.fn().mockImplementationOnce(() => undefined);
+    const renameFn = vi.fn();
+    const waitFn = vi.fn();
+    const result = removeLibraryRootWithRetry('/library', {
+      rmFn,
+      waitFn,
+      renameFn,
+      retryLimit: 1,
+      retryDelayMs: 10,
+    });
+    expect(result).toEqual({ asidePath: null });
+  });
 });

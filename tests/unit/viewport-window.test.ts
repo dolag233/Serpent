@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   columnWindow,
+  itemIntersectsVisibleRange,
   quantizeCanvasViewportOffsetPx,
   viewportOverscanPx,
 } from "../../src/renderer/viewport-window";
@@ -138,5 +139,31 @@ describe("windowed viewport coverage (Serpent-1s3d)", () => {
     expect(
       coverageGapForSlice(heights, stale, currentViewStart, currentViewEnd),
     ).toBe(0);
+  });
+});
+
+describe("itemIntersectsVisibleRange (Serpent-614293)", () => {
+  it("keeps a row that is clipping off the viewport top as visible media", () => {
+    expect(itemIntersectsVisibleRange(400, 250, 500, 1300)).toBe(true);
+  });
+
+  it("does not load media for rows entirely above the real viewport", () => {
+    expect(itemIntersectsVisibleRange(100, 250, 500, 1300)).toBe(false);
+  });
+
+  it("does not load media for rows entirely below the real viewport", () => {
+    expect(itemIntersectsVisibleRange(1400, 250, 500, 1300)).toBe(false);
+  });
+
+  it("fails closed when estimated row tops drift above the real viewport", () => {
+    const body = 250;
+    const gap = 14;
+    const extraPerRow = 14;
+    const overscanRows = 30;
+    const geometryTop = overscanRows * (body + gap);
+    const realTop = overscanRows * (body + gap + extraPerRow);
+    const visibleEnd = realTop + 800;
+    expect(itemIntersectsVisibleRange(geometryTop, body, realTop, visibleEnd)).toBe(false);
+    expect(itemIntersectsVisibleRange(realTop, body, realTop, visibleEnd)).toBe(true);
   });
 });

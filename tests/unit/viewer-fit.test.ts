@@ -5,6 +5,8 @@ import {
   clampViewerScale,
   fitContainScale,
   isAtFitScale,
+  VIEWER_MAX_SCALE,
+  VIEWER_MIN_SCALE,
 } from '../../src/renderer/viewer-fit';
 
 describe('fitContainScale (REQ-VIEW-006)', () => {
@@ -26,9 +28,15 @@ describe('fitContainScale (REQ-VIEW-006)', () => {
 
 describe('clampViewerScale', () => {
   it('clamps to the viewer range', () => {
-    expect(clampViewerScale(0.01)).toBe(0.05);
-    expect(clampViewerScale(12)).toBe(8);
+    expect(clampViewerScale(0.01)).toBe(VIEWER_MIN_SCALE);
+    expect(clampViewerScale(12)).toBe(VIEWER_MAX_SCALE);
     expect(clampViewerScale(1.5)).toBe(1.5);
+  });
+
+  it('exposes one range for all viewer zoom inputs', () => {
+    expect(VIEWER_MIN_SCALE).toBe(0.05);
+    expect(VIEWER_MAX_SCALE).toBe(8);
+    expect(VIEWER_MIN_SCALE).toBeLessThan(VIEWER_MAX_SCALE);
   });
 });
 

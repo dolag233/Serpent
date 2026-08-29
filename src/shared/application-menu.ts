@@ -73,6 +73,7 @@ export type ApplicationMenuCommand =
   | "about.serpent"
   | "about.github"
   | "about.open-source"
+  | "about.diagnostics"
   | "settings";
 
 export type ApplicationMenuItemTemplate = {
@@ -246,6 +247,7 @@ export function buildApplicationMenuTemplate(
         commandItem("about.serpent", "shell.mainMenuAboutSerpent"),
         commandItem("about.github", "shell.mainMenuVisitGitHub"),
         commandItem("about.open-source", "shell.mainMenuOpenSource"),
+        commandItem("about.diagnostics", "settings.viewDiagnostics"),
         { type: "separator" },
         commandItem("settings", "shell.mainMenuSettings"),
       ]

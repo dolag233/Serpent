@@ -3,18 +3,30 @@ import { useEffect, useState } from "react";
 import type { ImageSequenceSummary } from "../shared/asset-types";
 import type { PreviewResolution } from "../shared/library-api";
 import {
-  coverSrc,
   resolveLivePreviewMedia,
   resolveLiveVideoMuted,
   shouldPlayLiveAudio,
 } from "./asset-card-hover-preview";
 import { Icon } from "./Icons";
 import { SequenceFrameCanvas } from "./SequenceFrameCanvas";
+import { resolveSequenceFrameUrl } from "./sequence-frame-preview";
 
 interface AssetCardMediaProps {
   alt: string;
   /** Static thumbnail; shown whenever live preview is inactive or not ready. */
   coverUrl: string | null;
+  /**
+   * Virtual browse windows render only the current viewport and its small
+   * overscan band. Those cards can ask Chromium to start decoding immediately
+   * without recreating the old eager-load storm from the full-page layout.
+   */
+  loadImmediately?: boolean;
+  /**
+   * Virtual windows keep a large scroll-continuity runway mounted. Do not put
+   * a media URL on those off-screen cards: Chromium's native lazy threshold is
+   * large enough to start source-direct requests several screens early.
+   */
+  deferUntilVisible?: boolean;
   isActive: boolean;
   /**
    * Whether this card is under the pointer. Sound-bearing live previews
@@ -51,6 +63,8 @@ interface AssetCardMediaProps {
 export function AssetCardMedia({
   alt,
   coverUrl,
+  loadImmediately = false,
+  deferUntilVisible = false,
   isActive,
   hovering = false,
   libraryId,
@@ -65,6 +79,8 @@ export function AssetCardMedia({
 }: AssetCardMediaProps) {
   const isSequence =
     Boolean(sequence) && (sequence?.frameCount ?? 0) >= 3 && Boolean(libraryId);
+  const shouldLoadCover =
+    !deferUntilVisible || loadImmediately || isActive || hovering;
   const live = resolveLivePreviewMedia(isActive && !isSequence, preview);
   const [sequenceFrame, setSequenceFrame] = useState(0);
   // Serpent-2ajm: a failed image load must never paint the browser's broken
@@ -85,21 +101,22 @@ export function AssetCardMedia({
   }, [isActive, isSequence, sequence]);
 
   if (isSequence && sequence && libraryId) {
-    const sequenceUrl = sequence.frames[0]?.thumbnailArtifactId
-      ? coverSrc(libraryId, sequence.frames[0].thumbnailArtifactId)
+    const sequenceUrl = sequence.frames[0]
+      ? (resolveSequenceFrameUrl(libraryId, sequence.frames[0]) ?? coverUrl)
       : coverUrl;
+    const visibleSequenceUrl = shouldLoadCover ? sequenceUrl : null;
     if (!isActive) {
       return (
         <div className="asset-card-media">
-          {sequenceUrl && !errored ? (
+          {visibleSequenceUrl && !errored ? (
             <img
               alt={alt}
               className="asset-thumbnail"
               decoding="async"
-              fetchPriority="high"
-              loading="lazy"
+              fetchPriority={loadImmediately ? "high" : "auto"}
+              loading={loadImmediately ? "eager" : "lazy"}
               onError={() => setErrored(true)}
-              src={sequenceUrl}
+              src={visibleSequenceUrl}
             />
           ) : (
             fallbackIcon
@@ -109,19 +126,19 @@ export function AssetCardMedia({
     }
     return (
       <div className="asset-card-media">
-        {sequenceUrl && !errored ? (
+        {visibleSequenceUrl && !errored ? (
           <img
             alt={alt}
             className="asset-thumbnail sequence-card-cover-hidden"
             onError={() => setErrored(true)}
-            src={sequenceUrl}
+            src={visibleSequenceUrl}
           />
         ) : (
           fallbackIcon
         )}
         <SequenceFrameCanvas
           alt={alt}
-          fallbackUrl={sequenceUrl}
+          fallbackUrl={visibleSequenceUrl}
           frameIndex={sequenceFrame % sequence.frames.length}
           frames={sequence.frames}
           libraryId={libraryId}
@@ -130,17 +147,18 @@ export function AssetCardMedia({
     );
   }
 
+  const visibleCoverUrl = shouldLoadCover ? coverUrl : null;
   return (
     <div className="asset-card-media">
-      {coverUrl && !errored ? (
+      {visibleCoverUrl && !errored ? (
         <img
           alt={alt}
           className="asset-thumbnail"
           decoding="async"
-          fetchPriority="high"
-          loading="lazy"
+          fetchPriority={loadImmediately ? "high" : "auto"}
+          loading={loadImmediately ? "eager" : "lazy"}
           onError={() => setErrored(true)}
-          src={coverUrl}
+          src={visibleCoverUrl}
         />
       ) : (
         fallbackIcon

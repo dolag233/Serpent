@@ -1,3 +1,5 @@
+import { JPEG_IMAGE_EXTENSIONS } from './media-formats';
+
 /** Color-space choices exposed by the locked OCIO configuration. */
 export interface ImageColorSpaceOption {
   id: string;
@@ -18,7 +20,7 @@ export const COMMON_IMAGE_COLOR_SPACE_OPTIONS: readonly ImageColorSpaceOption[] 
 
 /** Formats that can be re-rendered through the bundled OIIO color pipeline. */
 export const COLOR_MANAGED_IMAGE_EXTENSIONS = new Set([
-  '.bmp', '.cr2', '.cr3', '.dng', '.exr', '.ico', '.jpg', '.jpeg', '.nef', '.png',
+  '.bmp', '.cr2', '.cr3', '.dng', '.exr', '.ico', ...JPEG_IMAGE_EXTENSIONS, '.nef', '.png',
   '.orf', '.psd', '.raf', '.raw', '.rw2', '.tga', '.tif', '.tiff', '.webp',
   '.arw',
 ]);

@@ -5,6 +5,7 @@ import { useT } from "./i18n";
 export type HtmlViewerSurfaceProps = {
   sourceUrl: string;
   isFullscreen: boolean;
+  onPresentationReady?: () => void;
 };
 
 /**
@@ -17,6 +18,7 @@ export type HtmlViewerSurfaceProps = {
 export function HtmlViewerSurface({
   sourceUrl,
   isFullscreen,
+  onPresentationReady,
 }: HtmlViewerSurfaceProps) {
   const t = useT();
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -25,10 +27,12 @@ export function HtmlViewerSurface({
 
   const handleLoad = () => {
     setLoaded(true);
+    onPresentationReady?.();
   };
 
   const handleError = () => {
     setError(t("viewer.htmlLoadFailed"));
+    onPresentationReady?.();
   };
 
   return (
@@ -45,7 +49,7 @@ export function HtmlViewerSurface({
         sandbox="allow-scripts allow-same-origin"
         onLoad={handleLoad}
         onError={handleError}
-        title="HTML preview"
+        title={t("viewer.htmlPreview")}
       />
     </div>
   );

@@ -373,7 +373,7 @@ const library: SerpentLibraryApi = Object.freeze({
     libraryId,
   }: {
     libraryId: string;
-  }): Promise<LibraryApiResult<{ libraryId: string; displayName: string }>> {
+  }): Promise<LibraryApiResult<{ libraryId: string; displayName: string; pendingCleanup?: boolean }>> {
     const result = await request({ type: 'library.delete-from-disk.request', libraryId });
     if (!result.ok) return failure(result);
     if (result.type !== 'library.deleted') {
@@ -381,7 +381,11 @@ const library: SerpentLibraryApi = Object.freeze({
     }
     return {
       ok: true as const,
-      value: { libraryId: result.libraryId, displayName: result.displayName },
+      value: {
+        libraryId: result.libraryId,
+        displayName: result.displayName,
+        ...(result.pendingCleanup ? { pendingCleanup: result.pendingCleanup } : {}),
+      },
     };
   },
 
@@ -1268,6 +1272,115 @@ const library: SerpentLibraryApi = Object.freeze({
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.search.result') throw new Error('Unexpected search-assets response.');
     return { ok: true as const, value: { items: result.items, total: result.total, offset: result.offset, snippets: result.snippets, ...(result.assetIds ? { assetIds: result.assetIds } : {}), ...(result.layout ? { layout: result.layout } : {}) } };
+  },
+
+  async openBrowseSession({ libraryId, query, filters, scope, sort, smartCollectionId, limit, showIgnored }: { libraryId: string; query: SearchQuery | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'long_edge' | 'duration' | 'rating' | 'color' | 'author'; order: 'asc' | 'desc' }; smartCollectionId?: string; limit?: number; showIgnored?: boolean }) {
+    const result = await request({ type: 'browse.session.open.request', libraryId, query, filters, scope, sort, smartCollectionId, limit, showIgnored });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'browse.session.opened') throw new Error('Unexpected open-browse-session response.');
+    return {
+      ok: true as const,
+      value: {
+        sessionId: result.sessionId,
+        libraryGeneration: result.libraryGeneration,
+        changeSequence: result.changeSequence,
+        queryFingerprint: result.queryFingerprint,
+        items: result.items,
+        total: result.total,
+        offset: result.offset,
+        ...(result.snippets ? { snippets: result.snippets } : {}),
+      },
+    };
+  },
+
+  async fetchBrowseSessionPage({ libraryId, sessionId, limit, offset }: { libraryId: string; sessionId: string; limit?: number; offset?: number }) {
+    const result = await request({ type: 'browse.session.page.request', libraryId, sessionId, limit, offset });
+    if (!result.ok) return failure(result);
+    if (result.type === 'browse.session.stale') {
+      return {
+        ok: true as const,
+        value: {
+          stale: true as const,
+          sessionId: result.sessionId,
+          reason: result.reason,
+        },
+      };
+    }
+    if (result.type !== 'browse.session.page') throw new Error('Unexpected browse-session-page response.');
+    return {
+      ok: true as const,
+      value: {
+        sessionId: result.sessionId,
+        changeSequence: result.changeSequence,
+        items: result.items,
+        total: result.total,
+        offset: result.offset,
+        ...(result.snippets ? { snippets: result.snippets } : {}),
+      },
+    };
+  },
+
+  async fetchBrowseSessionGeometry({ libraryId, sessionId, startIndex, limit }: { libraryId: string; sessionId: string; startIndex: number; limit?: number }) {
+    const result = await request({ type: 'browse.session.geometry.request', libraryId, sessionId, startIndex, limit });
+    if (!result.ok) return failure(result);
+    if (result.type === 'browse.session.stale') {
+      return {
+        ok: true as const,
+        value: {
+          stale: true as const,
+          sessionId: result.sessionId,
+          reason: result.reason,
+        },
+      };
+    }
+    if (result.type !== 'browse.session.geometry') throw new Error('Unexpected browse-session-geometry response.');
+    return {
+      ok: true as const,
+      value: {
+        sessionId: result.sessionId,
+        startIndex: result.startIndex,
+        changeSequence: result.changeSequence,
+        entries: result.entries,
+      },
+    };
+  },
+
+  async fetchBrowseSessionAssetIds({ libraryId, sessionId }: { libraryId: string; sessionId: string }) {
+    const result = await request({ type: 'browse.session.ids.request', libraryId, sessionId });
+    if (!result.ok) return failure(result);
+    if (result.type === 'browse.session.stale') {
+      return {
+        ok: true as const,
+        value: {
+          stale: true as const,
+          sessionId: result.sessionId,
+          reason: result.reason,
+        },
+      };
+    }
+    if (result.type !== 'browse.session.ids') throw new Error('Unexpected browse-session-ids response.');
+    return { ok: true as const, value: result.assetIds };
+  },
+
+  async closeBrowseSession({ libraryId, sessionId }: { libraryId: string; sessionId: string }) {
+    const result = await request({ type: 'browse.session.close.request', libraryId, sessionId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'browse.session.closed') throw new Error('Unexpected close-browse-session response.');
+    return { ok: true as const, value: { sessionId: result.sessionId } };
+  },
+
+  async fetchLibraryNavigationSummary({ libraryId, showIgnored, includeTrashedFolders }: { libraryId: string; showIgnored?: boolean; includeTrashedFolders?: boolean }) {
+    const result = await request({
+      type: 'library.navigation-summary.request',
+      libraryId,
+      showIgnored,
+      includeTrashedFolders,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.navigation-summary') {
+      throw new Error('Unexpected library-navigation-summary response.');
+    }
+    return { ok: true as const, value: result.summary };
   },
 
   async planAiSearch({ naturalQuery }: { naturalQuery: string }): Promise<LibraryApiResult<{ plan: AiSearchPlan; apiFormat: AiApiFormat; model: string }>> {
@@ -2484,7 +2597,7 @@ const shell: SerpentShellApi = Object.freeze({
         'library.create', 'library.open', 'library.close', 'library.remove',
         'library.delete-from-disk', 'library.import', 'library.import-eagle', 'library.export', 'library.settings',
         'window.background-jobs', 'window.diagnostics',
-        'about.serpent', 'about.github', 'about.open-source', 'settings',
+        'about.serpent', 'about.github', 'about.open-source', 'about.diagnostics', 'settings',
       ];
       if (commands.includes(input as ApplicationMenuCommand)) {
         listener(input as ApplicationMenuCommand);

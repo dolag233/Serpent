@@ -6,6 +6,7 @@ import { _electron as electron, expect, test, type Page } from "@playwright/test
 
 import {
   closeLibraryViaSwitcher,
+  importFilesThroughBridge,
   resolveElectronExecutablePath,
 } from "./electron-test-helpers";
 
@@ -118,7 +119,7 @@ test("restores the recent library and focuses the last browsed asset after a ful
   const sourceRoot = path.join(temporaryRoot, "sources");
   mkdirSync(profilePath);
   mkdirSync(sourceRoot);
-  const sourcePaths = ["first.txt", "remember-me.txt"].map((name) => {
+  const sourcePaths = ["first.txt", "remember-me.txt", "root-import.txt"].map((name) => {
     const sourcePath = path.join(sourceRoot, name);
     writeFileSync(sourcePath, name);
     return sourcePath;
@@ -126,7 +127,7 @@ test("restores the recent library and focuses the last browsed asset after a ful
   const executablePath = resolveElectronExecutablePath();
   const applicationDirectory =
     process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
-  const launch = () =>
+  const launch = (importFilePath = sourcePaths.slice(0, 2).join(path.delimiter)) =>
     electron.launch({
       args: [applicationDirectory],
       cwd: applicationDirectory,
@@ -138,7 +139,7 @@ test("restores the recent library and focuses the last browsed asset after a ful
         SERPENT_E2E_USER_DATA_PATH: profilePath,
         SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
         SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
-        SERPENT_E2E_IMPORT_FILES: sourcePaths.join(path.delimiter),
+        SERPENT_E2E_IMPORT_FILES: importFilePath,
       },
     });
 
@@ -171,7 +172,7 @@ test("restores the recent library and focuses the last browsed asset after a ful
     await window.waitForTimeout(800);
     await application.close();
 
-    application = await launch();
+    application = await launch(sourcePaths[2]!);
     window = await application.firstWindow();
     await expect(
       window.getByText(libraryName, { exact: true }).first(),
@@ -190,6 +191,41 @@ test("restores the recent library and focuses the last browsed asset after a ful
         ),
       )
       .toBe(restoredAssetId);
+
+    // Serpent-2b30bb: the visual browser session may restore the nested folder,
+    // but a fresh import must still target the library root. Use a new source
+    // file after restart and verify its durable managedFolderId is null.
+    await importFilesThroughBridge(window);
+    await expect
+      .poll(async () =>
+        window.evaluate(async () => {
+          const bridge = globalThis as typeof globalThis & {
+            serpent: {
+              library: {
+                listOpen(): Promise<{ ok: boolean; value?: Array<{ libraryId: string }> }>;
+                listAssets(input: {
+                  libraryId: string;
+                  recursive: boolean;
+                }): Promise<{ ok: boolean; value?: Array<{
+                  displayName: string;
+                  managedFolderId: string | null;
+                }> }>;
+              };
+            };
+          };
+          const opened = await bridge.serpent.library.listOpen();
+          const libraryId = opened.value?.[0]?.libraryId;
+          if (!opened.ok || !libraryId) return false;
+          const listed = await bridge.serpent.library.listAssets({
+            libraryId,
+            recursive: true,
+          });
+          return listed.ok && listed.value?.some(
+            (asset) => asset.displayName === "root-import.txt" && asset.managedFolderId === null,
+          ) === true;
+        }),
+      )
+      .toBe(true);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });

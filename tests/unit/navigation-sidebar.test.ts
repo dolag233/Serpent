@@ -11,6 +11,38 @@ import {
 } from "../../src/renderer/NavigationSidebar";
 import { LocaleProvider } from "../../src/renderer/i18n";
 
+function createDragTransfer(types: string[]): DataTransfer {
+  return {
+    types,
+    dropEffect: "none",
+    effectAllowed: "all",
+    files: [],
+    getData: () => "",
+    setData: () => undefined,
+  } as unknown as DataTransfer;
+}
+
+function dispatchDragEvent(
+  element: Element,
+  type: "dragenter" | "dragover",
+  dataTransfer: DataTransfer,
+): Event {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+  element.dispatchEvent(event);
+  return event;
+}
+
+function dispatchDropEvent(
+  element: Element,
+  dataTransfer: DataTransfer,
+): Event {
+  const event = new Event("drop", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+  element.dispatchEvent(event);
+  return event;
+}
+
 function createNavigationProps(
   overrides: Partial<NavigationSidebarProps> = {},
 ): NavigationSidebarProps {
@@ -353,5 +385,150 @@ describe("NavigationSidebar virtual library root", () => {
       parentId,
       childId,
     ]);
+  });
+
+  it("highlights collection and trash rows for native File drags", async () => {
+    const collection = {
+      collectionId: "collection-1",
+      parentId: null,
+      name: "References",
+      description: null,
+      coverAssetId: null,
+      position: 0,
+      assetCount: 1,
+      childCollectionCount: 0,
+    };
+    const props = createNavigationProps({
+      collections: [collection],
+      collectionTree: new Map([[null, [collection]]]),
+    });
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        createElement(
+          LocaleProvider,
+          null,
+          createElement(NavigationSidebar, props),
+        ),
+      );
+    });
+
+    const collectionRow = container.querySelector<HTMLButtonElement>(
+      'button[data-nav-collection-id="collection-1"]',
+    );
+    const trashRow = [...container.querySelectorAll<HTMLButtonElement>(".nav-row")]
+      .find((row) => /Trash|回收站/u.test(row.textContent ?? ""));
+    expect(collectionRow).not.toBeNull();
+    expect(trashRow).toBeDefined();
+
+    const nativeFileTransfer = createDragTransfer(["Files"]);
+    await act(async () => {
+      dispatchDragEvent(collectionRow!, "dragover", nativeFileTransfer);
+    });
+
+    expect(collectionRow?.classList.contains("is-drop-target")).toBe(true);
+
+    await act(async () => {
+      dispatchDragEvent(trashRow!, "dragover", nativeFileTransfer);
+    });
+
+    expect(trashRow?.classList.contains("is-drop-target")).toBe(true);
+    expect(collectionRow?.classList.contains("is-drop-target")).toBe(false);
+  });
+
+  it("keeps the child collection highlighted when a drag enters its row", async () => {
+    const parent = {
+      collectionId: "collection-parent",
+      parentId: null,
+      name: "Parent",
+      description: null,
+      coverAssetId: null,
+      position: 0,
+      assetCount: 1,
+      childCollectionCount: 1,
+    };
+    const child = {
+      collectionId: "collection-child",
+      parentId: parent.collectionId,
+      name: "Child",
+      description: null,
+      coverAssetId: null,
+      position: 0,
+      assetCount: 0,
+      childCollectionCount: 0,
+    };
+    const onAssetsDroppedOnCollection = vi.fn();
+    const onResolveManagedAssetDrop = vi.fn(async () => ["asset-1"]);
+    const props = createNavigationProps({
+      collections: [parent, child],
+      collectionTree: new Map([
+        [null, [parent]],
+        [parent.collectionId, [child]],
+      ]),
+      onExternalDragOver: (event) => event.preventDefault(),
+      onAssetsDroppedOnCollection,
+      onResolveManagedAssetDrop,
+    });
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        createElement(
+          LocaleProvider,
+          null,
+          createElement(NavigationSidebar, props),
+        ),
+      );
+    });
+
+    const parentRow = container.querySelector<HTMLButtonElement>(
+      `button[data-nav-collection-id="${parent.collectionId}"]`,
+    );
+    const childRow = container.querySelector<HTMLButtonElement>(
+      `button[data-nav-collection-id="${child.collectionId}"]`,
+    );
+    expect(parentRow).not.toBeNull();
+    expect(childRow).not.toBeNull();
+
+    for (const types of [["Files"], ["application/x-serpent-managed-assets"]]) {
+      await act(async () => {
+        const dragOver = dispatchDragEvent(
+          childRow!,
+          "dragover",
+          createDragTransfer(types),
+        );
+        if (types[0] === "Files") {
+          expect(dragOver.defaultPrevented).toBe(true);
+        }
+      });
+
+      expect(childRow?.classList.contains("is-drop-target")).toBe(true);
+      expect(parentRow?.classList.contains("is-drop-target")).toBe(false);
+    }
+
+    const nativeFileTransfer = {
+      ...createDragTransfer(["Files"]),
+      files: [new File(["asset"], "asset.png")],
+    } as unknown as DataTransfer;
+    let dropEvent: Event | undefined;
+    await act(async () => {
+      dropEvent = dispatchDropEvent(childRow!, nativeFileTransfer);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(dropEvent?.defaultPrevented).toBe(true);
+    expect(onResolveManagedAssetDrop).toHaveBeenCalledWith(
+      nativeFileTransfer.files,
+    );
+    expect(onAssetsDroppedOnCollection).toHaveBeenCalledWith(
+      child.collectionId,
+      ["asset-1"],
+      "move",
+    );
   });
 });

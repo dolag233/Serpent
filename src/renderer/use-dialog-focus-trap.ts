@@ -13,7 +13,7 @@ const FOCUSABLE_SELECTOR =
  * initial focus to the first focusable control, and restore prior focus on
  * close. Escape handling stays with the caller (Serpent-vvn).
  */
-export function useDialogFocusTrap(active: boolean): void {
+export function useDialogFocusTrap(active: boolean, focusKey?: string): void {
   const previousFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -86,13 +86,13 @@ export function useDialogFocusTrap(active: boolean): void {
         previous.focus();
       }
     };
-  }, [active]);
+  }, [active, focusKey]);
 }
 
 function getTopmostModal(): HTMLElement | null {
   const modals = Array.from(
     document.querySelectorAll<HTMLElement>(
-      '[role="dialog"][aria-modal="true"]',
+      '[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"]',
     ),
   ).filter((modal) => !modal.hidden && modal.getAttribute("aria-hidden") !== "true");
   return modals.at(-1) ?? null;

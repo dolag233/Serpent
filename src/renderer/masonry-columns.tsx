@@ -24,6 +24,11 @@ import {
 import { isCanvasReflowRestorationPending } from "./canvas-reflow-restore";
 import { estimateMasonryPreviewHeightPx } from "./masonry-preview-frame";
 import { columnWindow, useCanvasLocalViewport } from "./viewport-window";
+import type { VirtualBrowseLayout } from "./browse/virtual-browse-layout";
+import {
+  VirtualMasonryColumns,
+  type BrowseCardRenderOptions,
+} from "./browse/virtual-browse-canvas";
 
 export function masonryCardSlotStyle(args: {
   previewHeightPx: number;
@@ -40,7 +45,42 @@ export function masonryCardSlotStyle(args: {
   };
 }
 
-export function MasonryColumns({
+type MasonryColumnsProps = {
+  assets: AssetSummary[];
+  layout: BrowseLayoutEntry[];
+  virtualLayout?: VirtualBrowseLayout | null;
+  cardSize: number;
+  showCaption: boolean;
+  captionBandPx?: number;
+  suspendScrollRestoration?: boolean;
+  renderCard: (
+    asset: AssetSummary,
+    options?: BrowseCardRenderOptions,
+  ) => ReactNode;
+  renderLayoutPreview?: (
+    entry: BrowseLayoutEntry,
+    options?: BrowseCardRenderOptions,
+  ) => ReactNode;
+};
+
+export function MasonryColumns(props: MasonryColumnsProps) {
+  if (props.virtualLayout) {
+    return (
+      <VirtualMasonryColumns
+        assets={props.assets}
+        layout={props.virtualLayout}
+        cardSize={props.cardSize}
+        showCaption={props.showCaption}
+        captionBandPx={props.captionBandPx}
+        renderCard={props.renderCard}
+        renderLayoutPreview={props.renderLayoutPreview}
+      />
+    );
+  }
+  return <RegularMasonryColumns {...props} />;
+}
+
+function RegularMasonryColumns({
   assets,
   layout,
   cardSize,
@@ -49,17 +89,7 @@ export function MasonryColumns({
   suspendScrollRestoration = false,
   renderCard,
   renderLayoutPreview,
-}: {
-  assets: AssetSummary[];
-  layout: BrowseLayoutEntry[];
-  cardSize: number;
-  showCaption: boolean;
-  /** Extra caption line height when resolution is enabled. */
-  captionBandPx?: number;
-  suspendScrollRestoration?: boolean;
-  renderCard: (asset: AssetSummary) => ReactNode;
-  renderLayoutPreview?: (entry: BrowseLayoutEntry) => ReactNode;
-}) {
+}: MasonryColumnsProps) {
   const resolvedCaptionBandPx = captionBandPx ?? MASONRY_CAPTION_BAND_PX;
   const containerRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(0);

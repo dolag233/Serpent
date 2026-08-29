@@ -606,12 +606,17 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 
 
 .windows-window-controls {
-  position: absolute;
+  /* Serpent-52a9b4: portaled to document.body — position: fixed and the
+     window-caption layer so minimize/maximize/close stay above every modal
+     backdrop (see ui/0007). The toolbar reserves the same 3-caption width, so
+     layout is unchanged. macOS native traffic lights are window-level by
+     design and unaffected. */
+  position: fixed;
   top: 0;
   right: 0;
-  z-index: var(--ui-layer-shell);
+  z-index: var(--ui-layer-window-caption);
   display: flex;
-  height: 100%;
+  height: var(--shell-toolbar-height);
   -webkit-app-region: no-drag;
 }
 
@@ -3635,6 +3640,18 @@ input[type="range"] {
   pointer-events: auto;
 }
 
+/* A library switch is a safety boundary: hide the old and not-yet-coherent
+ * navigation model until the replacement library has been read completely. */
+.library-loading-backdrop {
+  background: var(--ui-surface-canvas);
+  backdrop-filter: none;
+}
+
+.library-loading-dialog {
+  width: 100%;
+  max-width: 36rem;
+}
+
 /* While a modal is open, freeze shell chrome so hover popovers (filters) cannot open. */
 body.serpent-modal-open .app-shell {
   pointer-events: none;
@@ -4055,6 +4072,31 @@ body.serpent-modal-open .app-shell {
      paint the --ui-backdrop layer itself. */
   background: transparent;
   outline: none;
+}
+
+/* Keep the already decoded viewer in place while the next asset resolves.
+   Both surfaces occupy the same paint box; the target is hidden until its
+   first decoded frame or error surface is ready, so navigation never exposes
+   a blank/black intermediate frame. */
+.workspace-viewer-transition {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace-viewer-transition > .workspace-viewer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  flex: none;
+}
+
+.workspace-viewer-transition > .workspace-viewer.is-preview-preloading {
+  visibility: hidden;
+  pointer-events: none;
 }
 .workspace-viewer:focus,
 .workspace-viewer:focus-visible {
@@ -4896,9 +4938,11 @@ body.serpent-modal-open .app-shell {
   opacity: 0;
   pointer-events: none;
 }
-/* Volume/scrub chrome must stay interactive while idle-faded (Serpent-jy9z). */
+/* Volume/scrub chrome must stay interactive while idle-faded (Serpent-jy9z).
+   In fullscreen, pointer movement wakes the whole viewer; focus alone must
+   not keep the transport bar visible after the idle timer expires. */
 .workspace-viewer.is-chrome-idle .preview-chrome-fade:hover,
-.workspace-viewer.is-chrome-idle .preview-chrome-fade:focus-within,
+.workspace-viewer.is-chrome-idle:not(:fullscreen) .preview-chrome-fade:focus-within,
 .workspace-viewer.is-chrome-idle .preview-chrome-fade:has(.preview-viewer-volume.is-adjusting) {
   opacity: 1;
   pointer-events: auto;
@@ -8796,6 +8840,64 @@ select.ai-config-input.ai-config-languages {
   border-color: color-mix(in srgb, var(--accent) 36%, var(--divider-soft));
 }
 
+.about-dialog-release-notes {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  width: min(100%, 300px);
+  margin-top: 2px;
+}
+
+.about-dialog-release-notes-toggle,
+.about-dialog-release-notes-link {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.about-dialog-release-notes-toggle:hover,
+.about-dialog-release-notes-toggle:focus-visible,
+.about-dialog-release-notes-link:hover,
+.about-dialog-release-notes-link:focus-visible {
+  color: var(--text);
+  outline: none;
+  text-decoration: underline;
+}
+
+.about-dialog-release-notes-panel {
+  width: 100%;
+  max-height: 150px;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--divider-soft);
+  border-radius: 8px;
+  background: var(--raised-2);
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.about-dialog-release-notes-panel ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.about-dialog-release-notes-panel li + li {
+  margin-top: 4px;
+}
+
+.about-dialog-release-notes-date,
+.about-dialog-release-notes-mandatory {
+  margin: 0 0 6px;
+}
+
+.about-dialog-release-notes-mandatory {
+  color: var(--warning);
+}
+
 .about-dialog-update-status {
   max-width: 270px;
   color: var(--tertiary);
@@ -9149,7 +9251,11 @@ select.ai-config-input.ai-config-languages {
   min-width: 0;
   box-sizing: border-box;
   flex-direction: column;
-  gap: 14px;
+  /* Windowing spacers own the inter-row gap via row margin. A CSS gap
+     here would add extra empty strips that the row window cannot see, so
+     loadImmediately drifts above the real viewport (Serpent-1s3d /
+     Serpent-614293). */
+  gap: 0;
 }
 
 .justified-row {
@@ -9193,8 +9299,11 @@ select.ai-config-input.ai-config-languages {
 
 .justified-card-slot .asset-caption {
   flex: 0 0 auto;
-  min-height: 18px;
+  box-sizing: border-box;
+  height: var(--justified-caption-band, auto);
+  min-height: 0;
   padding-top: 4px;
+  overflow: hidden;
 }
 
 .justified-card-slot .asset-caption strong {

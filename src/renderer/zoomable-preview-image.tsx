@@ -25,6 +25,10 @@ import {
 } from "./viewer-display-transform";
 import { isViewerFitShortcut } from "./viewer-fit-shortcut";
 import {
+  VIEWER_MAX_SCALE,
+  VIEWER_MIN_SCALE,
+} from "./viewer-fit";
+import {
   pbrTextureDisplayFilter,
   type PbrTextureChannelPresentation,
 } from "./pbr-texture-channel";
@@ -66,6 +70,9 @@ export const ZoomableImage = forwardRef<
      * enabled. */
     fitKeybinds?: "space-and-f" | "f-only";
     isFullscreen?: boolean;
+    /** Suppress global viewer shortcuts while this surface is preloading. */
+    keyboardShortcutsDisabled?: boolean;
+    onPresentationReady?: () => void;
     onFullscreen?: () => void;
     onSwipeNext?: () => void;
     onSwipePrevious?: () => void;
@@ -77,11 +84,15 @@ export const ZoomableImage = forwardRef<
     displayTransform?: ViewerDisplayTransform;
     /** Detected read-only PBR channel presentation for this image asset. */
     pbrChannel?: PbrTextureChannelPresentation | null;
+    /** Keep animated formats on their static placeholder until promotion. */
+    isAnimated?: boolean;
     /**
      * Optional ready thumbnail / preview. Shown immediately; full `src`
      * upgrades quietly after decode (Serpent-eh07).
      */
     placeholderSrc?: string;
+    /** Suppress animated full-source playback while this surface preloads. */
+    preloadOnly?: boolean;
     src: string;
   }
 >(function ZoomableImage(
@@ -89,6 +100,8 @@ export const ZoomableImage = forwardRef<
     alt,
     fitKeybinds = "space-and-f",
     isFullscreen = false,
+    keyboardShortcutsDisabled = false,
+    onPresentationReady,
     onFullscreen,
     onSwipeNext,
     onSwipePrevious,
@@ -99,27 +112,48 @@ export const ZoomableImage = forwardRef<
     fitRequestToken,
     displayTransform = IDENTITY_VIEWER_DISPLAY_TRANSFORM,
     pbrChannel = null,
+    isAnimated = false,
     placeholderSrc,
+    preloadOnly = false,
     src,
   },
   ref,
 ) {
   const t = useT();
   const imageRef = useRef<HTMLImageElement>(null);
-  const [fullDecoded, setFullDecoded] = useState(false);
+  const [decodedSource, setDecodedSource] = useState<string | null>(null);
   const [imageError, setImageError] = useState(false);
+  const decodeRequestRef = useRef(0);
   const [sourceNatural, setSourceNatural] = useState({ w: 0, h: 0 });
   const sourceNaturalRef = useRef({ w: 0, h: 0 });
   const previousQuarterTurnsRef = useRef(displayTransform.quarterTurns);
+  const useAnimatedPlaceholder = Boolean(
+    preloadOnly && isAnimated && placeholderSrc,
+  );
+  const fullSource = useAnimatedPlaceholder ? placeholderSrc! : src;
+  const activeSourceRef = useRef(fullSource);
+  activeSourceRef.current = fullSource;
+  // Keep the decode latch tied to the URL it proved. The first viewer render
+  // can legitimately use the thumbnail as both `placeholderSrc` and `src`;
+  // a later source URL must not inherit that thumbnail's decoded state.
+  const fullDecoded = !useAnimatedPlaceholder && decodedSource === src;
+  const fullLayerDecoded = decodedSource === fullSource;
   const {
-    fitScale,
     fitToWindow,
     measureAndFit,
     view,
     viewportPointerHandlers,
     viewportRef,
     zoomAt,
-  } = useViewerZoomPan({ onSwipeNext, onSwipePrevious });
+  } = useViewerZoomPan({
+    keyboardShortcutsDisabled,
+    onSwipeNext,
+    onSwipePrevious,
+  });
+
+  const notifyPresentationReady = useCallback(() => {
+    onPresentationReady?.();
+  }, [onPresentationReady]);
 
   const measureFromImage = useCallback(
     (image: HTMLImageElement) => {
@@ -158,31 +192,70 @@ export const ZoomableImage = forwardRef<
     fitToWindow();
   }, [fitRequestToken, fitToWindow]);
 
-  // Reset the decode latch whenever the full URL identity changes (asset
-  // switches remount via key; placeholder->full upgrades change src, so the
-  // probe must re-decode the new URL). The measured natural size is NOT reset
-  // here — asset switches already remount (key={assetId}) and the upgrade must
-  // keep the previous measurement to preserve the user's zoom/pan
-  // (Serpent-esuj).
+  const promoteDecodedImage = useCallback(
+    (image: HTMLImageElement, source: string) => {
+      if (!isDecodedImage(image)) return;
+      const requestId = ++decodeRequestRef.current;
+      void (async () => {
+        try {
+          // `load`/naturalWidth can precede the compositor's paint-ready
+          // decode for large images. Wait for the browser's decode promise
+          // before changing which layer is visible.
+          if (typeof image.decode === "function") await image.decode();
+        } catch {
+          // A decode rejection is only recoverable when the image still proves
+          // a usable current resource. Source changes/failed loads are stale.
+          if (!isDecodedImage(image)) return;
+        }
+        await new Promise<void>((resolve) => {
+          window.requestAnimationFrame(() => resolve());
+        });
+        const attributeSource = image.getAttribute("src");
+        if (
+          requestId !== decodeRequestRef.current ||
+          activeSourceRef.current !== source ||
+          (attributeSource !== source && image.currentSrc !== source) ||
+          !image.isConnected ||
+          !isDecodedImage(image)
+        ) {
+          return;
+        }
+        // Measure before committing the visible-layer switch so the first
+        // full-image frame already has the correct fit/zoom geometry.
+        measureFromImage(image);
+        setDecodedSource(source);
+        notifyPresentationReady();
+      })();
+    },
+    [measureFromImage, notifyPresentationReady],
+  );
+
+  // Invalidate pending decode continuations before React can reconcile a new
+  // source. The source identity latch above also makes this safe across the
+  // passive-effect boundary of a thumbnail → original prop update.
   useEffect(() => {
-    setFullDecoded(false);
+    decodeRequestRef.current += 1;
+    setDecodedSource(null);
     setImageError(false);
-  }, [placeholderSrc, src]);
+  }, [fullSource, placeholderSrc, src]);
 
   const handleImageError = useCallback(() => {
     // Do not leave Chromium's native broken-image glyph and alt text on the
     // canvas. The viewer owns a consistent, theme-aware failure surface.
+    decodeRequestRef.current += 1;
     setImageError(true);
-    setFullDecoded(false);
+    setDecodedSource(null);
     setSourceNatural({ w: 0, h: 0 });
     sourceNaturalRef.current = { w: 0, h: 0 };
-  }, []);
+    notifyPresentationReady();
+  }, [notifyPresentationReady]);
 
   const display = resolveViewerImageDisplay({
     placeholderUrl: placeholderSrc ?? null,
     fullUrl: src,
     fullDecoded,
   });
+  const paintSrc = display.displayUrl ?? src;
   const hasFullUpgrade = Boolean(
     placeholderSrc && src && placeholderSrc !== src,
   );
@@ -200,10 +273,14 @@ export const ZoomableImage = forwardRef<
 
   useLayoutEffect(() => {
     const image = imageRef.current;
-    if (image && image.naturalWidth > 0) measureFromImage(image);
-  }, [display.layer, fullDecoded, measureFromImage]);
+    if (image && image.naturalWidth > 0) {
+      measureFromImage(image);
+      notifyPresentationReady();
+    }
+  }, [display.layer, fullLayerDecoded, measureFromImage, notifyPresentationReady]);
 
   useEffect(() => {
+    if (keyboardShortcutsDisabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (isTypingTarget(event.target)) return;
       const key = event.key;
@@ -220,9 +297,13 @@ export const ZoomableImage = forwardRef<
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [fitKeybinds, fitToWindow]);
+  }, [fitKeybinds, fitToWindow, keyboardShortcutsDisabled]);
 
-  const sliderMax = Math.max((fitScale || 1) * 4, 2);
+  // The range must describe the same scale domain as wheel/keyboard zoom.
+  // Using `fitScale * 4` made the slider stop early for small images while
+  // the wheel continued to the viewer's real 8× ceiling.
+  const sliderMin = VIEWER_MIN_SCALE;
+  const sliderMax = VIEWER_MAX_SCALE;
   // Keep the element itself in source orientation. CSS rotation swaps the
   // rendered bounding box; swapping width/height here as well would stretch
   // the bitmap and effectively swap the dimensions twice.
@@ -252,9 +333,9 @@ export const ZoomableImage = forwardRef<
         ) : hasFullUpgrade ? (
           <>
             <img
-              alt={fullDecoded ? "" : alt}
-              aria-hidden={fullDecoded ? true : undefined}
-              className={`preview-image preview-image-placeholder${fullDecoded ? " is-hidden" : ""}`}
+              alt={fullLayerDecoded ? "" : alt}
+              aria-hidden={fullLayerDecoded ? true : undefined}
+              className={`preview-image preview-image-placeholder${fullLayerDecoded ? " is-hidden" : ""}`}
               data-pbr-channel={pbrChannel?.channel}
               decoding="async"
               draggable={false}
@@ -262,8 +343,11 @@ export const ZoomableImage = forwardRef<
               onLoad={(event) => {
                 setImageError(false);
                 measureFromImage(event.currentTarget);
+                // The placeholder is already a valid presentation for a
+                // preloading viewer; it must not set the full-source latch.
+                notifyPresentationReady();
               }}
-              ref={fullDecoded ? undefined : imageRef}
+              ref={fullLayerDecoded ? undefined : imageRef}
               src={placeholderSrc}
               style={{
                 width: displayW,
@@ -274,20 +358,19 @@ export const ZoomableImage = forwardRef<
               }}
             />
             <img
-              alt={fullDecoded ? alt : ""}
-              aria-hidden={!fullDecoded ? true : undefined}
-              className={`preview-image preview-image-full${fullDecoded ? " is-visible" : " is-hidden"}`}
+              alt={fullLayerDecoded ? alt : ""}
+              aria-hidden={!fullLayerDecoded ? true : undefined}
+              className={`preview-image preview-image-full${fullLayerDecoded ? " is-visible" : " is-hidden"}`}
               data-pbr-channel={pbrChannel?.channel}
               decoding="async"
               draggable={false}
               onError={handleImageError}
               onLoad={(event) => {
                 setImageError(false);
-                measureFromImage(event.currentTarget);
-                if (isDecodedImage(event.currentTarget)) setFullDecoded(true);
+                promoteDecodedImage(event.currentTarget, fullSource);
               }}
-              ref={fullDecoded ? imageRef : undefined}
-              src={src}
+              ref={fullLayerDecoded ? imageRef : undefined}
+              src={fullSource}
               style={{
                 width: displayW,
                 height: displayH,
@@ -306,8 +389,7 @@ export const ZoomableImage = forwardRef<
             onError={handleImageError}
             onLoad={(event) => {
               setImageError(false);
-              measureFromImage(event.currentTarget);
-              if (isDecodedImage(event.currentTarget)) setFullDecoded(true);
+              promoteDecodedImage(event.currentTarget, paintSrc);
             }}
             ref={imageRef}
             src={display.displayUrl ?? src}
@@ -344,7 +426,7 @@ export const ZoomableImage = forwardRef<
         <input
           aria-label={t("preview.imageZoom")}
           max={sliderMax}
-          min={Math.min(fitScale || 0.1, 0.1)}
+          min={sliderMin}
           onChange={(event) => {
             const bounds = viewportRef.current?.getBoundingClientRect();
             if (!bounds) return;
@@ -354,10 +436,12 @@ export const ZoomableImage = forwardRef<
               Number(event.target.value),
             );
           }}
-          step={Math.max(sliderMax / 200, 0.01)}
+          // Keep the range endpoint reachable. A 0.04 step from a 0.05
+          // minimum lands on 7.97 when the user presses End, despite max=8.
+          step={0.01}
           tabIndex={VIEWER_CHROME_TAB_INDEX}
           type="range"
-          value={Math.min(sliderMax, Math.max(0.05, view.scale))}
+          value={Math.min(sliderMax, Math.max(sliderMin, view.scale))}
         />
         {onRotate && (
           <button

@@ -383,6 +383,7 @@ describe('saveAssetFromUrl', () => {
   it.each([
     ['image/png', 'asset.png'],
     ['image/jpeg', 'asset.jpeg'],
+    ['image/jpeg', 'asset.jfif'],
     ['image/gif', 'asset.gif'],
     ['image/tiff', 'asset.tif'],
     ['image/webp', 'asset.webp'],

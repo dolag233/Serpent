@@ -22,6 +22,9 @@ import {
   LibraryServiceError,
   SUPPORTED_SCHEMA_VERSION,
 } from '../../src/worker/library-service';
+import {
+  removeLibraryRootWithRetry,
+} from '../../src/worker/windows-fs-retry';
 import { importNoConflict } from './import-no-conflict';
 
 const temporaryRoots: string[] = [];
@@ -41,10 +44,10 @@ function newService(
 
 const require = createRequire(import.meta.url);
 
-// Valid 1x1 white PNG bytes (pre-computed), matching thumbnails.test.ts so
-// trash tests can generate real decodable thumbnails through the media queue.
+// Valid 2049×1 PNG bytes (pre-computed), matching the derived-thumbnail
+// boundary so trash tests can generate a real artifact through the media queue.
 const VALID_1X1_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==',
+  'iVBORw0KGgoAAAANSUhEUgAACAEAAAABCAIAAAAqtLKbAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAOklEQVRYhe3YQQ0AAAgDMeRMImInBh+kySno8yZbESBAgAABAgQIECBAgAABAgQIECBAgAABAnk3zA9mXOIiDxU7WQAAAABJRU5ErkJggg==',
   'base64',
 );
 
@@ -104,10 +107,25 @@ function expectServiceError(operation: () => unknown, code: LibraryServiceError[
   expect((thrown as LibraryServiceError).code).toBe(code);
 }
 
-afterEach(() => {
-  for (const service of services.splice(0)) service.closeAll();
+function flushSharpFileCache(): void {
+  try {
+    const sharp = require('sharp') as {
+      cache?: (options: boolean | { files?: number; memory?: number; items?: number }) => void;
+    };
+    // Drop any libvips file handles left by the last thumbnail pipeline so
+    // Windows can delete the temp library root (POSIX unlinks open files).
+    sharp.cache?.(false);
+    sharp.cache?.({ files: 0, memory: 32, items: 128 });
+  } catch {
+    // Sharp is optional in this file; tests that never decode images skip it.
+  }
+}
+
+afterEach(async () => {
+  await Promise.all(services.splice(0).map((service) => service.closeAllAsync()));
+  flushSharpFileCache();
   for (const root of temporaryRoots.splice(0)) {
-    rmSync(root, { force: true, recursive: true });
+    removeLibraryRootWithRetry(root);
   }
 });
 
@@ -521,7 +539,14 @@ describe('trash preview artifacts (BUG-TRASH-001)', () => {
     ).get(artifactId) as { status: string; invalidated_at: string | null };
     expect(artifactRow).toEqual({ status: 'ready', invalidated_at: null });
     db.close();
-    expect(existsSync(path.join(created.libraryPath, '.serpent', 'artifacts', `${artifactId}.webp`))).toBe(true);
+    // The generator may choose JPEG or WebP based on source opacity; resolve
+    // the authorized artifact path instead of coupling the trash invariant to
+    // one encoder extension.
+    expect(existsSync(service.getArtifactAbsolutePath(
+      created.libraryId,
+      artifactId,
+      'preview',
+    ))).toBe(true);
 
     // The trash listing (the renderer's trash-scope data source) must keep
     // exposing the thumbnail artifact so the card can build a preview URL.
@@ -532,10 +557,19 @@ describe('trash preview artifacts (BUG-TRASH-001)', () => {
     // The media protocol resolution must keep serving the artifact for the
     // trashed asset, and the served bytes must still decode as an image.
     const servedPath = service.getArtifactAbsolutePath(created.libraryId, artifactId, 'preview');
-    const sharp = require('sharp') as (input: string) => { metadata(): Promise<{ width?: number; height?: number }> };
-    const metadata = await sharp(servedPath).metadata();
-    expect(metadata.width).toBeGreaterThan(0);
-    expect(metadata.height).toBeGreaterThan(0);
+    const servedBytes = readFileSync(servedPath);
+    const sharp = require('sharp') as (input: Buffer) => {
+      metadata(): Promise<{ width?: number; height?: number }>;
+      destroy?(): void;
+    };
+    const decoder = sharp(servedBytes);
+    try {
+      const metadata = await decoder.metadata();
+      expect(metadata.width).toBeGreaterThan(0);
+      expect(metadata.height).toBeGreaterThan(0);
+    } finally {
+      decoder.destroy?.();
+    }
 
     service.closeAll();
   });
@@ -1406,6 +1440,28 @@ describe('deleteLinkedAssets', () => {
     expect(deletedCount).toBe(1);
     expect(existsSync(path.join(root, 'linked-del', 'to-delete.txt'))).toBe(true);
     expect(service.listAssets({ libraryId: created.libraryId, recursive: true })).toHaveLength(0);
+    service.closeAll();
+  });
+
+  it('clears a missing linked source from the index without treating it as a trash failure', async () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Missing Linked Del', selectedParentPath: root });
+    const linkedRoot = path.join(root, 'missing-linked-del');
+    const sourcePath = path.join(linkedRoot, 'already-gone.txt');
+    mkdirSync(linkedRoot);
+    writeFileSync(sourcePath, 'already gone');
+    service.importFolderAsLinked({ libraryId: created.libraryId, sourceRootPath: linkedRoot });
+    const [linkedAsset] = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    rmSync(sourcePath);
+    expect(service.refreshManagedAssets(created.libraryId).missingCount).toBe(1);
+
+    await expect(service.deleteLinkedAssets({
+      libraryId: created.libraryId,
+      assetIds: [linkedAsset!.assetId],
+      deleteSourceFile: true,
+    })).resolves.toEqual({ deletedCount: 1, failedCount: 0, failures: [] });
+    expect(service.listAssets({ libraryId: created.libraryId, recursive: true })).toEqual([]);
     service.closeAll();
   });
 

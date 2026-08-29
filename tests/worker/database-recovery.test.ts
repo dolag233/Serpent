@@ -49,6 +49,14 @@ function newService(): LibraryService {
   return service;
 }
 
+async function waitForBackup(pathToBackup: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (!existsSync(pathToBackup)) {
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${pathToBackup}`);
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 afterEach(() => {
   for (const service of services.splice(0)) service.closeAll();
   for (const root of roots.splice(0)) rmSync(root, { force: true, recursive: true });
@@ -334,6 +342,9 @@ describe('database damage recovery (Serpent-dw9a)', () => {
 
     await service.runOpenBackgroundReconciliation(library.libraryId);
     const backup = backupPath(library.libraryPath, 1);
+    // Open maintenance is intentionally scheduled after the reconciliation
+    // promise so backup/quick_check cannot delay the first browse wave.
+    await waitForBackup(backup);
     const readBackupName = () => {
       const database = new Database(backup);
       try {
@@ -349,10 +360,12 @@ describe('database damage recovery (Serpent-dw9a)', () => {
     service.renameLibrary({ libraryId: library.libraryId, displayName: 'Throttle During' });
     now += 60 * 60 * 1000;
     await service.runOpenBackgroundReconciliation(library.libraryId);
+    await new Promise<void>((resolve) => setTimeout(resolve, 1_100));
     expect(readBackupName()).toBe('Throttle Before');
 
     now += 24 * 60 * 60 * 1000 + 1;
     await service.runOpenBackgroundReconciliation(library.libraryId);
+    await new Promise<void>((resolve) => setTimeout(resolve, 1_100));
     expect(readBackupName()).toBe('Throttle During');
   });
 });

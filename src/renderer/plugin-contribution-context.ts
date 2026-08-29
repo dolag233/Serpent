@@ -23,6 +23,7 @@ const MIME_BY_MEDIA_TYPE: Record<AssetSummary["mediaType"], string> = {
 const MIME_BY_EXTENSION: Record<string, string> = {
   jpg: "image/jpeg",
   jpeg: "image/jpeg",
+  jfif: "image/jpeg",
   png: "image/png",
   gif: "image/gif",
   webp: "image/webp",

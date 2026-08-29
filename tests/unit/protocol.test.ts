@@ -203,6 +203,99 @@ describe('renderer request protocol', () => {
     })).toThrow();
   });
 
+  it('round-trips bounded BrowseSession geometry blocks', () => {
+    expect(parseRendererRequest({
+      type: 'browse.session.geometry.request',
+      libraryId: 'library-01',
+      sessionId: 'session-01',
+      startIndex: 128,
+      limit: 128,
+    })).toMatchObject({ type: 'browse.session.geometry.request', startIndex: 128 });
+    expect(parseWorkerRequest({
+      requestId: 'geometry-01',
+      command: {
+        type: 'browse.session.geometry',
+        libraryId: 'library-01',
+        sessionId: 'session-01',
+        startIndex: 128,
+        limit: 128,
+      },
+    }).command).toMatchObject({ type: 'browse.session.geometry' });
+    expect(parseWorkerResponse({
+      requestId: 'geometry-01',
+      result: {
+        ok: true,
+        type: 'browse.session.geometry',
+        libraryId: 'library-01',
+        sessionId: 'session-01',
+        startIndex: 128,
+        changeSequence: 4,
+        entries: [{ index: 128, assetId: 'asset-128', width: 1920, height: 1080 }],
+      },
+    }).result).toMatchObject({ type: 'browse.session.geometry' });
+  });
+
+  it('round-trips the coherent navigation summary request', () => {
+    expect(parseRendererRequest({
+      type: 'library.navigation-summary.request',
+      libraryId: 'library-01',
+      showIgnored: true,
+      includeTrashedFolders: true,
+    })).toMatchObject({ type: 'library.navigation-summary.request', showIgnored: true });
+    expect(parseWorkerRequest({
+      requestId: 'navigation-01',
+      command: {
+        type: 'library.navigation-summary',
+        libraryId: 'library-01',
+        showIgnored: true,
+        includeTrashedFolders: true,
+      },
+    }).command).toMatchObject({ type: 'library.navigation-summary' });
+    expect(parseWorkerResponse({
+      requestId: 'navigation-01',
+      result: {
+        ok: true,
+        type: 'library.navigation-summary',
+        summary: {
+          libraryId: 'library-01',
+          changeSequence: 4,
+          allAssetCount: 10,
+          rootAssetCount: 3,
+          trashedAssetCount: 1,
+          folders: [],
+          linkedFolders: [],
+          tags: [],
+          collections: [],
+          smartCollections: [],
+          trashedFolders: [],
+        },
+      },
+    }).result).toMatchObject({ type: 'library.navigation-summary' });
+  });
+
+  it('round-trips BrowseSession select-all ids without rebuilding the query', () => {
+    expect(parseRendererRequest({
+      type: 'browse.session.ids.request',
+      libraryId: 'library-01',
+      sessionId: 'session-01',
+    })).toEqual({
+      type: 'browse.session.ids.request',
+      libraryId: 'library-01',
+      sessionId: 'session-01',
+    });
+    expect(parseWorkerResponse({
+      requestId: 'session-ids-01',
+      result: {
+        ok: true,
+        type: 'browse.session.ids',
+        libraryId: 'library-01',
+        sessionId: 'session-01',
+        changeSequence: 4,
+        assetIds: ['asset-01', 'asset-02'],
+      },
+    }).result).toMatchObject({ type: 'browse.session.ids', assetIds: ['asset-01', 'asset-02'] });
+  });
+
   it('rejects the retired Label field in search clauses', () => {
     expect(() => parseRendererRequest({
       type: 'asset.search.request',
@@ -2209,6 +2302,16 @@ describe('renderer lifecycle events', () => {
         displayPath: '/libraries/restored',
       },
     })).toMatchObject({ type: 'library.opened', source: 'replacement-restore' });
+    expect(parseRendererLifecycleEvent({
+      type: 'library.opening',
+      operation: 'open',
+      source: 'mcp',
+    })).toEqual({ type: 'library.opening', operation: 'open', source: 'mcp' });
+    expect(parseRendererLifecycleEvent({
+      type: 'library.closed',
+      libraryId: 'mcp-library',
+      source: 'mcp',
+    })).toEqual({ type: 'library.closed', libraryId: 'mcp-library', source: 'mcp' });
     expect(() =>
       parseRendererLifecycleEvent({ type: 'library.opened', libraryPath: '/private/path' }),
     ).toThrow();
@@ -2658,5 +2761,68 @@ describe('sync open-remote-libraries protocol (Serpent-xffq)', () => {
       directoryName: '远端库',
       selectedParentPath: 'C:/Libraries',
     });
+  });
+});
+
+describe('library deletion deferred-cleanup protocol (Serpent-65d837)', () => {
+  it('parses a worker deletion carrying a pending aside path', () => {
+    const response = parseWorkerResponse({
+      requestId: 'req-01',
+      result: {
+        ok: true,
+        type: 'library.deleted',
+        libraryId: 'library-01',
+        displayName: 'Art',
+        libraryPath: 'C:/media/Art',
+        pendingAsidePath: 'C:/media/Art.del-123',
+      },
+    });
+    expect(response.result).toMatchObject({ ok: true, type: 'library.deleted' });
+    expect((response.result as { pendingAsidePath?: string }).pendingAsidePath).toBe('C:/media/Art.del-123');
+  });
+
+  it('parses a fully cleaned worker deletion without a pending aside', () => {
+    const response = parseWorkerResponse({
+      requestId: 'req-02',
+      result: {
+        ok: true,
+        type: 'library.deleted',
+        libraryId: 'library-01',
+        displayName: 'Art',
+        libraryPath: 'C:/media/Art',
+      },
+    });
+    expect(response.result).toMatchObject({ ok: true, type: 'library.deleted' });
+    expect((response.result as { pendingAsidePath?: string }).pendingAsidePath).toBe(undefined);
+  });
+
+  it('parses the renderer-facing pendingCleanup flag', () => {
+    const result = parseRendererResult({
+      ok: true,
+      type: 'library.deleted',
+      libraryId: 'library-01',
+      displayName: 'Art',
+      pendingCleanup: true,
+    });
+    expect((result as { pendingCleanup?: boolean }).pendingCleanup).toBe(true);
+  });
+
+  it('parses the pending cleanup command and rejects an empty path list', () => {
+    expect(parseWorkerRequest({
+      requestId: 'cleanup-01',
+      command: {
+        type: 'system.cleanup-pending-deletions',
+        asidePaths: ['C:/media/Art.del-123'],
+      },
+    }).command).toEqual({
+      type: 'system.cleanup-pending-deletions',
+      asidePaths: ['C:/media/Art.del-123'],
+    });
+    expect(() =>
+      parseWorkerRequest({
+        requestId: 'cleanup-02',
+        command: { type: 'system.cleanup-pending-deletions', asidePaths: [] },
+      }),
+    ).toThrow();
   });
 });

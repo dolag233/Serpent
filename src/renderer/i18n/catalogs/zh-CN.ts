@@ -62,6 +62,8 @@ export const zhCN = {
     libraryMenu: "资源库菜单",
     chooseLibrary: "选择资源库",
     noLibraryOpen: "尚未打开资源库",
+    switchLibrary: "切换资源库…",
+    librarySwitchWarning: "当前有一项操作正在进行。Serpent 会等待它完成后再切换资源库；该操作完成后可能仍会改变切换后的显示内容。确定要继续吗？",
     otherLibraries: "其他资源库",
     createLibrary: "创建资源库",
     createLibraryEllipsis: "新建资源库…",
@@ -147,6 +149,7 @@ export const zhCN = {
     mainMenuFront: "前置全部窗口",
     mainMenuVisitGitHub: "访问 GitHub 仓库",
     mainMenuOpenSource: "开源组件与许可",
+    mainMenuRevealLog: "查看日志",
     mainMenuVersion: "当前版本 {version}",
     mainMenuCheckUpdate: "检查更新",
     windowControls: "窗口控制",
@@ -807,8 +810,8 @@ export const zhCN = {
       fps: "帧率（FPS）",
       help: "默认 30 FPS。仅分辨率一致的帧会进入同一序列。",
       applyToRest: "将当前设置应用到后面的序列",
-      importSelected: "只导入所选文件",
-      importSequence: "作为序列导入 {count} 帧",
+      importSelected: "导入单独文件",
+      importSequence: "导入序列帧",
       importing: "正在导入…"
     },
     pluginTrustPrompt: {
@@ -838,6 +841,7 @@ export const zhCN = {
       automationNotice: "提示",
       automationWarning: "注意",
       automationError: "自动化操作未能完成",
+      switchLibrary: "切换资源库",
       confirm: "知道了"
     },
     rename: {
@@ -979,7 +983,12 @@ export const zhCN = {
       updateAssetMissing: "此版本没有适用于当前构建的更新资产。",
       updateVerificationFailed: "下载的更新未通过完整性校验。",
       updateDownloadFailed: "更新下载失败，请重试。",
-      updateOpenFailed: "无法打开安装器。"
+      updateOpenFailed: "无法打开安装器。",
+      viewReleaseNotes: "查看更新日志",
+      hideReleaseNotes: "收起更新日志",
+      releaseDate: "发布日期：{date}",
+      mandatoryUpdate: "此更新为必需更新。",
+      openReleaseNotes: "在浏览器中打开完整更新日志"
     },
     openSource: {
       title: "开源组件与许可",
@@ -1095,7 +1104,7 @@ export const zhCN = {
     categoryAssets: "资产",
     categoryAppearance: "外观",
     categoryBrowse: "浏览",
-    categoryAi: "AI",
+    categoryAi: "AI分析",
     categoryMcp: "MCP",
     categoryPlugins: "插件",
     categoryPluginSettings: "插件设置",
@@ -1270,6 +1279,8 @@ export const zhCN = {
     hoverAudioPlayHint: "鼠标悬停音频卡片时在画布内播放，移开即停止。",
     hoverVideoSound: "视频悬停播放带声音",
     hoverVideoSoundHint: "悬停视频卡片播放时播放声音（默认关闭，避免噪音）。",
+    taskCompletionSound: "任务结果提示音",
+    taskCompletionSoundHint: "仅当导入、导出等操作实际耗时超过 1 分钟时，在完成或失败后播放轻提示音。关闭后不再播放。",
     languageHint: "控制界面文案语言，立即生效。",
     imageSequenceAutoDetect: "导入时自动检测序列帧",
     imageSequenceAutoDetectHint:
@@ -1562,6 +1573,7 @@ export const zhCN = {
     zoomIn: "放大",
     zoomOut: "缩小",
     zoomFit: "适应宽度",
+    htmlPreview: "HTML 预览",
     htmlLoadFailed: "无法加载 HTML 文件。",
     htmlLoading: "正在加载 HTML…"
   },
@@ -1644,6 +1656,11 @@ export const zhCN = {
     exportingLibrary: "正在导出资源库：",
     importingLibrary: "导入资源库：",
     openingLibrary: "正在打开资源库：{name}",
+    openingLibraryNamed: "正在打开“{name}”资源库",
+    openingLibraryGeneric: "正在打开资源库",
+    deletingLibraryNamed: "正在删除“{name}”资源库",
+    deletingLibraryGeneric: "正在删除资源库",
+    switchLibraryWhileLoading: "切换资源库",
     validatingEagleLibrary: "正在打开 Eagle 资源库…",
     validatingBillfishLibrary: "正在验证 Billfish 资源库…",
     cancelExport: "取消导出",
@@ -1829,6 +1846,7 @@ export const zhCN = {
     assetsDeleteFromDiskFailed: "从硬盘删除资产失败。",
     folderDeleteFromDiskFailed: "从硬盘删除文件夹失败。",
     libraryDeletedFromDisk: "已从硬盘删除资源库「{name}」。",
+    libraryDeletedCleanupPending: "已从硬盘删除资源库「{name}」。少量残留文件正被系统占用（杀毒软件扫描或资源管理器打开），将在后台自动重试清理；重启应用也会再次清理。",
     libraryDeleteFailed: "删除资源库失败。",
     libraryRemoved: "已移除资源库「{name}」（磁盘文件未删除）。",
     libraryRemoveFailed: "移除资源库失败。",
@@ -1840,6 +1858,7 @@ export const zhCN = {
     convertLinkedDone: "已转换 {count} 项；外部源目录保持不变。",
     convertLinkedFailed: "转换链接文件夹失败。",
     closeFailed: "关闭失败。",
+    previousLibraryCloseFailed: "新资源库已打开，但旧资源库未能完全关闭。请稍后重试关闭旧资源库。",
     restoredCount: "已恢复 {count} 项资产",
     restoreTrashedFolderDone:
       "已恢复文件夹「{name}」：{folders} 个文件夹、{assets} 项资产",
@@ -1861,7 +1880,7 @@ export const zhCN = {
     emptyTrashSkipped: "，{count} 项未清理：{reasons}",
     emptyTrashFailed: "清空回收站失败。",
     deleteLinkedPartial: "删除链接资产未全部完成：已删除 {deleted} 项，另有 {failed} 项保留。原因：{reasons}",
-    deleteLinkedWithTrash: "已将 {count} 个源文件移入系统回收站，并移除链接资产记录。",
+    deleteLinkedWithTrash: "已移除 {count} 个链接资产记录；仍存在的源文件已移入系统回收站。",
     refreshListManually: "请手动刷新资产列表。",
     deleteDoneRefreshFailed: "删除已完成，但界面刷新失败：{reason}",
     deleteOutcomeRefreshFailed: "{outcome} 另外，界面刷新失败：{reason}",
@@ -2002,6 +2021,7 @@ export const zhCN = {
       LIBRARY_STRUCTURE_MISMATCH: "该资源库的数据库结构与当前 Serpent 版本不匹配。请升级到最新版 Serpent 后重新打开。",
       LIBRARY_NOT_WRITABLE: "无法在所选文件夹写入文件。可能是没有写权限、磁盘已满或只读，或文件被其他程序占用。请检查文件夹和 NAS 连接后重试。",
       LIBRARY_NETWORK_SHARE: "无法在此网络共享（NAS/SMB）上打开或写入资源库数据库。NAS 资源库会使用回滚日志，文件锁和断线恢复取决于共享盘。请检查 NAS 连接和权限；若仍失败，请把资源库复制到本机磁盘，或改用 WebDAV 同步。",
+      LINKED_FOLDER_UNAVAILABLE: "该 NAS 资源库包含一个在此电脑上不可用的链接文件夹。资源库数据库没有损坏。请重新连接该文件夹，或在此电脑上重新指定链接文件夹后再打开资源库。",
       LIBRARY_IO_ERROR: "资源库操作未完成：磁盘或文件系统报告了 I/O 错误。请检查磁盘连接、可用空间和权限；若仍失败，请把资源库复制到本机磁盘，并查看「诊断日志」。",
       LIBRARY_BUSY: "该资源库正被另一个 Serpent 窗口占用，或数据库暂时锁定。请等待几秒后重试；不要在两台电脑上同时打开同一资源库。",
       LIBRARY_CLEANUP_FAILED: "创建资源库失败，且临时文件无法自动清理。请删除所选位置旁的 `.serpent-create-*.partial` 文件夹，然后换一个可写文件夹重试。",
@@ -2094,7 +2114,10 @@ export const zhCN = {
       SYNC_CONFLICT: "远端内容已被其他设备修改。",
       SYNC_METHOD_NOT_ALLOWED: "服务器不支持所需的同步操作（例如 MOVE）。请更换支持 WebDAV 完整方法的服务器，或联系管理员开启。",
       SYNC_WRITE_UNSUPPORTED: "该服务器不支持上传文件，无法用于同步。请更换允许 PUT 上传的 WebDAV 服务。",
-      SYNC_HTTP_ERROR: "服务器返回了 HTTP 错误。请检查地址、账号权限和服务器状态后重试。"
+      SYNC_HTTP_ERROR: "服务器返回了 HTTP 错误。请检查地址、账号权限和服务器状态后重试。",
+      LINKED_FOLDER_NETWORK_DISCONNECTED: "网络盘或链接文件夹当前不可达，请重新连接后再打开资源库。",
+      LINKED_FOLDER_NOT_FOUND: "这台电脑上找不到链接文件夹路径。请重新连接磁盘或重新指定链接文件夹后再打开资源库。",
+      LINKED_FOLDER_FOREIGN_DEVICE: "链接文件夹的设备或卷标识与记录不一致，请在此电脑上重新指定链接文件夹。"
     },
     withReason: "{message} 原因：{reason}"
   },

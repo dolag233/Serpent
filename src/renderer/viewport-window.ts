@@ -34,8 +34,20 @@ export function viewportOverscanPx(
 export function useCanvasLocalViewport(
   containerRef: RefObject<HTMLElement | null>,
   cardSizePx: number = 0,
-): { start: number; end: number } {
-  const [viewport, setViewport] = useState({ start: 0, end: 8000 });
+): {
+  /** Overscan window kept mounted for scroll continuity. */
+  start: number;
+  end: number;
+  /** Actual canvas viewport used for network/decode priority decisions. */
+  visibleStart: number;
+  visibleEnd: number;
+} {
+  const [viewport, setViewport] = useState({
+    start: 0,
+    end: 8000,
+    visibleStart: 0,
+    visibleEnd: 800,
+  });
 
   useLayoutEffect(() => {
     const element = containerRef.current;
@@ -51,10 +63,18 @@ export function useCanvasLocalViewport(
       // expose a white band (CANVAS-037). Read and publish in the scroll
       // handler so React can commit the matching slice before that paint.
       const next = readCanvasLocalViewport(element, canvas, undefined, cardSizePx);
+      const visible = readCanvasLocalViewport(element, canvas, 0, cardSizePx);
       setViewport((previous) =>
-        previous.start === next.start && previous.end === next.end
+        previous.start === next.start
+          && previous.end === next.end
+          && previous.visibleStart === visible.start
+          && previous.visibleEnd === visible.end
           ? previous
-          : next,
+          : {
+              ...next,
+              visibleStart: visible.start,
+              visibleEnd: visible.end,
+            },
       );
     };
 
@@ -91,6 +111,22 @@ export function readCanvasLocalViewport(
     quantizeCanvasViewportOffsetPx(canvasRect.top - containerRect.top) - overscan;
   const end = start + canvas.clientHeight + overscan * 2;
   return { start, end };
+}
+
+/**
+ * True when `[top, top + height]` overlaps the real canvas visible range.
+ * Virtual cards outside this range stay mounted for scroll continuity but
+ * must not receive a media URL (`deferUntilVisible`).
+ */
+export function itemIntersectsVisibleRange(
+  top: number,
+  height: number,
+  visibleStart: number,
+  visibleEnd: number,
+): boolean {
+  const itemTop = Number.isFinite(top) ? top : 0;
+  const itemHeight = Number.isFinite(height) && height > 0 ? height : 0;
+  return itemTop + itemHeight > visibleStart && itemTop < visibleEnd;
 }
 
 /**

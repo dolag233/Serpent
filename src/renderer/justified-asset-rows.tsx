@@ -21,6 +21,12 @@ import {
 } from "./canvas-asset-layout";
 import { resolveJustifiedCaptionBandPx } from "./justified-caption-band";
 import { columnWindow, useCanvasLocalViewport } from "./viewport-window";
+import type { VirtualBrowseLayout } from "./browse/virtual-browse-layout";
+import {
+  VirtualJustifiedAssetRows,
+  virtualJustifiedRowStyle,
+  type BrowseCardRenderOptions,
+} from "./browse/virtual-browse-canvas";
 
 export {
   resolveJustifiedCaptionBandPx,
@@ -48,24 +54,45 @@ export function justifiedSlotStyle(
   };
 }
 
-export function JustifiedAssetRows({
+type JustifiedAssetRowsProps = {
+  assets: AssetSummary[];
+  layout: BrowseLayoutEntry[];
+  virtualLayout?: VirtualBrowseLayout | null;
+  cardSize: number;
+  renderCard: (
+    asset: AssetSummary,
+    options?: BrowseCardRenderOptions,
+  ) => ReactNode;
+  renderLayoutPreview?: (
+    entry: BrowseLayoutEntry,
+    options?: BrowseCardRenderOptions,
+  ) => ReactNode;
+  /** @deprecated Ignored. Preview height is locked to layout placement. */
+  captionBandPx?: number;
+};
+
+export function JustifiedAssetRows(props: JustifiedAssetRowsProps) {
+  if (props.virtualLayout) {
+    return (
+      <VirtualJustifiedAssetRows
+        assets={props.assets}
+        layout={props.virtualLayout}
+        cardSize={props.cardSize}
+        renderCard={props.renderCard}
+        renderLayoutPreview={props.renderLayoutPreview}
+      />
+    );
+  }
+  return <RegularJustifiedAssetRows {...props} />;
+}
+
+function RegularJustifiedAssetRows({
   assets,
   layout,
   cardSize,
   renderCard,
   renderLayoutPreview,
-}: {
-  assets: AssetSummary[];
-  layout: BrowseLayoutEntry[];
-  cardSize: number;
-  renderCard: (asset: AssetSummary) => ReactNode;
-  renderLayoutPreview?: (entry: BrowseLayoutEntry) => ReactNode;
-  /**
-   * @deprecated Ignored. Preview height is locked to layout placement;
-   * caption renders at natural height below (Serpent-5p45).
-   */
-  captionBandPx?: number;
-}) {
+}: JustifiedAssetRowsProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(0);
   const viewport = useCanvasLocalViewport(containerRef, cardSize);
@@ -140,7 +167,11 @@ export function JustifiedAssetRows({
     <div
       className="justified-rows"
       ref={containerRef}
-      style={{ gap: 0, minHeight: rowWindow.totalHeight }}
+      style={{
+        gap: 0,
+        minHeight: rowWindow.totalHeight,
+        ["--justified-caption-band" as string]: `${captionBandPx}px`,
+      }}
     >
       {rowWindow.spacerBefore > 0 ? (
         <div
@@ -155,7 +186,10 @@ export function JustifiedAssetRows({
           <div
             className="justified-row"
             key={`justified-row-${rowIndex}`}
-            style={isLast ? undefined : { marginBottom: ASSET_GRID_GAP_PX }}
+            style={virtualJustifiedRowStyle({
+              bodyHeightPx: row.height + captionBandPx,
+              isLast,
+            })}
           >
             {row.items.map((placement) => {
               const asset = assetById.get(placement.id);

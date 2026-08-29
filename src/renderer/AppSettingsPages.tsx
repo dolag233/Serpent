@@ -14,6 +14,10 @@ import {
   loadImportConflictPreferences,
   saveImportConflictPreferences,
 } from "./import-conflict-preferences";
+import {
+  loadTaskCompletionSoundPreferences,
+  saveTaskCompletionSoundPreferences,
+} from "./task-completion-sound-preferences";
 import type {
   ImportConflictPreferences,
   RememberedDuplicateDecision,
@@ -81,6 +85,16 @@ export function GeneralSettingsPage({
   onOpenExtensionReleases?: () => void;
 } = {}): ReactNode {
   const { t, preference: localePreference, setLocale } = useLocale();
+  const [taskCompletionSoundEnabled, setTaskCompletionSoundEnabled] = useState(
+    () => loadTaskCompletionSoundPreferences().enabled,
+  );
+
+  function toggleTaskCompletionSound(): void {
+    const enabled = !taskCompletionSoundEnabled;
+    saveTaskCompletionSoundPreferences({ version: 1, enabled });
+    setTaskCompletionSoundEnabled(enabled);
+  }
+
   return (
     <>
       <SettingsCard>
@@ -108,6 +122,14 @@ export function GeneralSettingsPage({
             ))}
           </div>
         </div>
+      </SettingsCard>
+      <SettingsCard>
+        <SettingsToggleRow
+          checked={taskCompletionSoundEnabled}
+          hint={t("settings.taskCompletionSoundHint")}
+          label={t("settings.taskCompletionSound")}
+          onChange={toggleTaskCompletionSound}
+        />
       </SettingsCard>
       {onOpenAppLog ? (
         <SettingsCard>

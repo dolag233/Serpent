@@ -1,5 +1,7 @@
 import path from 'node:path';
 
+import { JPEG_IMAGE_EXTENSIONS } from '../shared/media-formats';
+
 export type RemoteMediaValidationFailure =
   | 'MIME_TYPE_MISSING'
   | 'MIME_TYPE_UNSUPPORTED'
@@ -38,7 +40,7 @@ const MEDIA_BY_CONTENT_TYPE: Readonly<Record<string, RemoteMediaDefinition>> = {
     matchesMagic: (bytes) => startsWith(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
   },
   'image/jpeg': {
-    extensions: ['.jpg', '.jpeg'], minimumMagicBytes: 3, preferredExtension: '.jpg',
+    extensions: JPEG_IMAGE_EXTENSIONS, minimumMagicBytes: 3, preferredExtension: '.jpg',
     matchesMagic: (bytes) => startsWith(bytes, [0xff, 0xd8, 0xff]),
   },
   'image/gif': {

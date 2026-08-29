@@ -31,11 +31,13 @@ import {
   setApplicationMenuCommandLabel,
 } from "./application-menu";
 import { applyDevAppIcon, appIconImage } from "./app-icon";
+import { ArtifactPathCache } from "./artifact-path-cache";
 import { SourcePathCache, type SourcePathResolution } from "./source-path-cache";
 import {
   NativeAssetDragCache,
   startNativeAssetDrag,
 } from "./native-asset-drag";
+import { nativeDragAssetsForResult } from "./native-asset-drag-prime";
 import {
   clearViewerVideoShortcutCapture,
   isViewerVideoShortcutContentsActive,
@@ -55,7 +57,9 @@ import {
   type NativeDialogHost,
 } from "./native-dialogs";
 import {
+  ExternalLibraryArchiveError,
   materializeExternalLibrarySource,
+  sweepOrphanExternalLibraryStaging,
   type MaterializedExternalLibrarySource,
 } from "./external-library-archive";
 import {
@@ -270,11 +274,20 @@ import {
 import { pickIsolatedWindowPlacement } from "./e2e-isolated-window";
 import {
   clearActiveRecentLibrary,
+  recentLibraryAutoOpenEnabled,
   readActiveLibraryPath,
   readRecentLibraryEntries,
   rememberRecentLibrary,
   removeRecentLibrary,
 } from "./recent-libraries";
+import {
+  readPendingCleanupAsidePaths,
+  writePendingCleanupAsidePaths,
+} from "./pending-cleanup-store";
+import {
+  readExternalLibraryStagingRoots,
+  writeExternalLibraryStagingRoots,
+} from "./external-library-staging-store";
 import { AiQueueScheduler } from "./ai-queue-scheduler";
 import { aiSearchFailureReason, planAiSearch } from "./ai-search-planner";
 import {
@@ -308,7 +321,8 @@ import { createArtifactResponse } from "./artifact-response";
 import { PreviewCache } from "./preview-cache";
 import {
   bindLibraryMediaReadSignal,
-  blockLibraryMediaReads,
+  beginLibraryDeleteMediaFence,
+  endLibraryDeleteMediaFence,
   isLibraryMediaReadBlocked,
   unblockLibraryMediaReads,
 } from "./library-media-reads";
@@ -356,6 +370,17 @@ import {
   pluginUiMimeType,
 } from "./plugin-ui-assets";
 
+// Headless E2E hosts may expose no hardware WebGL implementation. Opt those
+// tests into Chromium's explicitly acknowledged software path; production
+// keeps the platform's normal GPU selection and never silently downgrades it.
+if (
+  process.env.SERPENT_E2E === "1" &&
+  process.env.SERPENT_E2E_ENABLE_SWIFTSHADER === "1"
+) {
+  app.commandLine.appendSwitch("enable-unsafe-swiftshader");
+  app.commandLine.appendSwitch("use-angle", "swiftshader");
+}
+
 if (process.env.SERPENT_E2E === "1") {
   const explicitUserDataPath = process.env.SERPENT_E2E_USER_DATA_PATH;
   app.setPath(
@@ -384,7 +409,10 @@ protocol.registerSchemesAsPrivileged(serpentProtocolSchemes());
 
 // E2E（本地/CI）：虚拟化 runner 的 GPU 不可靠，白屏会让所有交互测试
 // 超时（CI mac 上 69 个 E2E 全挂）。禁用硬件加速换取稳定渲染。
-if (process.env.SERPENT_E2E === "1") {
+if (
+  process.env.SERPENT_E2E === "1" &&
+  process.env.SERPENT_E2E_ENABLE_SWIFTSHADER !== "1"
+) {
   app.disableHardwareAcceleration();
 }
 
@@ -402,36 +430,19 @@ let workerClient: LibraryWorkerClient | undefined;
 let syncAutoScheduler: SyncAutoScheduler | undefined;
 type ArtifactPathBatchWaiter = {
   artifactId: string;
+  generation: number;
   resolve: (absolutePath: string) => void;
   reject: (error: Error) => void;
 };
 const artifactPathBatches = new Map<string, ArtifactPathBatchWaiter[]>();
-const artifactPathCache = new Map<string, string>();
-const artifactPathCacheEpochByLibrary = new Map<string, number>();
-const ARTIFACT_PATH_CACHE_LIMIT = 4_096;
-
-function artifactPathCacheKey(libraryId: string, artifactId: string, usage: string): string {
-  return `${libraryId}\u0000${usage}\u0000${artifactId}`;
-}
+const artifactPathCache = new ArtifactPathCache(4_096);
 
 function clearArtifactPathCache(libraryId?: string): void {
   if (libraryId === undefined) {
     artifactPathCache.clear();
-    artifactPathCacheEpochByLibrary.clear();
     return;
   }
-  artifactPathCacheEpochByLibrary.set(
-    libraryId,
-    (artifactPathCacheEpochByLibrary.get(libraryId) ?? 0) + 1,
-  );
-  const prefix = `${libraryId}\u0000`;
-  for (const key of artifactPathCache.keys()) {
-    if (key.startsWith(prefix)) artifactPathCache.delete(key);
-  }
-}
-
-function artifactPathCacheEpoch(libraryId: string): number {
-  return artifactPathCacheEpochByLibrary.get(libraryId) ?? 0;
+  artifactPathCache.clearLibrary(libraryId);
 }
 
 function cancelArtifactPathBatches(libraryId: string): void {
@@ -444,33 +455,24 @@ function cancelArtifactPathBatches(libraryId: string): void {
   }
 }
 
-function rememberArtifactPath(libraryId: string, artifactId: string, usage: string, absolutePath: string): void {
-  const key = artifactPathCacheKey(libraryId, artifactId, usage);
-  artifactPathCache.delete(key);
-  artifactPathCache.set(key, absolutePath);
-  while (artifactPathCache.size > ARTIFACT_PATH_CACHE_LIMIT) {
-    const oldest = artifactPathCache.keys().next().value;
-    if (oldest === undefined) break;
-    artifactPathCache.delete(oldest);
-  }
-}
-
 function resolveArtifactPathBatched(
   libraryId: string,
   artifactId: string,
   usage: "preview" | "proxy",
 ): Promise<string> {
-  const cached = artifactPathCache.get(artifactPathCacheKey(libraryId, artifactId, usage));
+  const generation = artifactPathCache.generation(libraryId);
+  const cached = artifactPathCache.get(libraryId, artifactId, usage, generation);
   if (cached !== undefined) {
     // A lookup hit is also a use: keep hot viewport artifacts at the MRU end
     // of the bounded cache instead of evicting them after unrelated pages.
-    rememberArtifactPath(libraryId, artifactId, usage, cached);
     return Promise.resolve(cached);
   }
-  const key = `${libraryId}\u0000${usage}`;
+  // Keep requests from different library generations in separate batches. A
+  // reopen can happen while the 2ms coalescing window is still pending.
+  const key = `${libraryId}\u0000${usage}\u0000${generation}`;
   return new Promise<string>((resolve, reject) => {
     const batch = artifactPathBatches.get(key) ?? [];
-    batch.push({ artifactId, resolve, reject });
+    batch.push({ artifactId, generation, resolve, reject });
     artifactPathBatches.set(key, batch);
     if (batch.length > 1) return;
     setTimeout(() => {
@@ -485,7 +487,7 @@ function resolveArtifactPathBatched(
       void (async () => {
         for (let index = 0; index < pending.length; index += 500) {
           const chunk = pending.slice(index, index + 500);
-          const requestEpoch = artifactPathCacheEpoch(libraryId);
+          const requestGeneration = chunk[0]?.generation ?? generation;
           try {
             const result = await client.request({
               type: "media.get-artifact-paths",
@@ -501,13 +503,22 @@ function resolveArtifactPathBatched(
             );
             for (const waiter of chunk) {
               const absolutePath = paths.get(waiter.artifactId);
-              if (absolutePath) {
-                if (artifactPathCacheEpoch(libraryId) === requestEpoch) {
-                  rememberArtifactPath(libraryId, waiter.artifactId, usage, absolutePath);
-                }
+              if (
+                absolutePath &&
+                artifactPathCache.generation(libraryId) === requestGeneration
+              ) {
+                artifactPathCache.set(
+                  libraryId,
+                  waiter.artifactId,
+                  usage,
+                  absolutePath,
+                  requestGeneration,
+                );
                 waiter.resolve(absolutePath);
+              } else if (absolutePath) {
+                waiter.reject(new Error("Artifact path resolution became stale."));
               } else {
-                artifactPathCache.delete(artifactPathCacheKey(libraryId, waiter.artifactId, usage));
+                artifactPathCache.invalidateArtifact(libraryId, waiter.artifactId, usage);
                 waiter.reject(new Error("Artifact was absent from path batch."));
               }
             }
@@ -629,6 +640,93 @@ function recentLibraryPath(): string {
   return path.join(app.getPath("userData"), "recent-library.json");
 }
 
+function pendingLibraryCleanupPath(): string {
+  return path.join(app.getPath("userData"), "pending-library-cleanup.json");
+}
+
+// Serpent-65d837: backoff schedule for asking the Worker to remove `.del-*`
+// aside roots left behind by a disk deletion. Windows handles (Defender scan,
+// Explorer, lingering `serpent://` streams) usually close within seconds, so a
+// few short retries resolve it without user action; anything still remaining
+// stays persisted and is retried on the next app launch.
+const PENDING_CLEANUP_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
+
+let pendingCleanupRetry = 0;
+let pendingCleanupRetryTimer: NodeJS.Timeout | undefined;
+
+/**
+ * Fire-and-forget: tells the Worker to remove every persisted `.del-*` aside
+ * root, drops the paths that succeeded from the store, and keeps retrying the
+ * remaining ones with a bounded backoff. Callers: after a deletion reported a
+ * pending aside, and after the Worker becomes ready at startup.
+ */
+function retryPendingLibraryCleanups(): void {
+  if (pendingCleanupRetryTimer) return;
+  void runPendingLibraryCleanups(0);
+}
+
+async function runPendingLibraryCleanups(round: number): Promise<void> {
+  const pendingPath = pendingLibraryCleanupPath();
+  const asidePaths = readPendingCleanupAsidePaths(pendingPath, (error) => {
+    logger?.error("pending-library-cleanup.read", error);
+  });
+  if (asidePaths.length === 0) return;
+  if (!workerClient) return;
+  let cleanedPaths: string[];
+  let remainingPaths: string[];
+  try {
+    const outcome = await workerClient.request({
+      type: "system.cleanup-pending-deletions",
+      asidePaths,
+    });
+    if (outcome.ok && outcome.type === "system.cleanup-pending-deletions") {
+      cleanedPaths = outcome.cleanedPaths;
+      remainingPaths = outcome.remainingPaths;
+    } else {
+      cleanedPaths = [];
+      remainingPaths = asidePaths;
+    }
+  } catch (error) {
+    cleanedPaths = [];
+    remainingPaths = asidePaths;
+    logger?.error(
+      "pending-library-cleanup.run",
+      error instanceof Error ? error : new Error(String(error)),
+    );
+  }
+  const stillPersisted = readPendingCleanupAsidePaths(pendingPath, (error) => {
+    logger?.error("pending-library-cleanup.read", error);
+  });
+  const remainingSet = new Set(remainingPaths);
+  const next = stillPersisted.filter((sidePath) => remainingSet.has(sidePath));
+  if (next.length === 0) {
+    writePendingCleanupAsidePaths(pendingPath, [], (error) => {
+      logger?.error("pending-library-cleanup.write", error);
+    });
+    return;
+  }
+  writePendingCleanupAsidePaths(pendingPath, next, (error) => {
+    logger?.error("pending-library-cleanup.write", error);
+  });
+  if (cleanedPaths.length > 0) {
+    logger?.info("pending-library-cleanup.deferred", "Removed leftover library roots.", {
+      cleanedCount: cleanedPaths.length,
+    });
+  }
+  const delay = PENDING_CLEANUP_RETRY_DELAYS_MS[round];
+  if (delay === undefined) {
+    logger?.info("pending-library-cleanup.still-pending", "Pending cleanup will retry on next launch.", {
+      remaining: next.length,
+    });
+    return;
+  }
+  pendingCleanupRetry = round + 1;
+  pendingCleanupRetryTimer = setTimeout(() => {
+    pendingCleanupRetryTimer = undefined;
+    void runPendingLibraryCleanups(pendingCleanupRetry);
+  }, delay);
+}
+
 function currentPluginCompatibilityPlatform():
   | { platform: 'darwin' | 'win32' | 'linux'; arch: 'arm64' | 'x64' | 'ia32' }
   | undefined {
@@ -687,6 +785,35 @@ let pendingBillfishOpenSourcePath: string | undefined;
 // directories. The Worker only receives the extracted root; these callbacks
 // ensure the archive contents do not remain on disk after the operation.
 const externalSourceCleanups = new Map<string, () => Promise<void>>();
+const liveExternalLibraryStagingRoots = new Set<string>();
+
+function externalLibraryStagingStorePath(): string {
+  return path.join(app.getPath("userData"), "external-library-staging.json");
+}
+
+function persistExternalLibraryStagingRoot(root: string): void {
+  const storePath = externalLibraryStagingStorePath();
+  const current = readExternalLibraryStagingRoots(storePath, (error) => {
+    logger?.error("external-library.staging-store.read", error);
+  });
+  writeExternalLibraryStagingRoots(storePath, [...current, root], (error) => {
+    logger?.error("external-library.staging-store.write", error);
+  });
+}
+
+function forgetExternalLibraryStagingRoot(root: string): void {
+  const storePath = externalLibraryStagingStorePath();
+  const current = readExternalLibraryStagingRoots(storePath, (error) => {
+    logger?.error("external-library.staging-store.read", error);
+  });
+  writeExternalLibraryStagingRoots(
+    storePath,
+    current.filter((value) => value !== root),
+    (error) => {
+      logger?.error("external-library.staging-store.write", error);
+    },
+  );
+}
 
 function rememberExternalSource(materialized: MaterializedExternalLibrarySource): string {
   externalSourceCleanups.set(materialized.sourceRootPath, materialized.cleanup);
@@ -697,17 +824,81 @@ async function cleanupExternalSource(sourceRootPath: string | undefined): Promis
   if (!sourceRootPath) return;
   const cleanup = externalSourceCleanups.get(sourceRootPath);
   if (!cleanup) return;
-  externalSourceCleanups.delete(sourceRootPath);
   try {
     await cleanup();
+    externalSourceCleanups.delete(sourceRootPath);
   } catch (error) {
-    logger?.error("external-library.archive-cleanup", error, { sourceRootPath });
+    logger?.error("external-library.archive-cleanup", error);
   }
 }
 
 async function cleanupAllExternalSources(): Promise<void> {
   const sourceRoots = [...externalSourceCleanups.keys()];
   await Promise.all(sourceRoots.map((sourceRootPath) => cleanupExternalSource(sourceRootPath)));
+}
+
+async function materializeSelectedExternalLibrary(input: {
+  readonly sourcePath: string;
+  readonly kind: "eagle" | "billfish";
+  readonly fallbackDirectory?: string;
+}): Promise<MaterializedExternalLibrarySource> {
+  return materializeExternalLibrarySource({
+    sourcePath: input.sourcePath,
+    kind: input.kind,
+    preferredTempDirectory: tmpdir(),
+    fallbackTempDirectory: input.fallbackDirectory,
+    registerStagingRoot: (root) => {
+      liveExternalLibraryStagingRoots.add(root);
+      persistExternalLibraryStagingRoot(root);
+    },
+    unregisterStagingRoot: (root) => {
+      liveExternalLibraryStagingRoots.delete(root);
+      forgetExternalLibraryStagingRoot(root);
+    },
+  });
+}
+
+function fallbackDirectoryForLibraryId(libraryId: string): string | undefined {
+  const entries = readRecentLibraryEntries(recentLibraryPath(), (error) => {
+    logger?.error("recent-library.read", error);
+  });
+  const match = entries.find((entry) => entry.libraryId === libraryId);
+  if (match?.path) return path.dirname(path.resolve(match.path));
+  const active = readActiveLibraryPath(recentLibraryPath(), (error) => {
+    logger?.error("recent-library.read", error);
+  });
+  return active ? path.dirname(path.resolve(active)) : undefined;
+}
+
+async function sweepOrphanExternalLibraryStagingOnStartup(): Promise<void> {
+  const storePath = externalLibraryStagingStorePath();
+  const registered = readExternalLibraryStagingRoots(storePath, (error) => {
+    logger?.error("external-library.staging-store.read", error);
+  });
+  try {
+    const result = await sweepOrphanExternalLibraryStaging({
+      registeredRoots: registered,
+      searchParents: [tmpdir()],
+      liveRoots: liveExternalLibraryStagingRoots,
+    });
+    writeExternalLibraryStagingRoots(storePath, result.remaining, (error) => {
+      logger?.error("external-library.staging-store.write", error);
+    });
+    if (result.removed.length > 0) {
+      logger?.info("external-library.staging-sweep", "Removed leftover extract directories.", {
+        removedCount: result.removed.length,
+      });
+    }
+    if (result.failed.length > 0) {
+      logger?.error(
+        "external-library.staging-sweep",
+        new Error("Could not remove leftover extract directories."),
+        { failedCount: result.failed.length },
+      );
+    }
+  } catch (error) {
+    logger?.error("external-library.staging-sweep", error);
+  }
 }
 
 // Pending import libraryId (importId -> libraryId), for auto-analyze after import.
@@ -1689,7 +1880,13 @@ function publishAssetChange(event: AssetChangeEvent): void {
 
 function publishLibraryChanged(event: LibraryChangedEvent): void {
   const parsed = parseLibraryChangedEvent(event);
-  clearArtifactPathCache(parsed.libraryId);
+  // `library.changed` is also emitted for immutable derived-artifact writes.
+  // Advancing the Main-side path-cache generation here races a thumbnail
+  // response that is already resolving: the path lookup returns a valid new
+  // artifact, but the generation check rejects it as stale. The Renderer then
+  // sees a transient protocol failure and permanently replaces the image with
+  // its broken-file fallback. Asset/source mutations use asset.changed and
+  // explicitly clear this cache; close/reopen paths clear it as well.
   pluginActivationCoordinator?.fanOutDomainEvent(createPluginDomainEvent({
     kind: 'library.changed',
     libraryId: parsed.libraryId,
@@ -1944,6 +2141,9 @@ function toRendererResult(
       type: "library.deleted",
       libraryId: result.libraryId,
       displayName: result.displayName,
+      // Serpent-65d837: the library root is gone, but a `.del-*` aside may
+      // still exist; the Renderer shows a deferred-cleanup notice.
+      ...(result.pendingAsidePath ? { pendingCleanup: true } : {}),
     });
   }
   if (result.type === "asset.relink-batch.preview") {
@@ -2187,10 +2387,10 @@ async function commandFor(
         ["zip", "eaglepack", "rar", "7z", "tar", "gz", "tgz", "bz2", "tbz", "tbz2", "xz", "txz"],
       );
       if (!selectedSourcePath) return undefined;
-      const materialized = await materializeExternalLibrarySource({
+      const materialized = await materializeSelectedExternalLibrary({
         sourcePath: selectedSourcePath,
         kind: "eagle",
-        tempDirectory: tmpdir(),
+        fallbackDirectory: path.dirname(path.resolve(selectedSourcePath)),
       });
       const sourceRootPath = rememberExternalSource(materialized);
       return sourceRootPath
@@ -2210,10 +2410,10 @@ async function commandFor(
       );
       if (!selectedSourcePath) return undefined;
       callbacks?.onBillfishSourceSelected?.();
-      const materialized = await materializeExternalLibrarySource({
+      const materialized = await materializeSelectedExternalLibrary({
         sourcePath: selectedSourcePath,
         kind: "billfish",
-        tempDirectory: tmpdir(),
+        fallbackDirectory: path.dirname(path.resolve(selectedSourcePath)),
       });
       const sourceRootPath = rememberExternalSource(materialized);
       return sourceRootPath
@@ -2469,10 +2669,10 @@ async function commandFor(
         ["zip", "eaglepack", "rar", "7z", "tar", "gz", "tgz", "bz2", "tbz", "tbz2", "xz", "txz"],
       );
       if (!selectedSourcePath) return undefined;
-      const materialized = await materializeExternalLibrarySource({
+      const materialized = await materializeSelectedExternalLibrary({
         sourcePath: selectedSourcePath,
         kind: "eagle",
-        tempDirectory: tmpdir(),
+        fallbackDirectory: fallbackDirectoryForLibraryId(request.libraryId),
       });
       const sourceRootPath = rememberExternalSource(materialized);
       return sourceRootPath
@@ -2491,10 +2691,10 @@ async function commandFor(
         [{ name: "Billfish Pack", extensions: ["billfishpack"] }],
       );
       if (!selectedSourcePath) return undefined;
-      const materialized = await materializeExternalLibrarySource({
+      const materialized = await materializeSelectedExternalLibrary({
         sourcePath: selectedSourcePath,
         kind: "billfish",
-        tempDirectory: tmpdir(),
+        fallbackDirectory: fallbackDirectoryForLibraryId(request.libraryId),
       });
       const sourceRootPath = rememberExternalSource(materialized);
       return sourceRootPath
@@ -2796,6 +2996,53 @@ async function commandFor(
         limit: request.limit,
         offset: request.offset,
         showIgnored: request.showIgnored,
+      };
+    case "browse.session.open.request":
+      return {
+        type: "browse.session.open",
+        libraryId: request.libraryId,
+        query: request.query,
+        filters: request.filters,
+        scope: request.scope,
+        sort: request.sort,
+        smartCollectionId: request.smartCollectionId,
+        limit: request.limit,
+        showIgnored: request.showIgnored,
+      };
+    case "browse.session.page.request":
+      return {
+        type: "browse.session.page",
+        libraryId: request.libraryId,
+        sessionId: request.sessionId,
+        limit: request.limit,
+        offset: request.offset,
+      };
+    case "browse.session.geometry.request":
+      return {
+        type: "browse.session.geometry",
+        libraryId: request.libraryId,
+        sessionId: request.sessionId,
+        startIndex: request.startIndex,
+        limit: request.limit,
+      };
+    case "browse.session.ids.request":
+      return {
+        type: "browse.session.ids",
+        libraryId: request.libraryId,
+        sessionId: request.sessionId,
+      };
+    case "browse.session.close.request":
+      return {
+        type: "browse.session.close",
+        libraryId: request.libraryId,
+        sessionId: request.sessionId,
+      };
+    case "library.navigation-summary.request":
+      return {
+        type: "library.navigation-summary",
+        libraryId: request.libraryId,
+        showIgnored: request.showIgnored,
+        includeTrashedFolders: request.includeTrashedFolders,
       };
     case "ai.search-plan.request":
       // Planned directly in Main so provider credentials never enter the
@@ -3523,8 +3770,9 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
 
     if (request.type === "library.delete-from-disk.request") {
       // Drop serpent:// file handles before the Worker tries to rm the root.
+      // Always end this fence in `finally`; ZIP import preserves library_id.
       deleteFromDiskLibraryId = request.libraryId;
-      blockLibraryMediaReads(request.libraryId);
+      beginLibraryDeleteMediaFence(request.libraryId);
       clearNativeAssetDragCache(request.libraryId);
     }
 
@@ -4535,6 +4783,23 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       previousLibraryPaths = await closeOpenLibrariesBeforeReplacement();
     }
 
+    // Deterministic E2E seam for optimistic asset deletion. The renderer must
+    // remove the card before this real IPC/Worker request resolves; production
+    // never delays requests because this branch is gated by SERPENT_E2E.
+    if (
+      !app.isPackaged &&
+      process.env.SERPENT_E2E === "1" &&
+      command.type === "asset.trash"
+    ) {
+      const delayMs = Number.parseInt(
+        process.env.SERPENT_E2E_TRASH_DELAY_MS ?? "",
+        10,
+      );
+      if (Number.isInteger(delayMs) && delayMs > 0 && delayMs <= 10_000) {
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+
     // 测试连接（sync.probe）：单次超时后自动重试，最大重试后给出提醒
     // （用户决定 2026-08-17；传输数据本身无墙钟超时）。
     const viewerRequest = command.type === "media.get-preview-artifact" ? command : undefined;
@@ -4555,15 +4820,6 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
     if (!workerResult.ok && previousLibraryPaths.length > 0) {
       await reopenLibrariesAfterFailedReplacement(previousLibraryPaths);
-    }
-
-    if (
-      request.type === "library.delete-from-disk.request" &&
-      !workerResult.ok &&
-      workerResult.error.code !== "LIBRARY_NOT_FOUND" &&
-      workerResult.error.code !== "NOT_A_LIBRARY"
-    ) {
-      unblockLibraryMediaReads(request.libraryId);
     }
 
     if (
@@ -4594,33 +4850,32 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     // what the user actually sees and can drag immediately) blocks the
     // response. The rest primes in fire-and-forget chunks so a 50k browse
     // result no longer stalls the renderer behind a full-cache worker burst.
-    const nativeDragAssets = !workerResult.ok
-      ? []
-      : workerResult.type === "asset.list" ||
-          workerResult.type === "collection.assets.list" ||
-          workerResult.type === "asset.list-trash"
-        ? workerResult.assets
-        : workerResult.type === "asset.search.result" ||
-            workerResult.type === "smart-collection.executed"
-          ? workerResult.items
-          : [];
+    const nativeDragAssets = nativeDragAssetsForResult(workerResult);
+    // Conflict resolution requests intentionally carry only importId; the
+    // library context is retained from the earlier conflicts response until
+    // the completion branch below consumes it.
+    const nativeDragLibraryId =
+      "libraryId" in request && typeof request.libraryId === "string"
+        ? request.libraryId
+        : request.type === "asset.import.resolve"
+          ? pendingImportLibraries.get(request.importId)
+          : undefined;
     if (
       nativeDragAssets.length > 0 &&
-      "libraryId" in request &&
-      typeof request.libraryId === "string"
+      nativeDragLibraryId
     ) {
       const dragAssetIds = nativeDragAssets.flatMap((asset) =>
         asset.sequence?.frames.map((frame) => frame.assetId) ?? [asset.assetId],
       );
       await primeNativeAssetDragCache(
-        request.libraryId,
+        nativeDragLibraryId,
         dragAssetIds.slice(0, NATIVE_DRAG_PRIME_VISIBLE_COUNT),
         "upsert",
       );
       const rest = dragAssetIds.slice(NATIVE_DRAG_PRIME_VISIBLE_COUNT);
       if (rest.length > 0) {
         void primeNativeAssetDragCacheInBackground(
-          request.libraryId,
+          nativeDragLibraryId,
           rest,
         );
       }
@@ -4671,6 +4926,22 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       // preview mirrors consuming the LRU budget.
       if ("libraryId" in request) {
         void previewCache?.purgeLibrary(request.libraryId);
+      }
+      // Serpent-65d837: a leftover `.del-*` aside must never be silently
+      // forgotten — persist it for deferred cleanup and kick the retry loop.
+      if (workerResult.pendingAsidePath) {
+        const pendingPath = pendingLibraryCleanupPath();
+        const current = readPendingCleanupAsidePaths(pendingPath, (error) => {
+          logger?.error("pending-library-cleanup.read", error);
+        });
+        writePendingCleanupAsidePaths(
+          pendingPath,
+          [...current, workerResult.pendingAsidePath],
+          (error) => {
+            logger?.error("pending-library-cleanup.write", error);
+          },
+        );
+        void retryPendingLibraryCleanups();
       }
     }
 
@@ -5368,8 +5639,10 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       return result;
     }
     if (result.type === "library.opened") {
+      unblockLibraryMediaReads(result.library.libraryId);
       publishLifecycle({ type: "library.opened", library: result.library });
     } else if (workerResult.ok && workerResult.type === "library.imported") {
+      unblockLibraryMediaReads(workerResult.libraryId);
       publishLifecycle({
         type: "library.opened",
         library: {
@@ -5390,9 +5663,6 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
     return result;
   } catch (error) {
-    if (deleteFromDiskLibraryId) {
-      unblockLibraryMediaReads(deleteFromDiskLibraryId);
-    }
     if (relinkPreviewContext) {
       pendingRelinkPreviews.cancel(
         relinkPreviewContext.libraryId,
@@ -5403,11 +5673,13 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     if (previousLibraryPaths.length > 0) {
       await reopenLibrariesAfterFailedReplacement(previousLibraryPaths);
     }
-    const publicError = error instanceof LibraryParentError
-      ? createPublicError(error.code, error.reason)
-      : error instanceof WorkerRequestTimeoutError
-        ? createPublicError("INTERNAL_ERROR", "LIBRARY_TRANSFER_TIMEOUT")
-        : toPublicError(error);
+    const publicError = error instanceof ExternalLibraryArchiveError
+      ? createPublicError(error.publicCode, error.reason)
+      : error instanceof LibraryParentError
+        ? createPublicError(error.code, error.reason)
+        : error instanceof WorkerRequestTimeoutError
+          ? createPublicError("INTERNAL_ERROR", "LIBRARY_TRANSFER_TIMEOUT")
+          : toPublicError(error);
     if (operation) {
       publishLifecycle({
         type: "library.open-failed",
@@ -5417,6 +5689,9 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
     return { ok: false, error: publicError };
   } finally {
+    if (deleteFromDiskLibraryId) {
+      endLibraryDeleteMediaFence(deleteFromDiskLibraryId);
+    }
     if (!retainExternalSource) {
       const sourceRootPath =
         command?.type === "library.inspect-eagle" ||
@@ -5694,7 +5969,7 @@ async function executeMcpLibraryContextCommand(input: {
   }
   if (input.commandId === 'library.open') {
     if (selected.libraryId === '' || needsOpen) {
-      publishLifecycle({ type: 'library.opening', operation: 'open' });
+      publishLifecycle({ type: 'library.opening', operation: 'open', source: 'mcp' });
       const opened = await client.request({
         type: 'library.open',
         selectedLibraryPath: selected.libraryPath,
@@ -5779,11 +6054,15 @@ function scheduleWindowsInstallerCleanup(installerPath: string): void {
       { detached: true, stdio: "ignore", windowsHide: true },
     );
     cleanupProcess.once("error", (error) => {
-      logger?.error("app-update.cleanup", error, { artifact: outputDirectory });
+      logger?.error("app-update.cleanup", error, {
+        artifactKind: "windows-installer-cleanup",
+      });
     });
     cleanupProcess.unref();
   } catch (error) {
-    logger?.error("app-update.cleanup", error, { artifact: outputDirectory });
+    logger?.error("app-update.cleanup", error, {
+      artifactKind: "windows-installer-cleanup",
+    });
   }
 }
 
@@ -5812,6 +6091,7 @@ async function startApplication(): Promise<void> {
   }
   appLogPath = chooseUniqueSessionLogPath(app.getPath("logs"), new Date());
   logger = new AppLogger(appLogPath);
+  void sweepOrphanExternalLibraryStagingOnStartup();
   appUpdateService = createAppUpdateService({
     currentVersion: app.getVersion(),
     isPackaged: app.isPackaged,
@@ -5871,8 +6151,18 @@ async function startApplication(): Promise<void> {
   workerClient = new LibraryWorkerClient(
     path.join(__dirname, "library_worker.js"),
     logger,
+    {
+      ...process.env,
+      SERPENT_LIBRARY_METADATA_CACHE_PATH: path.join(
+        app.getPath('userData'),
+        'library-metadata-cache',
+      ),
+    },
   );
   await workerClient.start();
+  // Serpent-65d837: remove any `.del-*` aside roots that could not be deleted
+  // during a previous session (deferred-cleanup store, backoff loop).
+  retryPendingLibraryCleanups();
   const activeWorkerClient = workerClient;
   // Slice E (Serpent-hnmg): Main owns the shared offscreen window that renders
   // model thumbnails. The worker enqueues model jobs and asks Main to render;
@@ -6929,9 +7219,15 @@ async function startApplication(): Promise<void> {
   });
   syncAutoScheduler.start();
 
-  const recentPath = readActiveLibraryPath(recentLibraryPath(), (error) => {
-    logger?.error("recent-library.read", error);
-  });
+  // Production startup intentionally leaves the library closed. A missing,
+  // disconnected, or incompatible active library must not hold the app before
+  // the user can choose another one from the always-available switcher. The
+  // explicit opt-in is reserved for isolated full-restart E2E coverage.
+  const recentPath = recentLibraryAutoOpenEnabled()
+    ? readActiveLibraryPath(recentLibraryPath(), (error) => {
+        logger?.error("recent-library.read", error);
+      })
+    : null;
   if (recentPath) {
     const restored = await workerClient.request({
       type: "library.open",
@@ -7195,6 +7491,7 @@ async function startApplication(): Promise<void> {
         ".webp": "image/webp",
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
+        ".jfif": "image/jpeg",
         ".png": "image/png",
         ".gif": "image/gif",
         ".webm": "video/webm",
@@ -7270,7 +7567,7 @@ async function startApplication(): Promise<void> {
         // the batch returned. Do not keep serving a stale artifact location
         // after the first failed read; the next request will ask the Worker
         // for the current path.
-        artifactPathCache.delete(artifactPathCacheKey(libraryId, artifactId, url.hostname));
+        artifactPathCache.invalidateArtifact(libraryId, artifactId, url.hostname);
         return new Response("Artifact file missing", { status: 404 });
       }
     } catch (error) {

@@ -4,7 +4,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { resolveElectronExecutablePath } from "./electron-test-helpers";
+import {
+  openLinkedFolderImportMenu,
+  resolveElectronExecutablePath,
+} from "./electron-test-helpers";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -615,9 +618,7 @@ test("multi-asset menu shows a visible count and mixed-selection skip reasons", 
       window.locator('[data-asset-id][title="managed.png"]'),
     ).toBeVisible({ timeout: 15_000 });
 
-    await window.getByRole("button", { name: "主菜单" }).click();
-    await window.getByRole("menuitem", { name: "文件", exact: true }).hover();
-    await window.getByRole("menuitem", { name: "导入链接文件夹" }).click();
+    await openLinkedFolderImportMenu(application, window);
     await window.getByRole("button", { name: "所有资产" }).click();
 
     const managedCard = window.locator(

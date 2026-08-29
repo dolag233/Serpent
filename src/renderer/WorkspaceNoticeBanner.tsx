@@ -54,7 +54,9 @@ export function WorkspaceNoticeBanner({
           <Icon name={iconName} size={15} />
         </span>
       )}
-      message={message.text}
+      message={(
+        <span data-hover-tip={message.text}>{message.text}</span>
+      )}
       onTransitionEnd={onTransitionEnd}
       onDismiss={onDismiss}
       tone={message.kind === "notice" ? "info" : message.kind}

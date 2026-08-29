@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -16,6 +17,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   extractZipStream,
+  inspectZipUncompressedBytes,
   zipBombProtectionLimits,
   ZipImportStreamError,
   type ZipImportProgress,
@@ -335,5 +337,19 @@ describe('extractZipStream', () => {
     expect(readFileSync(path.join(destinationRoot, 'Assets', 'completed.bin'), 'utf-8'))
       .toBe('completed');
     expect(readFileSync(existingFile, 'utf-8')).toBe('user data');
+  });
+});
+
+describe('inspectZipUncompressedBytes', () => {
+  it('sums uncompressed entry sizes without writing files', async () => {
+    const root = temporaryRoot();
+    const zipPath = path.join(root, 'sizes.zip');
+    const payload = Buffer.alloc(4_096, 7);
+    await createZip(zipPath, [
+      { name: 'one.bin', data: payload },
+      { name: 'two.bin', data: payload },
+    ]);
+    await expect(inspectZipUncompressedBytes(zipPath)).resolves.toBe(8_192);
+    expect(readdirSync(root)).toEqual(['sizes.zip']);
   });
 });

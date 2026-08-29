@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
-import { aiSearchPlanSchema, assetMetadataResultSchema, extractedMetadataResultSchema, assetSummarySchema, browseLayoutEntrySchema, collectionSummarySchema, folderBrowseEntrySchema, ignoredPathSchema, linkedFolderDirectoryMutationSchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagCooccurrenceGraphSchema, tagSummarySchema, trashedFolderSummarySchema } from '../asset-types';
+import { aiSearchPlanSchema, assetMetadataResultSchema, extractedMetadataResultSchema, assetSummarySchema, browseGeometryBlockSchema, browseLayoutEntrySchema, collectionSummarySchema, folderBrowseEntrySchema, ignoredPathSchema, linkedFolderDirectoryMutationSchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagCooccurrenceGraphSchema, tagSummarySchema, trashedFolderSummarySchema } from '../asset-types';
+import { libraryNavigationSummarySchema } from '../library-navigation';
 import { pluginJobRecordSchema } from '../../plugins/plugin-jobs';
 import { recentLibraryListSchema } from '../recent-libraries';
 import { publicErrorReasonSchema, publicErrorSchema } from './errors';
@@ -1080,6 +1081,64 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('browse.session.opened'),
+    sessionId: nonBlankString,
+    libraryGeneration: z.number().int().nonnegative(),
+    changeSequence: z.number().int().nonnegative(),
+    queryFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
+    items: z.array(assetSummarySchema),
+    total: z.number().int().nonnegative(),
+    offset: z.number().int().nonnegative(),
+    snippets: z.array(z.strictObject({
+      assetId: nonBlankString,
+      text: z.string().max(4_000),
+    })).optional(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('browse.session.page'),
+    sessionId: nonBlankString,
+    changeSequence: z.number().int().nonnegative(),
+    items: z.array(assetSummarySchema),
+    total: z.number().int().nonnegative(),
+    offset: z.number().int().nonnegative(),
+    snippets: z.array(z.strictObject({
+      assetId: nonBlankString,
+      text: z.string().max(4_000),
+    })).optional(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('browse.session.geometry'),
+    libraryId: nonBlankString,
+    ...browseGeometryBlockSchema.shape,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('browse.session.ids'),
+    libraryId: nonBlankString,
+    sessionId: nonBlankString,
+    changeSequence: z.number().int().nonnegative(),
+    assetIds: z.array(nonBlankString).max(100_000),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('browse.session.stale'),
+    sessionId: nonBlankString,
+    reason: z.enum(['library-generation', 'change-sequence', 'missing']),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('browse.session.closed'),
+    sessionId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('library.navigation-summary'),
+    summary: libraryNavigationSummarySchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('asset.trashed'),
     trashedCount: z.number().int().nonnegative(),
     operationId: nonBlankString,
@@ -1616,6 +1675,15 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
     libraryId: nonBlankString,
     displayName: nonBlankString,
     libraryPath: nonBlankString,
+    // Serpent-65d837: set when the root was renamed aside and the aside copy
+    // still could not be removed; Main must re-queue it for deferred cleanup.
+    pendingAsidePath: nonBlankString.optional(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('system.cleanup-pending-deletions'),
+    cleanedPaths: z.array(nonBlankString),
+    remainingPaths: z.array(nonBlankString),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -2040,6 +2108,9 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     type: z.literal('library.deleted'),
     libraryId: nonBlankString,
     displayName: nonBlankString,
+    // Serpent-65d837: true when a leftover .del-* root still needs deferred
+    // cleanup; the Renderer shows a notice describing automatic retries.
+    pendingCleanup: z.boolean().optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -2289,6 +2360,7 @@ export const rendererLifecycleEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('library.opening'),
     operation: libraryLifecycleOperationSchema,
+    source: z.enum(['mcp']).optional(),
   }),
   z.strictObject({
     type: z.literal('library.opened'),
@@ -2306,6 +2378,7 @@ export const rendererLifecycleEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('library.closed'),
     libraryId: nonBlankString,
+    source: z.enum(['mcp']).optional(),
   }),
 ]);
 

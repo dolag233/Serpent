@@ -343,6 +343,84 @@ test("plays a direct MP4 and a generated WebM fallback through the asset viewer"
       .poll(() => directVideo.getAttribute("src"), { timeout: 30_000 })
       .toMatch(/^serpent:\/\/source\//);
     await expectPlayableAndSeekable(directVideo);
+    const directVideoChrome = directViewer.locator(".preview-video-controls");
+    const directFullscreenButton = directViewer.getByRole("button", {
+      name: "全屏",
+    });
+    await directVideo.hover();
+    await directFullscreenButton.click();
+    await expect(
+      directViewer.getByRole("button", { name: "退出全屏" }),
+    ).toBeVisible({ timeout: 10_000 });
+    await expect
+      .poll(() =>
+        window.evaluate(() => Boolean(document.fullscreenElement)),
+      )
+      .toBe(true);
+    // A focused fullscreen button must not keep the transport chrome visible
+    // forever after the viewer idle timer expires.
+    await expect
+      .poll(() => directVideoChrome.evaluate((element) => getComputedStyle(element).opacity), {
+        timeout: 5_000,
+      })
+      .toBe("0");
+    await window.evaluate(async () => {
+      if (document.fullscreenElement) await document.exitFullscreen();
+    });
+    await expect(directFullscreenButton).toBeVisible();
+    await directVideo.evaluate((element) => {
+      if (!(element instanceof HTMLVideoElement)) throw new TypeError("not a video");
+      element.currentTime = 1;
+    });
+    await expect
+      .poll(() =>
+        directVideo.evaluate((element) => {
+          if (!(element instanceof HTMLVideoElement)) throw new TypeError("not a video");
+          return element.currentTime;
+        }),
+      )
+      .toBeGreaterThan(0.5);
+    await directVideo.evaluate(async (element) => {
+      if (!(element instanceof HTMLVideoElement)) throw new TypeError("not a video");
+      element.muted = true;
+      await element.play();
+    });
+    await expect
+      .poll(() =>
+        directVideo.evaluate((element) => {
+          if (!(element instanceof HTMLVideoElement)) throw new TypeError("not a video");
+          return element.paused;
+        }),
+      )
+      .toBe(false);
+    const directScrubber = directViewer.getByRole("slider", {
+      name: "拖动视频进度",
+    });
+    const scrubberBox = await directScrubber.boundingBox();
+    expect(scrubberBox).not.toBeNull();
+    await window.mouse.move(
+      scrubberBox!.x + scrubberBox!.width * 0.35,
+      scrubberBox!.y + scrubberBox!.height / 2,
+    );
+    await window.mouse.down();
+    await window.mouse.move(
+      scrubberBox!.x + scrubberBox!.width * 0.55,
+      scrubberBox!.y + scrubberBox!.height / 2,
+      { steps: 4 },
+    );
+    await window.mouse.up();
+    await directScrubber.focus();
+    await window.keyboard.press("Space");
+    // Space belongs to viewer playback even after the scrubber receives focus;
+    // it must not invoke the slider's native Space behavior instead.
+    await expect
+      .poll(() =>
+        directVideo.evaluate((element) => {
+          if (!(element instanceof HTMLVideoElement)) throw new TypeError("not a video");
+          return element.paused;
+        }),
+      )
+      .toBe(true);
     // Video zoom/pan/fit mirrors the image viewer (Serpent-190): the mouse
     // wheel zooms, a drag pans while zoomed, and Fit restores fit-to-window.
     const videoFitBox = await directVideo.boundingBox();

@@ -19,6 +19,7 @@ export type PlaybackIntent = "play" | "pause";
 /** Minimal shape so helpers stay unit-testable outside a DOM environment. */
 export type KeyboardTargetLike = {
   tagName?: string;
+  role?: string;
   isContentEditable?: boolean;
   closest?: (selector: string) => unknown;
 } | null;
@@ -86,25 +87,12 @@ function matchPhysicalOrKey(
   return keys.includes(event.key);
 }
 
-function isFocusedChromeControl(
-  target: KeyboardTargetLike | EventTarget | null,
-): boolean {
-  if (target == null || typeof target !== "object") return false;
-  const el = target as KeyboardTargetLike & object;
-  const tag = el.tagName?.toUpperCase();
-  if (tag === "BUTTON" || tag === "A") return true;
-  if (
-    typeof el.closest === "function" &&
-    el.closest('button, a, [role="button"], [role="menuitem"], [role="option"]')
-  ) {
-    return true;
-  }
-  return false;
-}
-
 /**
- * Space toggles play/pause only when the viewer is open and the key is not
- * needed by an editable field or focused chrome control.
+ * Space toggles play/pause when the viewer is open. The video scrubber is
+ * deliberately owned by the viewer shortcut so its native Space behavior
+ * cannot turn a scrub operation into a control-only interaction. This applies
+ * to every non-editable viewer control; real text fields retain their native
+ * semantics.
  */
 export function shouldHandleVideoSpaceKey(event: {
   key: string;
@@ -115,7 +103,6 @@ export function shouldHandleVideoSpaceKey(event: {
   if (event.repeat) return false;
   if (event.key !== " " && event.code !== "Space") return false;
   if (isEditableKeyboardTarget(event.target)) return false;
-  if (isFocusedChromeControl(event.target)) return false;
   return true;
 }
 

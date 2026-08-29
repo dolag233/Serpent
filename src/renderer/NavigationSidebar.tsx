@@ -863,6 +863,18 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     return mode;
   }
 
+  /**
+   * Production Electron drags arrive as native `Files`; the E2E/in-window
+   * fallback carries the managed-asset MIME type. Both represent an asset
+   * drag for target highlighting, while only the latter can be parsed locally.
+   */
+  function supportsAssetDropTransfer(transfer: DataTransfer): boolean {
+    return (
+      supportsManagedAssetDrag(transfer) ||
+      supportsExternalImportTransfer(transfer)
+    );
+  }
+
   function assetFolderDropHandlers(key: string, folderId: string | null) {
     return {
       dropActive: assetDropTarget === key,
@@ -1274,16 +1286,32 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         draggable={inlineCollectionRename?.collectionId !== c.collectionId}
         key={c.collectionId}
         onDragEnd={() => onSetDraggedCollectionId(null)}
+        onDragEnter={(event) => {
+          if (supportsAssetDropTransfer(event.dataTransfer)) {
+            setAssetDropTarget(`collection:${c.collectionId}`);
+          }
+        }}
+        onDragLeave={(event) => {
+          if (event.currentTarget.contains(event.relatedTarget as Node | null))
+            return;
+          setAssetDropTarget((current) =>
+            current === `collection:${c.collectionId}` ? null : current,
+          );
+        }}
         onDragOver={(event) => {
           if (supportsManagedAssetDrag(event.dataTransfer)) {
+            setAssetDropTarget(`collection:${c.collectionId}`);
             applyManagedAssetDragOver(event);
             return;
           }
-          if (
-            draggedCollectionId ||
-            supportsExternalImportTransfer(event.dataTransfer)
-          )
+          if (supportsExternalImportTransfer(event.dataTransfer)) {
+            setAssetDropTarget(`collection:${c.collectionId}`);
+            onExternalDragOver(event);
+            return;
+          }
+          if (draggedCollectionId) {
             event.preventDefault();
+          }
         }}
         onDragStart={(event) => {
           event.stopPropagation();
@@ -1385,11 +1413,15 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             navCollectionId={c.collectionId}
             dropActive={assetDropTarget === `collection:${c.collectionId}`}
             onDragEnter={(event) => {
-              if (supportsManagedAssetDrag(event.dataTransfer)) {
+              if (supportsAssetDropTransfer(event.dataTransfer)) {
+                event.stopPropagation();
                 setAssetDropTarget(`collection:${c.collectionId}`);
               }
             }}
             onDragLeave={(event) => {
+              if (supportsAssetDropTransfer(event.dataTransfer)) {
+                event.stopPropagation();
+              }
               if (event.currentTarget.contains(event.relatedTarget as Node | null))
                 return;
               setAssetDropTarget((current) =>
@@ -1398,7 +1430,15 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             }}
             onDragOver={(event) => {
               if (supportsManagedAssetDrag(event.dataTransfer)) {
+                event.stopPropagation();
                 applyManagedAssetDragOver(event);
+              } else if (supportsExternalImportTransfer(event.dataTransfer)) {
+                event.stopPropagation();
+                setAssetDropTarget(`collection:${c.collectionId}`);
+                // Native Electron asset drags arrive as Files. The child row
+                // owns the event so the parent collection cannot steal the
+                // highlight, therefore it must also accept the drop here.
+                onExternalDragOver(event);
               }
             }}
             onDrop={(event) => {
@@ -1486,7 +1526,8 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           onDragEnter={(event) => {
             if (
               supportsManagedFolderDrag(event.dataTransfer) ||
-              supportsManagedAssetDrag(event.dataTransfer)
+              supportsManagedAssetDrag(event.dataTransfer) ||
+              supportsExternalImportTransfer(event.dataTransfer)
             )
               setAssetDropTarget("trash");
           }}
@@ -1505,6 +1546,13 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
               // Trash is always a move/delete target; Option does not copy.
               event.preventDefault();
               event.dataTransfer.dropEffect = "move";
+              onManagedAssetCopyModeChange?.(false);
+            } else if (supportsExternalImportTransfer(event.dataTransfer)) {
+              // Native asset drags arrive as Files. Resolve them on drop and
+              // keep the trash affordance consistent with the managed path.
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+              setAssetDropTarget("trash");
               onManagedAssetCopyModeChange?.(false);
             }
           }}

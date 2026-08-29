@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   bindLibraryMediaReadSignal,
-  blockLibraryMediaReads,
+  beginLibraryDeleteMediaFence,
+  endLibraryDeleteMediaFence,
   isLibraryMediaReadBlocked,
   unblockLibraryMediaReads,
 } from '../../src/main/library-media-reads';
@@ -19,7 +20,7 @@ describe('library media reads (Serpent-dfgg)', () => {
     expect(signal.aborted).toBe(false);
     expect(isLibraryMediaReadBlocked(LIBRARY_ID)).toBe(false);
 
-    blockLibraryMediaReads(LIBRARY_ID);
+    beginLibraryDeleteMediaFence(LIBRARY_ID);
 
     expect(isLibraryMediaReadBlocked(LIBRARY_ID)).toBe(true);
     expect(signal.aborted).toBe(true);
@@ -35,20 +36,28 @@ describe('library media reads (Serpent-dfgg)', () => {
   });
 
   it('returns an already-aborted signal for blocked libraries', () => {
-    blockLibraryMediaReads(LIBRARY_ID);
+    beginLibraryDeleteMediaFence(LIBRARY_ID);
     const signal = bindLibraryMediaReadSignal(LIBRARY_ID);
     expect(signal.aborted).toBe(true);
   });
 
   it('allows new reads after a failed delete reopens the library', () => {
     const first = bindLibraryMediaReadSignal(LIBRARY_ID);
-    blockLibraryMediaReads(LIBRARY_ID);
+    beginLibraryDeleteMediaFence(LIBRARY_ID);
     expect(first.aborted).toBe(true);
 
-    unblockLibraryMediaReads(LIBRARY_ID);
+    endLibraryDeleteMediaFence(LIBRARY_ID);
     expect(isLibraryMediaReadBlocked(LIBRARY_ID)).toBe(false);
 
     const second = bindLibraryMediaReadSignal(LIBRARY_ID);
     expect(second.aborted).toBe(false);
+  });
+
+  it('releases the fence after a successful delete so ZIP re-import of the same library_id can serve previews', () => {
+    beginLibraryDeleteMediaFence(LIBRARY_ID);
+    endLibraryDeleteMediaFence(LIBRARY_ID);
+    expect(isLibraryMediaReadBlocked(LIBRARY_ID)).toBe(false);
+    const signal = bindLibraryMediaReadSignal(LIBRARY_ID);
+    expect(signal.aborted).toBe(false);
   });
 });

@@ -221,7 +221,6 @@ export function LibrarySwitcher({
           </button>
           <button
             className="library-switcher-item"
-            disabled={busy}
             onClick={() => runMenuAction(onOpenLibrary)}
             role="menuitem"
             tabIndex={-1}
@@ -231,7 +230,7 @@ export function LibrarySwitcher({
           </button>
           <button
             className="library-switcher-item"
-            disabled={!libraryName || busy}
+            disabled={!libraryName}
             onClick={() => runMenuAction(onCloseLibrary)}
             role="menuitem"
             tabIndex={-1}

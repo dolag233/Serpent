@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -32,6 +33,20 @@ import {
   mixCountsFor,
   sizeBucketForIndex,
 } from '../worker/large-library-mix';
+import { resolveFfmpegPath } from '../../src/worker/binary-resolver';
+
+function supportsLavfiInput(): boolean {
+  try {
+    const output = execFileSync(
+      resolveFfmpegPath(),
+      ['-hide_banner', '-formats'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    return /\blavfi\b/u.test(output);
+  } catch {
+    return false;
+  }
+}
 
 describe('large-library mix', () => {
   it('supports a strict all-previewable image benchmark profile', () => {
@@ -165,7 +180,7 @@ describe('large-library media bytes', () => {
     expect(createUnsupportedBytes(3).includes(Buffer.from('SERPENT-UNSUPPORTED'))).toBe(true);
   });
 
-  it('encodes short unique mp4 and webm clips when ffmpeg is available', () => {
+  it.runIf(supportsLavfiInput())('encodes short unique mp4 and webm clips when ffmpeg exposes lavfi', () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), 'serpent-large-video-'));
     try {
       const mp4Path = path.join(directory, 'clip.mp4');

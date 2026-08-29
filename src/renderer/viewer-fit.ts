@@ -19,9 +19,13 @@ export function fitContainScale(
   return Math.min(viewportWidth / imageWidth, viewportHeight / imageHeight);
 }
 
+/** The scale range shared by wheel, keyboard, and the viewer range control. */
+export const VIEWER_MIN_SCALE = 0.05;
+export const VIEWER_MAX_SCALE = 8;
+
 /** Clamp a zoom scale between actual-size floor/ceiling for the viewer. */
 export function clampViewerScale(scale: number): number {
-  return Math.min(8, Math.max(0.05, scale));
+  return Math.min(VIEWER_MAX_SCALE, Math.max(VIEWER_MIN_SCALE, scale));
 }
 
 /**

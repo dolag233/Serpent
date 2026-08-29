@@ -34,6 +34,13 @@ describe("parseImageSequenceFileName", () => {
       numericWidth: 0,
       prefix: "photo ",
     });
+    expect(parseImageSequenceFileName("reference_0042.JFIF")).toMatchObject({
+      extension: ".jfif",
+      frameNumber: 42,
+      numberStyle: "trailing",
+      numericWidth: 4,
+      prefix: "reference_",
+    });
     expect(parseImageSequenceFileName("shot_(001).png")).toMatchObject({
       frameNumber: 1,
       numberStyle: "parens",

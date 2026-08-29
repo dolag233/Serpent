@@ -37,6 +37,12 @@ describe("PreviewCache", () => {
     expect(existsSync(mirrored!)).toBe(true);
     expect(await cache.totalBytes()).toBe(128);
     expect(await cache.countFiles()).toBe(1);
+    expect(cache.getMetrics()).toMatchObject({
+      hits: 1,
+      misses: 1,
+      stores: 1,
+      bytesStored: 128,
+    });
   });
 
   it("returns null for unknown artifacts without creating directories", () => {
@@ -75,6 +81,10 @@ describe("PreviewCache", () => {
     await small.evictToBudget();
     expect(small.locateSync("lib", "old", ".webp")).toBeNull();
     expect(small.locateSync("lib", "new", ".webp")).not.toBeNull();
+    expect(small.getMetrics()).toMatchObject({
+      evictions: 1,
+      bytesEvicted: 200,
+    });
   });
 
   it("purges one library without touching others", async () => {
@@ -86,7 +96,7 @@ describe("PreviewCache", () => {
     expect(cache.locateSync("libB", "artifact", ".jpg")).not.toBeNull();
   });
 
-  it("emits hit and store events for diagnostics", async () => {
+  it("emits hit, miss and store events for diagnostics", async () => {
     const events: string[] = [];
     const observed = new PreviewCache({
       rootDir: path.join(root, "events"),
@@ -94,9 +104,12 @@ describe("PreviewCache", () => {
       onEvent: (event) => events.push(`${event.kind}:${event.artifactId}`),
     });
     const origin = originFile("a.bin", 16);
+    observed.locateSync("lib", "missing", ".webp");
     await observed.store("lib", "artifact", origin, ".webp");
     observed.locateSync("lib", "artifact", ".webp");
+    expect(events).toContain("miss:missing");
     expect(events).toContain("store:artifact");
     expect(events).toContain("hit:artifact");
+    expect(observed.getMetrics()).toMatchObject({ hits: 1, misses: 1, stores: 1 });
   });
 });

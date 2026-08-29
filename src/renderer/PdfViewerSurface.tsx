@@ -30,7 +30,13 @@ export type PdfViewerSurfaceProps = {
   sourceUrl: string | null;
   /** Ready document thumbnail shown while pdf.js loads the real source. */
   placeholderUrl?: string | null;
+  /** Aborted when the owning viewer session closes or changes revision. */
+  sessionSignal?: AbortSignal | null;
   isFullscreen: boolean;
+  /** Preloaded navigation surfaces must not own global zoom shortcuts. */
+  keyboardShortcutsDisabled?: boolean;
+  /** Called when a placeholder, first page, or error can be shown. */
+  onPresentationReady?: () => void;
 };
 
 /** Zoom bounds (1 = fit viewer width). */
@@ -68,7 +74,10 @@ function clampZoom(zoom: number): number {
 export function PdfViewerSurface({
   sourceUrl,
   placeholderUrl,
+  sessionSignal,
   isFullscreen,
+  keyboardShortcutsDisabled = false,
+  onPresentationReady,
 }: PdfViewerSurfaceProps) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement>(null);
@@ -86,6 +95,12 @@ export function PdfViewerSurface({
   const [zoom, setZoom] = useState(1);
   const [hostClientWidth, setHostClientWidth] = useState(0);
   const [pdfLoading, setPdfLoading] = useState(Boolean(sourceUrl));
+
+  useEffect(() => {
+    if (error || loadedPages > 0 || (placeholderUrl && !sourceUrl)) {
+      onPresentationReady?.();
+    }
+  }, [error, loadedPages, onPresentationReady, placeholderUrl, sourceUrl]);
   /**
    * Page-local zoom anchor. Flex gap and padding do not scale with zoom, so
    * later pages cannot use origin-uniform `(scroll + pointer) * ratio`.
@@ -132,8 +147,16 @@ export function PdfViewerSurface({
   // protocol instead: the renderer never receives a filesystem path, and the
   // PDF parser can request only the byte ranges it needs.
   useEffect(() => {
-    let cancelled = false;
+    let cancelled = Boolean(sessionSignal?.aborted);
     let loadingTask: PDFDocumentLoadingTask | null = null;
+    const rangeControllers = new Set<AbortController>();
+    let abortRangeRequests: (() => void) | undefined;
+    const abortSessionWork = () => {
+      cancelled = true;
+      abortRangeRequests?.();
+      void loadingTask?.destroy();
+    };
+    sessionSignal?.addEventListener("abort", abortSessionWork, { once: true });
     queueMicrotask(() => {
       if (cancelled) return;
       setPdfLoading(Boolean(sourceUrl));
@@ -168,12 +191,12 @@ export function PdfViewerSurface({
         try {
           const probe = await fetch(sourceUrl, {
             headers: { Range: "bytes=0-0" },
+            signal: sessionSignal ?? undefined,
           });
           const contentRange = parseContentRange(probe.headers.get("Content-Range"));
           if (probe.status === 206 && contentRange) {
             const initialData = new Uint8Array(await probe.arrayBuffer());
             if (!cancelled) {
-              const rangeControllers = new Set<AbortController>();
               let aborted = false;
               const transport = new pdfjs.PDFDataRangeTransport(
                 contentRange.length,
@@ -188,6 +211,8 @@ export function PdfViewerSurface({
                 if (existing) return;
                 const controller = new AbortController();
                 rangeControllers.add(controller);
+                const abortFromSession = () => controller.abort();
+                sessionSignal?.addEventListener("abort", abortFromSession, { once: true });
                 const request = fetch(sourceUrl, {
                   headers: { Range: `bytes=${begin}-${end - 1}` },
                   signal: controller.signal,
@@ -205,6 +230,7 @@ export function PdfViewerSurface({
                   .finally(() => {
                     rangeRequests.delete(key);
                     rangeControllers.delete(controller);
+                    sessionSignal?.removeEventListener("abort", abortFromSession);
                   });
                 rangeRequests.set(key, request);
               };
@@ -213,12 +239,13 @@ export function PdfViewerSurface({
                 abort(): void;
               };
               rangeTransport.requestDataRange = requestRange;
-              rangeTransport.abort = () => {
+              abortRangeRequests = () => {
                 aborted = true;
                 for (const controller of rangeControllers) controller.abort();
                 rangeControllers.clear();
                 rangeRequests.clear();
               };
+              rangeTransport.abort = abortRangeRequests;
               range = rangeTransport;
             }
           }
@@ -250,22 +277,29 @@ export function PdfViewerSurface({
       }
     })();
     return () => {
-      cancelled = true;
-      void loadingTask?.destroy();
+      sessionSignal?.removeEventListener("abort", abortSessionWork);
+      abortSessionWork();
     };
-  }, [sourceUrl, t]);
+  }, [sessionSignal, sourceUrl, t]);
 
   // Render the page column. Re-runs when the document loads or the zoom
   // or host width changes; the loaded document is reused so zooming never
   // re-fetches.
   useEffect(() => {
     const host = hostRef.current;
-    if (!host || !pdfDoc || hostClientWidth <= 48) return;
+    if (!host || !pdfDoc || hostClientWidth <= 48 || sessionSignal?.aborted) return;
     let cancelled = false;
     let observer: IntersectionObserver | null = null;
     const rendered = new Set<number>();
     const renderTasks = new Set<RenderTask>();
     const pageNodes: HTMLElement[] = [];
+    const abortRenderWork = () => {
+      cancelled = true;
+      observer?.disconnect();
+      for (const renderTask of renderTasks) renderTask.cancel();
+      renderTasks.clear();
+    };
+    sessionSignal?.addEventListener("abort", abortRenderWork, { once: true });
     // Nodes from the previous render pass (zoom change). Kept as transition
     // placeholders so the column never blanks out between zoom levels. Page
     // boxes resize immediately (required for later-page pointer anchors);
@@ -457,15 +491,13 @@ export function PdfViewerSurface({
     })();
 
     return () => {
-      cancelled = true;
-      observer?.disconnect();
-      for (const renderTask of renderTasks) renderTask.cancel();
-      renderTasks.clear();
+      sessionSignal?.removeEventListener("abort", abortRenderWork);
+      abortRenderWork();
       // Do NOT clear host.textContent here: zoom re-renders reuse the previous
       // page nodes as transition placeholders (no white flash). The component
       // unmount is handled by React removing the subtree.
     };
-  }, [hostClientWidth, pdfDoc, t, zoom]);
+  }, [hostClientWidth, pdfDoc, sessionSignal, t, zoom]);
 
   /**
    * Apply a new zoom while keeping the page-local point under the pointer
@@ -523,6 +555,7 @@ export function PdfViewerSurface({
   // Cmd/Ctrl+= / - / 0 — same global chords as the image/video viewer
   // (0 resets to fit width). Ignore while typing in an editable target.
   useEffect(() => {
+    if (keyboardShortcutsDisabled) return;
     const platform = isMacPlatform(navigator.userAgent) ? "mac" : "windows";
     const onKeyDown = (event: KeyboardEvent) => {
       if (shouldIgnoreGlobalZoomShortcut(event.target)) return;
@@ -539,7 +572,7 @@ export function PdfViewerSurface({
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zoom]);
+  }, [keyboardShortcutsDisabled, zoom]);
 
   return (
     <div
@@ -549,7 +582,10 @@ export function PdfViewerSurface({
     >
       {placeholderUrl && loadedPages === 0 ? (
         <div className="pdf-viewer-placeholder" aria-hidden="true">
-          <img alt="" src={placeholderUrl} />
+          <img
+            alt=""
+            src={placeholderUrl}
+          />
         </div>
       ) : null}
       {pageCount !== null ? (
