@@ -114,6 +114,22 @@ export function readCanvasLocalViewport(
 }
 
 /**
+ * True when `[top, top + height]` overlaps the real canvas visible range.
+ * Virtual cards outside this range stay mounted for scroll continuity but
+ * must not receive a media URL (`deferUntilVisible`).
+ */
+export function itemIntersectsVisibleRange(
+  top: number,
+  height: number,
+  visibleStart: number,
+  visibleEnd: number,
+): boolean {
+  const itemTop = Number.isFinite(top) ? top : 0;
+  const itemHeight = Number.isFinite(height) && height > 0 ? height : 0;
+  return itemTop + itemHeight > visibleStart && itemTop < visibleEnd;
+}
+
+/**
  * Contiguous window over a column/row of estimated heights.
  * `start` is inclusive, `end` is exclusive.
  */

@@ -9251,7 +9251,11 @@ select.ai-config-input.ai-config-languages {
   min-width: 0;
   box-sizing: border-box;
   flex-direction: column;
-  gap: 14px;
+  /* Windowing spacers own the inter-row gap via row margin. A CSS gap
+     here would add extra empty strips that the row window cannot see, so
+     loadImmediately drifts above the real viewport (Serpent-1s3d /
+     Serpent-614293). */
+  gap: 0;
 }
 
 .justified-row {
@@ -9295,8 +9299,11 @@ select.ai-config-input.ai-config-languages {
 
 .justified-card-slot .asset-caption {
   flex: 0 0 auto;
-  min-height: 18px;
+  box-sizing: border-box;
+  height: var(--justified-caption-band, auto);
+  min-height: 0;
   padding-top: 4px;
+  overflow: hidden;
 }
 
 .justified-card-slot .asset-caption strong {

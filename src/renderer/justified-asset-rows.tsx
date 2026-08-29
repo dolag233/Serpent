@@ -24,6 +24,7 @@ import { columnWindow, useCanvasLocalViewport } from "./viewport-window";
 import type { VirtualBrowseLayout } from "./browse/virtual-browse-layout";
 import {
   VirtualJustifiedAssetRows,
+  virtualJustifiedRowStyle,
   type BrowseCardRenderOptions,
 } from "./browse/virtual-browse-canvas";
 
@@ -166,7 +167,11 @@ function RegularJustifiedAssetRows({
     <div
       className="justified-rows"
       ref={containerRef}
-      style={{ gap: 0, minHeight: rowWindow.totalHeight }}
+      style={{
+        gap: 0,
+        minHeight: rowWindow.totalHeight,
+        ["--justified-caption-band" as string]: `${captionBandPx}px`,
+      }}
     >
       {rowWindow.spacerBefore > 0 ? (
         <div
@@ -181,7 +186,10 @@ function RegularJustifiedAssetRows({
           <div
             className="justified-row"
             key={`justified-row-${rowIndex}`}
-            style={isLast ? undefined : { marginBottom: ASSET_GRID_GAP_PX }}
+            style={virtualJustifiedRowStyle({
+              bodyHeightPx: row.height + captionBandPx,
+              isLast,
+            })}
           >
             {row.items.map((placement) => {
               const asset = assetById.get(placement.id);

@@ -42,6 +42,12 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-08-29 平铺模式可见缩略图窗口
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| CANVAS-041 / `Serpent-614293` | 平铺大库滚动时视口顶部缩略图仍解码 | 人类验收通过 | 打开 2w+ 库切到平铺；分别停在约 20% 与 90% 滚动位置；观察视口最上一行和即将滚出的卡片。再切瀑布流对照 | 平铺当前可见行（含顶部被裁切的一行）缩略图真实解码，不是文件图标；越往下滚不得出现半屏占位。瀑布流保持原样 | [开发日志](../development/2026-08-29-justified-visible-thumbnail-window-development-log.md) / `src/renderer/browse/virtual-browse-canvas.tsx` / `src/renderer/viewport-window.ts` / `tests/unit/viewport-window.test.ts` / `tests/unit/virtual-browse-canvas.test.ts` | 2026-08-29 用户验收通过。自动化：3 files / 23 passed。packaged 未执行。 |
+
 ### 2026-08-29 合集层级组织回归
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

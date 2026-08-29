@@ -1,7 +1,13 @@
 # Serpent 项目状态
 
-> 更新时间：2026-08-27
+> 更新时间：2026-08-29
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
+
+- **2026-08-29 `Serpent-614293` 平铺视口顶部缩略图**：大库 justified 用几何 offset 判定
+  `loadImmediately`，但行高未锁、CSS `gap: 14px` 与 caption 自然撑开会让 DOM 高于模型；
+  误差从 overscan 累积后，视口顶部被当成跑道外而不挂 URL。瀑布流已锁 body 高度故无此病。
+  已锁行高/caption band、CSS gap 改为 0。2026-08-29 用户真机验收通过。详见
+  [开发日志](development/2026-08-29-justified-visible-thumbnail-window-development-log.md)。
 
 - **2026-08-27 `Serpent-79b839` 同 ID 开库**：本机已打开 A 时再打开复制到 NAS 的副本，当前只按 `library_id` 判重并抛 `LIBRARY_CORRUPT`。路径不能当身份（盘符挂载 vs UNC 可能是同一份远端库）。未修。同 ID 应确认提示，禁止当损坏抢救。关联 `Serpent-f863df` / `Serpent-6c5c65`。
 

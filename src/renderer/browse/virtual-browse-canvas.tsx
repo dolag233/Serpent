@@ -22,7 +22,10 @@ import {
   type CanvasAssetLayoutIndex,
 } from "../canvas-asset-layout";
 import { resolveJustifiedCaptionBandPx } from "../justified-caption-band";
-import { useCanvasLocalViewport } from "../viewport-window";
+import {
+  itemIntersectsVisibleRange,
+  useCanvasLocalViewport,
+} from "../viewport-window";
 import {
   type VirtualBrowseLayout,
   virtualLayoutEntryAt,
@@ -58,6 +61,24 @@ function virtualJustifiedSlotStyle(input: {
   return {
     width: Math.max(1, Math.round(input.width)),
     ["--justified-preview-height" as string]: `${Math.max(1, Math.round(input.height))}px`,
+  };
+}
+
+/**
+ * Lock the justified row's used height to the geometry body. Caption/font
+ * overflow must not grow the row, or loadImmediately offsets drift above the
+ * real viewport and the top visible cards lose their thumbnails
+ * (Serpent-614293). Masonry already does this with an explicit slot height.
+ */
+export function virtualJustifiedRowStyle(input: {
+  bodyHeightPx: number;
+  isLast: boolean;
+}): CSSProperties {
+  return {
+    height: Math.max(1, Math.round(input.bodyHeightPx)),
+    flexShrink: 0,
+    overflow: "hidden",
+    marginBottom: input.isLast ? undefined : ASSET_GRID_GAP_PX,
   };
 }
 
@@ -889,9 +910,12 @@ export function VirtualMasonryColumns({
                 const isLast = row === itemCount - 1;
                 const bodyHeight = column.heightAt(row);
                 const cardTop = column.offsetAt(row);
-                const loadImmediately =
-                  cardTop + bodyHeight > viewport.visibleStart
-                  && cardTop < viewport.visibleEnd;
+                const loadImmediately = itemIntersectsVisibleRange(
+                  cardTop,
+                  bodyHeight,
+                  viewport.visibleStart,
+                  viewport.visibleEnd,
+                );
                 return (
                   <div
                     className="masonry-card-slot"
@@ -1015,7 +1039,11 @@ export function VirtualJustifiedAssetRows({
     <div
       className="justified-rows"
       ref={containerRef}
-      style={{ gap: 0, minHeight: rowWindow.totalHeight }}
+      style={{
+        gap: 0,
+        minHeight: rowWindow.totalHeight,
+        ["--justified-caption-band" as string]: `${captionBandPx}px`,
+      }}
     >
       {rowWindow.spacerBefore > 0 ? (
         <div aria-hidden style={{ height: rowWindow.spacerBefore, flexShrink: 0 }} />
@@ -1026,15 +1054,21 @@ export function VirtualJustifiedAssetRows({
         const start = rowIndex * itemsPerRow;
         const count = rowGeometry?.widths.length ?? 0;
         const rowTop = rowGeometry?.offset ?? 0;
-        const rowBottom = rowTop + (rowGeometry?.bodyHeight ?? 0);
-        const loadImmediately =
-          rowBottom > viewport.visibleStart
-          && rowTop < viewport.visibleEnd;
+        const bodyHeight = rowGeometry?.bodyHeight ?? 0;
+        const loadImmediately = itemIntersectsVisibleRange(
+          rowTop,
+          bodyHeight,
+          viewport.visibleStart,
+          viewport.visibleEnd,
+        );
         return (
           <div
             className="justified-row"
             key={`virtual-justified-row-${rowIndex}`}
-            style={rowIndex === geometry.count - 1 ? undefined : { marginBottom: ASSET_GRID_GAP_PX }}
+            style={virtualJustifiedRowStyle({
+              bodyHeightPx: bodyHeight,
+              isLast: rowIndex === geometry.count - 1,
+            })}
           >
             {Array.from({ length: Math.max(0, count) }, (_, itemOffset) => {
               const index = start + itemOffset;

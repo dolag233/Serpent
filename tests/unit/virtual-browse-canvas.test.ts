@@ -6,6 +6,7 @@ import {
   buildJustifiedGeometry,
   buildMasonryGeometry,
   variableWindow,
+  virtualJustifiedRowStyle,
 } from "../../src/renderer/browse/virtual-browse-canvas";
 
 function entry(assetId: string, width: number | null, height: number | null) {
@@ -118,5 +119,15 @@ describe("virtual browse canvas geometry", () => {
     expect(geometry.offsetAt(25_000)).toBe(geometry.totalHeight);
     expect(geometry.rowAt(0).previewHeight).not.toBe(geometry.rowAt(1).previewHeight);
     expect(geometry.offsetAt(12_501)).toBeGreaterThan(geometry.offsetAt(12_500));
+  });
+
+  it("locks justified row used height to the geometry body (Serpent-614293)", () => {
+    const style = virtualJustifiedRowStyle({ bodyHeightPx: 258, isLast: false });
+    expect(style.height).toBe(258);
+    expect(style.flexShrink).toBe(0);
+    expect(style.overflow).toBe("hidden");
+    expect(style.marginBottom).toBe(14);
+    expect(virtualJustifiedRowStyle({ bodyHeightPx: 258, isLast: true }).marginBottom)
+      .toBeUndefined();
   });
 });
