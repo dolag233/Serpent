@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+# Serpent: 勿运行 bd post-merge（会按空/陈旧 Dolt 重写 issues.jsonl）。工单随 Git 提交同步。
+exit 0

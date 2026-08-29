@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="ivory" gradientUnits="userSpaceOnUse" x1="256" y1="110" x2="256" y2="330">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#D9DEE7"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="#0F1522"/>
+  <!-- 左牙 -->
+  <path d="M176 122C182 200 200 270 234 326C216 268 200 196 200 122Z" fill="url(#ivory)"/>
+  <!-- 右牙 -->
+  <path d="M336 122C330 200 312 270 278 326C296 268 312 196 312 122Z" fill="url(#ivory)"/>
+  <!-- 蛇信：从双牙之间吐出 -->
+  <path d="M256 150L256 316M256 316L240 352M256 316L272 352" fill="none"
+        stroke="#F4505F" stroke-width="8" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+# Serpent: 勿运行 bd pre-push export。推送前确保 .beads/issues.jsonl 已随提交进入 Git。
+exit 0
