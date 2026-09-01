@@ -757,6 +757,7 @@ export const zhCN = {
       skip: "跳过冲突资产",
       title: "移动 {count} 项托管资产",
       targetFolder: "目标文件夹",
+      linkedFolders: "链接文件夹",
       nameConflict: "同名冲突",
       help: "移动不会改变资产 ID、标签、合集、人工元数据、AI 内容或源链接；完成后可撤销一次。",
       submit: "确认移动"

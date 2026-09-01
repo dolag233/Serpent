@@ -11836,6 +11836,32 @@ function AppInner() {
           assetIds={moveDialog.assetIds}
           folderIds={moveDialog.folderIds}
           folders={folders}
+          linkedFolders={
+            moveDialog.assetIds.length > 0 && moveDialog.folderIds.length === 0
+              ? (() => {
+                  const rootNames = new Map(
+                    linkedFolders
+                      .filter((folder) => (folder.relativePath ?? "") === "")
+                      .map((folder) => [folder.folderId, folder.displayName]),
+                  );
+                  return linkedFolders.map((folder) => {
+                    const rootName =
+                      (folder.linkedFolderId
+                        ? rootNames.get(folder.linkedFolderId)
+                        : undefined) ?? folder.displayName;
+                    return {
+                      folderId: folder.folderId,
+                      name: folder.displayName,
+                      relativePath:
+                        (folder.relativePath ?? "") === ""
+                          ? rootName
+                          : `${rootName}/${folder.relativePath}`,
+                      assetCount: folder.assetCount,
+                    };
+                  });
+                })()
+              : undefined
+          }
           targetFolderId={moveDialog.targetFolderId}
           conflictStrategy={moveDialog.conflictStrategy}
           folderOnly={

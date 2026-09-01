@@ -12,6 +12,13 @@ export interface MoveDialogProps {
     relativePath: string;
     directAssetCount: number;
   }>;
+  /** 链接文件夹作为资产移动目标（仅资产移动时传入；链接资产目标与 managed 并列）。 */
+  linkedFolders?: Array<{
+    folderId: string;
+    name: string;
+    relativePath: string;
+    assetCount: number;
+  }>;
   targetFolderId: string | null;
   conflictStrategy: "keep-both" | "replace" | "skip";
   /** When only folders are moved, hide replace (folders use keep-both / skip). */
@@ -26,6 +33,7 @@ export function MoveDialog({
   assetIds,
   folderIds = [],
   folders,
+  linkedFolders = [],
   targetFolderId,
   conflictStrategy,
   folderOnly = false,
@@ -85,6 +93,15 @@ export function MoveDialog({
               {folder.relativePath} ({folder.directAssetCount})
             </option>
           ))}
+          {linkedFolders.length > 0 && (
+            <optgroup label={t("dialog.move.linkedFolders")}>
+              {linkedFolders.map((folder) => (
+                <option key={folder.folderId} value={folder.folderId}>
+                  {folder.relativePath} ({folder.assetCount})
+                </option>
+              ))}
+            </optgroup>
+          )}
         </select>
         <label
           className="field-label field-label-spaced"

@@ -2668,7 +2668,10 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     case 'linked-folder.assets.copy': {
       const result = libraryService.copyAssetsToLinkedFolder(request.command);
       scheduleThumbnailScene(request.command.libraryId, 'linked', result.assets.map((asset) => asset.assetId));
-      return { ok: true, type: 'linked-folder.assets.copied', ...result };
+      // copiedSourceAssetIds 是内部实现细节（供 moveAssets 移动后清理源），
+      // 不进公共响应 schema（strict）。
+      const { copiedCount, skippedCount, assets } = result;
+      return { ok: true, type: 'linked-folder.assets.copied', copiedCount, skippedCount, assets };
     }
     case 'linked-folder.convert': {
       const result = libraryService.convertLinkedFolderToManaged(request.command);

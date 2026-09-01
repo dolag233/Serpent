@@ -1593,6 +1593,42 @@ async function handleListFolders(): Promise<ListFoldersDisposition> {
     if (match?.displayName) libraryDisplayName = match.displayName;
   }
 
+  // 链接文件夹与 managed 文件夹并列作为扩展保存目标：worker 的 folder.list
+  // 只列 managed，这里额外取 linked-folder.list 并按链接根 displayName 做
+  // 命名空间前缀，避免与 managed 的 relativePath 撞树（Serpent-f6f779）。
+  let linkedExtensionFolders: Array<{
+    folderId: string;
+    name: string;
+    relativePath: string;
+    assetCount: number;
+  }> = [];
+  const linkedResult = await workerClient.request({
+    type: "linked-folder.list",
+    libraryId: saveContext.libraryId,
+  });
+  if (linkedResult.ok && linkedResult.type === "linked-folder.list") {
+    const rootNames = new Map(
+      linkedResult.folders
+        .filter((folder) => (folder.relativePath ?? "") === "")
+        .map((folder) => [folder.folderId, folder.displayName]),
+    );
+    linkedExtensionFolders = linkedResult.folders.map((folder) => {
+      const rootName =
+        (folder.linkedFolderId
+          ? rootNames.get(folder.linkedFolderId)
+          : undefined) ?? folder.displayName;
+      return {
+        folderId: folder.folderId,
+        name: folder.displayName,
+        relativePath:
+          (folder.relativePath ?? "") === ""
+            ? rootName
+            : `${rootName}/${folder.relativePath}`,
+        assetCount: folder.assetCount,
+      };
+    });
+  }
+
   return {
     ok: true,
     libraryDisplayName,
@@ -1611,12 +1647,15 @@ async function handleListFolders(): Promise<ListFoldersDisposition> {
       }
       return ids;
     })(),
-    folders: result.folders.map((folder) => ({
-      folderId: folder.folderId,
-      name: folder.name,
-      relativePath: folder.relativePath,
-      assetCount: folder.directAssetCount,
-    })),
+    folders: [
+      ...result.folders.map((folder) => ({
+        folderId: folder.folderId,
+        name: folder.name,
+        relativePath: folder.relativePath,
+        assetCount: folder.directAssetCount,
+      })),
+      ...linkedExtensionFolders,
+    ],
   };
 }
 

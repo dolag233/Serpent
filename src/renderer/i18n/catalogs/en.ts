@@ -769,6 +769,7 @@ export const en = {
       skip: "Skip conflicting assets",
       title: "Move {count} managed assets",
       targetFolder: "Destination folder",
+      linkedFolders: "Linked folders",
       nameConflict: "Name conflicts",
       help: "Move does not change asset IDs, tags, collections, manual metadata, AI content, or source URLs. You can undo once afterward.",
       submit: "Confirm move"

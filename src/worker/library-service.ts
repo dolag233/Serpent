@@ -14827,7 +14827,13 @@ export class LibraryService {
     relativePath?: string;
     assetIds: string[];
     conflictStrategy: 'keep-both' | 'replace' | 'skip';
-  }): { copiedCount: number; skippedCount: number; assets: AssetSummary[] } {
+  }): {
+    copiedCount: number;
+    skippedCount: number;
+    assets: AssetSummary[];
+    /** 本次实际复制成功的源资产 id（skip 冲突时不包含被跳过的），供 moveAssets 移动后清理源。 */
+    copiedSourceAssetIds: string[];
+  } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     this.assertAssetsNotExplicitlyIgnored(openLibrary, input.assetIds);
     const folder = openLibrary.connection.prepare(
@@ -14856,6 +14862,7 @@ export class LibraryService {
     }>;
     if (rows.length !== input.assetIds.length) throw new LibraryServiceError('ASSET_NOT_FOUND');
     const copiedPaths: string[] = [];
+    const copiedSourceAssetIds: string[] = [];
     const backups: Array<{ destination: string; backup: string }> = [];
     const operationId = randomUUID();
     const operationPath = path.join(this.assertSafeOperationsRoot(openLibrary.summary.libraryPath), operationId);
@@ -14911,6 +14918,7 @@ export class LibraryService {
         }
         copyFileSync(sourcePath, destination, constants.COPYFILE_EXCL);
         copiedPaths.push(relativeDestination);
+        copiedSourceAssetIds.push(row.asset_id);
         occupied.add(portablePathIdentity(relativeDestination));
       }
       rmSync(operationPath, { recursive: true, force: true });
@@ -14927,11 +14935,22 @@ export class LibraryService {
       });
       throw serviceError(error, 'IMPORT_APPLY_FAILED');
     }
-    this.refreshManagedAssets(input.libraryId);
+    // 只注册本次复制的文件，避免 refreshManagedAssets 全量枚举导致的复制缓慢。
+    this.registerWrittenLinkedAssets(
+      openLibrary,
+      input.folderId,
+      folder.absolute_root_path,
+      copiedPaths,
+    );
     const copiedIdentities = new Set(copiedPaths.map(portablePathIdentity));
     const assets = this.listAssets({ libraryId: input.libraryId, folderId: input.folderId, recursive: true })
       .filter((asset) => copiedIdentities.has(portablePathIdentity(asset.relativeFilePath)));
-    return { copiedCount: copiedPaths.length, skippedCount, assets };
+    return {
+      copiedCount: copiedPaths.length,
+      skippedCount,
+      assets,
+      copiedSourceAssetIds,
+    };
   }
 
   /**
@@ -31418,6 +31437,46 @@ export class LibraryService {
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
     }
+    // 目标是链接文件夹（链接根或其虚拟子目录）：把 managed 资产复制进链接
+    // 外部目录并注册为链接资产，再永久删除已复制的 managed 源——对用户而言
+    // 等价于「移动到链接文件夹」，链接资产与 managed 资产同为目标（Serpent-f6f779）。
+    const linkedTarget = input.targetFolderId === null
+      ? null
+      : this.linkedFolderRowForImport(openLibrary, input.targetFolderId);
+    if (linkedTarget) {
+      const managedSourceCount = openLibrary.connection.prepare(
+        `SELECT COUNT(*) AS count FROM assets
+          WHERE asset_id IN (${input.assetIds.map(() => '?').join(',')})
+            AND location_kind = 'managed' AND deleted_at IS NULL`,
+      ).get(...input.assetIds) as { count: number };
+      if (managedSourceCount.count !== input.assetIds.length) {
+        // 链接资产移动到链接文件夹是另一场景，此处仅支持 managed → linked。
+        throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      }
+      const strategy = input.conflictStrategy ?? 'keep-both';
+      const copy = this.copyAssetsToLinkedFolder({
+        libraryId: input.libraryId,
+        folderId: linkedTarget.folder_id,
+        ...(linkedTarget.relative_path
+          ? { relativePath: linkedTarget.relative_path }
+          : {}),
+        assetIds: input.assetIds,
+        conflictStrategy: strategy,
+      });
+      // 只删除实际复制成功的源（skip 冲突的源保留在原位）。
+      if (copy.copiedSourceAssetIds.length > 0) {
+        this.deleteAssetsFromDisk({
+          libraryId: input.libraryId,
+          assetIds: copy.copiedSourceAssetIds,
+        });
+      }
+      return {
+        movedCount: copy.copiedCount,
+        skippedCount: copy.skippedCount,
+        operationId: null,
+        assets: copy.assets,
+      };
+    }
     const targetFolder = input.targetFolderId === null ? undefined : this.targetFolder(openLibrary, input.targetFolderId);
     const rows = openLibrary.connection.prepare(
       `SELECT asset_id, relative_file_path, managed_folder_id, availability FROM assets
@@ -31597,6 +31656,31 @@ export class LibraryService {
     this.assertAssetsNotExplicitlyIgnored(openLibrary, input.assetIds);
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    // 目标是链接文件夹（链接根或其虚拟子目录）：与 moveAssets 的链接分支对称，
+    // 复制进链接外部目录并注册为链接资产（copyAssetsToLinkedFolder 支持 managed
+    // 与 linked 源，Serpent-f6f779）。此分支需先于 linked 源分支判定，否则
+    // 链接目标会落到 copyLinkedAssetsToManagedFolder 上。
+    const copyLinkedTarget = input.targetFolderId === null
+      ? null
+      : this.linkedFolderRowForImport(openLibrary, input.targetFolderId);
+    if (copyLinkedTarget) {
+      const copied = this.copyAssetsToLinkedFolder({
+        libraryId: input.libraryId,
+        folderId: copyLinkedTarget.folder_id,
+        ...(copyLinkedTarget.relative_path
+          ? { relativePath: copyLinkedTarget.relative_path }
+          : {}),
+        assetIds: input.assetIds,
+        conflictStrategy: input.conflictStrategy ?? 'keep-both',
+      });
+      return {
+        copiedCount: copied.copiedCount,
+        skippedCount: copied.skippedCount,
+        operationId: null,
+        assets: copied.assets,
+        outputAssetIdsBySource: [],
+      };
     }
     const locationRows = openLibrary.connection.prepare(
       `SELECT asset_id, location_kind
@@ -36943,7 +37027,14 @@ export class LibraryService {
       throw serviceError(error, 'IMPORT_APPLY_FAILED');
     }
 
-    this.refreshManagedAssets(input.libraryId);
+    // 只注册本次写入的文件，避免 refreshManagedAssets 全量枚举所有链接文件夹
+    // 导致的导入缓慢（Serpent-f6f779）。
+    this.registerWrittenLinkedAssets(
+      openLibrary,
+      input.linkedFolderId,
+      folder.absolute_root_path,
+      written,
+    );
     const identities = new Set(written.map(portablePathIdentity));
     const assets = this.listAssets({
       libraryId: input.libraryId,
@@ -36960,6 +37051,76 @@ export class LibraryService {
       replacedCount: 0,
       assets,
     };
+  }
+
+  /**
+   * 直接把新写入链接目录的文件注册为链接资产，替代全库 refreshManagedAssets。
+   * 写入路径（importPathsIntoLinkedFolder / copyAssetsToLinkedFolder）原先调用
+   * refreshManagedAssets(libraryId) 全量枚举所有链接文件夹来注册新增文件——链接
+   * 文件夹大时导入明显变慢。这里按 importFolderAsLinked 的注册模式（INSERT
+   * assets + revisions）只登记本次写入的文件；content_fingerprint 留待后续
+   * 自然 reconciliation 计算，与 importFolderAsLinked 初始索引行为一致。
+   */
+  private registerWrittenLinkedAssets(
+    openLibrary: OpenLibrary,
+    linkedFolderId: string,
+    absoluteRootPath: string,
+    writtenRelativePaths: readonly string[],
+  ): void {
+    if (writtenRelativePaths.length === 0) return;
+    const now = new Date().toISOString();
+    const insertAsset = openLibrary.connection.prepare(
+      `INSERT INTO assets
+         (asset_id, location_kind, managed_folder_id, linked_folder_id, relative_file_path,
+          path_identity, current_revision_id, availability, source_device, source_inode,
+          created_at, updated_at)
+       VALUES (?, 'linked', NULL, ?, ?, ?, NULL, 'available', ?, ?, ?, ?)`,
+    );
+    const insertRevision = openLibrary.connection.prepare(
+      `INSERT INTO revisions
+         (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
+          original_filename, origin, accepted_at)
+       VALUES (?, ?, NULL, ?, ?, ?, 'import', ?)`,
+    );
+    const setCurrentRevision = openLibrary.connection.prepare(
+      'UPDATE assets SET current_revision_id = ?, updated_at = ? WHERE asset_id = ?',
+    );
+    // transaction() 返回可调用包装，必须立即调用（与 importFolderAsLinked 一致）。
+    openLibrary.connection.transaction(() => {
+      for (const relativePath of writtenRelativePaths) {
+        const absolute = path.join(absoluteRootPath, ...relativePath.split('/'));
+        let stat: Stats;
+        try {
+          stat = lstatSync(absolute);
+        } catch {
+          continue; // 文件已消失，留给后续 reconciliation 处理
+        }
+        if (!stat.isFile() || stat.isSymbolicLink()) continue;
+        const assetId = randomUUID();
+        const revisionId = randomUUID();
+        const pathIdentity = portablePathIdentity(relativePath);
+        insertAsset.run(
+          assetId,
+          linkedFolderId,
+          relativePath,
+          pathIdentity,
+          String(stat.dev),
+          String(stat.ino),
+          now,
+          now,
+        );
+        insertRevision.run(
+          revisionId,
+          assetId,
+          stat.size,
+          stat.mtime.toISOString(),
+          path.posix.basename(relativePath),
+          now,
+        );
+        setCurrentRevision.run(revisionId, now, assetId);
+        this.syncAssetSearchContent(openLibrary.connection, assetId);
+      }
+    })();
   }
 
   private linkedFolderRowForImport(

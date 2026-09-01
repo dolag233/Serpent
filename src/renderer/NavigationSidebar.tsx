@@ -1174,11 +1174,9 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                 "application/x-serpent-managed-assets",
               )
             ) {
-              // Linked-folder drops always copy files out; Option is a no-op
-              // for effect (still report copy so the cursor matches).
-              event.preventDefault();
-              event.dataTransfer.dropEffect = "copy";
-              onManagedAssetCopyModeChange?.(true);
+              // 与 managed 文件夹一致：普通拖=移动、Option 拖=复制
+              // （Serpent-f6f779，链接文件夹不再强制复制）。
+              applyManagedAssetDragOver(event);
               return;
             }
             if (supportsExternalImportTransfer(event.dataTransfer)) {
@@ -1200,10 +1198,20 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                 const ids = serialized
                   ? (JSON.parse(serialized) as string[])
                   : fallbackIds!;
-                // `lf` retains the virtual child relativePath.  Passing the
-                // root summary here silently copied into the linked root and
-                // made child folders appear to accept drops without effect.
-                void onCopyManagedToLinked(lf, ids);
+                const mode = resolveDragDropMode({
+                  altKey: event.altKey,
+                });
+                if (mode === "copy") {
+                  // Option 拖：复制语义，managed 源保留原位。
+                  // `lf` retains the virtual child relativePath.  Passing the
+                  // root summary here silently copied into the linked root and
+                  // made child folders appear to accept drops without effect.
+                  void onCopyManagedToLinked(lf, ids);
+                } else {
+                  // 普通拖：与 managed 文件夹一致，走 moveAssets 的链接目标
+                  // 分支（复制进链接目录 + 删除 managed 源），Serpent-f6f779。
+                  void onAssetsDroppedOnFolder(entry.folderId, ids, "move");
+                }
               } catch {
                 // drag data invalid — silently ignore
               }
