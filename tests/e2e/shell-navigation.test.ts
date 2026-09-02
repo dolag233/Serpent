@@ -222,6 +222,40 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       await window.keyboard.press("Escape");
       await expect(settingsDialog).toHaveCount(0);
     }
+
+    // Typography is an app preference, not Chromium page zoom. Exercise all
+    // three tiers through the real Appearance settings and verify that the
+    // shared root scale and a visible control both change.
+    if (process.platform === "win32") {
+      await settingsButton.click();
+      await window.getByRole("menuitem", { name: "设置", exact: true }).click();
+    } else {
+      await settingsButton.click();
+    }
+    const fontSettingsDialog = window.getByRole("dialog");
+    await expect(fontSettingsDialog).toBeVisible();
+    await fontSettingsDialog.getByRole("tab", { name: "外观", exact: true }).click();
+    const fontSizeGroup = fontSettingsDialog.locator(".app-settings-font-size-options");
+    await expect(fontSizeGroup.getByRole("radio")).toHaveCount(3);
+    const fontSizeButton = fontSizeGroup.getByRole("radio").first();
+    const readFontScale = () => window.evaluate(() => ({
+      scale: getComputedStyle(document.documentElement)
+        .getPropertyValue("--ui-font-scale")
+        .trim(),
+      size: getComputedStyle(document.querySelector(".app-settings-font-size-options button")!)
+        .fontSize,
+      zoom: getComputedStyle(document.documentElement).zoom,
+    }));
+    await fontSizeGroup.getByRole("radio", { name: "紧凑", exact: true }).click();
+    await expect.poll(readFontScale).toEqual({ scale: "0.94", size: "11.28px", zoom: "1" });
+    await fontSizeGroup.getByRole("radio", { name: "默认", exact: true }).click();
+    await expect.poll(readFontScale).toEqual({ scale: "1", size: "12px", zoom: "1" });
+    await fontSizeGroup.getByRole("radio", { name: "舒适", exact: true }).click();
+    await expect.poll(readFontScale).toEqual({ scale: "1.06", size: "12.72px", zoom: "1" });
+    await expect(fontSizeButton).toHaveAttribute("aria-checked", "false");
+    await window.keyboard.press("Escape");
+    await expect(fontSettingsDialog).toHaveCount(0);
+
     await expect(
       window.locator(".toolbar-workspace-cluster .scope-history"),
     ).toBeVisible();

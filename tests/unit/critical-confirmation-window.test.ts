@@ -38,12 +38,19 @@ class FakeIpcMain implements CriticalConfirmationIpcHost {
 class FakeWindow implements CriticalConfirmationWindowLike {
   static nextId = 1;
   readonly id = FakeWindow.nextId++;
+  readonly executedJavaScript: string[] = [];
   readonly webContents = {
     id: this.id + 10_000,
     isDestroyed: () => this.destroyed,
     setWindowOpenHandler: () => undefined,
     on: () => undefined,
-    executeJavaScript: async () => ({ ready: true, height: 260 }),
+    executeJavaScript: async (code: string) => {
+      this.executedJavaScript.push(code);
+      if (code.includes("getComputedStyle(document.documentElement).fontFamily")) {
+        return '"Test UI", "Segoe UI", sans-serif';
+      }
+      return { ready: true, height: 260 };
+    },
   };
   readonly listeners = new Map<string, Set<() => void>>();
   destroyed = false;
@@ -139,6 +146,7 @@ describe('Critical confirmation window', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(window.shown).toBe(true);
     expect(window.focused).toBe(true);
+    expect(window.executedJavaScript.some((code) => code.includes('Test UI'))).toBe(true);
 
     manager.dispose();
     void pending;

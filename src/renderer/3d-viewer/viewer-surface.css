@@ -64,7 +64,7 @@
 }
 
 .model-viewer-toolbar-label {
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   color: var(--ui-content-secondary);
   white-space: nowrap;
 }
@@ -72,7 +72,7 @@
 .model-viewer-toolbar-item select {
   max-width: 150px;
   height: 24px;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   color: var(--ui-content-primary);
   background: var(--ui-surface-pane);
   border: 1px solid var(--ui-border-subtle);
@@ -87,7 +87,7 @@
 
 .model-viewer-toolbar-value {
   min-width: 34px;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale));
   font-variant-numeric: tabular-nums;
   color: var(--ui-content-secondary);
   text-align: right;
@@ -129,7 +129,7 @@
   background: color-mix(in srgb, var(--ui-surface-raised) 92%, transparent);
   box-shadow: 0 2px 12px rgb(0 0 0 / 24%);
   color: var(--ui-content-primary);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   z-index: 2;
 }
 
@@ -179,15 +179,15 @@
   justify-content: center;
   gap: 12px;
   color: var(--ui-content-secondary);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale));
   z-index: 3;
   background: var(--ui-surface-canvas);
 }
 
 .model-viewer-state strong {
   color: var(--ui-content-primary);
-  font-size: 15px;
-  font-weight: 600;
+  font-size: calc(15px * var(--ui-font-scale));
+  font-weight: var(--ui-font-weight-semibold);
 }
 
 .model-viewer-state p {
@@ -204,7 +204,7 @@
   border-radius: 8px;
   background: var(--ui-surface-raised);
   color: var(--ui-content-primary);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale));
   cursor: pointer;
 }
 
@@ -243,7 +243,7 @@
   background: var(--ui-surface-pane);
   color: var(--ui-content-primary);
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   cursor: pointer;
 }
 

@@ -159,12 +159,12 @@ export function MediaJobsDialog({
                     }}
                   >
                     <div
+                      className="media-jobs-grid"
                       style={{
                         display: "grid",
                         gap: 8,
                         gridTemplateColumns:
                           "minmax(0, 1.4fr) minmax(0, 1.2fr) 90px minmax(0, 2fr)",
-                        fontSize: 11,
                       }}
                     >
                       <MediaJobAssetLabel
@@ -290,12 +290,12 @@ export function MediaJobsDialog({
                       style={{ padding: "5px 2px" }}
                     >
                       <div
+                        className="media-jobs-grid"
                         style={{
                           display: "grid",
                           gap: 8,
                           gridTemplateColumns:
                             "minmax(0, 1.4fr) minmax(0, 1.2fr) 90px minmax(0, 2fr)",
-                          fontSize: 11,
                         }}
                       >
                         <MediaJobAssetLabel
@@ -354,12 +354,12 @@ export function MediaJobsDialog({
                           style={{ padding: "5px 2px" }}
                         >
                           <div
+                            className="media-jobs-grid"
                             style={{
                               display: "grid",
                               gap: 8,
                               gridTemplateColumns:
                                 "minmax(160px, 1.4fr) minmax(90px, 0.8fr) 90px minmax(140px, 1.4fr)",
-                              fontSize: 11,
                             }}
                           >
                             <span title={job.ownerPluginId}>

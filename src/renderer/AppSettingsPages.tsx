@@ -27,6 +27,11 @@ import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useLocale, useT } from "./i18n";
 import {
+  FONT_SIZE_OPTIONS,
+  type FontSizePreference,
+} from "./font-size-preferences";
+import { useFontSize } from "./FontSizeProvider";
+import {
   SHADOW_LEVEL_MAX,
   SHADOW_LEVEL_MIN,
   clampShadowLevel,
@@ -291,6 +296,7 @@ export function AssetsSettingsPage({
 
 export function AppearanceSettingsPage(): ReactNode {
   const t = useT();
+  const { preferences: fontSizePrefs, setPreference: setFontSizePreference } = useFontSize();
   const { preferences: shadowPrefs, setLevel: setShadowLevel } = useElevation();
   const { preferences: menuAcrylicPrefs, setLevel: setMenuAcrylicLevel } =
     useMenuAcrylic();
@@ -311,6 +317,31 @@ export function AppearanceSettingsPage(): ReactNode {
       </div>
       <div className="app-settings-card-divider" />
       <ThemeColorSettings />
+      <div className="app-settings-card-divider" />
+      <div className="app-settings-row app-settings-row-stack">
+        <div className="app-settings-row-copy">
+          <strong>{t("settings.fontSize")}</strong>
+          <span>{t("settings.fontSizeHint")}</span>
+        </div>
+        <div
+          aria-label={t("settings.fontSize")}
+          className="app-settings-option-group app-settings-font-size-options"
+          role="radiogroup"
+        >
+          {FONT_SIZE_OPTIONS.map((option: FontSizePreference) => (
+            <button
+              aria-checked={fontSizePrefs.preference === option}
+              className="app-settings-option"
+              key={option}
+              onClick={() => setFontSizePreference(option)}
+              role="radio"
+              type="button"
+            >
+              {t(`settings.fontSize${option[0]!.toUpperCase()}${option.slice(1)}` as const)}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="app-settings-card-divider" />
       <SettingsDisclosure
         hint={t("settings.backgroundSectionHint")}
