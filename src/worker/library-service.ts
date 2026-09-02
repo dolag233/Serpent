@@ -150,6 +150,11 @@ import {
   readMigrationFailure,
   recordMigrationFailure,
 } from './schema-failure';
+import {
+  gitignoreMatchesPath,
+  parseGitignore,
+  type GitIgnoreMatcher,
+} from './gitignore';
 import { sanitizeAiDescription } from '../shared/ai-analysis-settings';
 import {
   CONTENT_REPLACE_BATCH_MAX_ITEMS,
@@ -892,91 +897,6 @@ function cleanFilename(name: string): string {
     .replace(/^\.+/, '')
     .replace(/\.+$/, '')
     .trim() || 'download';
-}
-
-type GitIgnoreRule = {
-  negated: boolean;
-  regex: RegExp;
-};
-
-/** Dependency-free gitignore matching for library-scoped asset rules. */
-function gitIgnorePatternToRegex(rawPattern: string): RegExp | null {
-  let pattern = rawPattern;
-  let directoryOnly = false;
-  let anchored = false;
-  if (pattern.endsWith('/')) {
-    directoryOnly = true;
-    pattern = pattern.slice(0, -1);
-  }
-  if (pattern.startsWith('/')) {
-    anchored = true;
-    pattern = pattern.slice(1);
-  }
-  if (pattern.length === 0) return null;
-
-  let glob = '';
-  for (let index = 0; index < pattern.length; index += 1) {
-    const character = pattern[index]!;
-    if (character === '*') {
-      if (pattern[index + 1] === '*') {
-        while (pattern[index + 1] === '*') index += 1;
-        glob += '.*';
-      } else {
-        glob += '[^/]*';
-      }
-    } else if (character === '?') {
-      glob += '[^/]';
-    } else if (character === '[') {
-      const end = pattern.indexOf(']', index + 1);
-      if (end >= 0) {
-        const contents = pattern.slice(index + 1, end);
-        glob += contents.startsWith('!')
-          ? `[^${contents.slice(1)}]`
-          : `[${contents}]`;
-        index = end;
-      } else {
-        glob += '\\[';
-      }
-    } else {
-      glob += character.replace(/[\\^$.*+?()[\]{}|]/gu, '\\$&');
-    }
-  }
-
-  const hasSlash = pattern.includes('/');
-  const prefix = anchored || hasSlash ? '^' : '^(?:.*/)?';
-  const suffix = directoryOnly || !hasSlash ? '(?:/.*)?$' : '$';
-  try {
-    return new RegExp(`${prefix}${glob}${suffix}`, 'iu');
-  } catch {
-    return null;
-  }
-}
-
-function parseGitignore(text: string): GitIgnoreRule[] {
-  const rules: GitIgnoreRule[] = [];
-  for (const sourceLine of text.split(/\r?\n/u)) {
-    let line = sourceLine.trimEnd();
-    if (line.length === 0) continue;
-    if (line.startsWith('\\#') || line.startsWith('\\!')) line = line.slice(1);
-    else if (line.startsWith('#')) continue;
-    const negated = line.startsWith('!');
-    if (negated) line = line.slice(1);
-    const regex = gitIgnorePatternToRegex(line);
-    if (regex) rules.push({ negated, regex });
-  }
-  return rules;
-}
-
-function gitignoreMatchesPath(rules: GitIgnoreRule[], relativePath: string): boolean {
-  const normalized = relativePath.replaceAll('\\', '/').replace(/^\/+|\/+$/gu, '');
-  if (!normalized) return false;
-  const candidates = [normalized, `Assets/${normalized}`];
-  let ignored = false;
-  for (const rule of rules) {
-    if (!candidates.some((candidate) => rule.regex.test(candidate))) continue;
-    ignored = !rule.negated;
-  }
-  return ignored;
 }
 
 function prohibitedIpv4(address: string): boolean {
@@ -3432,6 +3352,10 @@ interface OpenLibrary {
   preservedRelinkPathIdentities: Set<string>;
   /** Last .serpentignore contents materialized into gitignore_ignored_paths. */
   gitignoreText: string;
+  /** Parsed rules used while discovering files that are not in SQLite yet. */
+  gitignoreMatcher: GitIgnoreMatcher;
+  /** Whether the current ignore text has been materialized at least once. */
+  gitignoreMaterialized: boolean;
   /**
    * Serpent-4bdd26: memo for the recursive per-collection asset counts keyed
    * by the narrow browse change sequence. The recursive CTE costs ~25-100ms
@@ -6706,6 +6630,12 @@ export class LibraryService {
         entry.assetId = assetId;
         existingByPath.set(pathIdentity, assetId);
         claimedAssetIds.add(assetId);
+        this.diagnose('linked-folder.sync.asset-moved', 'External file moved within the linked root; asset reconciled to new path', {
+          libraryId: openLibrary.summary.libraryId,
+          assetId,
+          linkedFolderId: folderId,
+          newRelativePath: entry.relativePath,
+        });
       }
     }
     discovery.movedLinkedAssetsReconciled = true;
@@ -8496,7 +8426,27 @@ export class LibraryService {
   }
 
   private syncGitignore(openLibrary: OpenLibrary, text = readGitignoreText(openLibrary.summary.libraryPath)): void {
-    if (openLibrary.readOnly || text === openLibrary.gitignoreText) return;
+    if (openLibrary.readOnly || (text === openLibrary.gitignoreText && openLibrary.gitignoreMaterialized)) return;
+    // Libraries created before ignore actions became file-backed may still
+    // have managed rows in explicit_ignored_paths.  Convert those rows before
+    // clearing the legacy mirror so opening an old library never silently
+    // reveals assets the user had hidden.
+    const migratedText = !openLibrary.gitignoreMaterialized
+      ? this.migrateLegacyManagedIgnoreRules(openLibrary, text)
+      : text;
+    if (migratedText !== text) {
+      try {
+        writeFileSync(gitignorePath(openLibrary.summary.libraryPath), migratedText, 'utf8');
+      } catch (error) {
+        throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+      }
+      this.noteClientFilesystemMutation();
+    }
+    const rules = parseGitignore(migratedText);
+    // Keep discovery and the materialized table on the same rule snapshot.
+    // Discovery can see a file before it has a database row, so it must not
+    // rely on gitignore_ignored_paths alone.
+    openLibrary.gitignoreMatcher = rules;
     // Serpent-verg review fix: libraries predating the ignore-rule tables
     // have no gitignore state to sync.
     if (
@@ -8505,7 +8455,6 @@ export class LibraryService {
     ) {
       return;
     }
-    const rules = parseGitignore(text);
     const transaction = openLibrary.connection.transaction(() => {
       // Managed ignore state is file-backed. Older versions also mirrored
       // managed rules into explicit_ignored_paths; clear those stale rows
@@ -8525,19 +8474,57 @@ export class LibraryService {
         .prepare("SELECT relative_file_path FROM assets WHERE location_kind = 'managed' AND deleted_at IS NULL")
         .all() as Array<{ relative_file_path: string }>;
       for (const folder of folders) {
-        if (gitignoreMatchesPath(rules, folder.relative_path)) {
+        if (gitignoreMatchesPath(rules, folder.relative_path, 'folder')) {
           insert.run(folder.relative_path, 'folder');
         }
       }
       for (const asset of assets) {
-        if (gitignoreMatchesPath(rules, asset.relative_file_path)) {
+        if (gitignoreMatchesPath(rules, asset.relative_file_path, 'asset')) {
           insert.run(asset.relative_file_path, 'asset');
         }
       }
     });
     transaction();
-    openLibrary.gitignoreText = text;
+    openLibrary.gitignoreText = migratedText;
+    openLibrary.gitignoreMaterialized = true;
     this.rebindCurrentNetworkMetadataCache(openLibrary);
+  }
+
+  private migrateLegacyManagedIgnoreRules(openLibrary: OpenLibrary, text: string): string {
+    if (!hasTable(openLibrary.connection, 'explicit_ignored_paths')) return text;
+    const legacyRows = openLibrary.connection
+      .prepare(
+        `SELECT relative_path, path_kind
+           FROM explicit_ignored_paths
+          WHERE location_kind = 'managed' AND linked_folder_id = ''
+            AND path_kind IN ('asset', 'folder', 'extension')
+          ORDER BY ignored_at, relative_path, path_kind`,
+      )
+      .all() as Array<{
+        relative_path: string;
+        path_kind: 'asset' | 'folder' | 'extension';
+      }>;
+    if (legacyRows.length === 0) return text;
+
+    const lines = text.split(/\r?\n/u);
+    const existing = new Set(lines.map((line) => line.trimEnd()));
+    let changed = false;
+    for (const row of legacyRows) {
+      let rule: string | undefined;
+      try {
+        rule = this.managedGitignoreRule(row.relative_path, row.path_kind);
+      } catch {
+        // A malformed legacy row must not prevent the rest of the library
+        // from opening; valid rows are still promoted to the config file.
+        continue;
+      }
+      if (rule === undefined || existing.has(rule)) continue;
+      while (lines.at(-1) === '') lines.pop();
+      lines.push(rule);
+      existing.add(rule);
+      changed = true;
+    }
+    return changed ? `${lines.join('\n')}\n` : text;
   }
 
   /** Cheap liveness check for callers that must not open or mutate state. */
@@ -20277,9 +20264,19 @@ export class LibraryService {
       // shipped next to the package (resolved from the bundle's location).
       const { createRequire } = await import('node:module');
       const { pathToFileURL } = await import('node:url');
+      const requireFromBundle = createRequire(__filename);
       pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(
-        createRequire(__filename).resolve('pdfjs-dist/legacy/build/pdf.worker.mjs'),
+        requireFromBundle.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs'),
       ).href;
+      // pdfjs 6.x 把 wasm（jbig2/openjpeg）、cmaps、standard_fonts 放在
+      // pdfjs-dist 顶层资源目录，不在 pdf.worker.mjs 同目录；不显式提供
+      // wasmUrl 时，含 JBIG2 压缩图片的 PDF（扫描论文常见）无法解码
+      // （ERR_MODULE_NOT_FOUND nulljbig2_nowasm_fallback.js），缩略图生成
+      // 失败 → 文件夹封面反复失效重试。getDocument 的 URL 需以 / 结尾。
+      const pdfjsRoot = path.dirname(requireFromBundle.resolve('pdfjs-dist/package.json'));
+      const wasmUrl = pathToFileURL(`${pdfjsRoot}/wasm/`).href;
+      const cMapUrl = pathToFileURL(`${pdfjsRoot}/cmaps/`).href;
+      const standardFontDataUrl = pathToFileURL(`${pdfjsRoot}/standard_fonts/`).href;
       // Vite bundling breaks pdfjs's own node_utils bootstrap (it calls
       // createRequire(import.meta.url), which is undefined in the CJS
       // bundle), so internal image painting would hit the DOM canvas factory
@@ -20310,6 +20307,9 @@ export class LibraryService {
       const loadingTask = pdfjs.getDocument({
         data: new Uint8Array(pdfBytes),
         CanvasFactory: NapiCanvasFactory,
+        wasmUrl,
+        cMapUrl,
+        standardFontDataUrl,
       });
       const pdfDocument = await loadingTask.promise;
       try {
@@ -26564,6 +26564,8 @@ export class LibraryService {
         changeSubscription: { lastSequence: 0, stop() {} },
         preservedRelinkPathIdentities: new Set(),
         gitignoreText: '',
+        gitignoreMatcher: parseGitignore(''),
+        gitignoreMaterialized: false,
       });
       this.openIdByPath.set(normalizedPath, library.library_id);
       this.emitNetworkMetadataCacheEvent({
@@ -27018,7 +27020,12 @@ export class LibraryService {
       case 'model':
         return generatorVersion === MODEL_THUMBNAIL_GENERATOR_VERSION;
       case 'document':
-        return generatorVersion === DOCUMENT_THUMBNAIL_GENERATOR_VERSION;
+        // DOCUMENT_THUMBNAIL_GENERATOR_VERSION 对应 offscreen HTML 渲染器；
+        // generatePdfThumbnail（pdfjs）写入 `pdfjs@<version>`。若只认 offscreen
+        // 版本，pdfjs 生成的 PDF 缩略图每次 enqueue 都被判 stale 而失效，
+        // 造成「生成成功→立即失效→重生成」的封面 churn。两者都应视为当前。
+        return generatorVersion === DOCUMENT_THUMBNAIL_GENERATOR_VERSION
+          || generatorVersion.startsWith('pdfjs@');
       default:
         return true;
     }
@@ -36369,10 +36376,20 @@ export class LibraryService {
            ))
            OR (ignored_path.path_kind = 'extension' AND
              LOWER(${alias}.relative_file_path) LIKE '%.' || LOWER(ignored_path.relative_path))
-           OR (${alias}.location_kind = 'managed' AND
-             EXISTS (SELECT 1 FROM gitignore_ignored_paths gitignore_path
-                      WHERE gitignore_path.path_kind = 'asset'
-                        AND gitignore_path.relative_path = ${alias}.relative_file_path))
+         )
+    )
+    AND NOT EXISTS (
+      SELECT 1
+        FROM gitignore_ignored_paths gitignore_path
+       WHERE ${alias}.location_kind = 'managed'
+         AND (
+           (gitignore_path.path_kind = 'asset' AND
+             gitignore_path.relative_path = ${alias}.relative_file_path)
+           OR (gitignore_path.path_kind = 'folder' AND (
+             gitignore_path.relative_path = ''
+             OR ${alias}.relative_file_path = gitignore_path.relative_path
+             OR ${alias}.relative_file_path LIKE gitignore_path.relative_path || '/%'
+           ))
          )
     )`;
   }
@@ -36383,6 +36400,12 @@ export class LibraryService {
     linkedFolderId: string | null,
     relativePath: string,
   ): boolean {
+    if (
+      locationKind === 'managed'
+      && gitignoreMatchesPath(openLibrary.gitignoreMatcher, relativePath, 'folder')
+    ) {
+      return true;
+    }
     // Serpent-verg review fix: libraries predating the ignore-rule table
     // have no explicit ignores.
     if (!hasTable(openLibrary.connection, 'explicit_ignored_paths')) return false;
@@ -36419,6 +36442,12 @@ export class LibraryService {
   ): boolean {
     if (pathKind === 'folder') {
       return this.explicitFolderIgnored(openLibrary, locationKind, linkedFolderId, relativePath);
+    }
+    if (
+      locationKind === 'managed'
+      && gitignoreMatchesPath(openLibrary.gitignoreMatcher, relativePath, 'asset')
+    ) {
+      return true;
     }
     const normalized = this.normalizeExplicitIgnorePath(
       relativePath,
@@ -36523,16 +36552,19 @@ export class LibraryService {
     pathKind: 'asset' | 'folder' | 'extension',
     ignored: boolean,
   ): void {
-    const normalized = pathKind === 'extension'
-      ? relativePath.trim().replace(/^\.+/u, '').toLowerCase()
-      : this.normalizeExplicitIgnorePath(relativePath, false);
-    if (!normalized) return;
-    const positive = pathKind === 'extension'
-      ? `*.${normalized}`
-      : `Assets/${normalized}${pathKind === 'folder' ? '/' : ''}`;
+    const positive = this.managedGitignoreRule(relativePath, pathKind);
+    if (positive === undefined) return;
     const negative = `!${positive}`;
-    const lines = openLibrary.gitignoreText.split(/\r?\n/u).filter((line) => line.length > 0);
-    const filtered = lines.filter((line) => line !== positive && line !== negative);
+    const lines = openLibrary.gitignoreText.split(/\r?\n/u);
+    const filtered = lines.filter((line) => {
+      // Keep comments and blank separators intact.  Only remove the exact
+      // generated positive/negative rule (plus harmless trailing spaces), so
+      // repeated context-menu actions never accumulate duplicates or erase
+      // the user's formatting.
+      const comparable = line.trimEnd();
+      return comparable !== positive && comparable !== negative;
+    });
+    while (filtered.at(-1) === '') filtered.pop();
     filtered.push(ignored ? positive : negative);
     const next = `${filtered.join('\n')}\n`;
     if (next === openLibrary.gitignoreText) return;
@@ -36543,6 +36575,19 @@ export class LibraryService {
     }
     this.noteClientFilesystemMutation();
     this.syncGitignore(openLibrary, next);
+  }
+
+  private managedGitignoreRule(
+    relativePath: string,
+    pathKind: 'asset' | 'folder' | 'extension',
+  ): string | undefined {
+    const normalized = pathKind === 'extension'
+      ? relativePath.trim().replace(/^\.+/u, '').toLowerCase()
+      : this.normalizeExplicitIgnorePath(relativePath, false);
+    if (!normalized) return undefined;
+    return pathKind === 'extension'
+      ? `*.${normalized}`
+      : `Assets/${normalized}${pathKind === 'folder' ? '/' : ''}`;
   }
 
   listIgnoredPaths(libraryId: string): IgnoredPath[] {
@@ -36622,7 +36667,22 @@ export class LibraryService {
       if (!row) throw new LibraryServiceError('FOLDER_NOT_FOUND');
     }
     if (input.locationKind === 'managed') {
+      // Managed ignore state is file-backed.  Do not mirror it into
+      // explicit_ignored_paths: that table is reserved for linked-folder
+      // scoped entries, while .serpentignore is the single source of truth
+      // for everything under Assets/.
       this.updateManagedGitignoreRule(openLibrary, relativePath, input.pathKind, input.ignored);
+      return {
+        ignored: input.ignored,
+        path: {
+          locationKind: 'managed',
+          linkedFolderId: null,
+          relativePath,
+          pathKind: input.pathKind,
+          displayName: relativePath || 'Assets',
+          ignoredAt: new Date().toISOString(),
+        },
+      };
     }
     const sourceFolderId = linkedFolderId ?? '';
     const write = openLibrary.connection.prepare(
@@ -39649,10 +39709,24 @@ export class LibraryService {
         openLibrary.connection
           .prepare("UPDATE linked_folders SET status = 'offline', updated_at = ? WHERE folder_id = ?")
           .run(folderNow, folder.folder_id);
+        this.diagnose('linked-folder.sync.status-changed', 'Linked folder went offline (root path unavailable)', {
+          libraryId: openLibrary.summary.libraryId,
+          folderId: folder.folder_id,
+          rootPath: folder.absolute_root_path,
+          previousStatus: 'available',
+          newStatus: 'offline',
+        });
       } else if (!rootGone && folder.status === 'offline') {
         openLibrary.connection
           .prepare("UPDATE linked_folders SET status = 'available', updated_at = ? WHERE folder_id = ?")
           .run(folderNow, folder.folder_id);
+        this.diagnose('linked-folder.sync.status-changed', 'Linked folder restored (root path available again)', {
+          libraryId: openLibrary.summary.libraryId,
+          folderId: folder.folder_id,
+          rootPath: folder.absolute_root_path,
+          previousStatus: 'offline',
+          newStatus: 'available',
+        });
       }
     }
   }
@@ -40733,6 +40807,14 @@ export class LibraryService {
         changedCount += 1;
       }
 
+      // 离线链接根（root 目录不可用）已由 reconcileLinkedFolderStatuses 置为
+      // offline；其资产的缺失属于「目录整体离线」，status-changed 日志已覆盖，
+      // 不做逐资产 asset-missing 刷屏（Serpent-c2d052）。
+      const offlineLinkedFolderIds = new Set(
+        (openLibrary.connection
+          .prepare("SELECT folder_id FROM linked_folders WHERE status = 'offline'")
+          .all() as Array<{ folder_id: string }>).map((row) => row.folder_id),
+      );
       for (const asset of before) {
         if (
           asset.location_kind === 'managed' &&
@@ -40806,6 +40888,21 @@ export class LibraryService {
               .run(new Date().toISOString(), asset.asset_id);
             changedCount += 1;
             missingCount += 1;
+            // 仅对「链接资产 + 文件夹未离线」的逐文件缺失打日志：managed 资产
+            // 不属链接磁盘同步；文件夹整体离线由 status-changed 覆盖，避免
+            // 整目录 N 条刷屏（Serpent-c2d052）。
+            if (
+              asset.location_kind === 'linked'
+              && !offlineLinkedFolderIds.has(asset.linked_folder_id ?? '')
+            ) {
+              this.diagnose('linked-folder.sync.asset-missing', 'External file disappeared from disk; asset marked missing', {
+                libraryId: openLibrary.summary.libraryId,
+                assetId: asset.asset_id,
+                locationKind: asset.location_kind,
+                linkedFolderId: asset.linked_folder_id,
+                relativeFilePath: asset.relative_file_path,
+              });
+            }
           }
           continue;
         }
@@ -41052,6 +41149,15 @@ export class LibraryService {
         : {}),
     };
     markStage(options?.includeAssets ? 'list-assets' : 'return');
+    if (changedCount > 0 || missingCount > 0) {
+      // refreshManagedAssets 同时对账 managed 与 linked，摘要用中性 scope，
+      // 避免纯 managed 变更被误标为链接磁盘同步（Serpent-c2d052）。
+      this.diagnose('assets.sync.reconciled', 'Disk reconciliation applied changes', {
+        libraryId,
+        changedCount,
+        missingCount,
+      });
+    }
     return result;
   }
 
@@ -41672,6 +41778,8 @@ export class LibraryService {
       changeSubscription,
       preservedRelinkPathIdentities: new Set(),
       gitignoreText: initialGitignoreText,
+      gitignoreMatcher: parseGitignore(initialGitignoreText === '\u0000' ? '' : initialGitignoreText),
+      gitignoreMaterialized: false,
       ...(activeNetworkMetadataCache ? { networkMetadataCache: activeNetworkMetadataCache } : {}),
     };
     registeredOpenLibrary.value = openLibrary;
@@ -42031,6 +42139,8 @@ export class LibraryService {
         changeSubscription: { lastSequence: 0, stop() {} },
         preservedRelinkPathIdentities: new Set(),
         gitignoreText: '',
+        gitignoreMatcher: parseGitignore(''),
+        gitignoreMaterialized: false,
       });
       this.openIdByPath.set(canonicalPath, summary.libraryId);
       return summary;

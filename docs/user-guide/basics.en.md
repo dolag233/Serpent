@@ -6,15 +6,20 @@ On first launch choose **Create library**, pick a location, and enter a display 
 
 Use the upper-left **Main menu → Library** to create, open, import, or export libraries. **Library settings** lets you rename the current library, see its location, and edit its ignore configuration. A description field is not implemented yet.
 
-The ignore editor uses one rule per line, similar to `.gitignore`; the UI calls it an “ignore configuration file”. Saving immediately affects browsing, search, and scanning:
+The ignore editor uses Git-style rules, one per line; the UI calls it an “ignore configuration file”. Ignore actions for assets, folders, and extensions in this library are written here too. Saving immediately affects browsing, search, and scanning:
 
 ```text
-*.tmp                 # ignore every .tmp file
-references/drafts/    # ignore this folder
-!references/drafts/keep.png  # un-ignore one file
+# ignore every .tmp file
+*.tmp
+# ignore this folder
+references/drafts/
+# keep one file visible
+!references/drafts/keep.png
+# hide folders whose names start with "."
+.*/
 ```
 
-The `?` help explains `*`, `?`, `**`, a trailing `/` for directories, a leading `/` for library-root rules, and `!` negation.
+The `?` help explains `*`, `?`, `**`, a trailing `/` for directories, a leading `/` for library-root rules, and `!` to un-ignore.
 
 ### Open external libraries (Eagle / Billfish)
 
