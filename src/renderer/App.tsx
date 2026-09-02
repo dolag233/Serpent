@@ -98,7 +98,7 @@ import {
   buildLinkedFolderBreadcrumbTrail,
   buildManagedFolderBreadcrumbTrail,
 } from "./folder-breadcrumb-trail";
-import { folderBrowseScope } from "./folder-browse-scope";
+import { folderBrowseScope, folderSearchScope } from "./folder-browse-scope";
 import {
   linkedDirectoryName,
   linkedRevealFolderId,
@@ -5738,23 +5738,18 @@ function AppInner() {
     );
   }
 
-  function currentSearchScope(): SearchScope | undefined {
+  function currentSearchScope(
+    recursivelySearchFolders = false,
+  ): SearchScope | undefined {
     if (activeCollectionId)
       return {
         kind: "collection",
         collectionId: activeCollectionId,
         recursive: collectionRecursive,
       };
-    if (assetScope === "root")
-      return { kind: "folder", folderId: null, recursive: false };
-    if (assetScope !== "all")
-      // REQ-FOLDER-009 / REQ-FILTER-012: folder search follows the same switch.
-      return {
-        kind: "folder",
-        folderId: assetScope,
-        recursive: folderRecursive,
-      };
-    return undefined;
+    return recursivelySearchFolders
+      ? folderSearchScope(assetScope)
+      : folderBrowseScope(assetScope, folderRecursive);
   }
 
   async function reloadCurrentContent(options?: {
@@ -5781,7 +5776,7 @@ function AppInner() {
       : currentQueryDefinition();
     await loadContent(library, assetScope, {
       discovery,
-      searchScope: currentSearchScope(),
+      searchScope: currentSearchScope(discovery.search !== undefined),
       blockingLibraryLoad: options?.blockingNavigation,
     });
   }
@@ -6433,7 +6428,9 @@ function AppInner() {
   async function executeSearchDefinition(definition: SearchDefinition) {
     if (!api || !library) return;
     const requestGeneration = ++searchRequestGenerationRef.current;
-    const searchScope = currentSearchScope();
+    // Resolve once so the first page and every subsequent page use exactly
+    // the same scope even if sidebar state changes while the request is live.
+    const searchScope = currentSearchScope(definition.search !== undefined);
     const result = await api.openBrowseSession({
       libraryId: library.libraryId,
       query: definition.search ?? null,
