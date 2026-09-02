@@ -3008,7 +3008,24 @@ function AppInner() {
     setSelectedAssetId(asset.assetId);
     selectionAnchorRef.current = asset.assetId;
     setPreviewAsset(asset);
-  }, [selectionAnchorRef, wakeViewerChrome]);
+    // Serpent-b7e173：打开查看器注册一个历史状态。已是 preview（重复打开）则
+    // 原地替换，避免叠层 preview；applyWorkspaceLocation 回放时 suppress 不重复记。
+    if (!suppressNavHistoryRef.current) {
+      const previewLocation: WorkspaceNavLocation = {
+        kind: "preview",
+        assetId: asset.assetId,
+      };
+      if (navHistoryRef.current.current.kind === "preview") {
+        navHistoryRef.current.replaceCurrent(previewLocation);
+      } else {
+        navHistoryRef.current.push(previewLocation);
+      }
+      setNavHistoryUi({
+        canBack: navHistoryRef.current.canBack,
+        canForward: navHistoryRef.current.canForward,
+      });
+    }
+  }, [navHistoryRef, selectionAnchorRef, setNavHistoryUi, suppressNavHistoryRef, wakeViewerChrome]);
 
   const persistAssetColorSpace = useCallback(async (assetId: string, colorSpace: string | null) => {
     if (!api || !library) return;
@@ -3030,7 +3047,18 @@ function AppInner() {
     selectionAnchorRef.current = asset.assetId;
     previewFocusReturnRef.current = asset.assetId;
     setPreviewAsset(asset);
-  }, [selectionAnchorRef]);
+    // Serpent-b7e173：查看器内切资产只更新当前 preview 条目的 assetId，不新增历史。
+    if (!suppressNavHistoryRef.current) {
+      navHistoryRef.current.replaceCurrent({
+        kind: "preview",
+        assetId: asset.assetId,
+      });
+      setNavHistoryUi({
+        canBack: navHistoryRef.current.canBack,
+        canForward: navHistoryRef.current.canForward,
+      });
+    }
+  }, [navHistoryRef, selectionAnchorRef, setNavHistoryUi, suppressNavHistoryRef]);
 
   const closeAssetPreview = useCallback(async (restoreBrowsePosition = true) => {
     // A scope transition can arrive after React has already cleared
@@ -3044,6 +3072,17 @@ function AppInner() {
     const closingAsset = previewAsset;
     if (!closingAsset) return;
     if (closingPreviewRef.current === closingAsset.assetId) return;
+    // Serpent-b7e173：查看器被关闭时（无论 X/Esc 显式关还是导航触发），若当前
+    // 历史条目仍是 preview 则硬移除——否则「从预览导航到别处」会残留一个已关闭
+    // 的 preview，导致 back 回到它。back()/forward() 已移 index（当前非 preview）
+    // 或导航 push 会截断，不在此重复处理。
+    if (navHistoryRef.current.current.kind === "preview") {
+      navHistoryRef.current.dismissCurrent();
+      setNavHistoryUi({
+        canBack: navHistoryRef.current.canBack,
+        canForward: navHistoryRef.current.canForward,
+      });
+    }
     const closeGeneration = ++previewCloseGenerationRef.current;
     closingPreviewRef.current = closingAsset.assetId;
     previewRestoringRef.current = restoreBrowsePosition;
@@ -3169,7 +3208,7 @@ function AppInner() {
         closingPreviewRef.current = null;
       }
     }
-  }, [api, library, previewAsset]);
+  }, [api, library, navHistoryRef, previewAsset, setNavHistoryUi]);
 
   // Collection tree helper
   const collectionTree = useMemo(() => {
@@ -4003,17 +4042,39 @@ function AppInner() {
       case "trash":
         await enterTrashAt(location.tombstoneId);
         return;
+      case "preview": {
+        // 回放查看器状态：preview 条目总是在某浏览 scope 之后打开，其资产应在
+        // 当前视图（assets/visibleAssets）中；找不到（已删除/被过滤）则把这条
+        // 失效 preview 从历史移除（dismissCurrent，当前正是栈顶 preview），
+        // 让 current 落回下层浏览 scope，避免留下幽灵 preview。
+        const target = [...visibleAssets, ...assets].find(
+          (candidate) => candidate.assetId === location.assetId,
+        );
+        if (target) {
+          openAssetPreview(target);
+        } else {
+          navHistoryRef.current.dismissCurrent();
+          syncNavHistoryUi();
+        }
+        return;
+      }
+      case "tag-management":
+        await enterTagManagement();
+        return;
     }
   }
 
   async function goWorkspaceBack() {
-    if (previewAsset) {
-      await closeAssetPreview();
-      return;
-    }
     const location = navHistoryRef.current.back();
     if (!location) return;
     syncNavHistoryUi();
+    if (previewAsset) {
+      // Serpent-b7e173：查看器是从当前浏览 scope 打开的，back() 已把 index 移出
+      // preview。浏览界面本就显示在查看器下层，直接关查看器恢复滚动位置即可，
+      // 不要走 applyWorkspaceLocation → chooseFolder 的全量重载（会把滚动归零）。
+      await closeAssetPreview();
+      return;
+    }
     suppressNavHistoryRef.current = true;
     try {
       await applyWorkspaceLocation(location);
@@ -4023,10 +4084,9 @@ function AppInner() {
   }
 
   async function goWorkspaceForward() {
-    if (previewAsset) {
-      await closeAssetPreview();
-      return;
-    }
+    // 前进只走历史（Serpent-b7e173）。查看器开着时 preview 必在栈顶，
+    // forward() 返回 null；能前进时查看器必然已关（back 或导航已离开），
+    // 故前进无需任何 preview 特判；前进到 preview 由 applyWorkspaceLocation 重开查看器。
     const location = navHistoryRef.current.forward();
     if (!location) return;
     syncNavHistoryUi();
@@ -4606,6 +4666,8 @@ function AppInner() {
       if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
       if (!isCurrentLibraryView(viewSession)) return;
       setTags(tagResult.value);
+      // Serpent-b7e173：进入标签管理注册历史状态（apply 回放时被 suppress）。
+      recordNavigation({ kind: "tag-management" });
     } catch (caught) {
       if (isCurrentLibraryView(viewSession)) {
         setError(toMessage(caught, t("toast.readTagAssetsFailed"), locale));
@@ -9974,6 +10036,8 @@ function AppInner() {
         <div className="toolbar-cluster toolbar-workspace-cluster">
           <div className="toolbar-workspace-main">
             <ScopeHistoryButtons
+              // Serpent-b7e173：预览已是历史条目（打开查看器必压在某浏览 scope 上），
+              // 所以后退/前进由纯历史驱动即可，无需对预览做任何特判。
               canBack={navHistoryUi.canBack}
               canForward={navHistoryUi.canForward}
               onBack={() => void goWorkspaceBack()}

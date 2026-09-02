@@ -32,7 +32,11 @@ import {
   type LoadContentForRestore,
 } from "./restore-browser-session";
 import type { BeginBrowsePage } from "./use-browse-pagination";
-import type { WorkspaceNavHistory, WorkspaceNavLocation } from "./workspace-nav-history";
+import {
+  seedRestoreLeafLocation,
+  type WorkspaceNavHistory,
+  type WorkspaceNavLocation,
+} from "./workspace-nav-history";
 
 export type UseBrowserSessionRestoreArgs = {
   api: SerpentLibraryApi | null;
@@ -199,8 +203,14 @@ export function useBrowserSessionRestore(
         // import destination. A relaunch must never silently direct a new
         // import into the last folder the user happened to browse.
         resetImportTargetFolderRef.current = undefined;
-        navHistoryRef.current.clear(restoredLocation);
-        setNavHistoryUi({ canBack: false, canForward: false });
+        // 恢复进非 all scope 时以 {kind:"all"} 为历史基底压入，使「后退到全部」
+        // 从第一帧即可用（Serpent-ada7ad：否则首次打开/重启恢复的会话只有单条
+        // 历史，未切文件夹时后退按钮被禁、无法返回）。
+        const seeded = seedRestoreLeafLocation(
+          navHistoryRef.current,
+          restoredLocation,
+        );
+        setNavHistoryUi({ canBack: seeded.canBack, canForward: false });
       } else {
         setLibraryLoading(null);
         navHistoryRef.current.clear({ kind: "all" });
