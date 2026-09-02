@@ -1964,9 +1964,17 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
    popover's own scroll region rather than a separate floating dropdown. */
 .filter-tag-suggestions {
   display: flex;
+  max-height: calc(var(--shell-chip-height) * 4 + 24px);
   min-height: 0;
   flex-direction: column;
   gap: 8px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+}
+
+.filter-tag-sort {
+  flex-wrap: wrap;
 }
 
 .filter-tag-section {

@@ -6,7 +6,7 @@ export default defineConfig({
     // Windows CI runners are slower; the 5s vitest default flakes heavy
     // worker tests (schema chains, write fencing, model pipeline).
     testTimeout: 120_000,
-    include: ['tests/{unit,worker}/**/*.test.ts'],
+    include: ['tests/{unit,worker}/**/*.test.{ts,tsx}'],
     coverage: {
       enabled: false,
     },

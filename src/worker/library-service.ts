@@ -36614,14 +36614,64 @@ export class LibraryService {
       ignored_at: string;
       display_name: string;
     }>;
-    return rows.map((row) => ({
-      locationKind: row.location_kind,
-      linkedFolderId: row.linked_folder_id,
-      relativePath: row.relative_path,
-      pathKind: row.path_kind,
-      displayName: row.display_name,
-      ignoredAt: row.ignored_at,
-    }));
+    // Managed rules are stored in .serpentignore. The materialized table is
+    // used by browse/search hot paths, but can lag behind a newly discovered
+    // file; evaluate the current matcher here so Settings always shows the
+    // actual files and folders currently affected by the rules.
+    const ignoredAt = new Date().toISOString();
+    if (hasTable(openLibrary.connection, 'managed_folders')) {
+      const managedFolders = openLibrary.connection.prepare(
+        `SELECT relative_path FROM managed_folders ORDER BY relative_path`,
+      ).all() as Array<{ relative_path: string }>;
+      for (const folder of managedFolders) {
+        if (!gitignoreMatchesPath(openLibrary.gitignoreMatcher, folder.relative_path, 'folder')) {
+          continue;
+        }
+        rows.push({
+          location_kind: 'managed',
+          linked_folder_id: null,
+          relative_path: folder.relative_path,
+          path_kind: 'folder',
+          ignored_at: ignoredAt,
+          display_name: folder.relative_path,
+        });
+      }
+    }
+    if (hasTable(openLibrary.connection, 'assets')) {
+      const managedAssets = openLibrary.connection.prepare(
+        `SELECT relative_file_path AS relative_path
+           FROM assets
+          WHERE location_kind = 'managed' AND deleted_at IS NULL
+          ORDER BY relative_file_path`,
+      ).all() as Array<{ relative_path: string }>;
+      for (const asset of managedAssets) {
+        if (!gitignoreMatchesPath(openLibrary.gitignoreMatcher, asset.relative_path, 'asset')) {
+          continue;
+        }
+        rows.push({
+          location_kind: 'managed',
+          linked_folder_id: null,
+          relative_path: asset.relative_path,
+          path_kind: 'asset',
+          ignored_at: ignoredAt,
+          display_name: asset.relative_path,
+        });
+      }
+    }
+    return rows
+      .sort((a, b) =>
+        a.location_kind.localeCompare(b.location_kind) ||
+        a.relative_path.localeCompare(b.relative_path) ||
+        a.path_kind.localeCompare(b.path_kind),
+      )
+      .map((row) => ({
+        locationKind: row.location_kind,
+        linkedFolderId: row.linked_folder_id,
+        relativePath: row.relative_path,
+        pathKind: row.path_kind,
+        displayName: row.display_name,
+        ignoredAt: row.ignored_at,
+      }));
   }
 
   setIgnore(input: {

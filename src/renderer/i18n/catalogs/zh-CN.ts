@@ -454,7 +454,10 @@ export const zhCN = {
     searchAddTag: "搜索并添加标签",
     addableTags: "可添加的标签",
     topTags: "常用标签",
-    recentTags: "最近筛选"
+    recentTags: "最近筛选",
+    tagSort: "标签建议排序",
+    tagSortCount: "使用次数",
+    tagSortName: "名称"
   },
   command: {
     asset: {

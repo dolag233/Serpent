@@ -22,9 +22,9 @@ export type GitIgnoreMatcher = {
  */
 export function parseGitignore(text: string): GitIgnoreMatcher {
   const matcher = ignore({ ignorecase: true });
-  for (const [index, line] of text.split(/\r?\n/u).entries()) {
+  for (const line of text.split(/\r?\n/u)) {
     try {
-      matcher.add({ pattern: line, mark: String(index) });
+      matcher.add(line);
     } catch {
       // Keep valid rules active when an unrelated line is malformed.
     }
@@ -38,7 +38,7 @@ export function parseGitignore(text: string): GitIgnoreMatcher {
     const qualified = assetsQualifiedPattern(line);
     if (qualified === undefined) continue;
     try {
-      matcher.add({ pattern: qualified, mark: String(index) });
+      matcher.add(qualified);
     } catch {
       // The original line was handled above; an invalid qualified form must
       // not make an otherwise valid ignore file unusable.

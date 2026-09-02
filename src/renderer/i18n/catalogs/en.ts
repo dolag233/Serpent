@@ -466,7 +466,10 @@ export const en = {
     searchAddTag: "Search and add tags",
     addableTags: "Tags you can add",
     topTags: "Most used",
-    recentTags: "Recently filtered"
+    recentTags: "Recently filtered",
+    tagSort: "Sort tag suggestions",
+    tagSortCount: "Usage",
+    tagSortName: "Name"
   },
   command: {
     asset: {

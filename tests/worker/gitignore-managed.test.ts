@@ -79,7 +79,23 @@ describe('managed ignore configuration', () => {
     expect(ignoreText).toBe(
       '*.txt\nAssets/renders/\nAssets/renders/preview.txt\n',
     );
-    expect(service.listIgnoredPaths(library.libraryId)).toEqual([]);
+    expect(service.listIgnoredPaths(library.libraryId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          locationKind: 'managed',
+          pathKind: 'folder',
+          relativePath: 'renders',
+          displayName: 'renders',
+        }),
+        expect.objectContaining({
+          locationKind: 'managed',
+          pathKind: 'asset',
+          relativePath: 'renders/preview.txt',
+          displayName: 'renders/preview.txt',
+        }),
+      ]),
+    );
+    expect(service.listIgnoredPaths(library.libraryId)).toHaveLength(2);
     expect(service.listAssets({ libraryId: library.libraryId, recursive: true })).toEqual([]);
 
     service.setIgnore({
@@ -90,6 +106,7 @@ describe('managed ignore configuration', () => {
       ignored: false,
     });
     expect(readFileSync(ignorePath, 'utf8')).toContain('!*.txt\n');
+    expect(service.listIgnoredPaths(library.libraryId)).toHaveLength(2);
 
     service.closeAll();
     const reopened = newService();
@@ -156,6 +173,9 @@ describe('managed ignore configuration', () => {
 
     const reopened = newService();
     reopened.openLibrary(library.libraryPath);
+    // Opening defers the full ignore materialization until the first library
+    // read so large libraries can render their identity promptly.
+    reopened.listIgnoredPaths(library.libraryId);
     expect(readFileSync(path.join(library.libraryPath, '.serpentignore'), 'utf8'))
       .toContain(`Assets/${asset.relativeFilePath}`);
     expect(reopened.listAssets({ libraryId: library.libraryId, recursive: true })).toEqual([]);

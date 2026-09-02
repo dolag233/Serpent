@@ -301,6 +301,10 @@ export type UseBrowsePaginationResult = {
    * counters stay consistent until the deferred full reconcile re-registers.
    */
   removeLocally: (assetIds: string[], removedCount: number) => () => void;
+  /** Apply measured media geometry without restarting the browse session. */
+  applyGeometryPatches: (
+    patches: ReadonlyMap<string, { width: number; height: number }>,
+  ) => void;
   /** Drop the current definition (library close / navigation to non-browse views). */
   reset: () => void;
   hasMorePages: boolean;

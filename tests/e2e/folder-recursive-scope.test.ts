@@ -188,6 +188,14 @@ test("folder browse stays direct until include-subfolders is checked", async () 
     await expect(childCard).toBeVisible({ timeout: 15_000 });
     await expect(parentCard).toHaveCount(0);
 
+    // The browse-only switch must not narrow a live recursive text search.
+    await includeSubfolders.click();
+    await expect(includeSubfolders).toHaveAttribute("aria-pressed", "true");
+    await expect(childCard).toBeVisible({ timeout: 15_000 });
+    await includeSubfolders.click();
+    await expect(includeSubfolders).toHaveAttribute("aria-pressed", "false");
+    await expect(childCard).toBeVisible({ timeout: 15_000 });
+
     // Clearing the term restores the parent's ordinary non-recursive browse.
     await window.getByLabel("搜索资源库").fill("");
     await window.getByLabel("搜索资源库").press("Enter");

@@ -5,6 +5,11 @@ import {
   buildTagFilterDefaultSections,
   buildTagFilterSearchResults,
 } from "./tag-filter-suggestions";
+import {
+  sortTags,
+  type TagSortDirection,
+  type TagSortKey,
+} from "./tag-management-model";
 import { Icon } from "./Icons";
 import { useT } from "./i18n";
 import { isImeKeyboardEvent } from "./ime-safe-dismiss";
@@ -68,16 +73,35 @@ export function FilterTagPicker({
 }) {
   const t = useT();
   const [query, setQuery] = useState("");
+  const [sortKey, setSortKey] = useState<TagSortKey>("count");
+  const [sortDirection, setSortDirection] = useState<TagSortDirection>("desc");
 
   const trimmed = query.trim();
   const isSearching = trimmed.length > 0;
   const searchResults = isSearching
-    ? buildTagFilterSearchResults(tags, selectedNames, trimmed)
+    ? sortTags(
+        buildTagFilterSearchResults(tags, selectedNames, trimmed),
+        sortKey,
+        sortDirection,
+      )
     : [];
   const { top, recent } = isSearching
     ? { top: [], recent: [] }
     : buildTagFilterDefaultSections(tags, selectedNames, recentNames);
-  const firstCandidate = isSearching ? searchResults[0] : recent[0] ?? top[0];
+  const sortedTop = sortTags(top, sortKey, sortDirection);
+  const sortedRecent = sortTags(recent, sortKey, sortDirection);
+  const firstCandidate = isSearching
+    ? searchResults[0]
+    : sortedRecent[0] ?? sortedTop[0];
+
+  const handleSortClick = (nextKey: TagSortKey) => {
+    if (sortKey === nextKey) {
+      setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortKey(nextKey);
+    setSortDirection(nextKey === "count" ? "desc" : "asc");
+  };
 
   const add = (name: string, shiftKey: boolean) => {
     onChange(applyDimensionSelectionClick(selectedNames, name, shiftKey));
@@ -123,26 +147,56 @@ export function FilterTagPicker({
       />
       {!disabled && (
         <div className="filter-tag-suggestions" aria-label={t("filter.addableTags")}>
+          <div
+            aria-label={t("filter.tagSort")}
+            className="filter-tag-sort tag-management-sort"
+            role="group"
+          >
+            {(["count", "name"] as const).map((key) => (
+              <button
+                aria-pressed={sortKey === key}
+                className={`dimension-filter-btn${sortKey === key ? " is-active" : ""}`}
+                key={key}
+                onClick={() => handleSortClick(key)}
+                title={
+                  sortKey === key
+                    ? t(sortDirection === "asc" ? "filter.sortAsc" : "filter.sortDesc")
+                    : undefined
+                }
+                type="button"
+              >
+                {t(key === "count" ? "filter.tagSortCount" : "filter.tagSortName")}
+                {sortKey === key ? (
+                  <span aria-hidden="true" className="sort-order-glyph">
+                    <Icon
+                      name={sortDirection === "asc" ? "sort-asc" : "sort-desc"}
+                      size={14}
+                    />
+                  </span>
+                ) : null}
+              </button>
+            ))}
+          </div>
           {isSearching
             ? searchResults.length > 0 && (
                 <TagOptionList tags={searchResults} onSelect={add} />
               )
-            : (top.length > 0 || recent.length > 0) && (
+            : (sortedTop.length > 0 || sortedRecent.length > 0) && (
                 <>
-                  {recent.length > 0 && (
+                  {sortedRecent.length > 0 && (
                     <div className="filter-tag-section">
                       <div className="filter-tag-section-label">
                         {t("filter.recentTags")}
                       </div>
-                      <TagOptionList tags={recent} onSelect={add} />
+                      <TagOptionList tags={sortedRecent} onSelect={add} />
                     </div>
                   )}
-                  {top.length > 0 && (
+                  {sortedTop.length > 0 && (
                     <div className="filter-tag-section">
                       <div className="filter-tag-section-label">
                         {t("filter.topTags")}
                       </div>
-                      <TagOptionList tags={top} onSelect={add} />
+                      <TagOptionList tags={sortedTop} onSelect={add} />
                     </div>
                   )}
                 </>
