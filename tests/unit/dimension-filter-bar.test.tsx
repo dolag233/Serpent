@@ -149,4 +149,49 @@ describe("DimensionFilterBar hover opening", () => {
     });
     expect(document.body.querySelector("[data-dimension-filter-popover]")).not.toBeNull();
   });
+
+  it("does not reopen after leaving while a duplicate hover timer is pending", async () => {
+    vi.useFakeTimers();
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        createElement(
+          LocaleProvider,
+          { children: null, initialPreference: "en" },
+          createElement(DimensionFilterBar, props()),
+        ),
+      );
+    });
+
+    const colorButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("Color"));
+    expect(colorButton).toBeDefined();
+    const outside = document.createElement("div");
+
+    await act(async () => {
+      colorButton?.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+      vi.advanceTimersByTime(500);
+    });
+    expect(document.body.querySelector("[data-dimension-filter-popover]")).not.toBeNull();
+
+    // A second pointerover can arrive from a child/nearby pointer transition
+    // while the same dimension is already open. Leaving must cancel that
+    // delayed open before the close timer runs.
+    await act(async () => {
+      colorButton?.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+      colorButton?.dispatchEvent(
+        new PointerEvent("pointerout", { bubbles: true, relatedTarget: outside }),
+      );
+      vi.advanceTimersByTime(150);
+    });
+    expect(document.body.querySelector("[data-dimension-filter-popover]")).toBeNull();
+
+    await act(async () => {
+      vi.advanceTimersByTime(350);
+    });
+    expect(document.body.querySelector("[data-dimension-filter-popover]")).toBeNull();
+  });
 });
