@@ -27,8 +27,11 @@ import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useLocale, useT } from "./i18n";
 import {
+  FONT_SIZE_INDEX_MAX,
+  FONT_SIZE_INDEX_MIN,
   FONT_SIZE_OPTIONS,
-  type FontSizePreference,
+  fontSizePreferenceFromIndex,
+  fontSizePreferenceToIndex,
 } from "./font-size-preferences";
 import { useFontSize } from "./FontSizeProvider";
 import {
@@ -302,6 +305,8 @@ export function AppearanceSettingsPage(): ReactNode {
     useMenuAcrylic();
   const { enabled: inspectorCardFeelEnabled, toggle: toggleInspectorCardFeel } =
     useInspectorCardFeel();
+  const fontSizeIndex = fontSizePreferenceToIndex(fontSizePrefs.preference);
+  const fontSizeLabelKey = `settings.fontSize${fontSizePrefs.preference[0]!.toUpperCase()}${fontSizePrefs.preference.slice(1)}` as const;
 
   return (
     <SettingsCard className="app-settings-appearance-card">
@@ -323,23 +328,41 @@ export function AppearanceSettingsPage(): ReactNode {
           <strong>{t("settings.fontSize")}</strong>
           <span>{t("settings.fontSizeHint")}</span>
         </div>
-        <div
-          aria-label={t("settings.fontSize")}
-          className="app-settings-option-group app-settings-font-size-options"
-          role="radiogroup"
-        >
-          {FONT_SIZE_OPTIONS.map((option: FontSizePreference) => (
-            <button
-              aria-checked={fontSizePrefs.preference === option}
-              className="app-settings-option"
-              key={option}
-              onClick={() => setFontSizePreference(option)}
-              role="radio"
-              type="button"
-            >
-              {t(`settings.fontSize${option[0]!.toUpperCase()}${option.slice(1)}` as const)}
-            </button>
-          ))}
+        <div className="app-settings-elevation-scale app-settings-font-size-scale">
+          <div className="app-settings-elevation-rail">
+            <Slider
+              aria-label={t("settings.fontSize")}
+              className="app-settings-elevation-slider app-settings-font-size-slider"
+              max={FONT_SIZE_INDEX_MAX}
+              min={FONT_SIZE_INDEX_MIN}
+              onValueChange={(value) =>
+                setFontSizePreference(fontSizePreferenceFromIndex(value))
+              }
+              step={1}
+              value={fontSizeIndex}
+              valueText={t(fontSizeLabelKey)}
+            />
+            <div aria-hidden="true" className="app-settings-elevation-ticks">
+              {FONT_SIZE_OPTIONS.map((option, index) => (
+                <span
+                  className={
+                    fontSizeIndex === index
+                      ? "app-settings-elevation-tick is-active"
+                      : "app-settings-elevation-tick"
+                  }
+                  key={option}
+                >
+                  <span className="app-settings-elevation-tick-mark" />
+                  <span className="app-settings-elevation-tick-label">
+                    {index}
+                  </span>
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="app-settings-font-size-label">
+            {t(fontSizeLabelKey)}
+          </div>
         </div>
       </div>
       <div className="app-settings-card-divider" />

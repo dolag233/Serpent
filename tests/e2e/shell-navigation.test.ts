@@ -224,7 +224,7 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
     }
 
     // Typography is an app preference, not Chromium page zoom. Exercise all
-    // three tiers through the real Appearance settings and verify that the
+    // four tiers through the real Appearance settings and verify that the
     // shared root scale and a visible control both change.
     if (process.platform === "win32") {
       await settingsButton.click();
@@ -235,24 +235,34 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
     const fontSettingsDialog = window.getByRole("dialog");
     await expect(fontSettingsDialog).toBeVisible();
     await fontSettingsDialog.getByRole("tab", { name: "外观", exact: true }).click();
-    const fontSizeGroup = fontSettingsDialog.locator(".app-settings-font-size-options");
-    await expect(fontSizeGroup.getByRole("radio")).toHaveCount(3);
-    const fontSizeButton = fontSizeGroup.getByRole("radio").first();
+    const fontSizeScale = fontSettingsDialog.locator(".app-settings-font-size-scale");
+    const fontSizeSlider = fontSizeScale.getByRole("slider", { name: "字体大小" });
+    await expect(fontSizeSlider).toHaveAttribute("min", "0");
+    await expect(fontSizeSlider).toHaveAttribute("max", "3");
+    await expect(fontSizeScale.locator(".app-settings-elevation-tick-label")).toHaveCount(4);
     const readFontScale = () => window.evaluate(() => ({
       scale: getComputedStyle(document.documentElement)
         .getPropertyValue("--ui-font-scale")
         .trim(),
-      size: getComputedStyle(document.querySelector(".app-settings-font-size-options button")!)
+      size: getComputedStyle(document.querySelector(".app-settings-font-size-label")!)
         .fontSize,
       zoom: getComputedStyle(document.documentElement).zoom,
     }));
-    await fontSizeGroup.getByRole("radio", { name: "紧凑", exact: true }).click();
-    await expect.poll(readFontScale).toEqual({ scale: "0.94", size: "11.28px", zoom: "1" });
-    await fontSizeGroup.getByRole("radio", { name: "默认", exact: true }).click();
-    await expect.poll(readFontScale).toEqual({ scale: "1", size: "12px", zoom: "1" });
-    await fontSizeGroup.getByRole("radio", { name: "舒适", exact: true }).click();
-    await expect.poll(readFontScale).toEqual({ scale: "1.06", size: "12.72px", zoom: "1" });
-    await expect(fontSizeButton).toHaveAttribute("aria-checked", "false");
+    const setFontSizeIndex = async (index: number) => {
+      await fontSizeSlider.focus();
+      await fontSizeSlider.press("Home");
+      for (let step = 0; step < index; step += 1) {
+        await fontSizeSlider.press("ArrowRight");
+      }
+    };
+    await setFontSizeIndex(0);
+    await expect.poll(readFontScale).toEqual({ scale: "0.94", size: "10.34px", zoom: "1" });
+    await setFontSizeIndex(1);
+    await expect.poll(readFontScale).toEqual({ scale: "1", size: "11px", zoom: "1" });
+    await setFontSizeIndex(2);
+    await expect.poll(readFontScale).toEqual({ scale: "1.06", size: "11.66px", zoom: "1" });
+    await setFontSizeIndex(3);
+    await expect.poll(readFontScale).toEqual({ scale: "1.12", size: "12.32px", zoom: "1" });
     await window.keyboard.press("Escape");
     await expect(fontSettingsDialog).toHaveCount(0);
 

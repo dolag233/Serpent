@@ -3,14 +3,36 @@ import { z } from "zod";
 export const FONT_SIZE_PREFERENCES_KEY = "serpent.font-size-preferences.v1";
 export const FONT_SIZE_PREFERENCES_VERSION = 1;
 
-export const FONT_SIZE_OPTIONS = ["compact", "default", "comfortable"] as const;
+export const FONT_SIZE_OPTIONS = [
+  "compact",
+  "default",
+  "comfortable",
+  "large",
+] as const;
 export type FontSizePreference = (typeof FONT_SIZE_OPTIONS)[number];
 
 export const FONT_SIZE_SCALES: Readonly<Record<FontSizePreference, number>> = {
   compact: 0.94,
   default: 1,
   comfortable: 1.06,
+  large: 1.12,
 };
+
+export const FONT_SIZE_INDEX_MIN = 0;
+export const FONT_SIZE_INDEX_MAX = FONT_SIZE_OPTIONS.length - 1;
+
+export function fontSizePreferenceToIndex(preference: FontSizePreference): number {
+  return FONT_SIZE_OPTIONS.indexOf(preference);
+}
+
+export function fontSizePreferenceFromIndex(value: number): FontSizePreference {
+  if (!Number.isFinite(value)) return "default";
+  const index = Math.min(
+    FONT_SIZE_INDEX_MAX,
+    Math.max(FONT_SIZE_INDEX_MIN, Math.round(value)),
+  );
+  return FONT_SIZE_OPTIONS[index] ?? "default";
+}
 
 export const fontSizePreferencesSchema = z.strictObject({
   version: z.literal(FONT_SIZE_PREFERENCES_VERSION),

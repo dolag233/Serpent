@@ -4,15 +4,12 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { FONT_SIZE_SCALES } from "../../src/renderer/font-size-preferences";
 import { FontSizeProvider, useFontSize } from "../../src/renderer/FontSizeProvider";
 
 function Probe() {
   const { preferences, setPreference } = useFontSize();
-  return createElement(
-    "button",
-    { onClick: () => setPreference("comfortable") },
-    preferences.preference,
-  );
+  return createElement("button", { onClick: () => setPreference("large") }, preferences.preference);
 }
 
 describe("FontSizeProvider", () => {
@@ -51,8 +48,10 @@ describe("FontSizeProvider", () => {
     await act(async () => {
       container?.querySelector("button")?.click();
     });
-    expect(container.textContent).toBe("comfortable");
-    expect(document.documentElement.dataset.fontSize).toBe("comfortable");
+    expect(container.textContent).toBe("large");
+    expect(document.documentElement.dataset.fontSize).toBe("large");
+    expect(document.documentElement.style.getPropertyValue("--ui-font-scale"))
+      .toBe(String(FONT_SIZE_SCALES.large));
     expect(values.size).toBe(1);
   });
 });

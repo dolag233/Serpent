@@ -1382,6 +1382,7 @@ export const zhCN = {
     fontSizeCompact: "紧凑",
     fontSizeDefault: "默认",
     fontSizeComfortable: "舒适",
+    fontSizeLarge: "更大",
     librarySettings: "资源库设置",
     librarySettingsCategories: "资源库设置分类",
     libraryGeneral: "基本信息",

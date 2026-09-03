@@ -7775,6 +7775,22 @@ select.ai-config-input.ai-config-languages {
   line-height: 1.2;
 }
 
+.app-settings-font-size-scale {
+  margin-top: 10px;
+}
+
+.app-settings-font-size-scale .app-settings-elevation-tick {
+  cursor: default;
+}
+
+.app-settings-font-size-label {
+  padding: 2px var(--elev-inset) 0;
+  color: var(--secondary);
+  font-size: calc(11px * var(--ui-font-scale));
+  line-height: 1.2;
+  text-align: center;
+}
+
 .app-settings-option-group {
   display: flex;
   flex-wrap: wrap;

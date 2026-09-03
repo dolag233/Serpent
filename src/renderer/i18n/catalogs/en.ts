@@ -1398,6 +1398,7 @@ export const en = {
     fontSizeCompact: "Compact",
     fontSizeDefault: "Default",
     fontSizeComfortable: "Comfortable",
+    fontSizeLarge: "Larger",
     librarySettings: "Library settings",
     librarySettingsCategories: "Library settings categories",
     libraryGeneral: "General",

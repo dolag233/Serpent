@@ -4,9 +4,13 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   DEFAULT_FONT_SIZE_PREFERENCES,
+  FONT_SIZE_INDEX_MAX,
+  FONT_SIZE_INDEX_MIN,
   FONT_SIZE_PREFERENCES_KEY,
   FONT_SIZE_SCALES,
   applyFontSizePreferences,
+  fontSizePreferenceFromIndex,
+  fontSizePreferenceToIndex,
   loadFontSizePreferences,
   parseFontSizePreferences,
   saveFontSizePreferences,
@@ -40,15 +44,26 @@ describe("font-size preferences", () => {
       .toEqual(DEFAULT_FONT_SIZE_PREFERENCES);
   });
 
-  it("persists only the versioned three-tier contract", () => {
+  it("persists only the versioned four-tier contract", () => {
     const source = storage();
-    const next = setStoredFontSizePreference("comfortable", source);
-    expect(next.preference).toBe("comfortable");
+    const next = setStoredFontSizePreference("large", source);
+    expect(next.preference).toBe("large");
     expect(source.getItem(FONT_SIZE_PREFERENCES_KEY)).toBe(
-      JSON.stringify({ version: 1, preference: "comfortable" }),
+      JSON.stringify({ version: 1, preference: "large" }),
     );
     expect(loadFontSizePreferences(source)).toEqual(next);
     expect(saveFontSizePreferences(DEFAULT_FONT_SIZE_PREFERENCES, source)).toBe(true);
+  });
+
+  it("maps slider indices to the four preferences and clamps invalid positions", () => {
+    expect(fontSizePreferenceToIndex("compact")).toBe(FONT_SIZE_INDEX_MIN);
+    expect(fontSizePreferenceFromIndex(0)).toBe("compact");
+    expect(fontSizePreferenceFromIndex(1)).toBe("default");
+    expect(fontSizePreferenceFromIndex(2)).toBe("comfortable");
+    expect(fontSizePreferenceFromIndex(FONT_SIZE_INDEX_MAX)).toBe("large");
+    expect(fontSizePreferenceFromIndex(-1)).toBe("compact");
+    expect(fontSizePreferenceFromIndex(99)).toBe("large");
+    expect(fontSizePreferenceFromIndex(Number.NaN)).toBe("default");
   });
 
   it("applies the app scale without using page zoom", () => {
