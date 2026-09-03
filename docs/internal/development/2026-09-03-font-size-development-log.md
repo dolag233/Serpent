@@ -11,6 +11,7 @@
 - `src/renderer/ui/tokens.css` 的语义字号、`src/renderer/styles.css` 和 3D 查看器字号统一读取 `--ui-font-scale`；常用字重读取 UI 字重 token，保留少量既有中间字重以维持视觉层级。
 - 主进程独立危险确认窗口在测量内容前读取父窗口的已校验字号比例和平台字体栈，避免独立 data URL 窗口脱离应用字号/Windows 字体设置。
 - 外观设置复用现有设置卡片和 elevation slider 的轨道、thumb、刻度 token，并补充中英文文案；slider 暴露四个整数档位和当前档位的可读名称。
+- 独立 Luna 双轴审查见 [`2026-09-03-font-size-slider-review.md`](../reviews/2026-09-03-font-size-slider-review.md)；初轮 P2 已收口，平台未验证边界保留。
 
 ## 四列可追溯
 
