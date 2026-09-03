@@ -16,11 +16,11 @@
 
 | 需求条目 | 实现位置 | 自动化测试 | Computer Use / 平台证据 |
 | --- | --- | --- | --- |
-| 四档偏好、异常值回退与持久化 | `font-size-preferences.ts`；`FontSizeProvider.tsx`；`AppSettingsPages.tsx` | `tests/unit/font-size-preferences.test.ts`；`tests/unit/font-size-provider.test.tsx` | macOS Computer Use 已选中 0/1/2/3 四档并恢复默认 |
-| 首帧应用、不使用 page zoom | `src/renderer/main.tsx`；`src/renderer/ui/tokens.css` | 字体偏好单测；`tests/e2e/shell-navigation.test.ts` 四档断言 | macOS Electron E2E 四档 scale/字号/zoom 断言通过 |
-| Renderer / 设置 / 资产界面 / 查看器字号适配 | `src/renderer/styles.css`；`src/renderer/ui/ui.css`；`src/renderer/3d-viewer/viewer-surface.css`；`AppSettingsPages.tsx` | `tests/e2e/shell-navigation.test.ts`；字体偏好单测 | Computer Use 检查设置、主工作区、收起导航、Inspector、标签/颜色弹层、菜单、资源库切换器、3D 查看器，未见裁切或布局崩坏 |
-| 独立危险确认窗口随父窗口字号适配 | `src/main/critical-confirmation-window.ts` | `tests/unit/critical-confirmation-window.test.ts` | 单测覆盖 scale 与平台字体栈同步；真实危险确认未触发（避免删除操作） |
-| Windows 字体栈、字重、DPI / 分辨率 | `styles.css`；`harmonyos-sans-sc-windows.css`；`tokens.css` | `tests/e2e/windows-typography.test.ts`（仅 Windows 执行） | 当前 macOS 环境无法执行，Windows / packaged / 真实 DPI 未验证 |
+| 四档偏好、异常值回退与持久化 | `src/renderer/font-size-preferences.ts:6-35`；`src/renderer/FontSizeProvider.tsx:38-55`；`src/renderer/AppSettingsPages.tsx:58-65,307-370` | `tests/unit/font-size-preferences.test.ts:47-78`；`tests/unit/font-size-provider.test.tsx:28-56` | macOS Computer Use 会话已选中 0/1/2/3 四档并恢复默认；截图未入库，避免带入用户资产信息 |
+| 首帧应用、不使用 page zoom | `src/renderer/main.tsx:42`；`src/renderer/ui/tokens.css:1-120` | `tests/e2e/shell-navigation.test.ts:238-269` 四档断言 | macOS Electron E2E 四档 scale/字号/zoom 断言通过 |
+| Renderer / 设置 / 资产界面 / 查看器字号适配 | `src/renderer/styles.css:7651-7795`；`src/renderer/ui/ui.css`；`src/renderer/3d-viewer/viewer-surface.css`；`src/renderer/AppSettingsPages.tsx:338-370` | `tests/e2e/shell-navigation.test.ts:243-269,422-440`；字体偏好单测 | Computer Use 检查设置、主工作区、收起导航、Inspector、标签/颜色弹层、菜单、资源库切换器、3D 查看器，未见裁切或布局崩坏 |
+| 独立危险确认窗口随父窗口字号适配 | `src/main/critical-confirmation-window.ts:1-160` | `tests/unit/critical-confirmation-window.test.ts:1-120` | 单测覆盖 scale 与平台字体栈同步；真实危险确认未触发（避免删除操作） |
+| Windows 字体栈、字重、DPI / 分辨率 | `src/renderer/styles.css`；`src/renderer/harmonyos-sans-sc-windows.css`；`src/renderer/ui/tokens.css` | `tests/e2e/windows-typography.test.ts:1-120`（仅 Windows 执行） | 当前 macOS 环境无法执行，Windows / packaged / 真实 DPI 未验证 |
 
 ## 验证记录
 

@@ -32,6 +32,7 @@ import {
   FONT_SIZE_OPTIONS,
   fontSizePreferenceFromIndex,
   fontSizePreferenceToIndex,
+  type FontSizePreference,
 } from "./font-size-preferences";
 import { useFontSize } from "./FontSizeProvider";
 import {
@@ -56,6 +57,12 @@ import { ThemeColorSettings } from "./theme/ThemeColorSettings";
 
 const SHADOW_LEVEL_TICKS = [0, 1, 2, 3] as const;
 const MENU_ACRYLIC_LEVEL_TICKS = [0, 1, 2, 3] as const;
+const FONT_SIZE_LABEL_KEYS: Record<FontSizePreference, string> = {
+  compact: "settings.fontSizeCompact",
+  default: "settings.fontSizeDefault",
+  comfortable: "settings.fontSizeComfortable",
+  large: "settings.fontSizeLarge",
+};
 
 type SettingsToggleRowProps = {
   checked: boolean;
@@ -306,7 +313,7 @@ export function AppearanceSettingsPage(): ReactNode {
   const { enabled: inspectorCardFeelEnabled, toggle: toggleInspectorCardFeel } =
     useInspectorCardFeel();
   const fontSizeIndex = fontSizePreferenceToIndex(fontSizePrefs.preference);
-  const fontSizeLabelKey = `settings.fontSize${fontSizePrefs.preference[0]!.toUpperCase()}${fontSizePrefs.preference.slice(1)}` as const;
+  const fontSizeLabelKey = FONT_SIZE_LABEL_KEYS[fontSizePrefs.preference];
 
   return (
     <SettingsCard className="app-settings-appearance-card">

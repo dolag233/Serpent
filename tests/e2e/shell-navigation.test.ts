@@ -244,7 +244,7 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       scale: getComputedStyle(document.documentElement)
         .getPropertyValue("--ui-font-scale")
         .trim(),
-      size: getComputedStyle(document.querySelector(".app-settings-font-size-label")!)
+      size: getComputedStyle(document.querySelector(".dimension-filter-btn")!)
         .fontSize,
       zoom: getComputedStyle(document.documentElement).zoom,
     }));
@@ -256,13 +256,17 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       }
     };
     await setFontSizeIndex(0);
-    await expect.poll(readFontScale).toEqual({ scale: "0.94", size: "10.34px", zoom: "1" });
+    await expect(fontSizeSlider).toHaveAttribute("aria-valuetext", "紧凑");
+    await expect.poll(readFontScale).toEqual({ scale: "0.94", size: "11.28px", zoom: "1" });
     await setFontSizeIndex(1);
-    await expect.poll(readFontScale).toEqual({ scale: "1", size: "11px", zoom: "1" });
+    await expect(fontSizeSlider).toHaveAttribute("aria-valuetext", "默认");
+    await expect.poll(readFontScale).toEqual({ scale: "1", size: "12px", zoom: "1" });
     await setFontSizeIndex(2);
-    await expect.poll(readFontScale).toEqual({ scale: "1.06", size: "11.66px", zoom: "1" });
+    await expect(fontSizeSlider).toHaveAttribute("aria-valuetext", "舒适");
+    await expect.poll(readFontScale).toEqual({ scale: "1.06", size: "12.72px", zoom: "1" });
     await setFontSizeIndex(3);
-    await expect.poll(readFontScale).toEqual({ scale: "1.12", size: "12.32px", zoom: "1" });
+    await expect(fontSizeSlider).toHaveAttribute("aria-valuetext", "更大");
+    await expect.poll(readFontScale).toEqual({ scale: "1.12", size: "13.44px", zoom: "1" });
     await window.keyboard.press("Escape");
     await expect(fontSettingsDialog).toHaveCount(0);
 
@@ -413,6 +417,26 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
     await expect(importLinkedButton).toHaveAttribute(
       "data-hover-tip",
       "导入链接文件夹",
+    );
+
+    // Native Electron windows do not expose a restorable Playwright viewport
+    // value, so keep the narrow-window check last before closing the app.
+    await settingsButton.click();
+    const narrowFontSettingsDialog = window.getByRole("dialog");
+    await narrowFontSettingsDialog
+      .getByRole("tab", { name: "外观", exact: true })
+      .click();
+    await window.setViewportSize({ width: 900, height: 720 });
+    const narrowFontScale = narrowFontSettingsDialog.locator(
+      ".app-settings-font-size-scale",
+    );
+    await expect(narrowFontScale).toBeVisible();
+    const narrowFontScaleBox = await narrowFontScale.boundingBox();
+    const narrowViewport = window.viewportSize();
+    expect(narrowFontScaleBox).not.toBeNull();
+    expect(narrowViewport).not.toBeNull();
+    expect(narrowFontScaleBox!.x + narrowFontScaleBox!.width).toBeLessThanOrEqual(
+      narrowViewport!.width,
     );
   } finally {
     await application.close();
