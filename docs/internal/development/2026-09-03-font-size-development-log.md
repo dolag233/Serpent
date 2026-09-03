@@ -28,7 +28,8 @@
 | --- | --- |
 | 字体偏好与主进程确认窗定向单测 | `node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/unit/font-size-preferences.test.ts tests/unit/font-size-provider.test.tsx tests/unit/critical-confirmation-window.test.ts`：3 files，8 tests passed |
 | PDF 缩略图回归 | `node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/thumbnails.test.ts tests/unit/pdf-viewer-layout.test.ts`：2 files，76 tests passed |
-| 全量测试 | `npm run test`：507 files，4,380 tests passed；15 files / 25 tests skipped |
+| 全量测试（此前三档基线） | `npm run test`：507 files，4,380 tests passed；15 files / 25 tests skipped |
+| 本次全量回归 | `npm run test`：506 files passed，1 file failed，15 skipped；4381 passed，25 skipped。失败为既有 `tests/unit/plugin-standard-host-probe-fixture.test.ts` 的 guest realm 激活断言；单独重跑该文件为 1/1 passed，字体/过滤定向测试均通过，因此全量门禁本次仍记为未全绿。 |
 | Electron 字体 E2E | `node scripts/run-e2e.mjs tests/e2e/shell-navigation.test.ts`：1 passed，覆盖 0/1/2/3 |
 | 全量 Renderer 单测 | `npm run test:unit`：421 files passed，1 skipped；3,085 tests passed，3 skipped |
 | TypeScript | `npm run typecheck`：通过 |
