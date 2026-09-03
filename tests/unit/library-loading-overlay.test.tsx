@@ -50,7 +50,9 @@ describe("LibraryLoadingOverlay", () => {
   }
 
   it("identifies the target library and keeps the workspace covered", () => {
-    const html = renderToStaticMarkup(overlay());
+    const html = renderToStaticMarkup(
+      overlay({ onSwitchLibrary: () => undefined }),
+    );
 
     expect(html).toContain("正在打开“示例资源库”资源库");
     expect(html).toContain("切换资源库");

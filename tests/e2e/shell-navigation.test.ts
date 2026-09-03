@@ -222,6 +222,54 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       await window.keyboard.press("Escape");
       await expect(settingsDialog).toHaveCount(0);
     }
+
+    // Typography is an app preference, not Chromium page zoom. Exercise all
+    // four tiers through the real Appearance settings and verify that the
+    // shared root scale and a visible control both change.
+    if (process.platform === "win32") {
+      await settingsButton.click();
+      await window.getByRole("menuitem", { name: "设置", exact: true }).click();
+    } else {
+      await settingsButton.click();
+    }
+    const fontSettingsDialog = window.getByRole("dialog");
+    await expect(fontSettingsDialog).toBeVisible();
+    await fontSettingsDialog.getByRole("tab", { name: "外观", exact: true }).click();
+    const fontSizeScale = fontSettingsDialog.locator(".app-settings-font-size-scale");
+    const fontSizeSlider = fontSizeScale.getByRole("slider", { name: "字体大小" });
+    await expect(fontSizeSlider).toHaveAttribute("min", "0");
+    await expect(fontSizeSlider).toHaveAttribute("max", "3");
+    await expect(fontSizeScale.locator(".app-settings-elevation-tick-label")).toHaveCount(4);
+    const readFontScale = () => window.evaluate(() => ({
+      scale: getComputedStyle(document.documentElement)
+        .getPropertyValue("--ui-font-scale")
+        .trim(),
+      size: getComputedStyle(document.querySelector(".dimension-filter-btn")!)
+        .fontSize,
+      zoom: getComputedStyle(document.documentElement).zoom,
+    }));
+    const setFontSizeIndex = async (index: number) => {
+      await fontSizeSlider.focus();
+      await fontSizeSlider.press("Home");
+      for (let step = 0; step < index; step += 1) {
+        await fontSizeSlider.press("ArrowRight");
+      }
+    };
+    await setFontSizeIndex(0);
+    await expect(fontSizeSlider).toHaveAttribute("aria-valuetext", "紧凑");
+    await expect.poll(readFontScale).toEqual({ scale: "0.94", size: "11.28px", zoom: "1" });
+    await setFontSizeIndex(1);
+    await expect(fontSizeSlider).toHaveAttribute("aria-valuetext", "默认");
+    await expect.poll(readFontScale).toEqual({ scale: "1", size: "12px", zoom: "1" });
+    await setFontSizeIndex(2);
+    await expect(fontSizeSlider).toHaveAttribute("aria-valuetext", "舒适");
+    await expect.poll(readFontScale).toEqual({ scale: "1.06", size: "12.72px", zoom: "1" });
+    await setFontSizeIndex(3);
+    await expect(fontSizeSlider).toHaveAttribute("aria-valuetext", "更大");
+    await expect.poll(readFontScale).toEqual({ scale: "1.12", size: "13.44px", zoom: "1" });
+    await window.keyboard.press("Escape");
+    await expect(fontSettingsDialog).toHaveCount(0);
+
     await expect(
       window.locator(".toolbar-workspace-cluster .scope-history"),
     ).toBeVisible();
@@ -369,6 +417,26 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
     await expect(importLinkedButton).toHaveAttribute(
       "data-hover-tip",
       "导入链接文件夹",
+    );
+
+    // Native Electron windows do not expose a restorable Playwright viewport
+    // value, so keep the narrow-window check last before closing the app.
+    await settingsButton.click();
+    const narrowFontSettingsDialog = window.getByRole("dialog");
+    await narrowFontSettingsDialog
+      .getByRole("tab", { name: "外观", exact: true })
+      .click();
+    await window.setViewportSize({ width: 900, height: 720 });
+    const narrowFontScale = narrowFontSettingsDialog.locator(
+      ".app-settings-font-size-scale",
+    );
+    await expect(narrowFontScale).toBeVisible();
+    const narrowFontScaleBox = await narrowFontScale.boundingBox();
+    const narrowViewport = window.viewportSize();
+    expect(narrowFontScaleBox).not.toBeNull();
+    expect(narrowViewport).not.toBeNull();
+    expect(narrowFontScaleBox!.x + narrowFontScaleBox!.width).toBeLessThanOrEqual(
+      narrowViewport!.width,
     );
   } finally {
     await application.close();

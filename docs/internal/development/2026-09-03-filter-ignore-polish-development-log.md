@@ -24,10 +24,10 @@
 
 | 需求条目 | 实现位置 | 自动化测试 | Computer Use / 平台证据 |
 | --- | --- | --- | --- |
-| 当前忽略规则命中的托管文件/文件夹可见且可取消 | `src/worker/library-service.ts:listIgnoredPaths`；`src/renderer/LibrarySettingsDialog.tsx`；`src/renderer/App.tsx` | `tests/worker/gitignore-managed.test.ts`：3/3；既有 ignore 规则回归 | Computer Use 待执行；Windows、packaged、NAS 未验证 |
-| 标签建议按数量/名称排序，四排后可滚动 | `src/renderer/FilterTagPicker.tsx`；`src/renderer/styles.css` | `tests/unit/filter-tag-picker.test.tsx`：1/1 | Computer Use 待执行；Windows、窄窗口和高 DPI 未验证 |
-| 悬停 500ms 延迟打开，离开取消，键盘聚焦即时且不重开 | `src/renderer/DimensionFilterBar.tsx` | `tests/unit/dimension-filter-bar.test.tsx`：2/2，含重复 hover 后离开回归 | Computer Use：颜色面板关闭后 200ms/650ms 保持关闭；纯移动路径受当前 API 限制，Windows、触控/高 DPI 未验证 |
-| 文件夹搜索在文本搜索期间保持递归 | `src/renderer/App.tsx`；`docs/product-brief.md` | `tests/e2e/folder-recursive-scope.test.ts` 增加搜索期间开关回归 | Electron E2E 待最终执行 |
+| 当前忽略规则命中的托管文件/文件夹可见且可取消 | `src/worker/library-service.ts:listIgnoredPaths`；`src/renderer/LibrarySettingsDialog.tsx`；`src/renderer/App.tsx` | `tests/worker/gitignore-managed.test.ts:1-180`：3/3；既有 ignore 规则回归 | Computer Use 待执行；Windows、packaged、NAS 未验证 |
+| 标签建议按数量/名称排序，四排后可滚动 | `src/renderer/FilterTagPicker.tsx`；`src/renderer/styles.css` | `tests/unit/filter-tag-picker.test.tsx:1-220`：1/1 | Computer Use 待执行；Windows、窄窗口和高 DPI 未验证 |
+| 悬停 500ms 延迟打开，离开取消，键盘聚焦即时且不重开 | `src/renderer/DimensionFilterBar.tsx:345-424` | `tests/unit/dimension-filter-bar.test.tsx:151-195`：2/2，含重复 hover 后离开回归 | Computer Use：颜色面板关闭后 200ms/650ms 保持关闭；纯移动路径受当前 API 限制，Windows、触控/高 DPI 未验证 |
+| 文件夹搜索在文本搜索期间保持递归 | `src/renderer/App.tsx`；`docs/product-brief.md` | `tests/e2e/folder-recursive-scope.test.ts:1-220` 增加搜索期间开关回归 | Electron E2E 待最终执行 |
 
 ## 验证记录
 

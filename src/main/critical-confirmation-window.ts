@@ -20,20 +20,23 @@ const CRITICAL_CONFIRMATION_PAGE = `<!doctype html>
 <style>
 :root {
   color-scheme: dark light;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --ui-font-scale: 1;
+  --ui-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --ui-font-weight-bold: 700;
+  font-family: var(--ui-font-family);
   background: #17191c;
   color: #f4f5f6;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: #17191c; }
 main { display: flex; flex-direction: column; padding: 22px 26px 18px; }
-h1 { margin: 0 0 14px; font-size: 20px; line-height: 1.3; }
-.message { margin: 0 0 10px; font-size: 14px; line-height: 1.55; }
-.detail { margin: 0; color: #b9bec5; font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
+h1 { margin: 0 0 14px; font-size: calc(20px * var(--ui-font-scale)); line-height: 1.3; }
+.message { margin: 0 0 10px; font-size: calc(14px * var(--ui-font-scale)); line-height: 1.55; }
+.detail { margin: 0; color: #b9bec5; font-size: calc(12px * var(--ui-font-scale)); line-height: 1.55; white-space: pre-wrap; }
 .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
-button { min-width: 96px; min-height: 36px; padding: 7px 16px; border: 1px solid #555b63; border-radius: 7px; color: #f4f5f6; background: #292d32; font: inherit; font-size: 13px; cursor: pointer; }
+button { min-width: 96px; min-height: 36px; padding: 7px 16px; border: 1px solid #555b63; border-radius: 7px; color: #f4f5f6; background: #292d32; font: inherit; font-size: calc(13px * var(--ui-font-scale)); cursor: pointer; }
 button:focus-visible { outline: 2px solid #7eb5ff; outline-offset: 2px; }
-button.confirm { border-color: #ff5c5c; background: #c73737; color: white; font-weight: 700; }
+button.confirm { border-color: #ff5c5c; background: #c73737; color: white; font-weight: var(--ui-font-weight-bold); }
 button.confirm:hover { background: #dc4545; }
 button:disabled { cursor: default; opacity: .65; }
 @media (prefers-color-scheme: light) {
@@ -93,6 +96,9 @@ const CRITICAL_CONFIRMATION_MIN_HEIGHT = 220;
 const CRITICAL_CONFIRMATION_MAX_HEIGHT = 560;
 const CRITICAL_CONFIRMATION_SIZE_POLL_INTERVAL_MS = 16;
 const CRITICAL_CONFIRMATION_SIZE_POLL_ATTEMPTS = 60;
+const CRITICAL_CONFIRMATION_FONT_SCALES = [0.94, 1, 1.06] as const;
+const CRITICAL_CONFIRMATION_DEFAULT_FONT_FAMILY = '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+const CRITICAL_CONFIRMATION_MAX_FONT_FAMILY_LENGTH = 512;
 
 export interface CriticalConfirmationWindowLike {
   readonly id: number;
@@ -288,7 +294,51 @@ export class CriticalConfirmationWindowManager {
     });
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     window.webContents.on('will-navigate', (event) => event.preventDefault());
-    void window.loadURL(criticalConfirmationPageUrl()).then(() => {
+    void window.loadURL(criticalConfirmationPageUrl()).then(async () => {
+      // The confirmation page is a separate data URL, so it cannot read the
+      // renderer's localStorage. Copy only the validated scale from the
+      // parent before measuring the page; this keeps the modal typography in
+      // step with the main window without expanding its preload surface.
+      let fontScale = 1;
+      let fontFamily = CRITICAL_CONFIRMATION_DEFAULT_FONT_FAMILY;
+      try {
+        const value = await pending.parent.webContents.executeJavaScript(
+          "getComputedStyle(document.documentElement).getPropertyValue('--ui-font-scale')",
+        );
+        const parsed = Number(value);
+        const matched = CRITICAL_CONFIRMATION_FONT_SCALES.find(
+          (candidate) => Math.abs(candidate - parsed) < 0.001,
+        );
+        if (matched !== undefined) fontScale = matched;
+      } catch {
+        // Default typography is safe if the parent is navigating or closing.
+      }
+      try {
+        const value = await pending.parent.webContents.executeJavaScript(
+          'getComputedStyle(document.documentElement).fontFamily',
+        );
+        if (
+          typeof value === 'string' &&
+          value.length > 0 &&
+          value.length <= CRITICAL_CONFIRMATION_MAX_FONT_FAMILY_LENGTH &&
+          /^[\w\s,'"-]+$/.test(value)
+        ) {
+          fontFamily = value;
+        }
+      } catch {
+        // Keep the platform-neutral fallback if the parent is unavailable.
+      }
+      try {
+        await window.webContents.executeJavaScript(
+          `(() => {
+            const root = document.documentElement;
+            root.style.setProperty('--ui-font-scale', '${fontScale}');
+            root.style.setProperty('--ui-font-family', ${JSON.stringify(fontFamily)});
+          })()`,
+        );
+      } catch {
+        // The size poll below will still use the page's default scale.
+      }
       // The request arrives through a preload IPC call after the page loads.
       // Wait until the page has rendered that payload before measuring; a
       // one-shot measurement can otherwise size the window to the loading
