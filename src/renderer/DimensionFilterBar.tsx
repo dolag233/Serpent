@@ -387,6 +387,11 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     const onPointerOut = (event: PointerEvent) => {
       if (!isFilterChrome(event.target)) return;
       if (isFilterChrome(event.relatedTarget)) return;
+      // Leaving the filter chrome invalidates any delayed open, including
+      // pointer transitions whose relatedTarget is outside the document.
+      // Otherwise the close timer can run first and the stale open timer can
+      // reopen the popover a moment later.
+      clearOpenTimer();
       // IME candidate HWND is not in-document; relatedTarget is null.
       if (composition.isActive() || event.relatedTarget === null) return;
       scheduleClose();
