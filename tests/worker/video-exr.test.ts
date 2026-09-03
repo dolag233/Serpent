@@ -91,6 +91,15 @@ function buildClassicTiffDimensions(width: number, height: number): Buffer {
   return output;
 }
 
+function buildTgaDimensions(width: number, height: number): Buffer {
+  const output = Buffer.alloc(18);
+  output[2] = 2; // uncompressed true-color image
+  output.writeUInt16LE(width, 12);
+  output.writeUInt16LE(height, 14);
+  output[16] = 24;
+  return output;
+}
+
 it('escapes Windows paths embedded in FFmpeg filtergraphs', () => {
   expect(escapeFfmpegFilterPath(String.raw`C:\Serpent\fonts\DejaVuSans.ttf`))
     .toBe(String.raw`C\:/Serpent/fonts/DejaVuSans.ttf`);
@@ -995,7 +1004,6 @@ describe('video (ffprobe + ffmpeg)', () => {
       mimeType: 'video/webm',
       bytes: Buffer.from('mock-proxy-bytes'),
       generatorVersion: 'test',
-      maxBytes: 1024 * 1024,
     });
     expect(proxyArtifact.artifactId).toBeTruthy();
 
@@ -1057,7 +1065,6 @@ describe('video (ffprobe + ffmpeg)', () => {
       mimeType: 'video/mp4',
       bytes: Buffer.from('mock-h264-proxy-bytes'),
       generatorVersion: 'test',
-      maxBytes: 1024 * 1024,
     });
     expect(proxyArtifact.artifactId).toBeTruthy();
 
@@ -1077,7 +1084,7 @@ describe('video (ffprobe + ffmpeg)', () => {
     service.closeAll();
   });
 
-  it('rejects and removes a WebM proxy above the 512 MiB safety limit', async () => {
+  it('stores a generated WebM proxy without an output-size gate', async () => {
     process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
     const root = temporaryRoot();
     const diagnostics: LibraryServiceDiagnostic[] = [];
@@ -1111,15 +1118,14 @@ describe('video (ffprobe + ffmpeg)', () => {
     await service.processThumbnailQueue(created.libraryId, { maxJobs: 1 });
 
     expect(service.listMediaJobs(created.libraryId).jobs.find((job) => job.jobId === jobId))
-      .toMatchObject({ status: 'failed', errorCode: 'MEDIA_PROCESSING_FAILED' });
+      .toMatchObject({ status: 'succeeded', errorCode: null });
     const artifact = service.getCurrentArtifact(created.libraryId, asset.assetId, 'webm_proxy');
-    expect(artifact).toMatchObject({ status: 'failed', errorCode: 'MEDIA_PROCESSING_FAILED' });
+    expect(artifact).toMatchObject({ status: 'ready' });
     expect(existsSync(path.join(created.libraryPath, '.serpent', 'artifacts', artifact!.filePath)))
-      .toBe(false);
-    expect(diagnostics).toContainEqual(expect.objectContaining({
+      .toBe(true);
+    expect(diagnostics).not.toContainEqual(expect.objectContaining({
       scope: 'media-job.failed',
       context: expect.objectContaining({ errorCode: 'MEDIA_PROCESSING_FAILED' }),
-      error: expect.objectContaining({ message: expect.stringContaining('512 MiB') }),
     }));
     service.closeAll();
   });
@@ -1756,8 +1762,8 @@ describe('EXR/TGA (oiiotool)', () => {
     expect(oiioCall!.args).toContain('--ociodisplay:from=scene_linear:unpremult=1');
     const displayIndex = oiioCall!.args.indexOf('--ociodisplay:from=scene_linear:unpremult=1');
     expect(oiioCall!.args.slice(displayIndex + 1, displayIndex + 3)).toEqual(['', '']);
-    expect(oiioCall!.args).toContain('--resize');
-    expect(oiioCall!.args).toContain('0x512');
+    expect(oiioCall!.args).toContain('--fit');
+    expect(oiioCall!.args).toContain('512x512');
     expect(oiioCall!.args).toContain('-o');
     // Check that the input path is the resolved asset path (inside the library)
     expect(oiioCall!.args).toContain(assetPath);
@@ -2440,8 +2446,9 @@ describe('EXR/TGA (oiiotool)', () => {
       && !args.includes('--info'),
     );
     expect(viewerDecodes).toHaveLength(2);
-    expect(viewerDecodes[0]).toContain('--resize');
-    expect(viewerDecodes[1]).not.toContain('--resize');
+    expect(viewerDecodes[0]).toContain('--fit');
+    expect(viewerDecodes[0]).toContain('512x512');
+    expect(viewerDecodes[1]).not.toContain('--fit');
     expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'viewer_image'))
       .toMatchObject({ status: 'ready', mimeType: 'image/png' });
     service.closeAll();
@@ -2629,7 +2636,7 @@ describe('EXR/TGA (oiiotool)', () => {
     service.closeAll();
   });
 
-  it('uses the bounded Sharp path for ordinary TIFF thumbnails', async () => {
+  it('uses the format-owned OIIO path for ordinary TIFF thumbnails', async () => {
     process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
     const root = temporaryRoot();
     const invocations: string[][] = [];
@@ -2672,54 +2679,66 @@ describe('EXR/TGA (oiiotool)', () => {
       assetId: asset.assetId,
     }))!;
 
-    expect(invocations).toHaveLength(0);
+    expect(invocations).toHaveLength(2);
     expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'thumbnail'))
       .toMatchObject({
         artifactId: result.artifactId,
         status: 'ready',
-        mimeType: 'image/jpeg',
-        generatorId: expect.stringContaining('sharp@'),
+        mimeType: 'image/png',
+        generatorId: expect.stringContaining('oiio@'),
       });
     service.closeAll();
   });
 
-  it('rejects an OIIO raster above the pixel safety budget before spawning', async () => {
+  it('lets OIIO process a large TGA without a size or wall-clock rejection', async () => {
     process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
     const root = temporaryRoot();
-    const invocations: string[] = [];
+    const invocations: Array<{ command: string; args: string[]; timeoutMs?: number }> = [];
     const service = new LibraryService({
-      spawnFn: async (command) => {
-        invocations.push(command);
+      spawnFn: async (command, args, options) => {
+        invocations.push({ command, args, timeoutMs: options?.timeoutMs });
+        const outputPath = args.at(-1);
+        if (outputPath?.endsWith('.png')) {
+          mkdirSync(path.dirname(outputPath), { recursive: true });
+          writeFileSync(outputPath, Buffer.from('fake-png-data'));
+        }
         return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
       },
     });
-    const created = service.createLibrary({ displayName: 'HugeTIFF', selectedParentPath: root });
-    const sourcePath = path.join(root, 'huge.tiff');
-    writeFileSync(sourcePath, buildClassicTiffDimensions(100_000, 1_000));
+    const created = service.createLibrary({ displayName: 'LargeTga', selectedParentPath: root });
+    const sourcePath = path.join(root, 'large.tga');
+    writeFileSync(sourcePath, buildTgaDimensions(8_192, 8_192));
     importNoConflict(service, created.libraryId, sourcePath);
     const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
 
     await expect(service.generateThumbnail({
       libraryId: created.libraryId,
       assetId: asset.assetId,
-    })).rejects.toMatchObject({ reason: 'MEDIA_PROCESSING_FAILED' });
+    })).resolves.toMatchObject({ artifactId: expect.any(String) });
 
-    expect(invocations).toEqual([]);
+    expect(invocations).toHaveLength(2);
+    expect(invocations.every((invocation) => invocation.timeoutMs === undefined)).toBe(true);
     const db = assertDb(created.libraryPath);
     expect(db.prepare(
       "SELECT status, error_code FROM revision_artifacts WHERE kind = 'thumbnail'",
-    ).get()).toMatchObject({
-      status: 'failed',
-      error_code: 'MEDIA_INPUT_TOO_LARGE',
-    });
+    ).get()).toMatchObject({ status: 'ready', error_code: null });
     db.close();
     service.closeAll();
   });
 
-  it('retires a legacy OIIO thumbnail when a bounded TIFF can use Sharp', async () => {
+  it('keeps a legacy OIIO thumbnail current without a size-based decoder switch', async () => {
     process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = new LibraryService({
+      spawnFn: async (_command, args) => {
+        const outputPath = args.at(-1);
+        if (outputPath?.endsWith('.png')) {
+          mkdirSync(path.dirname(outputPath), { recursive: true });
+          writeFileSync(outputPath, Buffer.from('fake-png-data'));
+        }
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
     const sharp = require('sharp') as (input: {
       create: {
         width: number;
@@ -2759,16 +2778,7 @@ describe('EXR/TGA (oiiotool)', () => {
       assetIds: [asset.assetId],
       limit: 1,
       priority: 350,
-    })).toBe(1);
-    expect(service.listMediaJobs(created.libraryId).jobs).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          assetId: asset.assetId,
-          kind: 'generate_thumbnail',
-          status: 'queued',
-        }),
-      ]),
-    );
+    })).toBe(0);
     service.closeAll();
   });
 

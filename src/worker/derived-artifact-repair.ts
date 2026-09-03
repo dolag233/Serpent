@@ -30,9 +30,7 @@ export interface RetryFailedConnection {
 export const PERMANENT_DERIVED_FAILURE_CODES: ReadonlySet<string> = new Set([
   'SOURCE_NOT_FOUND',
   'FBX_SOURCE_NOT_FOUND',
-  'FILE_TOO_LARGE',
   'LIMIT_EXCEEDED',
-  'MODEL_TOO_LARGE',
   'FBX_LIMIT_EXCEEDED',
   'UNSUPPORTED_FORMAT',
   'MIME_TYPE_UNSUPPORTED',

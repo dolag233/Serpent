@@ -1,16 +1,13 @@
 /**
- * Native media decoding is memory-bound before it is CPU-bound. A high-core
- * machine must not turn every physical core into a simultaneous FFmpeg/Sharp
- * process: one 4K video can retain hundreds of decoded frames, and libvips
- * also has its own internal thread pool. Keep the queue small and let the
- * per-decoder lanes apply their stricter limits.
+ * Native media decoding is memory-bound before it is CPU-bound. Keep the
+ * queue small and let the per-decoder lanes apply their concurrency policy;
+ * this is scheduling only, never a source-size or hardware capability gate.
  */
 export const MEDIA_QUEUE_CONCURRENCY = 2;
 /**
  * Interactive image cards get two extra bounded slots. The regular/background
- * queue remains capped at MEDIA_QUEUE_CONCURRENCY; this is only used for a
- * current viewport and is still restricted to small, pixel-bounded sources
- * by the Worker decoder admission gate.
+ * queue remains capped at MEDIA_QUEUE_CONCURRENCY; this only prioritizes the
+ * current viewport and does not reject large or high-resolution sources.
  */
 export const MEDIA_INTERACTIVE_QUEUE_CONCURRENCY = 4;
 

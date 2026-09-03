@@ -50,6 +50,7 @@ import { SettingsCard, SettingsDisclosure } from "./ui/patterns";
 import { Slider, Switch } from "./ui/primitives";
 import {
   BackgroundSettings,
+  ThemeAccentPicker,
   ThemeModePicker,
   ThemeProfilePicker,
 } from "./theme/ThemeAppearanceControls";
@@ -326,6 +327,7 @@ export function AppearanceSettingsPage(): ReactNode {
           <ThemeModePicker />
         </div>
         <ThemeProfilePicker />
+        <ThemeAccentPicker />
       </div>
       <div className="app-settings-card-divider" />
       <ThemeColorSettings />

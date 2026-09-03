@@ -14,8 +14,8 @@ const tags = [
   { tagId: "unused", name: "Unused", assetCount: 0 },
 ];
 
-// A larger fixture (more than TOP_TAG_SUGGESTION_LIMIT tags) so some tags
-// fall outside the "top" section and can be exercised via "recent".
+// A larger fixture proves that the empty-query view keeps the complete tag
+// collection instead of silently reducing it to a popular/top subset.
 const manyTags = Array.from({ length: 10 }, (_, i) => ({
   tagId: `t${i}`,
   name: `Tag${i}`,
@@ -23,9 +23,9 @@ const manyTags = Array.from({ length: 10 }, (_, i) => ({
 }));
 
 describe("buildTagFilterDefaultSections (REQ-FILTER-020)", () => {
-  it("returns the most-used tags as the top section, sorted by count", () => {
-    const { top } = buildTagFilterDefaultSections(tags, [], []);
-    expect(top.map((tag) => tag.name)).toEqual([
+  it("returns every available tag in the all section", () => {
+    const { all } = buildTagFilterDefaultSections(tags, [], []);
+    expect(all.map((tag) => tag.name)).toEqual([
       "Warm",
       "Wood",
       "Metal",
@@ -35,39 +35,35 @@ describe("buildTagFilterDefaultSections (REQ-FILTER-020)", () => {
     ]);
   });
 
-  it("caps the top section at TOP_TAG_SUGGESTION_LIMIT", () => {
-    const { top } = buildTagFilterDefaultSections(manyTags, [], []);
-    expect(top).toHaveLength(8);
-    expect(top[0]?.name).toBe("Tag0");
-    expect(top.map((tag) => tag.name)).not.toContain("Tag8");
+  it("does not cap the all section by usage count", () => {
+    const { all } = buildTagFilterDefaultSections(manyTags, [], []);
+    expect(all).toHaveLength(manyTags.length);
+    expect(all.map((tag) => tag.name)).toEqual(manyTags.map((tag) => tag.name));
   });
 
-  it("puts recently-filtered tags in recent even when they are also top-used", () => {
-    // Tag0 is the most-used; after filtering with it, it must appear under
-    //「最近筛选」rather than being swallowed by「常用标签」(Serpent-e3e).
-    const { top, recent } = buildTagFilterDefaultSections(
+  it("keeps recently-filtered tags as a separate quick-access section", () => {
+    const { all, recent } = buildTagFilterDefaultSections(
       manyTags,
       [],
       ["Tag9", "Tag0"],
     );
     expect(recent.map((tag) => tag.name)).toEqual(["Tag9", "Tag0"]);
-    expect(top.some((tag) => tag.name === "Tag0")).toBe(false);
-    expect(top.some((tag) => tag.name === "Tag9")).toBe(false);
-    expect(top[0]?.name).toBe("Tag1");
+    expect(all.some((tag) => tag.name === "Tag0")).toBe(true);
+    expect(all.some((tag) => tag.name === "Tag9")).toBe(true);
   });
 
-  it("surfaces recent section before relying on top-only lists", () => {
+  it("surfaces the recent section independently from all tags", () => {
     const { recent } = buildTagFilterDefaultSections(tags, [], ["Glass"]);
     expect(recent.map((tag) => tag.name)).toEqual(["Glass"]);
   });
 
   it("excludes selected tags from both sections", () => {
-    const { top, recent } = buildTagFilterDefaultSections(
+    const { all, recent } = buildTagFilterDefaultSections(
       manyTags,
       ["Tag9"],
       ["Tag9"],
     );
-    expect(top.some((tag) => tag.name === "Tag9")).toBe(false);
+    expect(all.some((tag) => tag.name === "Tag9")).toBe(false);
     expect(recent.some((tag) => tag.name === "Tag9")).toBe(false);
   });
 
@@ -82,7 +78,7 @@ describe("buildTagFilterDefaultSections (REQ-FILTER-020)", () => {
 
   it("returns empty sections when there are no tags", () => {
     expect(buildTagFilterDefaultSections([], [], ["anything"])).toEqual({
-      top: [],
+      all: [],
       recent: [],
     });
   });
@@ -109,6 +105,11 @@ describe("buildTagFilterSearchResults (REQ-FILTER-020)", () => {
       "SciFi",
       "Unused",
     ]);
+  });
+
+  it("does not cap the complete search result set by default", () => {
+    const results = buildTagFilterSearchResults(manyTags, [], "tag");
+    expect(results).toHaveLength(manyTags.length);
   });
 
   it("caps results at the provided limit", () => {

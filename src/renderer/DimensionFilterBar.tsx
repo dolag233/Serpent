@@ -270,7 +270,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
 
   // REQ-FILTER-020: remembers tag names recently applied through this
   // picker so its default (empty-query) view can surface a "recent" section
-  // alongside the most-used tags. See tag-filter-recency.ts.
+  // alongside the complete tag set. See tag-filter-recency.ts.
   const [tagRecency, setTagRecency] = useState<TagFilterRecency>(() =>
     loadTagFilterRecency(),
   );
@@ -722,7 +722,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
           {openDimension === "tags" && (
             <PortaledPopover
               anchorRef={tagsDimRef}
-              className="dimension-filter-popover"
+              className="dimension-filter-popover is-tag-filter"
               data-dimension="tags"
               role="dialog"
             >

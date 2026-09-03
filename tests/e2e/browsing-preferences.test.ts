@@ -982,11 +982,14 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
       const open = await api.listOpen();
       const libraryId = open.value?.[0]?.libraryId;
       if (!libraryId) throw new Error("No open library");
-      const created = await api.createTag({
-        libraryId,
-        name: "偏好测试标签",
-      });
-      if (!created.ok) throw new Error("Could not create tag fixture.");
+      const names = [
+        "偏好测试标签",
+        ...Array.from({ length: 24 }, (_, index) => `过滤布局标签-${index + 1}`),
+      ];
+      for (const name of names) {
+        const created = await api.createTag({ libraryId, name });
+        if (!created.ok) throw new Error(`Could not create tag fixture: ${name}`);
+      }
     });
     // Entering tag management forces the host to fetch the updated tag
     // summary before returning to the asset canvas. This avoids racing the
@@ -1013,12 +1016,48 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     await window.getByRole("button", { name: "标签", exact: true }).click();
     await window.getByLabel("标签过滤").fill("偏好测试标签");
     await window.getByRole("option", { name: /偏好测试标签/ }).click();
+    await expect(
+      window
+        .locator(".dimension-filter-popover.is-tag-filter")
+        .locator(".filter-tag-chip.is-selected"),
+    ).toContainText("偏好测试标签");
     await assertToggleStates("true", "false", "false", "true");
     await assertHiddenFieldPresentation(true);
 
     // Return to 所有资产
     await window.getByRole("button", { name: /所有资产/ }).click();
     await assertHiddenFieldPresentation(true);
+
+    // REQ-FILTER-020 / Serpent-77c919: the default picker keeps recently
+    // filtered tags visible while exposing the complete tag collection in a
+    // separate scroll region. The two footer rows must stay visible at the
+    // bottom of the popover.
+    await window.getByRole("button", { name: "标签", exact: true }).click();
+    const tagPopover = window.locator(
+      ".dimension-filter-popover.is-tag-filter",
+    );
+    await expect(tagPopover).toBeVisible();
+    await expect(tagPopover.getByText("最近筛选", { exact: true })).toBeVisible();
+    await expect(tagPopover.getByText("所有标签", { exact: true })).toBeVisible();
+    await expect(tagPopover.getByText("常用标签", { exact: true })).toHaveCount(0);
+    const allTagScroll = tagPopover.locator(".filter-tag-all-scroll");
+    await expect(allTagScroll).toBeVisible();
+    const scrollMetrics = await allTagScroll.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      overflowY: getComputedStyle(element).overflowY,
+      scrollHeight: element.scrollHeight,
+    }));
+    expect(scrollMetrics.overflowY).toBe("auto");
+    expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight);
+    await allTagScroll.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      element.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await expect(tagPopover.getByText("排除", { exact: true })).toBeVisible();
+    await expect(
+      tagPopover.getByText("按住 Shift 可多选", { exact: true }),
+    ).toBeVisible();
+    await window.keyboard.press("Escape");
 
     // --- Collection scope ---
     // Create a collection and add the asset to it

@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -310,14 +310,14 @@ describe('model asset pipeline (slice A, Serpent-fu2i)', () => {
         onResult: (result) => results.push(result),
         modelThumbnailRenderer: async () => ({
           status: 'failed',
-          errorCode: 'MODEL_RENDER_TIMEOUT',
-          reason: 'no frame',
+          errorCode: 'MODEL_LOAD_FAILED',
+          reason: 'synthetic load failure',
         }),
       });
 
       // Failed artifact dedupes the queue and feeds the thumbnailStatus map;
       // the published code is benign (card keeps the generic 3D icon).
-      expect(results).toEqual([{ assetId: asset.assetId, errorCode: 'MODEL_RENDER_TIMEOUT' }]);
+      expect(results).toEqual([{ assetId: asset.assetId, errorCode: 'MODEL_LOAD_FAILED' }]);
       const listed = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
       expect(listed.thumbnailStatus).toBe('failed');
       expect(service.enqueueThumbnailJobs(created.libraryId, { assetIds: [asset.assetId] })).toBe(0);
@@ -328,7 +328,7 @@ describe('model asset pipeline (slice A, Serpent-fu2i)', () => {
         error_code: string | null;
       };
       expect(job.status).toBe('failed');
-      expect(job.error_code).toBe('MODEL_RENDER_TIMEOUT');
+      expect(job.error_code).toBe('MODEL_LOAD_FAILED');
       db.close();
 
       service.closeAll();
@@ -358,15 +358,15 @@ describe('model asset pipeline (slice A, Serpent-fu2i)', () => {
       service.closeAll();
     });
 
-    it('refuses oversized models with MODEL_TOO_LARGE (spec 3D-14)', async () => {
+    it('passes oversized models to the renderer without a source-size gate', async () => {
       const root = temporaryRoot();
       const service = new LibraryService();
       const created = service.createLibrary({ displayName: 'Models', selectedParentPath: root });
 
       const hugePath = createSourceFile(root, 'huge.glb');
-      // 300 MB cap + 1 byte.
-      const huge = Buffer.alloc(300 * 1024 * 1024 + 1, 0);
-      writeFileSync(hugePath, huge);
+      // Sparse fixture keeps the test cheap while still exercising the former
+      // 300 MB source-size boundary.
+      truncateSync(hugePath, 300 * 1024 * 1024 + 1);
       importNoConflict(service, created.libraryId, hugePath);
       const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
       service.enqueueThumbnailJobs(created.libraryId, { assetIds: [asset.assetId], limit: 50 });
@@ -380,10 +380,9 @@ describe('model asset pipeline (slice A, Serpent-fu2i)', () => {
         },
       });
 
-      // The renderer never saw the job; the failed artifact carries the code.
-      expect(rendererCalled.size).toBe(0);
+      expect(rendererCalled.size).toBe(1);
       const listed = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
-      expect(listed.thumbnailStatus).toBe('failed');
+      expect(listed.thumbnailStatus).toBe('ready');
 
       service.closeAll();
     });

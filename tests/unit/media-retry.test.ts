@@ -73,7 +73,6 @@ describe("media retry", () => {
       libraryId: "library-1",
       assetId: "asset-1",
       artifactKind: "webm_proxy",
-      timeoutMs: 100,
       pollIntervalMs: 1,
     });
 

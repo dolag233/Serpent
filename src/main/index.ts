@@ -5715,10 +5715,10 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
     const publicError = error instanceof ExternalLibraryArchiveError
       ? createPublicError(error.publicCode, error.reason)
-      : error instanceof LibraryParentError
-        ? createPublicError(error.code, error.reason)
+        : error instanceof LibraryParentError
+          ? createPublicError(error.code, error.reason)
         : error instanceof WorkerRequestTimeoutError
-          ? createPublicError("INTERNAL_ERROR", "LIBRARY_TRANSFER_TIMEOUT")
+          ? createPublicError("INTERNAL_ERROR")
           : toPublicError(error);
     if (operation) {
       publishLifecycle({

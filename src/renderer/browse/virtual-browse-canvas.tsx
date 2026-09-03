@@ -21,7 +21,6 @@ import {
   publishCanvasAssetLayoutIndex,
   type CanvasAssetLayoutIndex,
 } from "../canvas-asset-layout";
-import { resolveJustifiedCaptionBandPx } from "../justified-caption-band";
 import {
   itemIntersectsVisibleRange,
   useCanvasLocalViewport,
@@ -30,12 +29,6 @@ import {
   type VirtualBrowseLayout,
   virtualLayoutEntryAt,
 } from "./virtual-browse-layout";
-
-const JUSTIFIED_CAPTION_BAND_PX = resolveJustifiedCaptionBandPx({
-  dimensions: true,
-  name: true,
-  secondary: true,
-});
 
 function virtualMasonryCardSlotStyle(input: {
   previewHeightPx: number;
@@ -952,12 +945,14 @@ export function VirtualJustifiedAssetRows({
   assets,
   layout,
   cardSize,
+  captionBandPx,
   renderCard,
   renderLayoutPreview,
 }: {
   assets: AssetSummary[];
   layout: VirtualBrowseLayout;
   cardSize: number;
+  captionBandPx: number;
   renderCard: (
     asset: AssetSummary,
     options: BrowseCardRenderOptions,
@@ -978,7 +973,6 @@ export function VirtualJustifiedAssetRows({
     1,
     Math.floor((Math.max(0, availableWidth) + ASSET_GRID_GAP_PX) / (Math.max(1, cardSize) + ASSET_GRID_GAP_PX)),
   );
-  const captionBandPx = JUSTIFIED_CAPTION_BAND_PX;
   const geometry = useMemo(
     () => layout.total > GEOMETRY_MATERIALIZATION_LIMIT
       ? buildChunkedJustifiedGeometry({

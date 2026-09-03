@@ -59,40 +59,37 @@ interface PendingRequest {
 // processes, AV scanning the fresh bundle) legitimately exceeds 5s before the
 // worker module finishes loading; a too-tight handshake fails startup.
 const READY_TIMEOUT_MS = 15_000;
-const REQUEST_TIMEOUT_MS = 15_000;
-const SEARCH_REQUEST_TIMEOUT_MS = 60_000;
-// Serpent-2cc492：开库宽限窗口——SMB 冷缓存首读单条查询实测 20-35s，窗口内
-// 的请求放宽到 120s（仍远小于「无限等待」），窗口 120s 后恢复稳态超时。
-const OPEN_STARTUP_GRACE_WINDOW_MS = 120_000;
-const OPEN_STARTUP_GRACE_TIMEOUT_MS = 120_000;
+const PROVIDER_REQUEST_TIMEOUT_MS = 15_000;
 const FILE_OPERATION_TIMEOUT_MS = 5 * 60_000;
 const AI_QUEUE_TIMEOUT_MS = 10 * 60_000;
 const SHUTDOWN_TIMEOUT_MS = 2_000;
 const WORKER_CMD_LOG = process.env.SERPENT_WORKER_CMD_LOG === '1';
 
 /**
- * Disk-bound library transfer commands. A slow machine or a large Eagle
- * conversion can run for longer than any honest wall-clock budget; Main
- * must wait until the Worker finishes or the user cancels. Do not put
- * product "you may not use a large library" deadlines here.
+ * Local resource commands are allowed to finish at their own pace. Their
+ * duration depends on the selected library, filesystem, media content and
+ * current system load, none of which is a valid product deadline. Worker
+ * liveness is handled by the child exit/protocol paths below; a slow local
+ * operation must not be reported as a failed operation merely because a
+ * guessed wall-clock budget expired.
+ */
+const LOCAL_RESOURCE_COMMAND_PREFIXES = [
+  'library.',
+  'folder.',
+  'linked-folder.',
+  'asset.',
+  'media.',
+  'model.',
+  'smart-collection.',
+] as const;
+
+/**
+ * Disk-bound transfer commands that do not use one of the local prefixes
+ * above. A slow machine or a large external-library conversion can run for
+ * longer than any honest wall-clock budget; Main must wait until the Worker
+ * finishes or the user cancels.
  */
 const UNBOUNDED_WORKER_COMMANDS = new Set([
-  'library.create',
-  'library.open',
-  'library.inspect-eagle',
-  'library.open-eagle',
-  'library.inspect-billfish',
-  'library.open-billfish',
-  'library.export',
-  'library.export-cancel',
-  'library.import-folder',
-  'library.import-zip',
-  'library.import-cancel',
-  'library.import-validate',
-  'asset.import-eagle',
-  'asset.import-billfish',
-  'asset.refresh',
-  'asset.delete-linked',
   'automation.file-import-plan',
   'automation.file-operation-plan',
   // WebDAV sync transfers every changed asset in both directions plus the
@@ -103,7 +100,23 @@ const UNBOUNDED_WORKER_COMMANDS = new Set([
   'sync.run',
   'sync.list-remote-libraries',
   'sync.open-remote-library',
+  // A local file upload has no remote network deadline. The URL variant
+  // remains bounded by the download policy below.
+  'extension.save-from-file',
 ]);
+
+// These requests cross a provider/network boundary and already have their
+// own bounded protocol. Keep a finite Main-side envelope for a dead provider,
+// but never use it as the default for local SQLite/filesystem work.
+const BOUNDED_PROVIDER_COMMANDS = new Set([
+  'ai.test-connection',
+  'ai.list-models',
+  'sync.probe',
+]);
+
+function isLocalResourceCommand(commandType: string): boolean {
+  return LOCAL_RESOURCE_COMMAND_PREFIXES.some((prefix) => commandType.startsWith(prefix));
+}
 
 export class WorkerRequestTimeoutError extends Error {
   readonly code = 'WORKER_REQUEST_TIMEOUT' as const;
@@ -121,9 +134,8 @@ export function requestTimeoutForCommand(
   command: WorkerCommand | WorkerCommand['type'],
 ): number | null {
   const commandType = typeof command === 'string' ? command : command.type;
-  if (UNBOUNDED_WORKER_COMMANDS.has(commandType) || commandType.startsWith('asset.import.')) {
-    return null;
-  }
+  // AI requests have their own provider request/cancellation policy. Keep
+  // their finite request envelope ahead of the broad asset.* local rule.
   if (commandType === 'ai.process-queue') {
     if (typeof command === 'object' && command.type === 'ai.process-queue') {
       const lanes = Math.max(1, Math.min(command.maxJobs, command.concurrencyLimit));
@@ -138,19 +150,16 @@ export function requestTimeoutForCommand(
   if (commandType === 'asset.analyze') {
     return AI_QUEUE_TIMEOUT_MS;
   }
-  if (commandType === 'asset.search' || commandType === 'smart-collection.execute' || commandType === 'media.get-asset-drag-infos') {
-    // Large-library searches, smart-collection pages, and drag-info hydration
-    // can wait behind one unavoidable synchronous SQLite call. Superseded
-    // searches are discarded by the Worker before they enter SQLite; the
-    // remaining request gets a longer deadline instead of failing at the old
-    // 15s default.
-    return SEARCH_REQUEST_TIMEOUT_MS;
+  if (BOUNDED_PROVIDER_COMMANDS.has(commandType)) {
+    return PROVIDER_REQUEST_TIMEOUT_MS;
+  }
+  if (UNBOUNDED_WORKER_COMMANDS.has(commandType) || isLocalResourceCommand(commandType)) {
+    return null;
   }
   if (
     commandType === 'extension.save-from-url'
-    || commandType === 'extension.save-from-file'
   ) return FILE_OPERATION_TIMEOUT_MS;
-  return REQUEST_TIMEOUT_MS;
+  return null;
 }
 
 /** True when a Worker message looks like a push event rather than a request/response. */
@@ -170,12 +179,6 @@ export class LibraryWorkerClient {
   #pending = new Map<string, PendingRequest>();
   #expiredRequestIds = new Set<string>();
   #requestBroker = new LibraryRequestBroker();
-  // Serpent-2cc492（真实 NAS 生产库事故，2026-08-23）：开库后的第一批元数据
-  // 查询在 SMB 冷缓存下实测单条 20-35s（assets 表每页一次网络往返），远超
-  // 15s 默认超时；响应迟到即被丢弃、UI 呈现「空资源库」且无法自愈。开库
-  // 成功后开启一个有界宽限窗口：窗口内的请求按宽限超时计时（取两者较大值），
-  // 稳态超时语义不变。窗口本身有硬上限，不会无限拖延失败检测。
-  #openGraceUntil = 0;
   #shutdownAck: (() => void) | undefined;
   #shuttingDown = false;
   #assetChangeListeners = new Set<(event: AssetChangeEvent) => void>();
@@ -309,26 +312,13 @@ export class LibraryWorkerClient {
 
     const requestId = randomUUID();
     const sentAtEpochMs = Date.now();
-    if (
-      command.type === 'library.open'
-      || command.type === 'library.open-eagle'
-      || command.type === 'library.open-billfish'
-    ) {
-      this.#openGraceUntil = Date.now() + OPEN_STARTUP_GRACE_WINDOW_MS;
-    }
     return new Promise<WorkerResult>((resolve, reject) => {
       const baseTimeout = requestTimeoutForCommand(command);
-      const inOpenGrace = Date.now() < this.#openGraceUntil;
-      const timeout = baseTimeout == null
-        ? null
-        : inOpenGrace && command.type !== 'library.open'
-          ? Math.max(baseTimeout, OPEN_STARTUP_GRACE_TIMEOUT_MS)
-          : baseTimeout;
       const performanceEnvelope = this.#requestBroker.envelopeFor(command, {
         sentAtEpochMs,
-        timeoutMs: timeout,
+        timeoutMs: baseTimeout,
       });
-      const timer = timeout == null
+      const timer = baseTimeout == null
         ? undefined
         : setTimeout(() => {
           this.#pending.delete(requestId);
@@ -339,7 +329,7 @@ export class LibraryWorkerClient {
           );
           cleanupTimer.unref();
           reject(new WorkerRequestTimeoutError(requestId, command.type));
-        }, timeout);
+        }, baseTimeout);
 
       const sentAt = WORKER_CMD_LOG ? Date.now() : undefined;
       this.#pending.set(requestId, {

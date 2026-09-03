@@ -8,6 +8,7 @@ import {
 } from "react";
 
 import type { AssetSummary, BrowseLayoutEntry } from "../shared/asset-types";
+import { FONT_SIZE_SCALES } from "./font-size-preferences";
 import {
   ASSET_GRID_GAP_PX,
   countFittingColumns,
@@ -23,8 +24,10 @@ import {
   stackItemHeights,
 } from "./canvas-asset-layout";
 import { isCanvasReflowRestorationPending } from "./canvas-reflow-restore";
+import { scaleCaptionBandPx } from "./justified-caption-band";
 import { estimateMasonryPreviewHeightPx } from "./masonry-preview-frame";
 import { columnWindow, useCanvasLocalViewport } from "./viewport-window";
+import { useFontSize } from "./FontSizeProvider";
 import type { VirtualBrowseLayout } from "./browse/virtual-browse-layout";
 import {
   VirtualMasonryColumns,
@@ -65,6 +68,11 @@ type MasonryColumnsProps = {
 };
 
 export function MasonryColumns(props: MasonryColumnsProps) {
+  const { preferences } = useFontSize();
+  const captionBandPx = scaleCaptionBandPx(
+    props.captionBandPx ?? MASONRY_CAPTION_BAND_PX,
+    FONT_SIZE_SCALES[preferences.preference],
+  );
   if (props.virtualLayout) {
     return (
       <VirtualMasonryColumns
@@ -72,13 +80,13 @@ export function MasonryColumns(props: MasonryColumnsProps) {
         layout={props.virtualLayout}
         cardSize={props.cardSize}
         showCaption={props.showCaption}
-        captionBandPx={props.captionBandPx}
+        captionBandPx={captionBandPx}
         renderCard={props.renderCard}
         renderLayoutPreview={props.renderLayoutPreview}
       />
     );
   }
-  return <RegularMasonryColumns {...props} />;
+  return <RegularMasonryColumns {...props} captionBandPx={captionBandPx} />;
 }
 
 function RegularMasonryColumns({

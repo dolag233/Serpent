@@ -5,15 +5,12 @@
  * release reconciliation for library B, and opening B must not cancel A.
  */
 
-export const STARTUP_BURST_MAX_WAIT_MS = 15_000;
-
 export type StartupBurstGateToken = {
   libraryId: string;
   generation: number;
 };
 
 type StartupBurstWaiter = {
-  timer: ReturnType<typeof setTimeout>;
   resolve: () => void;
   reject: (reason?: unknown) => void;
 };
@@ -124,23 +121,10 @@ export class StartupBurstGateRegistry {
     if (this.isDrained(gate)) return Promise.resolve();
 
     return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        if (!gate.waiters.delete(resolve)) return;
-        // The cap is an intentional degraded-mode escape hatch. Marking the
-        // burst as served also prevents later searches from permanently taking
-        // the special first-browse path when no browse response ever arrives.
-        gate.browseServed = true;
-        const remaining = [...gate.waiters.values()];
-        gate.waiters.clear();
-        clearTimeout(timer);
-        resolve();
-        for (const waiter of remaining) {
-          clearTimeout(waiter.timer);
-          waiter.resolve();
-        }
-      }, STARTUP_BURST_MAX_WAIT_MS);
-      (timer as { unref?: () => void }).unref?.();
-      gate.waiters.set(resolve, { timer, resolve, reject });
+      // This is an admission gate for background work, not a request
+      // completion deadline. It stays open until a successful first browse,
+      // the in-flight startup commands drain, or the library is closed.
+      gate.waiters.set(resolve, { resolve, reject });
     });
   }
 
@@ -167,7 +151,6 @@ export class StartupBurstGateRegistry {
     const waiters = [...gate.waiters.values()];
     gate.waiters.clear();
     for (const waiter of waiters) {
-      clearTimeout(waiter.timer);
       waiter.resolve();
     }
   }
@@ -181,7 +164,6 @@ export class StartupBurstGateRegistry {
     const waiters = [...gate.waiters.values()];
     gate.waiters.clear();
     for (const waiter of waiters) {
-      clearTimeout(waiter.timer);
       waiter.reject(reason);
     }
   }

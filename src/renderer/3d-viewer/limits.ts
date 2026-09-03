@@ -2,43 +2,16 @@
  * Viewer resource limits (spec 3D-14 / research §3.6).
  *
  * Policy:
- * - Source file size > 300 MB → refuse to open, with an actionable message
- *   (matches the Worker FBX cap `FBX_MAX_SOURCE_BYTES` in shared/fbx-conversion.ts).
- * - Triangle count > 2 M → warning banner after load (matches the ufbx
- *   converter cap `FBX_MAX_TRIANGLES`; the model still renders).
+ * - Model source size is never used as an admission or rendering gate.
+ * - Triangle count > 2 M → a non-blocking warning after load.
  * - Texture edge > 2 K → warning banner (desktop VRAM budget, research §3.6);
  *   v1 warns instead of downscaling.
  *
  * All functions are pure (numbers in, verdicts out) and unit-tested.
  */
 
-export const MODEL_MAX_SOURCE_BYTES = 300 * 1024 * 1024;
 export const MODEL_TRIANGLE_WARN_THRESHOLD = 2_000_000;
 export const MODEL_TEXTURE_WARN_MAX_EDGE = 2_048;
-
-/** Verdict applied BEFORE opening the model (byteSize from the asset row). */
-export type ModelOpenLimitVerdict =
-  | { readonly allowed: true }
-  | {
-      readonly allowed: false;
-      readonly code: 'MODEL_TOO_LARGE';
-      readonly bytes: number;
-      readonly limitBytes: number;
-    };
-
-export function checkModelOpenLimits(input: {
-  readonly byteSize: number;
-}): ModelOpenLimitVerdict {
-  if (!Number.isFinite(input.byteSize) || input.byteSize > MODEL_MAX_SOURCE_BYTES) {
-    return {
-      allowed: false,
-      code: 'MODEL_TOO_LARGE',
-      bytes: input.byteSize,
-      limitBytes: MODEL_MAX_SOURCE_BYTES,
-    };
-  }
-  return { allowed: true };
-}
 
 /** Non-blocking warnings computed after a successful load. */
 export type ModelRenderWarning =

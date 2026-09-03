@@ -8,6 +8,7 @@ import {
 } from "react";
 
 import type { AssetSummary, BrowseLayoutEntry } from "../shared/asset-types";
+import { FONT_SIZE_SCALES } from "./font-size-preferences";
 import {
   ASSET_GRID_GAP_PX,
   aspectRatioForAsset,
@@ -20,7 +21,10 @@ import {
   publishCanvasAssetLayout,
   stackItemHeights,
 } from "./canvas-asset-layout";
-import { resolveJustifiedCaptionBandPx } from "./justified-caption-band";
+import {
+  resolveJustifiedCaptionBandPx,
+} from "./justified-caption-band";
+import { useFontSize } from "./FontSizeProvider";
 import { columnWindow, useCanvasLocalViewport } from "./viewport-window";
 import type { VirtualBrowseLayout } from "./browse/virtual-browse-layout";
 import {
@@ -73,18 +77,28 @@ type JustifiedAssetRowsProps = {
 };
 
 export function JustifiedAssetRows(props: JustifiedAssetRowsProps) {
+  const { preferences } = useFontSize();
+  const captionBandPx = resolveJustifiedCaptionBandPx(
+    {
+      dimensions: true,
+      name: true,
+      secondary: true,
+    },
+    FONT_SIZE_SCALES[preferences.preference],
+  );
   if (props.virtualLayout) {
     return (
       <VirtualJustifiedAssetRows
         assets={props.assets}
         layout={props.virtualLayout}
         cardSize={props.cardSize}
+        captionBandPx={captionBandPx}
         renderCard={props.renderCard}
         renderLayoutPreview={props.renderLayoutPreview}
       />
     );
   }
-  return <RegularJustifiedAssetRows {...props} />;
+  return <RegularJustifiedAssetRows {...props} captionBandPx={captionBandPx} />;
 }
 
 function RegularJustifiedAssetRows({
@@ -93,6 +107,7 @@ function RegularJustifiedAssetRows({
   cardSize,
   renderCard,
   renderLayoutPreview,
+  captionBandPx = JUSTIFIED_CAPTION_BAND_PX,
 }: JustifiedAssetRowsProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(0);
@@ -141,7 +156,6 @@ function RegularJustifiedAssetRows({
     ),
     [availableWidth, cardSize, layoutEntries],
   );
-  const captionBandPx = JUSTIFIED_CAPTION_BAND_PX;
   const layoutRects = useMemo(
     () => layoutJustifiedAssetRects(
       layoutEntries,

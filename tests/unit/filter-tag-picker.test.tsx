@@ -54,6 +54,8 @@ describe("FilterTagPicker sorting", () => {
 
     expect(optionNames()).toEqual(["Warm", "Wood", "Metal", "Glass", "SciFi", "Unused"]);
     expect(sortButtons()[0]?.getAttribute("aria-pressed")).toBe("true");
+    expect(container!.querySelector(".filter-tag-all-scroll")).not.toBeNull();
+    expect(container!.textContent).not.toContain("Most used");
 
     await act(async () => {
       sortButtons()[1]?.click();
@@ -64,5 +66,29 @@ describe("FilterTagPicker sorting", () => {
       sortButtons()[1]?.click();
     });
     expect(optionNames()).toEqual(["Wood", "Warm", "Unused", "SciFi", "Metal", "Glass"]);
+  });
+
+  it("marks selected tag chips so they can use the accent highlight", async () => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        createElement(
+          LocaleProvider,
+          { children: null, initialPreference: "en" },
+          createElement(FilterTagPicker, {
+            onChange: () => undefined,
+            selectedNames: ["Warm"],
+            tags,
+          }),
+        ),
+      );
+    });
+
+    const selectedChip = container!.querySelector(".filter-tag-chip.is-selected");
+    expect(selectedChip).not.toBeNull();
+    expect(selectedChip?.textContent).toContain("Warm");
   });
 });

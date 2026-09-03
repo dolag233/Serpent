@@ -40,7 +40,7 @@ export function assetSupportsThumbnail(asset: {
  * Error codes that mean "no thumbnail expected" rather than a user-actionable
  * failure. Covers:
  * - `UNSUPPORTED_FORMAT` — no generator exists for the format;
- * - MODEL_* — the offscreen render failed (timeout/context lost/parse error…);
+ * - MODEL_* — the offscreen render failed (context lost/parse error…);
  *   spec 3D-16 says a failed model thumbnail degrades to the generic 3D icon,
  *   never a failure badge, so these are suppressed exactly like
  *   `UNSUPPORTED_FORMAT`;

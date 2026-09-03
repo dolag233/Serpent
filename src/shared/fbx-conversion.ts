@@ -10,9 +10,7 @@ import { z } from 'zod';
 export const fbxConvertErrorCodeSchema = z.enum([
   'FBX_SOURCE_NOT_FOUND', // asset source file missing/unreadable
   'FBX_NOT_FBX', // not a parseable FBX (or unsupported FBX flavor)
-  'FBX_FILE_TOO_LARGE', // source exceeds FBX_MAX_SOURCE_BYTES
-  'FBX_LIMIT_EXCEEDED', // triangle/output limits hit during conversion
-  'FBX_CONVERSION_TIMEOUT', // wall-clock timeout hit
+  'FBX_LIMIT_EXCEEDED', // an explicitly requested conversion limit was hit
   'FBX_WASM_UNAVAILABLE', // resources/ufbx module missing or failed to load
   'FBX_NO_MESHES', // valid FBX but nothing convertible (no triangle geometry)
   'FBX_CONVERSION_FAILED', // internal conversion failure
@@ -30,10 +28,11 @@ export const FBX_GLB_ARTIFACT_KIND = 'model_glb';
 /** Bump when converter semantics change; part of the artifact cache key. */
 export const FBX_GLB_GENERATOR_VERSION = 'ufbx-wasm-1';
 
-/** Hard caps (spec 3D-14). */
-export const FBX_MAX_SOURCE_BYTES = 300 * 1024 * 1024;
-export const FBX_MAX_TRIANGLES = 2_000_000;
-export const FBX_CONVERT_TIMEOUT_MS = 120_000;
+/**
+ * Conversion has no source-size, triangle-count, or wall-clock product cap.
+ * The parser and renderer report genuine parse/resource failures, while the
+ * caller owns cancellation through the normal job/lifecycle signal.
+ */
 
 /** Conversion statistics returned with a successful result (3D-13). */
 export const fbxConversionStatsSchema = z.strictObject({

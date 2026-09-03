@@ -200,8 +200,31 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       const settingsDialog = window.getByRole("dialog");
       await expect(settingsDialog).toBeVisible();
       await settingsDialog.getByRole("tab", { name: "外观", exact: true }).click();
+      const themeAccentSwatches = settingsDialog.locator(
+        ".app-settings-theme-accent-swatch",
+      );
+      await expect(themeAccentSwatches).toHaveCount(8);
+      await settingsDialog.getByRole("radio", { name: "VS Code" }).click();
+      await settingsDialog
+        .locator('[data-theme-accent="purple"]')
+        .click();
+      await expect(
+        settingsDialog.locator('[data-theme-accent="purple"]'),
+      ).toHaveAttribute("aria-checked", "true");
+      await expect
+        .poll(() =>
+          window.evaluate(() => ({
+            accent: getComputedStyle(document.documentElement)
+              .getPropertyValue("--accent")
+              .trim(),
+            actionAccent: getComputedStyle(document.documentElement)
+              .getPropertyValue("--ui-action-accent")
+              .trim(),
+          })),
+        )
+        .toEqual({ accent: "#8b5cf6", actionAccent: "#8b5cf6" });
       const themeColorDisclosure = settingsDialog.getByRole("button", {
-        name: "主题色设置",
+        name: "高级颜色配置",
         exact: true,
       });
       await expect(themeColorDisclosure).toHaveAttribute(
@@ -363,6 +386,26 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
     await expect(
       window.locator(".asset-card").filter({ hasText: "nav-a.png" }),
     ).toBeVisible({ timeout: 15_000 });
+
+    // Larger text must keep the caption's bottom breathing room instead of
+    // leaving the 8px default padding visually compressed or clipped.
+    const importedCard = window.locator('.asset-card[title="nav-a.png"]');
+    const captionMetrics = await importedCard.locator(".asset-caption").evaluate(
+      (element) => {
+        const style = getComputedStyle(element);
+        return {
+          fontScale: getComputedStyle(document.documentElement)
+            .getPropertyValue("--ui-font-scale")
+            .trim(),
+          paddingBottom: Number.parseFloat(style.paddingBottom),
+          clientHeight: element.clientHeight,
+          scrollHeight: element.scrollHeight,
+        };
+      },
+    );
+    expect(captionMetrics.fontScale).toBe("1.12");
+    expect(captionMetrics.paddingBottom).toBeGreaterThan(8);
+    expect(captionMetrics.scrollHeight).toBeLessThanOrEqual(captionMetrics.clientHeight);
 
     await window.getByRole("button", { name: "添加文件夹" }).click();
     await window.getByLabel("新文件夹名称").fill("场景");

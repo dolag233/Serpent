@@ -53,8 +53,6 @@ import { createSceneComposer } from '../3d-viewer/scene-composer';
 
 /** Fixed neutral backdrop for model thumbnails (consistent across themes). */
 export const OFFSCREEN_THUMBNAIL_BACKGROUND = 0x1a1c1f;
-/** A custom protocol request must not strand the model render indefinitely. */
-export const OFFSCREEN_HDRI_LOAD_TIMEOUT_MS = 5_000;
 
 /** Structural renderer surface (real three WebGLRenderer or test fake). */
 export interface FrameRendererLike {
@@ -101,8 +99,6 @@ export interface FramePipelineDeps extends FrameEnvironmentDeps, FrameModelDeps 
   computeBounds?: (scene: unknown) => FrameBoundsResult;
   /** Structured logging hook (page console, forwarded by Main diagnostics). */
   log?: (message: string, context?: Record<string, unknown>) => void;
-  /** Injectable HDRI deadline for tests; production keeps the short fallback. */
-  hdriLoadTimeoutMs?: number;
   /**
    * Offscreen Chromium can leave custom-protocol HDR requests pending forever.
    * The ground-shadow key light remains available as a deterministic fallback.
@@ -175,14 +171,13 @@ export async function renderModelThumbnailFrame(
     if (preset) {
       try {
         log('offscreen-thumbnail.stage.hdri-loading', { presetId: preset.id });
-        environment = await promiseWithTimeout(
-          loadHdrEnvironmentForFrame(`serpent://app-assets/hdri/${preset.fileName}`, {
+        environment = await loadHdrEnvironmentForFrame(
+          `serpent://app-assets/hdri/${preset.fileName}`,
+          {
             renderer: deps.renderer,
             pmrem: deps.pmrem,
             loadHdrData: deps.loadHdrData,
-          }),
-          deps.hdriLoadTimeoutMs ?? OFFSCREEN_HDRI_LOAD_TIMEOUT_MS,
-          `HDRI load timed out: ${preset.id}`,
+          },
         );
         composer.setEnvironment(environment.environmentTexture);
         log('offscreen-thumbnail.stage.hdri-ready', { presetId: preset.id });
@@ -326,26 +321,6 @@ export async function renderModelThumbnailFrame(
     environment?.dispose();
     composer.dispose();
   }
-}
-
-function promiseWithTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  message: string,
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error: unknown) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
 }
 
 /** Real HDRI pipeline for the page (mirrors the viewer's environment module). */

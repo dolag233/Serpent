@@ -137,10 +137,6 @@ import {
 } from './media-resource-guard';
 import {
   estimateMediaNativeMemoryBytes,
-  MEDIA_INPUT_TOO_LARGE_ERROR_CODE,
-  MEDIA_MAX_INPUT_PIXELS,
-  MEDIA_MAX_UNKNOWN_OIIO_SOURCE_BYTES,
-  MediaInputTooLargeError,
   mediaNativeMemoryBudget,
   type MediaNativeMemoryEstimate,
 } from './media-memory-budget';
@@ -223,7 +219,7 @@ export interface SharpModule {
     pages?: number;
     failOn?: 'warning' | 'error' | 'none';
     sequentialRead?: boolean;
-    limitInputPixels?: number;
+    limitInputPixels?: number | false;
   }): SharpInstance;
   cache?(options: boolean | { files?: number; memory?: number; items?: number }): unknown;
   concurrency?(threads?: number): number;
@@ -328,69 +324,16 @@ const SHARP_VERSION = '0.35.3';
 const SHARP_THUMBNAIL_GENERATOR = `sharp@${SHARP_VERSION}-gifstill1`;
 /** RAW cards may use a bounded embedded JPEG instead of demosaicing the sensor frame. */
 const RAW_EMBEDDED_THUMBNAIL_GENERATOR = `raw-embedded-jpeg@1;sharp@${SHARP_VERSION};max=512`;
-const RAW_EMBEDDED_THUMBNAIL_MAX_PIXELS = 16_000_000;
 /** Eagle/Billfish imports publish a copy immediately, then normalize in the background. */
 const IMPORTED_THUMBNAIL_GENERATOR = `${IMPORTED_THUMBNAIL_GENERATOR_PREFIX};sharp@${SHARP_VERSION};max=512;still1`;
 /** Animated imported previews stay byte-for-byte intact but still need a durable completion marker. */
 const IMPORTED_ANIMATED_THUMBNAIL_GENERATOR = `${IMPORTED_THUMBNAIL_GENERATOR_PREFIX};preserved-animated@1`;
-const IMPORTED_THUMBNAIL_MAX_INPUT_PIXELS = 32_000_000;
-// Validate animated previews one frame at a time. This keeps the retained
-// decode buffer bounded while rejecting pathological frame-count bombs rather
-// than silently marking an unverified animation as preserved.
-const IMPORTED_THUMBNAIL_MAX_VALIDATION_PAGES = 128;
-// Keep ordinary card decodes below Sharp's much larger default decompression
-// bomb limit. The 64 MP bound still accepts the fixture's 8K class while
-// preventing a single malformed source from retaining hundreds of MB of
-// decoded pixels in the Worker.
-const THUMBNAIL_MAX_INPUT_PIXELS = MEDIA_MAX_INPUT_PIXELS;
-// A visible wave may use one extra Sharp worker only for sources whose decoded
-// footprint is bounded. Larger/unknown sources stay on the background lane so
-// a fast scroll cannot turn four large native allocations into an OOM spike.
-const THUMBNAIL_INTERACTIVE_MAX_SOURCE_BYTES = 32 * 1024 * 1024;
-const THUMBNAIL_INTERACTIVE_MAX_INPUT_PIXELS = 16_000_000;
-// TIFF is a dual-decoder format: Sharp is materially faster for ordinary
-// files, while OIIO is the safe path for large/private-tag-heavy files that
-// can trip libvips' cumulative metadata allocation limit. Keep the Sharp
-// admission bound below the general media limit so a TIFF cannot consume an
-// unbounded native buffer before the OIIO fallback gets a chance to handle it.
-const TIFF_SHARP_MAX_SOURCE_BYTES = 16 * 1024 * 1024;
-const TIFF_SHARP_MAX_INPUT_PIXELS = 16_000_000;
 
 function isTiffExtension(extensionOrFileName: string): boolean {
   const extension = extensionOrFileName.startsWith('.')
     ? extensionOrFileName.toLowerCase()
     : path.extname(extensionOrFileName).toLowerCase();
   return extension === '.tif' || extension === '.tiff';
-}
-
-function isBoundedTiffForSharp(input: {
-  sourceByteSize: number | null | undefined;
-  width: number | null | undefined;
-  height: number | null | undefined;
-}): boolean {
-  return Number.isSafeInteger(input.sourceByteSize)
-    && input.sourceByteSize! > 0
-    && input.sourceByteSize! <= TIFF_SHARP_MAX_SOURCE_BYTES
-    && Number.isSafeInteger(input.width)
-    && Number.isSafeInteger(input.height)
-    && input.width! > 0
-    && input.height! > 0
-    && input.width! <= TIFF_SHARP_MAX_INPUT_PIXELS / input.height!;
-}
-
-function isSafeForInteractiveImageLane(input: {
-  sourceByteSize: number | null | undefined;
-  width: number | null | undefined;
-  height: number | null | undefined;
-}): boolean {
-  return Number.isSafeInteger(input.sourceByteSize)
-    && input.sourceByteSize! > 0
-    && input.sourceByteSize! <= THUMBNAIL_INTERACTIVE_MAX_SOURCE_BYTES
-    && Number.isSafeInteger(input.width)
-    && Number.isSafeInteger(input.height)
-    && input.width! > 0
-    && input.height! > 0
-    && input.width! <= THUMBNAIL_INTERACTIVE_MAX_INPUT_PIXELS / input.height!;
 }
 
 type MediaNativeMemoryEstimateInput = Omit<MediaNativeMemoryEstimate, 'decoder'>;
@@ -424,31 +367,6 @@ async function inspectMediaNativeInput(
   return { sourceByteSize, width: sourceWidth, height: sourceHeight };
 }
 
-function assertOiioInputWithinSafetyBudget(
-  input: MediaNativeMemoryEstimateInput,
-): void {
-  const hasDimensions = Number.isSafeInteger(input.width)
-    && Number.isSafeInteger(input.height)
-    && input.width! > 0
-    && input.height! > 0;
-  if (hasDimensions && input.width! > MEDIA_MAX_INPUT_PIXELS / input.height!) {
-    throw new MediaInputTooLargeError(
-      `OIIO input exceeds the ${MEDIA_MAX_INPUT_PIXELS.toLocaleString()} pixel preview safety limit.`,
-    );
-  }
-  // A malformed/unsupported header cannot provide a pixel bound. Refuse only
-  // truly huge unknown inputs; ordinary unknown formats still get the single
-  // OIIO slot plus the full unknown-input reservation in the shared budget.
-  if (
-    !hasDimensions
-    && Number.isSafeInteger(input.sourceByteSize)
-    && input.sourceByteSize! > MEDIA_MAX_UNKNOWN_OIIO_SOURCE_BYTES
-  ) {
-    throw new MediaInputTooLargeError(
-      'OIIO input has no readable dimensions and exceeds the unknown-input byte safety limit.',
-    );
-  }
-}
 // A generator writes the final artifact before committing its DB row. Keep
 // recently-created unreferenced files out of the open-time sweep so a live
 // media job cannot be mistaken for a crash orphan; the next reconciliation
@@ -479,7 +397,6 @@ const RAW_IMAGE_METADATA_RETRY_DELAY_MS = 30_000;
 const RAW_IMAGE_METADATA_MAX_ATTEMPTS = 3;
 /** Opaque ≈4:3 light-stage covers (Serpent-dxk); stale strip/dark covers requeue. */
 const AUDIO_WAVEFORM_GENERATOR = `ffmpeg@${FFMPEG_VERSION}+${AUDIO_WAVEFORM_COVER_GENERATOR_TAG}`;
-const MAX_WEBM_PROXY_BYTES = 512 * 1024 * 1024;
 const VIDEO_PROXY_SCALE_FILTER =
   'scale=w=min(720\\,iw):h=min(720\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2';
 type VideoProxyProfile = {
@@ -560,8 +477,6 @@ function safeMediaJobErrorDetail(errorCode: string): string {
       return 'The current preview image is not ready. Regenerate the thumbnail or video poster first.';
     case 'PALETTE_EXTRACTION_FAILED':
       return 'Local palette extraction failed. See the local Serpent log for diagnostic details.';
-    case MEDIA_INPUT_TOO_LARGE_ERROR_CODE:
-      return 'This source is too large to decode safely for a preview. The original file remains available.';
     case IMPORTED_THUMBNAIL_NORMALIZATION_JOB:
       return 'The imported preview could not be normalized. The original imported preview remains available.';
     default:
@@ -572,8 +487,7 @@ function safeMediaJobErrorDetail(errorCode: string): string {
 type OiioArtifactErrorCode =
   | 'OIIO_REQUIRED'
   | 'OIIO_COLOR_TRANSFORM_FAILED'
-  | 'OIIO_GENERATION_FAILED'
-  | typeof MEDIA_INPUT_TOO_LARGE_ERROR_CODE;
+  | 'OIIO_GENERATION_FAILED';
 
 export type ExrPlaneDescriptor = {
   index: number;
@@ -786,10 +700,8 @@ import {
 } from './browse-session-store';
 import {
   MODEL_THUMBNAIL_GENERATOR_VERSION,
-  MODEL_THUMBNAIL_MAX_PNG_BYTES,
 } from '../shared/model-thumbnail-protocol';
 import { DOCUMENT_THUMBNAIL_GENERATOR_VERSION } from '../shared/document-thumbnail-protocol';
-import { MODEL_MAX_SOURCE_BYTES } from '../renderer/3d-viewer/limits';
 import {
   COMMON_IMAGE_COLOR_SPACE_OPTIONS,
   colorSpaceInfoFromName,
@@ -4104,7 +4016,10 @@ export function defaultSpawnFn(
       reject(new DOMException('Media job was cancelled before the subprocess started.', 'AbortError'));
       return;
     }
-    const timeoutMs = options?.timeoutMs ?? 120_000;
+    // Local media work has no honest wall-clock deadline: decode time depends
+    // on the source and the user's filesystem. Only callers with an explicit
+    // lifecycle/security reason may opt into a deadline.
+    const timeoutMs = options?.timeoutMs;
     let timedOut = false;
     let aborted = false;
     let settled = false;
@@ -4116,14 +4031,16 @@ export function defaultSpawnFn(
     });
     activeMediaProcesses.add(proc);
 
-    const timer = setTimeout(() => {
-      timedOut = true;
-      killMediaProcess(proc);
-      // Escalate to SIGKILL after 5s if still running.
-      killTimer = setTimeout(() => killMediaProcess(proc, 'SIGKILL'), 5_000);
-      killTimer.unref();
-    }, timeoutMs);
-    timer.unref();
+    const timer = timeoutMs === undefined
+      ? undefined
+      : setTimeout(() => {
+        timedOut = true;
+        killMediaProcess(proc);
+        // Escalate to SIGKILL after 5s if still running.
+        killTimer = setTimeout(() => killMediaProcess(proc, 'SIGKILL'), 5_000);
+        killTimer.unref();
+      }, timeoutMs);
+    timer?.unref();
 
     const abort = (): void => {
       if (settled || aborted) return;
@@ -4141,7 +4058,7 @@ export function defaultSpawnFn(
     proc.stderr?.on('data', (chunk: Buffer) => stderrTail.append(chunk));
 
     proc.on('error', (err) => {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       if (killTimer) clearTimeout(killTimer);
       options?.signal?.removeEventListener('abort', abort);
       activeMediaProcesses.delete(proc);
@@ -4150,7 +4067,7 @@ export function defaultSpawnFn(
     });
 
     proc.on('close', (code) => {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       if (killTimer) clearTimeout(killTimer);
       options?.signal?.removeEventListener('abort', abort);
       activeMediaProcesses.delete(proc);
@@ -4608,7 +4525,7 @@ async function defaultTrashItem(sourcePath: string): Promise<void> {
     execFile(
       binaryPath,
       [sourcePath],
-      { timeout: 15_000, windowsHide: true },
+      { windowsHide: true },
       (error) => error ? reject(error) : resolve(),
     );
   });
@@ -19745,8 +19662,8 @@ export class LibraryService {
   /**
    * Keep the fast visible-thumbnail wave on media that can complete in the
    * Worker. Models are rendered through Main's single-flight offscreen GPU
-   * window and may legitimately take seconds (or wait for a renderer timeout
-   * when WebGL is unavailable). They remain eligible for the normal startup /
+   * window and may legitimately take as long as the content requires. They
+   * remain eligible for the normal startup /
    * mutation queue; only the interactive viewport wave excludes them.
    */
   filterVisibleThumbnailAssetIds(
@@ -19897,31 +19814,19 @@ export class LibraryService {
       sourceWidth: execution.sourceWidth ?? tiffHeaderSize?.width,
       sourceHeight: execution.sourceHeight ?? tiffHeaderSize?.height,
     };
-    const safeTiffForSharp = isBoundedTiffForSharp({
-      sourceByteSize: assetRow.source_byte_size,
-      width: tiffHeaderSize?.width ?? execution.sourceWidth,
-      height: tiffHeaderSize?.height ?? execution.sourceHeight,
-    });
     if (
-      (
-        mediaType === 'image' &&
-        imageDecoder === 'sharp' &&
-        viewerDecoder === 'sharp' &&
-        (!colorSpaceOverride || !canOverrideImageColorSpace(ext))
-      ) || (
-        mediaType === 'image' &&
-        safeTiffForSharp &&
-        !colorSpaceOverride
-      )
+      mediaType === 'image' &&
+      imageDecoder === 'sharp' &&
+      viewerDecoder === 'sharp' &&
+      (!colorSpaceOverride || !canOverrideImageColorSpace(ext))
     ) {
       return this.generateImageThumbnail(input, openLibrary, assetPath, revisionId, sourceExecution);
     }
 
-    // TIFFs whose bounded header/size admission is unknown or unsafe stay on
-    // OIIO. libvips applies a cumulative allocation limit to custom TIFF tags;
-    // camera/scanner TIFFs with large private metadata can fail before the
-    // pixels are ever read. OIIO ignores that metadata for the raster
-    // conversion and keeps the Worker responsive.
+    // OIIO owns containers that Chromium cannot open directly, including TGA
+    // and TIFF. Decoder choice is format-based, never a guessed source-size
+    // or pixel-size threshold; the native tool decides whether the content is
+    // actually readable.
     if (mediaType === 'image' && viewerDecoder === 'oiio') {
       // RAW output is already LibRaw/OIIO's display-ready default sRGB and
       // the embedded-JPEG card path does not consume a source colour-space
@@ -19991,15 +19896,6 @@ export class LibraryService {
     // No renderer wired (direct unit harness / legacy): keep the benign
     // no-op so thumbnailStatus stays null and nothing is written.
     if (!options.renderer) return null;
-
-    if (input.byteSize != null && input.byteSize > MODEL_MAX_SOURCE_BYTES) {
-      this.writeModelThumbnailFailure(openLibrary, input.revisionId, 'MODEL_TOO_LARGE');
-      // The typed code lives on the failed artifact (the job's error_code);
-      // the throw only routes into the queue's failure path.
-      throw new LibraryServiceError('INTERNAL_ERROR', {
-        reason: 'MEDIA_PROCESSING_FAILED',
-      });
-    }
 
     const outcome = await options.renderer({
       libraryId: input.libraryId,
@@ -20107,7 +20003,6 @@ export class LibraryService {
     const bytes = frame.pngBytes;
     if (
       bytes.byteLength < 8
-      || bytes.byteLength > MODEL_THUMBNAIL_MAX_PNG_BYTES
       || !Number.isInteger(frame.width)
       || !Number.isInteger(frame.height)
     ) {
@@ -20640,28 +20535,18 @@ export class LibraryService {
           const probe = sharp(oldArtifactPath, {
             failOn: 'error',
             sequentialRead: true,
-            limitInputPixels: IMPORTED_THUMBNAIL_MAX_INPUT_PIXELS,
+            // This is a user-provided media artifact. Do not impose a
+            // product-side pixel limit; cancellation remains the only caller
+            // controlled stop condition.
+            limitInputPixels: false,
           });
           const metadata = await probe.metadata();
           throwIfCancelled();
           const inputWidth = metadata.width ?? 0;
           const inputHeight = metadata.height ?? 0;
-          if (
-            !Number.isSafeInteger(inputWidth)
-            || !Number.isSafeInteger(inputHeight)
-            || inputWidth <= 0
-            || inputHeight <= 0
-            || inputWidth > IMPORTED_THUMBNAIL_MAX_INPUT_PIXELS / inputHeight
-          ) {
-            throw new Error('Imported thumbnail exceeds the pixel budget.');
-          }
           const pages = metadata.pages ?? 1;
-          if (
-            !Number.isSafeInteger(pages)
-            || pages < 1
-            || pages > IMPORTED_THUMBNAIL_MAX_VALIDATION_PAGES
-          ) {
-            throw new Error('Imported animated thumbnail exceeds the validation frame budget.');
+          if (!Number.isSafeInteger(pages) || pages < 1) {
+            throw new Error('Sharp returned invalid page metadata for the imported thumbnail.');
           }
           const extension = path.extname(oldArtifactPath).toLowerCase();
           const format = metadata.format?.toLowerCase();
@@ -20685,7 +20570,7 @@ export class LibraryService {
                 page,
                 pages: 1,
                 sequentialRead: true,
-                limitInputPixels: IMPORTED_THUMBNAIL_MAX_INPUT_PIXELS,
+                limitInputPixels: false,
               });
               const rawDecoder = pageDecoder.raw?.();
               if (!rawDecoder?.toBuffer) {
@@ -20748,7 +20633,7 @@ export class LibraryService {
               const pipeline = sharp(oldArtifactPath, {
                 failOn: 'error',
                 sequentialRead: true,
-                limitInputPixels: IMPORTED_THUMBNAIL_MAX_INPUT_PIXELS,
+                limitInputPixels: false,
               })
                 .rotate()
                 .toColourspace('srgb')
@@ -20777,7 +20662,7 @@ export class LibraryService {
           const outputMetadata = await sharp(tempPath, {
             failOn: 'none',
             sequentialRead: true,
-            limitInputPixels: IMPORTED_THUMBNAIL_MAX_EDGE * IMPORTED_THUMBNAIL_MAX_EDGE,
+            limitInputPixels: false,
           }).metadata();
           throwIfCancelled();
           const outputWidth = outputMetadata.width ?? 0;
@@ -20805,21 +20690,6 @@ export class LibraryService {
             relativePath,
             width: outputWidth,
           };
-        },
-        {
-          sourceByteSize: legacy.byte_size,
-          // Eagle/Billfish artifact width/height describe the source asset,
-          // not the adjacent copied preview. Reserve against the preview's
-          // actual safety ceiling instead of letting untrusted source
-          // metadata distort native admission (or under-reserving a large
-          // preview whose header was not known before the decoder starts).
-          width: IMPORTED_THUMBNAIL_MAX_INPUT_PIXELS,
-          height: 1,
-          // Pixel validation materializes one decoded raster in libvips and a
-          // second copy in the V8-facing raw Buffer. Reserve both before the
-          // decoder starts; this intentionally serializes worst-case imports
-          // under the process-wide 384 MiB native budget.
-          decodedRasterCopies: 2,
         },
       );
 
@@ -20951,7 +20821,7 @@ export class LibraryService {
           const probe = s(assetPath, {
             failOn: 'none',
             sequentialRead: false,
-            limitInputPixels: THUMBNAIL_MAX_INPUT_PIXELS,
+            limitInputPixels: false,
           });
           const metadata = await probe.metadata();
           const pages = metadata.pages ?? 1;
@@ -20969,7 +20839,7 @@ export class LibraryService {
               try {
                 const samplePipeline = s(assetPath, {
                   page: candidate,
-                  limitInputPixels: THUMBNAIL_MAX_INPUT_PIXELS,
+                  limitInputPixels: false,
                 })
                   .rotate()
                   .toColourspace('srgb')
@@ -21016,12 +20886,12 @@ export class LibraryService {
                 page,
                 failOn: 'none',
                 sequentialRead: true,
-                limitInputPixels: THUMBNAIL_MAX_INPUT_PIXELS,
+                limitInputPixels: false,
               })
             : s(assetPath, {
                 failOn: 'none',
                 sequentialRead: false,
-                limitInputPixels: THUMBNAIL_MAX_INPUT_PIXELS,
+                limitInputPixels: false,
               });
           const finalMeta = isAnimatedGif ? await pipeline.metadata() : metadata;
           const swapsDimensions = finalMeta.orientation !== undefined
@@ -21254,7 +21124,7 @@ export class LibraryService {
           '80',
           artifactAbsPath,
         ],
-        { timeoutMs: 120_000, signal: execution.signal },
+        { signal: execution.signal },
       );
       const outputStat = existsSync(artifactAbsPath)
         ? statSync(artifactAbsPath)
@@ -22089,7 +21959,7 @@ export class LibraryService {
         '-frames:v', '1',
         '-update', '1',
         tempAbsPath,
-      ], { timeoutMs: 120_000, signal: execution.signal });
+      ], { signal: execution.signal });
 
       if (result.exitCode !== 0) {
         throw new Error(
@@ -23112,7 +22982,7 @@ export class LibraryService {
         '-show_format',
         '-show_streams',
         assetPath,
-      ], { timeoutMs: 60_000, signal: execution.signal });
+      ], { signal: execution.signal });
 
       if (result.exitCode !== 0) {
         throw new Error(`ffprobe exited with code ${result.exitCode}: ${result.stderr.slice(-200)}`);
@@ -23238,7 +23108,7 @@ export class LibraryService {
         '-frames:v', '1',
         '-q:v', '3',
         artifactAbsPath,
-      ], { timeoutMs: 120_000, signal: execution.signal });
+      ], { signal: execution.signal });
 
       if (result.exitCode !== 0) {
         throw new Error(`ffmpeg poster exited with code ${result.exitCode}: ${result.stderr.slice(-200)}`);
@@ -23329,7 +23199,7 @@ export class LibraryService {
         '-q:v', '5',
         '-update', '1',
         artifactAbsPath,
-      ], { timeoutMs: 180_000, signal: execution.signal });
+      ], { signal: execution.signal });
 
       if (result.exitCode !== 0) {
         console.error('[CONTACT-SHEET-FFMPEG-ERR]', result.stderr.slice(-800));
@@ -23375,7 +23245,7 @@ export class LibraryService {
         '-show_entries', 'stream=nb_read_frames',
         '-of', 'json',
         assetPath,
-      ], { timeoutMs: 60_000, signal: execution.signal });
+      ], { signal: execution.signal });
       if (result.exitCode !== 0) return null;
       const parsed = JSON.parse(result.stdout.toString('utf-8')) as {
         streams?: Array<{ nb_read_frames?: string | number }>;
@@ -23442,7 +23312,7 @@ export class LibraryService {
       const result = await this.runFfmpeg(
         ffmpegPath,
         ['-hide_banner', '-encoders'],
-        { timeoutMs: 30_000, signal: execution.signal },
+        { signal: execution.signal },
       );
       if (result.exitCode === 0) {
         listed = listedH264ProxyEncoders(
@@ -23463,7 +23333,7 @@ export class LibraryService {
           const result = await this.runFfmpeg(
             ffmpegPath,
             ffmpegOneFrameEncodeArgs(candidate, outputPath),
-            { timeoutMs: 20_000, signal: execution.signal },
+            { signal: execution.signal },
           );
           encodeOk = result.exitCode === 0
             && existsSync(outputPath)
@@ -23531,7 +23401,7 @@ export class LibraryService {
           ...profile.args,
           '-vf', VIDEO_PROXY_SCALE_FILTER,
           artifactAbsPath,
-        ], { timeoutMs: 600_000, signal: execution.signal });
+        ], { signal: execution.signal });
 
         if (result.exitCode !== 0) {
           throw new Error(
@@ -23540,13 +23410,6 @@ export class LibraryService {
         }
 
         const outputStat = statSync(artifactAbsPath);
-        if (outputStat.size > MAX_WEBM_PROXY_BYTES) {
-          const error = new Error(
-            `Generated ${profile.codec} proxy exceeds the 512 MiB safety limit (${outputStat.size} bytes).`,
-          ) as Error & { code: string };
-          error.code = 'MEDIA_PROCESSING_FAILED';
-          throw error;
-        }
         openLibrary.connection
           .prepare(
             `INSERT INTO revision_artifacts
@@ -23616,19 +23479,11 @@ export class LibraryService {
         '-b:a', '128k',
         '-f', 'ogg',
         artifactAbsPath,
-      ], { timeoutMs: 600_000, signal: execution.signal });
+      ], { signal: execution.signal });
       if (result.exitCode !== 0) {
         throw new Error(`ffmpeg audio proxy exited with code ${result.exitCode}: ${result.stderr.slice(-200)}`);
       }
       const outputStat = statSync(artifactAbsPath);
-      if (outputStat.size > MAX_WEBM_PROXY_BYTES) {
-        rmSync(artifactAbsPath, { force: true });
-        const error = new Error(
-          `Generated audio proxy exceeds the 512 MiB safety limit (${outputStat.size} bytes).`,
-        ) as Error & { code: string };
-        error.code = 'MEDIA_PROCESSING_FAILED';
-        throw error;
-      }
       openLibrary.connection.prepare(
         `INSERT INTO revision_artifacts
            (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
@@ -23690,19 +23545,13 @@ export class LibraryService {
           const pipeline = sharp(embeddedJpeg, {
             failOn: 'none',
             sequentialRead: true,
-            limitInputPixels: RAW_EMBEDDED_THUMBNAIL_MAX_PIXELS,
+            limitInputPixels: false,
           });
           const metadata = await pipeline.metadata();
           const width = metadata.width ?? 0;
           const height = metadata.height ?? 0;
-          if (
-            !Number.isSafeInteger(width)
-            || !Number.isSafeInteger(height)
-            || width <= 0
-            || height <= 0
-            || width * height > RAW_EMBEDDED_THUMBNAIL_MAX_PIXELS
-          ) {
-            throw new Error('Embedded RAW JPEG dimensions exceed the thumbnail safety budget.');
+          if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) {
+            throw new Error('Embedded RAW JPEG dimensions are invalid.');
           }
           const swapsDimensions = metadata.orientation !== undefined
             && metadata.orientation >= 5
@@ -23826,7 +23675,12 @@ export class LibraryService {
         1,
       ].join(',');
       const isRawAsset = isRawImageExtension(assetPath);
-      const resizeArgs = isViewerImage ? [] : ['--resize', '0x512'];
+      // Keep the card artifact inside a 512px square while preserving the
+      // source aspect ratio. `--resize 0x512` makes a 2048x1024 source into a
+      // 1024x512 card, which is twice as wide as the card contract and caused
+      // the real TIFF E2E to expose the wrong raster size. This is an output
+      // presentation size, not a source acceptance or processing limit.
+      const resizeArgs = isViewerImage ? [] : ['--fit', '512x512'];
 
       if (isRawAsset && !isViewerImage) {
         const embeddedThumbnail = await this.tryGenerateRawEmbeddedThumbnail(
@@ -23840,7 +23694,6 @@ export class LibraryService {
       }
 
       const nativeInput = await inspectMediaNativeInput(assetPath, execution);
-      assertOiioInputWithinSafetyBudget(nativeInput);
 
       // LibRaw already converts camera RAW data to its display-ready default
       // output. Running that result through the studio OCIO display transform
@@ -23872,7 +23725,6 @@ export class LibraryService {
           ];
 
       const result = await this.runOiio(oiiotoolPath, args, {
-        timeoutMs: 60_000,
         signal: execution.signal,
         memory: nativeInput,
       });
@@ -23917,8 +23769,6 @@ export class LibraryService {
       const resourceError = asMediaResourceExhaustedError(error, 'oiio');
       const errorCode: OiioArtifactErrorCode | typeof MEDIA_RESOURCE_EXHAUSTED_ERROR_CODE = resourceError
         ? MEDIA_RESOURCE_EXHAUSTED_ERROR_CODE
-        : error instanceof MediaInputTooLargeError
-          ? MEDIA_INPUT_TOO_LARGE_ERROR_CODE
         : isMissingPathError(error)
         ? 'OIIO_REQUIRED'
         : error instanceof OiioInvocationError
@@ -24133,7 +23983,7 @@ export class LibraryService {
           'background',
           () => (this.options.sharpFn ?? requireSharp())(bytes, {
             failOn: 'none',
-            limitInputPixels: MEDIA_MAX_INPUT_PIXELS,
+            limitInputPixels: false,
           }).metadata(),
           { sourceByteSize: bytes.length },
         );
@@ -24199,9 +24049,10 @@ export class LibraryService {
    * Write a derived binary artifact for an asset's current revision.
    *
    * Slice-0030 addition (FBX→GLB pipeline): like writePluginMediaArtifact but
-   * the artifact kind and generator version are caller supplied and the size
-   * cap is raised for model payloads. Cache semantics stay the same as the
-   * other derived pipelines: the artifact is keyed by (revision_id, kind) —
+   * the artifact kind and generator version are caller supplied. Local
+   * resources have no product-size gate; the artifact is written atomically.
+   * Cache semantics stay the same as the other derived pipelines: the
+   * artifact is keyed by (revision_id, kind) —
    * a new source revision invalidates the previous artifact — and the
    * `generator_version` column lets consumers detect a stale converter
    * (resolveConvertedGlb in src/worker/fbx/converter.ts).
@@ -24213,14 +24064,13 @@ export class LibraryService {
     mimeType: string;
     bytes: Uint8Array;
     generatorVersion: string;
-    maxBytes: number;
   }): { artifactId: string; filePath: string } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const asset = openLibrary.connection
       .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ? AND deleted_at IS NULL')
       .get(input.assetId) as { current_revision_id: string | null } | undefined;
     if (!asset?.current_revision_id) throw new LibraryServiceError('ASSET_NOT_FOUND');
-    if (input.bytes.length === 0 || input.bytes.length > input.maxBytes) {
+    if (input.bytes.length === 0) {
       throw new LibraryServiceError('INTERNAL_ERROR');
     }
 
@@ -24576,10 +24426,9 @@ export class LibraryService {
           ?? colorSpaceInfoFromName(metadata.space, metadata.hasProfile ? 'embedded' : 'metadata');
       } else {
         const nativeInput = await inspectMediaNativeInput(assetPath, {});
-        assertOiioInputWithinSafetyBudget(nativeInput);
         const result = await this.runOiio(resolveOiiotoolPath(), [
           '--info', '-v', '-a', assetPath,
-        ], { timeoutMs: 30_000, memory: nativeInput });
+        ], { memory: nativeInput });
         if (result.exitCode === 0) {
           detected = parseOiioColorSpaceInfo(result.stdout.toString('utf-8'));
         }
@@ -24610,10 +24459,9 @@ export class LibraryService {
     if (cached) return cached;
     try {
       const nativeInput = await inspectMediaNativeInput(assetPath, {});
-      assertOiioInputWithinSafetyBudget(nativeInput);
       const result = await this.runOiio(resolveOiiotoolPath(), [
         '--info', '-v', '-a', assetPath,
-      ], { timeoutMs: 30_000, memory: nativeInput });
+      ], { memory: nativeInput });
       if (result.exitCode !== 0) return [{ index: 0, label: 'Part 0' }];
       const planes = parseExrPlaneDescriptors(result.stdout.toString('utf-8'));
       this.exrPlanesByRevision.set(revisionId, planes);
@@ -26979,9 +26827,6 @@ export class LibraryService {
     relativeFilePath: string,
     kind: 'thumbnail' | 'video_poster',
     generatorVersion: string,
-    sourceByteSize?: number | null,
-    sourceWidth?: number | null,
-    sourceHeight?: number | null,
   ): boolean {
     if (generatorVersion.startsWith('plugin:')) return true;
     // Imported Eagle/Billfish previews are deliberately kept as the visible
@@ -26997,18 +26842,9 @@ export class LibraryService {
     switch (mediaType) {
       case 'image': {
         const extension = path.extname(relativeFilePath).toLowerCase();
-        const boundedTiffForSharp = isTiffExtension(extension)
-          && isBoundedTiffForSharp({
-            sourceByteSize,
-            width: sourceWidth,
-            height: sourceHeight,
-          });
         const oiioOwned = isRawImageExtension(extension)
           || extension === '.ico'
-          || (
-            imageViewerDecoderForExtension(extension) === 'oiio'
-            && !boundedTiffForSharp
-          );
+          || imageViewerDecoderForExtension(extension) === 'oiio';
         return oiioOwned
           ? generatorVersion.startsWith(`oiio@${OIIO_VERSION}`)
             || generatorVersion.startsWith(RAW_EMBEDDED_THUMBNAIL_GENERATOR)
@@ -27081,9 +26917,6 @@ export class LibraryService {
       row.relative_file_path,
       row.kind,
       row.generator_version,
-      row.source_byte_size,
-      row.source_width,
-      row.source_height,
     ));
     if (stale.length === 0) return 0;
     const invalidate = openLibrary.connection.prepare(
@@ -28505,17 +28338,11 @@ export class LibraryService {
                     sourceByteSize: claimAsset?.source_byte_size,
                     sourceWidth: claimAsset?.source_width,
                     sourceHeight: claimAsset?.source_height,
-                    // Only image jobs use the interactive Sharp lane. Video,
-                    // document, and model work retain their dedicated
-                    // decoder limits even when claimed by a visible wave.
+                    // Only image jobs use the interactive image lane. The
+                    // lane is selected by user intent, never by source size,
+                    // dimensions, or detected machine capacity.
                     lane: options.interactive
                       && claimMediaType === 'image'
-                      && claimAsset !== undefined
-                      && isSafeForInteractiveImageLane({
-                        sourceByteSize: claimAsset.source_byte_size,
-                        width: claimAsset.source_width,
-                        height: claimAsset.source_height,
-                      })
                       ? 'interactive'
                       : 'background',
                   },
@@ -38228,7 +38055,6 @@ export class LibraryService {
     metadata: EagleImportedMetadata,
   ): EagleCopiedThumbnail | undefined {
     if (!metadata.thumbnailPath) return undefined;
-    const maxBytes = 32 * 1024 * 1024;
     const canonicalRoot = path.resolve(metadata.sourceRootPath);
     const resolvedThumbnailPath = path.resolve(metadata.thumbnailPath);
     if (!pathIsWithin(canonicalRoot, resolvedThumbnailPath)) {
@@ -38239,7 +38065,7 @@ export class LibraryService {
       thumbnailStat.isSymbolicLink()
       || !thumbnailStat.isFile()
       || thumbnailStat.size <= 0n
-      || thumbnailStat.size > BigInt(maxBytes)
+      || thumbnailStat.size > BigInt(Number.MAX_SAFE_INTEGER)
     ) {
       throw new EagleLibraryReadError('Eagle thumbnail is not a supported regular file.');
     }

@@ -2226,10 +2226,6 @@ describe('public errors', () => {
       code: 'INVALID_LIBRARY_PATH',
       reason: 'LIBRARY_PARENT_MISSING',
     });
-    expect(createPublicError('INTERNAL_ERROR', 'LIBRARY_TRANSFER_TIMEOUT')).toMatchObject({
-      code: 'INTERNAL_ERROR',
-      reason: 'LIBRARY_TRANSFER_TIMEOUT',
-    });
   });
 
   it('exposes a specific safe error for invalid asset metadata', () => {

@@ -43,7 +43,7 @@ export function ThemeColorSettings(): ReactNode {
 
   return (
     <SettingsDisclosure
-      title={t('settings.customTheme')}
+      title={t('settings.advancedColors')}
     >
       <div className="app-settings-custom-theme-grid">
         {CUSTOM_THEME_EDITOR_FIELDS.map((field) => {

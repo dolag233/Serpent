@@ -1,12 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-  STARTUP_BURST_MAX_WAIT_MS,
   StartupBurstGateRegistry,
 } from '../../src/worker/startup-burst-gate';
-
-afterEach(() => {
-  vi.useRealTimers();
-});
 
 describe('StartupBurstGateRegistry', () => {
   it('keeps libraries and generations isolated', async () => {
@@ -90,17 +85,29 @@ describe('StartupBurstGateRegistry', () => {
     await expect(betaWait).resolves.toBeUndefined();
   });
 
-  it('releases every waiter at the hard cap and leaves the gate in normal mode', async () => {
-    vi.useFakeTimers();
+  it('keeps background work waiting until a successful browse or cancellation', async () => {
     const registry = new StartupBurstGateRegistry();
     const token = registry.open('library', 1);
     const first = registry.waitForDrain(token);
     const second = registry.waitForDrain(token);
 
-    vi.advanceTimersByTime(STARTUP_BURST_MAX_WAIT_MS);
+    let firstSettled = false;
+    let secondSettled = false;
+    void first.then(() => { firstSettled = true; });
+    void second.then(() => { secondSettled = true; });
+    await Promise.resolve();
+    expect(firstSettled).toBe(false);
+    expect(secondSettled).toBe(false);
+
+    registry.finishOpenResponse(token);
+    registry.finishCommand({
+      libraryId: 'library',
+      generation: 1,
+      commandType: 'asset.search',
+      servedSuccessfully: true,
+    });
     await expect(first).resolves.toBeUndefined();
     await expect(second).resolves.toBeUndefined();
-    expect(registry.isBrowseServed('library')).toBe(true);
   });
 
   it('requires a successful browse response and waits for the library command count', async () => {

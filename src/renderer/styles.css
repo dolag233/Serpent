@@ -840,6 +840,26 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   width: min(360px, 78vw);
 }
 
+/* REQ-FILTER-020 / Serpent-77c919: the tag picker has two visible sections
+   and two fixed footer rows. Only the complete tag collection scrolls; the
+   recent shortcuts and footer remain readable while the list moves. */
+.dimension-filter-popover.is-tag-filter {
+  width: min(400px, 84vw);
+  max-height: min(600px, calc(100vh - 120px));
+  overflow: hidden;
+}
+
+.dimension-filter-popover.is-tag-filter > .filter-tag-picker {
+  display: flex;
+  min-height: 0;
+  flex: 0 0 auto;
+}
+
+.dimension-filter-popover.is-tag-filter > .dimension-filter-check,
+.dimension-filter-popover.is-tag-filter > .dimension-filter-hint {
+  flex: 0 0 auto;
+}
+
 .dimension-filter-popover label {
   display: flex;
   flex-direction: column;
@@ -1945,6 +1965,17 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   line-height: 1;
 }
 
+.filter-tag-chip.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--divider));
+  background: var(--accent-soft);
+  color: var(--accent-soft-fg);
+}
+
+.filter-tag-chip.is-selected button,
+.filter-tag-chip.is-selected button:hover {
+  color: var(--accent-soft-fg);
+}
+
 .filter-tag-chip button {
   display: inline-flex;
   padding: 2px;
@@ -1959,18 +1990,16 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   color: var(--text);
 }
 
-/* REQ-FILTER-020: default-view section wrapper (top-used / recently-filtered
-   tags) and section labels. The suggestion area renders inline within the
-   popover's own scroll region rather than a separate floating dropdown. */
+/* REQ-FILTER-020: default-view section wrapper (all / recently-filtered
+   tags) and section labels. The suggestion area renders inline; only the
+   complete tag collection gets its own scroll region. */
 .filter-tag-suggestions {
   display: flex;
-  max-height: calc(var(--shell-chip-height) * 4 + 24px);
   min-height: 0;
+  flex: 0 0 auto;
   flex-direction: column;
   gap: 8px;
-  overflow-y: auto;
-  padding-right: 4px;
-  scrollbar-gutter: stable;
+  overflow: hidden;
 }
 
 .filter-tag-sort {
@@ -1979,8 +2008,32 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 
 .filter-tag-section {
   display: flex;
+  min-height: 0;
   flex-direction: column;
   gap: 2px;
+}
+
+.filter-tag-recent-section {
+  flex: 0 0 auto;
+}
+
+.filter-tag-recent-options {
+  max-height: calc(var(--shell-chip-height) * 2 + 8px);
+  overflow: hidden;
+}
+
+.filter-tag-all-section {
+  min-height: 0;
+  flex: 0 1 auto;
+}
+
+.filter-tag-all-scroll {
+  min-height: 0;
+  flex: 0 1 auto;
+  max-height: calc(var(--shell-chip-height) * 6 + 24px);
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
 }
 
 .filter-tag-section-label {
@@ -7976,6 +8029,24 @@ select.ai-config-input.ai-config-languages {
   white-space: nowrap;
 }
 
+.app-settings-theme-accent {
+  display: grid;
+  gap: var(--ui-space-2);
+}
+
+.app-settings-theme-accent-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-space-3);
+  padding: 2px;
+}
+
+.app-settings-theme-accent-swatch {
+  width: 26px;
+  height: 26px;
+}
+
 .app-settings-background-settings {
   display: grid;
   gap: var(--ui-space-3);
@@ -9338,7 +9409,7 @@ select.ai-config-input.ai-config-languages {
   box-sizing: border-box;
   height: var(--justified-caption-band, auto);
   min-height: 0;
-  padding-top: 4px;
+  padding-top: calc(4px * var(--ui-font-scale));
   overflow: hidden;
 }
 
@@ -9888,14 +9959,14 @@ select.ai-config-input.ai-config-languages {
 
 .asset-caption-skeleton-line.is-name {
   width: 72%;
-  height: 11px;
-  margin: 1.5px 0;
+  height: calc(11px * var(--ui-font-scale));
+  margin: calc(1.5px * var(--ui-font-scale)) 0;
 }
 
 .asset-caption-skeleton-line.is-meta {
   width: 46%;
-  height: 9px;
-  margin: 1.5px 0;
+  height: calc(9px * var(--ui-font-scale));
+  margin: calc(1.5px * var(--ui-font-scale)) 0;
 }
 
 .image-sequence-dialog-section {
@@ -10185,8 +10256,10 @@ select.ai-config-input.ai-config-languages {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 3px;
-  padding: 7px 8px 8px;
+  gap: calc(3px * var(--ui-font-scale));
+  padding: calc(7px * var(--ui-font-scale))
+    calc(8px * var(--ui-font-scale))
+    calc(8px * var(--ui-font-scale));
   /* Keep filename/meta above any preview overflow on tall portraits. */
   background: transparent;
 }

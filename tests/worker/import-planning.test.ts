@@ -616,7 +616,6 @@ describe('pending import plans', () => {
       mimeType: 'image/jpeg',
       bytes: Buffer.from('poster'),
       generatorVersion: 'test',
-      maxBytes: 1024,
     });
 
     const nameConflict = service.prepareImport({

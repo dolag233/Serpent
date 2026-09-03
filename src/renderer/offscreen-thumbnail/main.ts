@@ -98,8 +98,8 @@ bridge.onRender((job) => {
     pageRenderer = ensureRenderer();
   } catch (error) {
     // WebGL creation happens before the frame pipeline can return a typed
-    // result. Report it explicitly; otherwise the Main queue waits for its
-    // timeout and the card looks like an FBX/model-specific failure.
+    // result. Report it explicitly so the card shows the actual rendering
+    // capability failure instead of a generic model failure.
     window.__serpentOffscreenThumbnailDebug = {
       requestId: job.requestId,
       stage: 'outcome:webgl-unavailable',

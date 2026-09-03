@@ -721,7 +721,7 @@ describe('imported thumbnail normalization', () => {
     }
   });
 
-  it('rejects an imported animation above the validation page budget', async () => {
+  it('preserves an imported animation regardless of its page count', async () => {
     const root = temporaryRoot();
     const thumbnail = await largeJpeg();
     const service = new LibraryService({
@@ -748,10 +748,10 @@ describe('imported thumbnail normalization', () => {
       expect(existsSync(beforePath)).toBe(true);
       expect(service.getCurrentArtifact(library.libraryId, asset.assetId, 'thumbnail')).toMatchObject({
         artifactId: before.artifactId,
-        generatorVersion: 'eagle-thumbnail@1',
+        generatorVersion: 'import-thumbnail@2;preserved-animated@1',
         status: 'ready',
       });
-      expect(service.listMediaJobs(library.libraryId).jobs).toEqual(expect.arrayContaining([
+      expect(service.listMediaJobs(library.libraryId).jobs).not.toEqual(expect.arrayContaining([
         expect.objectContaining({
           assetId: asset.assetId,
           errorCode: IMPORTED_THUMBNAIL_NORMALIZATION_JOB,

@@ -13,6 +13,7 @@ import {
   resolveThemeProfile,
   type ThemeProfile,
 } from './theme-profiles';
+import { normalizeAccentHex } from './accent-preferences';
 import type { ResolvedTheme } from './theme-preferences';
 import type { ThemePreferencesStorage } from './theme-preferences';
 
@@ -25,13 +26,14 @@ function recomputeDerivedColorTokens(
   tokens: Partial<Record<CustomThemeColorToken, string>>,
   custom: CustomTheme['dark'],
   resolved: ResolvedTheme,
+  shouldRecomputeAccentDerived: boolean,
 ) {
   const isDark = resolved === 'dark';
   const setDerived = (token: CustomThemeColorToken, value: string) => {
     if (custom[token] === undefined) tokens[token] = value;
   };
 
-  if (custom['--ui-action-accent'] !== undefined) {
+  if (shouldRecomputeAccentDerived) {
     setDerived(
       '--ui-surface-selected',
       isDark
@@ -51,6 +53,7 @@ function recomputeDerivedColorTokens(
         : 'color-mix(in srgb, var(--ui-action-accent) 58%, transparent)',
     );
     setDerived('--ui-border-selection', 'var(--ui-action-accent)');
+    setDerived('--ui-action-selected', 'var(--ui-surface-selected)');
     setDerived(
       '--ui-action-accent-hover',
       isDark
@@ -100,14 +103,16 @@ function recomputeDerivedColorTokens(
  * overrides in one deterministic order. Keeping this pure makes the
  * precedence contract testable without mounting React or relying on effects.
  *
- * The accent color is an ordinary theme token in this model: the profile
- * ships one per tone variant and the custom-theme layer may override it —
- * there is no separate accent preference anymore.
+ * The accent color is composed in three layers: the profile's default, the
+ * optional quick theme color, and the advanced custom-theme override. The
+ * quick layer stays independent so a profile can be paired with a color,
+ * while an explicit advanced override still has the final say.
  */
 export function resolveEffectiveThemeTokens(input: {
   readonly themeProfile: ThemeProfile;
   readonly customTheme: CustomTheme;
   readonly resolved: ResolvedTheme;
+  readonly themeAccentHex?: string | null;
 }): EffectiveThemeTokenResult {
   const profile = resolveThemeProfile(input.themeProfile, input.resolved);
   const tokens: Partial<Record<CustomThemeColorToken, string>> = {};
@@ -121,11 +126,21 @@ export function resolveEffectiveThemeTokens(input: {
     setToken(token, value);
   }
 
+  const quickAccent = input.themeAccentHex === undefined || input.themeAccentHex === null
+    ? null
+    : normalizeAccentHex(input.themeAccentHex);
+  if (quickAccent) tokens['--ui-action-accent'] = quickAccent;
+
   const custom = input.customTheme[input.resolved];
   for (const [token, value] of Object.entries(custom)) {
     if (value !== undefined) setToken(token, value);
   }
-  recomputeDerivedColorTokens(tokens, custom, input.resolved);
+  recomputeDerivedColorTokens(
+    tokens,
+    custom,
+    input.resolved,
+    quickAccent !== null || custom['--ui-action-accent'] !== undefined,
+  );
 
   // The effective accent is the composed --ui-action-accent (custom override
   // wins over the profile's built-in tone variant).

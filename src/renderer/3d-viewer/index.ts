@@ -63,12 +63,9 @@ export {
   type ModelViewerErrorCode,
 } from './error-messages';
 export {
-  MODEL_MAX_SOURCE_BYTES,
   MODEL_TEXTURE_WARN_MAX_EDGE,
   MODEL_TRIANGLE_WARN_THRESHOLD,
-  checkModelOpenLimits,
   checkModelRenderWarnings,
-  type ModelOpenLimitVerdict,
   type ModelRenderWarning,
 } from './limits';
 export {

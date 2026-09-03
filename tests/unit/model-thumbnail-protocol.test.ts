@@ -3,8 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   MODEL_THUMBNAIL_DEFAULT_EDGE,
   MODEL_THUMBNAIL_GENERATOR_VERSION,
-  MODEL_THUMBNAIL_MAX_PNG_BYTES,
-  MODEL_THUMBNAIL_RENDER_TIMEOUT_MS,
   modelThumbnailFormatForFileName,
   modelThumbnailRenderRequestSchema,
   modelThumbnailRenderResponseSchema,
@@ -29,7 +27,6 @@ function validJob() {
     hdriPresetId: 'studio-small-09',
     width: MODEL_THUMBNAIL_DEFAULT_EDGE,
     height: MODEL_THUMBNAIL_DEFAULT_EDGE,
-    timeoutMs: MODEL_THUMBNAIL_RENDER_TIMEOUT_MS,
   };
 }
 
@@ -85,7 +82,7 @@ describe('model-thumbnail render protocol (slice E)', () => {
     const parsed = modelThumbnailRenderResponseSchema.parse({
       type: 'model-thumbnail.render-response',
       requestId: 'req-2',
-      result: { status: 'failed', errorCode: 'MODEL_RENDER_TIMEOUT', reason: 'no frame' },
+      result: { status: 'failed', errorCode: 'MODEL_LOAD_FAILED', reason: 'synthetic load failure' },
     });
     expect(parsed.result.status).toBe('failed');
   });
@@ -110,8 +107,6 @@ describe('model-thumbnail render protocol (slice E)', () => {
 
   it('exposes slice constants used by the queue and renderer', () => {
     expect(MODEL_THUMBNAIL_DEFAULT_EDGE).toBe(512);
-    expect(MODEL_THUMBNAIL_RENDER_TIMEOUT_MS).toBe(30_000);
     expect(MODEL_THUMBNAIL_GENERATOR_VERSION).toBe('offscreen-webgl-1');
-    expect(MODEL_THUMBNAIL_MAX_PNG_BYTES).toBe(4 * 1024 * 1024);
   });
 });

@@ -27,6 +27,10 @@ import {
   resolveEffectiveThemeTokens,
 } from './theme-composition';
 import {
+  loadThemeAccent,
+  saveThemeAccent,
+} from './theme-accent-preferences';
+import {
   loadThemeProfile,
   saveThemeProfile,
   THEME_PROFILE_VERSION,
@@ -48,6 +52,7 @@ type ThemeContextValue = {
   readonly preference: ThemePreference;
   readonly resolved: ResolvedTheme;
   readonly customTheme: CustomTheme;
+  readonly themeAccentHex: string | null;
   readonly themeProfile: ThemeProfile;
   readonly backgroundPreferences: BackgroundPreferences;
   readonly themeRevision: number;
@@ -55,6 +60,7 @@ type ThemeContextValue = {
   readonly setCustomTheme: (theme: CustomTheme) => void;
   readonly resetCustomTheme: () => void;
   readonly setThemeProfile: (profile: ThemeProfileId) => void;
+  readonly setThemeAccent: (accentHex: string) => void;
   readonly setBackgroundPreferences: (preferences: BackgroundPreferences) => boolean;
 };
 
@@ -78,6 +84,9 @@ export function ThemeProvider({
     // The legacy standalone accent preference migrates into a custom-theme
     // override here, once, before anything else reads the theme.
     migrateLegacyAccentIntoCustomTheme(loadCustomTheme(storage), storage),
+  );
+  const [themeAccentHex, setThemeAccentState] = useState<string | null>(() =>
+    loadThemeAccent(storage),
   );
   const [themeProfile, setThemeProfileState] = useState<ThemeProfile>(() => loadThemeProfile(storage));
   const [backgroundPreferences, setBackgroundPreferencesState] = useState<BackgroundPreferences>(() => loadBackgroundPreferences(storage));
@@ -106,23 +115,24 @@ export function ThemeProvider({
       themeProfile,
       customTheme,
       resolved,
+      themeAccentHex,
     });
     for (const [token, value] of Object.entries(composition.tokens)) {
       root.style.setProperty(token, value);
     }
     root.style.setProperty('--accent', composition.accentHex);
-  }, [customTheme, resolved, themeProfile]);
+  }, [customTheme, resolved, themeAccentHex, themeProfile]);
 
   useEffect(() => {
     applyBackgroundPreferences(backgroundPreferences);
   }, [backgroundPreferences]);
 
   useEffect(() => {
-    const signature = `${resolved}:${JSON.stringify(customTheme)}:${JSON.stringify(themeProfile)}:${JSON.stringify(backgroundPreferences)}`;
+    const signature = `${resolved}:${JSON.stringify(customTheme)}:${JSON.stringify(themeAccentHex)}:${JSON.stringify(themeProfile)}:${JSON.stringify(backgroundPreferences)}`;
     if (themeSignatureRef.current === signature) return;
     themeSignatureRef.current = signature;
     setThemeRevision((revision) => revision + 1);
-  }, [backgroundPreferences, customTheme, resolved, themeProfile]);
+  }, [backgroundPreferences, customTheme, resolved, themeAccentHex, themeProfile]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
@@ -159,6 +169,23 @@ export function ThemeProvider({
     // the global light/dark preference.
   }, [storage]);
 
+  const setThemeAccent = useCallback((accentHex: string) => {
+    const nextHex = saveThemeAccent(accentHex, storage);
+    setThemeAccentState(nextHex);
+    // A quick color is an intentional shortcut for the accent only. Remove
+    // the advanced accent override so clicking a swatch always takes effect;
+    // every other advanced color remains untouched.
+    const nextCustomTheme: CustomTheme = {
+      ...customTheme,
+      light: { ...customTheme.light },
+      dark: { ...customTheme.dark },
+    };
+    delete nextCustomTheme.light['--ui-action-accent'];
+    delete nextCustomTheme.dark['--ui-action-accent'];
+    saveCustomTheme(nextCustomTheme, storage);
+    setCustomThemeState(nextCustomTheme);
+  }, [customTheme, storage]);
+
   const setBackgroundPreferences = useCallback((next: BackgroundPreferences) => {
     const saved = saveBackgroundPreferences(next, storage);
     if (saved) setBackgroundPreferencesState(next);
@@ -170,6 +197,7 @@ export function ThemeProvider({
       preference,
       resolved,
       customTheme,
+      themeAccentHex,
       themeProfile,
       backgroundPreferences,
       themeRevision,
@@ -177,9 +205,10 @@ export function ThemeProvider({
       setCustomTheme,
       resetCustomTheme,
       setThemeProfile,
+      setThemeAccent,
       setBackgroundPreferences,
     }),
-    [backgroundPreferences, customTheme, preference, resetCustomTheme, resolved, setBackgroundPreferences, setCustomTheme, setTheme, setThemeProfile, themeProfile, themeRevision],
+    [backgroundPreferences, customTheme, preference, resetCustomTheme, resolved, setBackgroundPreferences, setCustomTheme, setTheme, setThemeAccent, setThemeProfile, themeAccentHex, themeProfile, themeRevision],
   );
 
   return (

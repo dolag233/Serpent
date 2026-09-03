@@ -7,8 +7,8 @@
  * environment is independent), 3D-07 soft ground contact shadow,
  * 3D-08 antialias + setPixelRatio(min(dpr,2)), 3D-09 HDRI presets switchable
  * from the toolbar, 3D-10 exposure, 3D-11/12 PBR + companion texture
- * remapping (via loader-registry), 3D-13 stats overlay, 3D-14 limits
- * (file-size refusal + warnings), 3D-15 error states with retry.
+ * remapping (via loader-registry), 3D-13 stats overlay, 3D-14 observational
+ * complexity warnings, 3D-15 error states with retry.
  *
  * WebGL lifecycle: renderer/controls/environment/model are created inside the
  * mount effect and fully disposed on unmount; a `loadEpoch` state re-runs the
@@ -57,7 +57,6 @@ import { DEFAULT_DISPLAY_MODE, type ModelDisplayMode } from './model-display-mod
 import { setupGroundShadow } from './ground-shadow';
 import { getHdriPreset, type HdriPresetId } from './hdri-presets';
 import {
-  checkModelOpenLimits,
   checkModelRenderWarnings,
   type ModelRenderWarning,
 } from './limits';
@@ -213,12 +212,6 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
       setPhase('error');
       setViewError({ code });
     };
-
-    // Open-limit refusal is derived from props in render (no effect setState):
-    // the error overlay shows immediately without a mount-triggered cascade.
-    if (!checkModelOpenLimits({ byteSize: props.asset.byteSize }).allowed) {
-      return;
-    }
 
     let renderer: WebGLRenderer;
     try {
@@ -518,14 +511,8 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
     setLoadEpoch((epoch) => epoch + 1);
   }, []);
 
-  // Open-limit refusal is derived from props so the error overlay renders on
-  // the first paint without waiting for the mount effect.
-  const openLimit = checkModelOpenLimits({ byteSize: props.asset.byteSize });
-  const refusalError: ViewError | null = openLimit.allowed
-    ? null
-    : { code: openLimit.code };
-  const effectivePhase: ViewPhase = refusalError ? 'error' : phase;
-  const effectiveError = viewError ?? refusalError;
+  const effectivePhase: ViewPhase = phase;
+  const effectiveError = viewError;
 
   useEffect(() => {
     if (effectivePhase === 'ready' || effectivePhase === 'error') {

@@ -3,22 +3,13 @@ import { JPEG_IMAGE_EXTENSIONS } from "./media-formats";
 /**
  * Bounded source-direct policy for card previews.
  *
- * The source path is only safe for small, browser-native raster images. The
- * dimensions and byte limit are part of the policy so a large source image
- * cannot accidentally bypass the derived-thumbnail memory budget.
+ * This is a presentation-route optimization, not an asset acceptance gate:
+ * larger or higher-resolution local sources continue through the native
+ * thumbnail pipeline and are never rejected because of these thresholds.
  */
 
 export const SOURCE_DIRECT_MAX_LONG_EDGE_PX = 2048;
-// A 2048px square can decode to more than 16 MiB before the browser paints
-// it. Keep the card path below a bounded decoded-pixel budget; the viewer's
-// explicit source route remains full fidelity.
 export const SOURCE_DIRECT_MAX_PIXELS = 2_000_000;
-// Keep card source reads below the cost of decoding a multi-megabyte PNG/JPEG
-// in every visible card. The 2 MiB encoded cap is paired with the 2 MP decoded
-// cap above, so a low-pixel PNG with a moderately large lossless payload does
-// not pay a redundant native thumbnail generation pass. Larger native images
-// still use the bounded thumbnail lane; the viewer's explicit source route
-// remains full fidelity.
 export const SOURCE_DIRECT_MAX_BYTES = 2 * 1024 * 1024;
 
 const SOURCE_DIRECT_EXTENSIONS = new Set([
@@ -44,8 +35,7 @@ export type SourceDirectPreviewInput = Readonly<{
 
 /**
  * Return true only when the original can be mounted as a bounded card image.
- * Unknown dimensions deliberately return false; the Worker must probe them
- * before admitting a source-direct candidate.
+ * Larger sources use the native thumbnail route; they remain valid assets.
  */
 export function isSourceDirectPreview(
   input: SourceDirectPreviewInput,

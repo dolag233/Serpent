@@ -16,8 +16,6 @@ import {
 } from '../shared/hdri-presets';
 import {
   MODEL_THUMBNAIL_DEFAULT_EDGE,
-  MODEL_THUMBNAIL_RENDER_TIMEOUT_MS,
-  MODEL_THUMBNAIL_WORKER_REQUEST_TIMEOUT_MS,
   modelThumbnailFormatForFileName,
   parseModelThumbnailRenderResponse,
   type ModelThumbnailSourceAuthorization,
@@ -25,7 +23,6 @@ import {
   type ModelThumbnailRenderResult,
 } from '../shared/model-thumbnail-protocol';
 import {
-  DOCUMENT_THUMBNAIL_WORKER_REQUEST_TIMEOUT_MS,
   parseDocumentThumbnailRenderResponse,
   type DocumentThumbnailRenderRequest,
   type DocumentThumbnailRenderResponse,
@@ -172,7 +169,7 @@ const pendingVisibleThumbnailWaves = new Map<string, {
 const lastVisibleWindowKeyByLibrary = new Map<string, string>();
 /** The key alone cannot distinguish geometry churn from real navigation. */
 const lastVisibleWindowAssetIdsByLibrary = new Map<string, string[]>();
-const deferredStartupThumbnailQueues = new Map<string, ReturnType<typeof setTimeout>>();
+const deferredStartupThumbnailGenerations = new Map<string, number>();
 type VisibleDimensionProbeState = {
   assetIds: Set<string>;
   controller: AbortController;
@@ -295,14 +292,14 @@ function requestPluginMediaProvider(input: Omit<PluginMediaProviderRequest, 'typ
 
 const pendingModelThumbnailRenders = new Map<string, {
   resolve: (result: ModelThumbnailRenderResult) => void;
-  timer: ReturnType<typeof setTimeout>;
+  cleanup: () => void;
 }>();
 
 /**
  * Ask Main to render one model thumbnail in the shared offscreen window.
- * Resolves with the typed result (never rejects except on abort); a missing
- * Main response degrades to MODEL_RENDER_TIMEOUT after
- * MODEL_THUMBNAIL_WORKER_REQUEST_TIMEOUT_MS.
+ * Resolves with the typed result (never rejects except on abort). Local model
+ * work has no honest wall-clock deadline; lifecycle disposal and the supplied
+ * signal are the cancellation boundaries.
  */
 function requestModelThumbnailRender(
   input: Omit<ModelThumbnailRenderRequest, 'type' | 'requestId'> & {
@@ -312,22 +309,13 @@ function requestModelThumbnailRender(
 ): Promise<ModelThumbnailRenderResult> {
   const requestId = randomUUID();
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      pendingModelThumbnailRenders.delete(requestId);
-      resolve({
-        status: 'failed',
-        errorCode: 'MODEL_RENDER_TIMEOUT',
-        reason: 'no render response from Main within the worker deadline',
-      });
-    }, MODEL_THUMBNAIL_WORKER_REQUEST_TIMEOUT_MS);
-    timer.unref?.();
     const onAbort = (): void => {
-      clearTimeout(timer);
       pendingModelThumbnailRenders.delete(requestId);
       reject(new DOMException('Model thumbnail render request aborted.', 'AbortError'));
     };
+    const cleanup = (): void => signal?.removeEventListener('abort', onAbort);
     signal?.addEventListener('abort', onAbort, { once: true });
-    pendingModelThumbnailRenders.set(requestId, { resolve, timer });
+    pendingModelThumbnailRenders.set(requestId, { resolve, cleanup });
     parentPort?.postMessage({
       type: 'model-thumbnail.render-request',
       requestId,
@@ -339,17 +327,20 @@ function requestModelThumbnailRender(
 /**
  * Process-wide single-flight gate: at most ONE model render is in flight at
  * any time (the shared offscreen window renders serially in Main; a second
- * concurrent request would only queue there and fight the worker deadline).
+ * concurrent request would only queue there and compete for the same render
+ * slot). There is no completion deadline for the local render itself.
  * The acquire waits for the previous render and honors cancellation.
- */let modelRenderTail: Promise<void> = Promise.resolve();
+ */
+let modelRenderTail: Promise<void> = Promise.resolve();
 /**
  * Serpent-8ca259: ask Main to capture an HTML document thumbnail in a fresh
  * offscreen window. Resolves with the typed result (never rejects except on
- * abort); a missing Main response degrades to DOCUMENT_RENDER_TIMEOUT.
+ * abort). Content size and load time are not converted into an arbitrary
+ * failure; lifecycle cancellation remains available.
  */
 const pendingDocumentThumbnailRenders = new Map<string, {
   resolve: (result: DocumentThumbnailRenderResponse['result']) => void;
-  timer: ReturnType<typeof setTimeout>;
+  cleanup: () => void;
 }>();
 
 function requestDocumentThumbnailRender(
@@ -358,22 +349,13 @@ function requestDocumentThumbnailRender(
 ): Promise<DocumentThumbnailRenderResponse['result']> {
   const requestId = randomUUID();
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      pendingDocumentThumbnailRenders.delete(requestId);
-      resolve({
-        status: 'failed',
-        errorCode: 'DOCUMENT_RENDER_TIMEOUT',
-        reason: 'no render response from Main within the worker deadline',
-      });
-    }, DOCUMENT_THUMBNAIL_WORKER_REQUEST_TIMEOUT_MS);
-    timer.unref?.();
     const onAbort = (): void => {
-      clearTimeout(timer);
       pendingDocumentThumbnailRenders.delete(requestId);
       reject(new DOMException('Document thumbnail render request aborted.', 'AbortError'));
     };
+    const cleanup = (): void => signal?.removeEventListener('abort', onAbort);
     signal?.addEventListener('abort', onAbort, { once: true });
-    pendingDocumentThumbnailRenders.set(requestId, { resolve, timer });
+    pendingDocumentThumbnailRenders.set(requestId, { resolve, cleanup });
     parentPort?.postMessage({
       type: 'document-thumbnail.render-request',
       requestId,
@@ -566,7 +548,6 @@ async function orchestrateRender(input: {
         hdriPresetId: BUNDLED_HDRI_PRESET_IDS[0]!,
         width: MODEL_THUMBNAIL_DEFAULT_EDGE,
         height: MODEL_THUMBNAIL_DEFAULT_EDGE,
-        timeoutMs: MODEL_THUMBNAIL_RENDER_TIMEOUT_MS,
         sourceAuthorizations,
         ...(input.views === undefined
           ? {}
@@ -944,20 +925,16 @@ function scheduleThumbnailQueue(
   return enqueued;
 }
 
-const STARTUP_THUMBNAIL_DELAY_MS = 1_000;
-// Serpent-4bdd26 收编 codex/large-library-performance@15f3325c：等待首个真实视口。
-const STARTUP_THUMBNAIL_VISIBLE_WAIT_MS = 250;
-const STARTUP_THUMBNAIL_MAX_VISIBLE_WAIT_MS = 8_000;
-
 // Serpent-onch/9e1d8d: per-command timing log, off by default.
 const WORKER_CMD_LOG = process.env.SERPENT_WORKER_CMD_LOG === '1';
 
 // Serpent-2cc492（真实 NAS 生产库事故，2026-08-23）：开库后台对账若与渲染端
 // startup 请求风暴同时运行，SMB 上 21,508 条目的 artifact 枚举实测 ~16.5s，
-// 加上各同步 SQL 步骤，startup 突发全部撞上主进程 15s 超时且 late 响应被
-// 丢弃（一次 E2E 记录到 462 条）——画布永远等不到第一页数据。因此对账必须
-// 等首个浏览查询真正服务完毕、且在飞命令清零后才启动；StartupBurstGateRegistry
-// 还按 libraryId + generation 隔离状态，避免多个打开库互相释放或取消启动门。
+// 加上各同步 SQL 步骤，startup 突发曾经撞上主进程的固定请求 deadline，late
+// 响应被丢弃（一次 E2E 记录到 462 条）——画布永远等不到第一页数据。因此
+// 对账必须等首个浏览查询真正服务完毕、且在飞命令清零后才启动；
+// StartupBurstGateRegistry 还按 libraryId + generation 隔离状态，避免多个打开库
+// 互相释放或取消启动门。
 const startupBurstGates = new StartupBurstGateRegistry();
 
 /** Run the open reconciliation only after the startup burst has drained. */
@@ -991,15 +968,14 @@ function scheduleOpenBackgroundReconciliation(
 
 /**
  * Do not let the library-open backfill claim the primary decoder before the
- * renderer has had a chance to report its first visible window. Re-arm the
- * delay whenever interactive media work extends the idle window below.
+ * renderer has had a chance to report its first visible window. The pending
+ * generation is released by that event or by library-close cancellation.
  */
 function deferStartupThumbnailScene(
   libraryId: string,
   libraryGeneration: number,
 ): void {
-  const previous = deferredStartupThumbnailQueues.get(libraryId);
-  if (previous !== undefined) clearTimeout(previous);
+  deferredStartupThumbnailGenerations.set(libraryId, libraryGeneration);
   startupThumbnailVisibleWindows.delete(libraryId);
 
   // Serpent-140fe2 direction (user, 2026-08-22): thumbnails must be queued
@@ -1008,52 +984,39 @@ function deferStartupThumbnailScene(
   // viewport above the low-priority backfill — so interactive activity no
   // longer postpones the enqueue (it only ever postponed it forever during
   // continuous browsing).
-  // Serpent-4bdd26 收编：大库上开壳可能比固定延迟更久，旧回填会在首个
-  // visible-window 到达前抢占解码器。每 250ms 轮询视口标记（最多 8s），
-  // 看到视口后再启动 startup 场景。
-  const waitDeadline = Date.now() + STARTUP_THUMBNAIL_MAX_VISIBLE_WAIT_MS;
-  const attempt = () => {
-    deferredStartupThumbnailQueues.delete(libraryId);
-    if (
-      !startupThumbnailVisibleWindows.has(libraryId)
-      && Date.now() < waitDeadline
-    ) {
-      deferredStartupThumbnailQueues.set(
-        libraryId,
-        setTimeout(attempt, STARTUP_THUMBNAIL_VISIBLE_WAIT_MS),
-      );
-      return;
-    }
-    // Serpent-2cc492（真实 NAS 生产库事故第二轮归因，2026-08-23）：startup
-    // 全量入队与处理本身就是一个持续数十秒的 Worker 风暴源（大库上 stale
-    // repair 扫描 + 每个失败任务一次 journal 写事务），与开库对账同样会饿死
-    // 渲染端首屏请求。因此 startup 场景与后台对账共用同一个 startup-burst
-    // 门闩：首屏浏览响应投递且在飞清零之前不入队不处理；15s 上限兜底。
-    const token = { libraryId, generation: libraryGeneration };
-    void startupBurstGates.waitForDrain(token).then(() => {
-      if (automaticMediaAdmissionAllowed(libraryId)) {
-        scheduleThumbnailScene(libraryId, 'startup');
-      }
-      return undefined;
-    }).catch(() => {
-      // Never let automatic media work surface as an unhandled rejection.
-    });
-  };
-
-  deferredStartupThumbnailQueues.set(
-    libraryId,
-    setTimeout(attempt, STARTUP_THUMBNAIL_DELAY_MS),
-  );
+  // Serpent-4bdd26: a cold library can take arbitrarily long to produce its
+  // first viewport on a slow local or network volume. Keep startup work
+  // event-driven instead of polling for a fixed number of seconds; the first
+  // visible-window report starts this scene, and close/open cancellation
+  // removes the pending generation.
 }
 
 function cancelDeferredStartupThumbnailScene(libraryId: string): void {
-  const timer = deferredStartupThumbnailQueues.get(libraryId);
-  if (timer !== undefined) clearTimeout(timer);
-  deferredStartupThumbnailQueues.delete(libraryId);
+  deferredStartupThumbnailGenerations.delete(libraryId);
   startupThumbnailVisibleWindows.delete(libraryId);
   pendingVisibleThumbnailWaves.delete(libraryId);
   lastVisibleWindowKeyByLibrary.delete(libraryId);
   lastVisibleWindowAssetIdsByLibrary.delete(libraryId);
+}
+
+function startDeferredStartupThumbnailScene(
+  libraryId: string,
+  libraryGeneration: number,
+): void {
+  if (deferredStartupThumbnailGenerations.get(libraryId) !== libraryGeneration) return;
+  deferredStartupThumbnailGenerations.delete(libraryId);
+  // Serpent-2cc492: startup enqueue/processing still waits for the first
+  // browse response and in-flight commands to drain, but it no longer has a
+  // time-based viewport wait before this gate is reached.
+  const token = { libraryId, generation: libraryGeneration };
+  void startupBurstGates.waitForDrain(token).then(() => {
+    if (automaticMediaAdmissionAllowed(libraryId)) {
+      scheduleThumbnailScene(libraryId, 'startup');
+    }
+    return undefined;
+  }).catch(() => {
+    // Never let automatic media work surface as an unhandled rejection.
+  });
 }
 
 function enqueueVisibleWindowDimensionProbes(
@@ -3961,6 +3924,10 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       //    masonry placeholders stop reflowing when thumbnails finish later.
       const { libraryId, assetIds } = request.command;
       startupThumbnailVisibleWindows.add(libraryId);
+      const deferredGeneration = deferredStartupThumbnailGenerations.get(libraryId);
+      if (deferredGeneration !== undefined) {
+        startDeferredStartupThumbnailScene(libraryId, deferredGeneration);
+      }
       // Serpent-4bc4ac: ignored assets are not indexed or operated on —
       // drop them before dimension probes and thumbnail scheduling.
       const visibleAssetIds = libraryService.filterIgnoredAssetIds(
@@ -4653,7 +4620,7 @@ parentPort.on('message', async (event) => {
     const renderResponse = parseModelThumbnailRenderResponse(input);
     const pending = pendingModelThumbnailRenders.get(renderResponse.requestId);
     if (pending) {
-      clearTimeout(pending.timer);
+      pending.cleanup();
       pendingModelThumbnailRenders.delete(renderResponse.requestId);
       pending.resolve(renderResponse.result);
     }
@@ -4667,7 +4634,7 @@ parentPort.on('message', async (event) => {
     const documentResponse = parseDocumentThumbnailRenderResponse(input);
     const pendingDocument = pendingDocumentThumbnailRenders.get(documentResponse.requestId);
     if (pendingDocument) {
-      clearTimeout(pendingDocument.timer);
+      pendingDocument.cleanup();
       pendingDocumentThumbnailRenders.delete(documentResponse.requestId);
       pendingDocument.resolve(documentResponse.result);
     }
@@ -4851,11 +4818,11 @@ parentPort.on('message', async (event) => {
           if (result.library.readOnly) return result;
           const generation = libraryGenerationRegistry.current(result.library.libraryId);
           if (generation !== undefined) {
-            deferStartupThumbnailScene(result.library.libraryId, generation);
             startupResponseGate = scheduleOpenBackgroundReconciliation(
               result.library.libraryId,
               generation,
             );
+            deferStartupThumbnailScene(result.library.libraryId, generation);
           }
         }
         return result;

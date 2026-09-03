@@ -15,6 +15,10 @@ import {
   THEME_PROFILE_PRESETS,
   type ThemeProfileId,
 } from './theme-profiles';
+import {
+  THEME_ACCENT_PRESETS,
+  themeAccentPresetByHex,
+} from './theme-accent-preferences';
 
 const PROFILE_LABELS = {
   serpent: 'settings.themeProfileSerpent',
@@ -102,6 +106,53 @@ export function ThemeProfilePicker(): ReactNode {
           </button>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * Quick accent choices. This is deliberately separate from the advanced
+ * semantic color editor below: it changes only the action accent and can be
+ * paired with any of the three theme profiles.
+ */
+export function ThemeAccentPicker(): ReactNode {
+  const t = useT();
+  const { setThemeAccent, themeAccentHex, customTheme, resolved } = useTheme();
+  const advancedAccent = customTheme[resolved]['--ui-action-accent'];
+  const selectedPreset = themeAccentPresetByHex(
+    advancedAccent ?? themeAccentHex,
+  );
+
+  return (
+    <div className="app-settings-theme-accent">
+      <div className="app-settings-row-copy">
+        <strong>{t('settings.themeAccent')}</strong>
+        <span>{t('settings.themeAccentHint')}</span>
+      </div>
+      <div
+        aria-label={t('settings.themeAccent')}
+        className="app-settings-theme-accent-swatches"
+        role="radiogroup"
+      >
+        {THEME_ACCENT_PRESETS.map((preset) => {
+          const selected = selectedPreset === preset.id;
+          const label = t(preset.labelKey);
+          return (
+            <button
+              aria-checked={selected}
+              aria-label={label}
+              className={`dimension-color-swatch app-settings-theme-accent-swatch${selected ? ' is-active' : ''}`}
+              data-theme-accent={preset.id}
+              key={preset.id}
+              onClick={() => setThemeAccent(preset.hex)}
+              role="radio"
+              style={{ background: preset.hex }}
+              title={label}
+              type="button"
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }

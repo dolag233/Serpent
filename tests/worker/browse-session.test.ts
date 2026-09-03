@@ -140,7 +140,6 @@ describe('BrowseSession', () => {
       mimeType: 'application/octet-stream',
       bytes: Uint8Array.from([1, 2, 3]),
       generatorVersion: 'browse-session-test@1',
-      maxBytes: 16,
     });
     expect(service.getChangeSequence(library.libraryId)).toBeGreaterThan(broadSequenceBeforeArtifact);
     expect(service.getBrowseChangeSequence(library.libraryId)).toBe(browseSequenceBeforeArtifact);

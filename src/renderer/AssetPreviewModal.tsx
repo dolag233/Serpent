@@ -455,8 +455,7 @@ const AssetPreviewModalContent = forwardRef<
         // also means the normal "direct playback is approved" polling gate
         // may stop before the proxy-ready event arrives. An explicit fallback
         // owns its refresh loop until the ready proxy is observable.
-        const deadline = Date.now() + 60_000;
-        while (Date.now() < deadline) {
+        while (isCurrentRun()) {
           if (!isCurrentRun()) return;
           const preview = await resolvePreview(
             true,
@@ -478,11 +477,13 @@ const AssetPreviewModalContent = forwardRef<
             setProxyFallbackState("loading");
             return;
           }
+          if (preview?.ok && preview.value.status === "failed") {
+            setProxyFallbackState("failed");
+            setError(previewFailureMessage(preview.value, t));
+            return;
+          }
           await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
         }
-        if (!isCurrentRun()) return;
-        setProxyFallbackState("failed");
-        setError(t("preview.proxyFailed"));
       }
     },
     [
@@ -626,8 +627,9 @@ const AssetPreviewModalContent = forwardRef<
             (asset.mediaType === "video"
               ? "webm_proxy"
               : asset.mediaType === "audio"
-                ? "audio_proxy"
-                : "thumbnail"),
+              ? "audio_proxy"
+              : "thumbnail"),
+          signal: viewerSessionController.current(viewerIdentity)?.signal,
         });
         await resolvePreview(
           false,
@@ -640,7 +642,8 @@ const AssetPreviewModalContent = forwardRef<
           setError(retainedPlaybackError);
         }
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       setError(t("preview.retryFailedNoResponse"));
     } finally {
       setRetrying(false);
@@ -1007,30 +1010,21 @@ const AssetPreviewModalContent = forwardRef<
                 }
               }}
               onPlaying={(video) => {
-                // An unsupported custom source can emit `play` immediately
-                // and only publish MEDIA_ERR_4 later. Poll briefly so an
-                // early play event cannot remove the retry surface before the
-                // media element settles.
-                const startedAt = Date.now();
-                const confirmPlayable = () => {
-                  if (
-                    video.error ||
-                    !video.isConnected ||
-                    video.readyState < HTMLMediaElement.HAVE_METADATA ||
-                    video.videoWidth <= 0 ||
-                    video.videoHeight <= 0
-                  ) {
-                    return;
-                  }
-                  if (Date.now() - startedAt < 5_000) {
-                    window.setTimeout(confirmPlayable, 100);
-                    return;
-                  }
-                  playbackErrorRef.current = null;
-                  setManualRetryError(null);
-                  setError(null);
-                };
-                confirmPlayable();
+                // `playing` is the media element's own readiness signal. Do
+                // not add a wall-clock confirmation window here: a slow local
+                // file or a large proxy is valid for as long as the element
+                // needs to decode it. If the source later emits a real error,
+                // handlePlaybackError restores the retry surface.
+                if (
+                  video.error ||
+                  !video.isConnected ||
+                  video.readyState < HTMLMediaElement.HAVE_METADATA ||
+                  video.videoWidth <= 0 ||
+                  video.videoHeight <= 0
+                ) return;
+                playbackErrorRef.current = null;
+                setManualRetryError(null);
+                setError(null);
               }}
               onRotate={rotateViewer}
               onSwipeNext={onNext}
