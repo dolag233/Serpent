@@ -711,6 +711,28 @@ const AssetPreviewModalContent = forwardRef<
 
   function handlePlaybackError(event: SyntheticEvent<HTMLMediaElement>) {
     const mediaError = event.currentTarget.error;
+    // Serpent-68d5fd: 视频播放失败的诊断——记录 resolution 快照与媒体错误，
+    // 用于定位间歇性「预览不可用」（已适配 mp4 偶发，需日志证据）。
+    try {
+      console.error(
+        "viewer.playback-error",
+        JSON.stringify({
+          assetId: asset.assetId,
+          mediaType: asset.mediaType,
+          mediaErrorCode: mediaError?.code ?? null,
+          mediaErrorMessage: mediaError?.message ?? null,
+          resolutionStatus: resolution?.status ?? null,
+          resolutionHasUrl: resolution?.url != null,
+          resolutionPlaybackMode: resolution?.playbackMode ?? null,
+          resolutionToken: resolution?.playbackToken ?? null,
+          resolutionErrorCode: resolution?.errorCode ?? null,
+          resolutionCodecs: resolution?.sourceCodecs ?? null,
+          proxyFallbackState,
+        }),
+      );
+    } catch {
+      // Diagnostics must never break playback error handling.
+    }
     // Seek/scrub cancels in-flight Range fetches; Chromium reports ABORTED.
     // Do not paint a fatal overlay or kick proxy generation for that race.
     if (isTransientMediaPlaybackError(mediaError)) {

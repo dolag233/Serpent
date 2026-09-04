@@ -7259,10 +7259,10 @@ async function startApplication(): Promise<void> {
   });
   syncAutoScheduler.start();
 
-  // Production startup intentionally leaves the library closed. A missing,
-  // disconnected, or incompatible active library must not hold the app before
-  // the user can choose another one from the always-available switcher. The
-  // explicit opt-in is reserved for isolated full-restart E2E coverage.
+  // Serpent-85a9b0：生产启动自动打开上次使用的资源库（记住上次打开的库与
+  // 文件夹——库打开后 renderer 的 browser-session 会恢复上次浏览的文件夹）。
+  // 打开失败（丢失/断开/不兼容）只记日志、回退 idle，不阻塞用户从切换器
+  // 另选库；E2E 隔离重启测试由 recentLibraryAutoOpenEnabled 显式门控。
   const recentPath = recentLibraryAutoOpenEnabled()
     ? readActiveLibraryPath(recentLibraryPath(), (error) => {
         logger?.error("recent-library.read", error);
