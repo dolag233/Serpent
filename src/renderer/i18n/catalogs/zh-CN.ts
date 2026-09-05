@@ -1560,7 +1560,6 @@ export const zhCN = {
     pbrScalarMode: "按中性灰度预览；源文件保持不变。",
     pbrSmoothnessMode: "按反转粗糙度的灰度预览；源文件保持不变。",
     pbrPackedMode: "这是打包通道，保持原始 RGB 预览；源文件保持不变。",
-    closeViewer: "关闭查看页面",
     pluginOverlayAriaLabel: "插件查看器覆盖层",
     pluginOverlayShow: "显示插件覆盖层",
     pluginOverlayHide: "隐藏插件覆盖层",

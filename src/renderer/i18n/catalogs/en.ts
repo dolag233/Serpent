@@ -1577,7 +1577,6 @@ export const en = {
     pbrScalarMode: "Neutral grayscale preview; the source file stays unchanged.",
     pbrSmoothnessMode: "Inverted-roughness grayscale preview; the source file stays unchanged.",
     pbrPackedMode: "Packed channel; original RGB preview; the source file stays unchanged.",
-    closeViewer: "Close viewer",
     pluginOverlayAriaLabel: "Plugin viewer overlay",
     pluginOverlayShow: "Show plugin overlay",
     pluginOverlayHide: "Hide plugin overlay",

@@ -1286,15 +1286,6 @@ const AssetPreviewModalContent = forwardRef<
               >
                 <Icon name="chevron-right" size={28} />
               </button>
-              <button
-                aria-label={t("preview.closeViewer")}
-                className={`preview-close-chip preview-chrome-fade is-${chromeContrast.close}`}
-                onClick={() => void requestClose()}
-                tabIndex={VIEWER_CHROME_TAB_INDEX}
-                type="button"
-              >
-                <Icon name="close" size={18} />
-              </button>
             </>
           ) : null}
         </div>

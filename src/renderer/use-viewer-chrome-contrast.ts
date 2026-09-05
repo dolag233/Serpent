@@ -9,7 +9,6 @@ import {
 const DEFAULT_CONTRAST: ViewerChromeContrastMap = {
   prev: "on-dark",
   next: "on-dark",
-  close: "on-dark",
 };
 
 function findSampleSource(
@@ -30,8 +29,8 @@ function findSampleSource(
 }
 
 /**
- * Sample the viewer stage media near <>/close affordances and refresh when
- * the asset surface changes (and lightly while video plays).
+ * Sample the viewer stage media near the <prev/next> affordances and refresh
+ * when the asset surface changes (and lightly while video plays).
  */
 export function useViewerChromeContrast(
   containerRef: RefObject<HTMLElement | null>,
@@ -51,9 +50,7 @@ export function useViewerChromeContrast(
       const image = source ? readMediaImageData(source) : null;
       const next = resolveViewerChromeContrasts(image);
       setContrasts((current) =>
-        current.prev === next.prev &&
-        current.next === next.next &&
-        current.close === next.close
+        current.prev === next.prev && current.next === next.next
           ? current
           : next,
       );

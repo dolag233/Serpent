@@ -5450,13 +5450,11 @@ body.serpent-modal-open .app-shell {
 .preview-exr-plane-selector:focus-within {
   box-shadow: 0 0 0 2px var(--accent);
 }
-.preview-nav.is-on-dark,
-.preview-close-chip.is-on-dark {
+.preview-nav.is-on-dark {
   color: rgb(255 255 255 / 88%);
   filter: drop-shadow(0 1px 2px rgb(0 0 0 / 55%));
 }
-.preview-nav.is-on-light,
-.preview-close-chip.is-on-light {
+.preview-nav.is-on-light {
   color: rgb(20 20 20 / 82%);
   filter: drop-shadow(0 1px 1px rgb(255 255 255 / 55%));
 }
@@ -5499,34 +5497,6 @@ body.serpent-modal-open .app-shell {
 }
 .preview-fullscreen-chip:hover {
   background: var(--raised);
-}
-.preview-close-chip {
-  position: absolute;
-  z-index: 2;
-  top: 10px;
-  right: 10px;
-  display: grid;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  place-items: center;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  box-shadow: none;
-  color: var(--text);
-  cursor: pointer;
-  opacity: 0.55;
-}
-.preview-close-chip:hover,
-.preview-close-chip:focus-visible {
-  background: transparent;
-  color: inherit;
-  opacity: 1;
-  outline: none;
-}
-.preview-close-chip:focus-visible {
-  box-shadow: 0 0 0 2px var(--accent);
 }
 
 /* REQ-VIEW-004: keep the scroll container mounted while viewing. Toggling
