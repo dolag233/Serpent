@@ -5,7 +5,6 @@ import { libraryNavigationSummarySchema } from '../library-navigation';
 import { pluginJobRecordSchema } from '../../plugins/plugin-jobs';
 import { recentLibraryListSchema } from '../recent-libraries';
 import { publicErrorReasonSchema, publicErrorSchema } from './errors';
-import { CONTENT_REPLACE_MAX_BASE64_LENGTH } from '../content-replace';
 import { fbxConvertErrorCodeSchema, fbxConversionStatsSchema } from '../fbx-conversion';
 import {
   WORKER_READY_MESSAGE_TYPE,
@@ -1189,7 +1188,7 @@ const assetOperationSuccessSchemas = [
     assetId: nonBlankString,
     revisionId: nonBlankString,
     byteSize: z.number().int().nonnegative(),
-    dataBase64: z.string().max(CONTENT_REPLACE_MAX_BASE64_LENGTH),
+    dataBase64: z.string(),
     truncated: z.boolean(),
     mimeType: z.string().nullable(),
   }),

@@ -11,8 +11,6 @@ import {
 import {
   CONTENT_REPLACE_BATCH_INLINE_MAX_BASE64_LENGTH,
   CONTENT_REPLACE_BATCH_MAX_ITEMS,
-  CONTENT_REPLACE_MAX_BYTES,
-  CONTENT_REPLACE_MAX_BASE64_LENGTH,
   CONTENT_REPLACE_STAGE_CHUNK_MAX_BASE64_LENGTH,
 } from '../content-replace';
 import { performanceRequestEnvelopeSchema } from '../performance-contract';
@@ -1914,7 +1912,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.content.replace'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
-    dataBase64: z.string().min(1).max(CONTENT_REPLACE_MAX_BASE64_LENGTH),
+    dataBase64: z.string().min(1),
     expectedRevisionId: identifierSchema.optional(),
     automationPlan: automationFilePlanProofSchema.optional(),
   }),
@@ -1954,7 +1952,8 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.content.read'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
-    maxBytes: z.number().int().positive().max(CONTENT_REPLACE_MAX_BYTES),
+    maxBytes: z.number().int().positive().optional(),
+    offsetBytes: z.number().int().nonnegative().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.restore'),

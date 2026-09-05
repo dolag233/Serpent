@@ -20,8 +20,6 @@ import { assetAuthorSchema, nameConflictDecisionSchema, sourcePageUrlSchema } fr
 import {
   CONTENT_REPLACE_BATCH_INLINE_MAX_BASE64_LENGTH,
   CONTENT_REPLACE_BATCH_MAX_ITEMS,
-  CONTENT_REPLACE_MAX_BYTES,
-  CONTENT_REPLACE_MAX_BASE64_LENGTH,
   CONTENT_REPLACE_STAGE_CHUNK_MAX_BASE64_LENGTH,
 } from '../shared/content-replace';
 import {
@@ -569,7 +567,7 @@ export const automationCommandInputSchemas = {
   }),
   'asset.content.replace': z.strictObject({
     assetId: nonBlankString,
-    dataBase64: z.string().min(1).max(CONTENT_REPLACE_MAX_BASE64_LENGTH),
+    dataBase64: z.string().min(1),
     expectedRevisionId: nonBlankString.optional(),
     mimeHint: z.string().max(128).optional(),
   }),
@@ -602,7 +600,8 @@ export const automationCommandInputSchemas = {
   }),
   'asset.content.read': z.strictObject({
     assetId: nonBlankString,
-    maxBytes: z.number().int().positive().max(CONTENT_REPLACE_MAX_BYTES).default(CONTENT_REPLACE_MAX_BYTES),
+    maxBytes: z.number().int().positive().optional(),
+    offsetBytes: z.number().int().nonnegative().optional(),
   }),
   'asset.move': z.strictObject({
     assetIds: z.array(nonBlankString).min(1).max(10_000),
@@ -1000,7 +999,7 @@ const assetContentReadWorkerResultSchema = z.strictObject({
   assetId: nonBlankString,
   revisionId: nonBlankString,
   byteSize: z.number().int().nonnegative(),
-  dataBase64: z.string().max(CONTENT_REPLACE_MAX_BASE64_LENGTH),
+  dataBase64: z.string(),
   truncated: z.boolean(),
   mimeType: z.string().nullable(),
 });
@@ -1482,7 +1481,7 @@ export const automationCommandResultSchemas = {
     assetId: nonBlankString,
     revisionId: nonBlankString,
     byteSize: z.number().int().nonnegative(),
-    dataBase64: z.string().max(CONTENT_REPLACE_MAX_BASE64_LENGTH),
+    dataBase64: z.string(),
     truncated: z.boolean(),
     mimeType: z.string().nullable(),
   }),

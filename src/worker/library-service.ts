@@ -154,7 +154,6 @@ import {
 import { sanitizeAiDescription } from '../shared/ai-analysis-settings';
 import {
   CONTENT_REPLACE_BATCH_MAX_ITEMS,
-  CONTENT_REPLACE_MAX_BYTES,
   CONTENT_REPLACE_STAGE_CHUNK_MAX_BYTES,
 } from '../shared/content-replace';
 import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type BrowseLayoutEntry, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type IgnoredPath, type LinkedFolderDirectoryMutation, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchQuery, type SearchScope, type SortDefinition, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagCooccurrenceGraph, type TagSummary, type TrashedFolderSummary } from '../shared/asset-types';
@@ -32585,9 +32584,6 @@ export class LibraryService {
     if (metadata !== undefined && stagedByteSize !== metadata.byteSize) {
       throw new LibraryServiceError('LIBRARY_CORRUPT');
     }
-    if (existingByteSize + payload.length > CONTENT_REPLACE_MAX_BYTES) {
-      throw new LibraryServiceError('INVALID_ASSET_METADATA');
-    }
     const descriptor = openSync(stagedPath, 'a', 0o600);
     try {
       writeSync(descriptor, payload);
@@ -32644,9 +32640,6 @@ export class LibraryService {
     }
 
     const payload = Buffer.from(input.dataBase64, 'base64');
-    if (payload.length > CONTENT_REPLACE_MAX_BYTES) {
-      throw new LibraryServiceError('INVALID_ASSET_METADATA');
-    }
 
     const row = openLibrary.connection
       .prepare(
@@ -32904,7 +32897,7 @@ export class LibraryService {
             throw new LibraryServiceError('INVALID_ASSET_METADATA');
           }
           const payload = Buffer.from(item.dataBase64, 'base64');
-          if (payload.length === 0 || payload.length > CONTENT_REPLACE_MAX_BYTES) {
+          if (payload.length === 0) {
             throw new LibraryServiceError('INVALID_ASSET_METADATA');
           }
           writeFileSync(stageFilePath, payload, { mode: 0o600 });
@@ -32937,7 +32930,6 @@ export class LibraryService {
             typeof metadata.byteSize !== 'number' ||
             !Number.isSafeInteger(metadata.byteSize) ||
             metadata.byteSize <= 0 ||
-            metadata.byteSize > CONTENT_REPLACE_MAX_BYTES ||
             !('complete' in metadata) ||
             metadata.complete !== true
           ) {
@@ -32950,7 +32942,7 @@ export class LibraryService {
         }
         const stat = lstatSync(stageFilePath);
         const byteSize = Number(stat.size);
-        if (!Number.isSafeInteger(byteSize) || byteSize <= 0 || byteSize > CONTENT_REPLACE_MAX_BYTES) {
+        if (!Number.isSafeInteger(byteSize) || byteSize <= 0) {
           throw new LibraryServiceError('INVALID_ASSET_METADATA');
         }
         const revisionId = randomUUID();
@@ -33139,6 +33131,7 @@ export class LibraryService {
     libraryId: string;
     assetId: string;
     maxBytes?: number;
+    offsetBytes?: number;
   }): {
     assetId: string;
     revisionId: string;
@@ -33166,11 +33159,12 @@ export class LibraryService {
     if (row.deleted_at !== null || row.availability !== 'available' || !row.current_revision_id) {
       throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
     }
-    const maxBytes = Math.min(
-      Math.max(1, input.maxBytes ?? CONTENT_REPLACE_MAX_BYTES),
-      CONTENT_REPLACE_MAX_BYTES,
-    );
-    if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    const offsetBytes = input.offsetBytes ?? 0;
+    if (!Number.isSafeInteger(offsetBytes) || offsetBytes < 0) {
+      throw new LibraryServiceError('INVALID_ASSET_METADATA');
+    }
+    const limitBytes = input.maxBytes;
+    if (limitBytes !== undefined && (!Number.isSafeInteger(limitBytes) || limitBytes <= 0)) {
       throw new LibraryServiceError('INVALID_ASSET_METADATA');
     }
 
@@ -33188,21 +33182,24 @@ export class LibraryService {
       if (!Number.isSafeInteger(byteSize)) {
         throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
       }
-      const bytesToRead = Math.min(byteSize, maxBytes);
+      const readStart = Math.min(offsetBytes, byteSize);
+      const bytesToRead = limitBytes === undefined
+        ? byteSize - readStart
+        : Math.min(limitBytes, byteSize - readStart);
       const buffer = Buffer.allocUnsafe(bytesToRead);
-      let offset = 0;
-      while (offset < bytesToRead) {
-        const count = readSync(descriptor, buffer, offset, bytesToRead - offset, offset);
+      let filled = 0;
+      while (filled < bytesToRead) {
+        const count = readSync(descriptor, buffer, filled, bytesToRead - filled, readStart + filled);
         if (count === 0) break;
-        offset += count;
+        filled += count;
       }
-      const payload = offset === buffer.length ? buffer : buffer.subarray(0, offset);
+      const payload = filled === buffer.length ? buffer : buffer.subarray(0, filled);
       return {
         assetId: row.asset_id,
         revisionId: row.current_revision_id,
         byteSize,
         dataBase64: payload.toString('base64'),
-        truncated: byteSize > payload.length,
+        truncated: readStart + payload.length < byteSize,
         mimeType,
       };
     } catch (error) {
