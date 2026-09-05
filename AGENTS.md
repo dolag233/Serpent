@@ -167,6 +167,8 @@ JSONL 流程操作，禁止重新启用旧数据库同步。
 - **TypeScript pinned 6.0.3**：typescript-eslint@8.63.0 不支持 TS 7.x，等生态适配后再升。
 - **标准化 UI（强制，2026-08-12 用户反馈）**：不同地方的同类 UI 必须使用同一套样式。新增/修改任何 UI 元素前，先查找并复用既有样式体系——主题变量（`--text`/`--secondary`/`--raised-2`/`--menu-item-hover-background` 等 token）、既有组件（`Tooltip`/`HoverTipHost`、`MenuSurface`、`DialogShell`、`Icon` 等）与既有 CSS 类。**禁止硬编码颜色/尺寸 fallback**（如 `#2b2d33`、`opacity: 0.62`）——会破坏亮/暗主题。hover 提示必须用标准 `data-hover-tip` / `<Tooltip>`（延迟与主题由 HoverTipHost 统一，~420ms），禁止自造 tooltip 浮层。**模态面板（模糊 scrim）必须复用 `dialog-backdrop` 且窗口控制按钮保持可点**（caption 为窗口级层：portal 到 body + `--ui-layer-window-caption`，见 [`docs/internal/ui/0007-modal-caption-interactivity.md`](docs/internal/ui/0007-modal-caption-interactivity.md)，Serpent-52a9b4）。样式审查是代码审查固定项：核对新样式只依赖主题 token 与既有类。
 
+- **先复用后新建（强制，2026-09-05 用户反馈）**：添加任何 UI 或功能之前，先快速检查项目内是否已有类似功能/组件/实现；若已有，直接复用或在既有能力上扩展，禁止另起炉灶照抄一份。先例：侧栏「文件夹树排序」曾自造 6 向扁平选项菜单，与既有资产排序控件（SortModeControl）的「方向单选组 + 字段列表」结构不同，返工对齐。功能/UI 审查固定项：落地前核对一次「项目里是否已有等价物」并说明复用点。
+
 ## 验收纪律（2026-07-14 复盘新增，强制生效）
 
 > 触发：autonomous loop 出现"部分实现 + 局部测试通过"被写成"规格覆盖完整"的系统性偏差（详见 `docs/internal/development/2026-07-14-acceptance-discipline-retrospective.md`）。下列规则覆盖"完成定义"的判定口径，所有 agent 每会话强制遵守。

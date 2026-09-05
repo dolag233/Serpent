@@ -3409,6 +3409,8 @@ interface ManagedFolderRow {
   parent_folder_id: string | null;
   relative_path: string;
   path_identity: string;
+  /** Serpent-db1835: sidebar folder sort by creation time. */
+  created_at?: string;
 }
 
 interface AssetSummaryRow {
@@ -11868,6 +11870,7 @@ export class LibraryService {
       throw new LibraryServiceError('FOLDER_ALREADY_EXISTS');
     }
 
+    const createdAt = new Date().toISOString();
     const folder: ManagedFolderSummary = {
       folderId: randomUUID(),
       parentFolderId: parent?.folder_id ?? null,
@@ -11875,6 +11878,7 @@ export class LibraryService {
       relativePath,
       directAssetCount: 0,
       childFolderCount: 0,
+      createdAt,
     };
     try {
       mkdirSync(targetPath);
@@ -11890,7 +11894,7 @@ export class LibraryService {
           folder.name,
           folder.relativePath,
           pathIdentity,
-          new Date().toISOString(),
+          createdAt,
         );
       return folder;
     } catch (error) {
@@ -11936,7 +11940,7 @@ export class LibraryService {
 
     const row = openLibrary.connection
       .prepare(
-        'SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders WHERE folder_id = ?',
+        'SELECT folder_id, parent_folder_id, name, relative_path, path_identity, created_at FROM managed_folders WHERE folder_id = ?',
       )
       .get(input.folderId) as ManagedFolderRow | undefined;
     if (!row) throw new LibraryServiceError('FOLDER_NOT_FOUND');
@@ -12215,7 +12219,7 @@ export class LibraryService {
 
     const rows = openLibrary.connection
       .prepare(
-        `SELECT folder_id, parent_folder_id, name, relative_path, path_identity
+        `SELECT folder_id, parent_folder_id, name, relative_path, path_identity, created_at
            FROM managed_folders
           WHERE folder_id IN (${input.folderIds.map(() => '?').join(',')})`,
       )
@@ -13692,7 +13696,7 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const rows = (openLibrary.connection
       .prepare(
-        'SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders ORDER BY relative_path',
+        'SELECT folder_id, parent_folder_id, name, relative_path, path_identity, created_at FROM managed_folders ORDER BY relative_path',
       )
       .all() as ManagedFolderRow[]).filter((row) =>
       showIgnored || !this.explicitFolderIgnored(openLibrary, 'managed', null, row.relative_path),
@@ -14676,6 +14680,7 @@ export class LibraryService {
       relativePath: row.relative_path,
       directAssetCount: resolved.directAssetCounts.get(row.folder_id) ?? 0,
       childFolderCount: resolved.childFolderCounts.get(row.folder_id) ?? 0,
+      createdAt: row.created_at,
     };
   }
 
@@ -39312,7 +39317,7 @@ export class LibraryService {
       const now = new Date().toISOString();
       const folderRows = openLibrary.connection
         .prepare(
-          'SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders ORDER BY relative_path',
+          'SELECT folder_id, parent_folder_id, name, relative_path, path_identity, created_at FROM managed_folders ORDER BY relative_path',
         )
         .all() as ManagedFolderRow[];
       const foldersByPath = new Map(folderRows.map((folder) => [folder.path_identity, folder]));
@@ -40711,7 +40716,7 @@ export class LibraryService {
 
       const folderRows = openLibrary.connection
         .prepare(
-          'SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders ORDER BY relative_path',
+          'SELECT folder_id, parent_folder_id, name, relative_path, path_identity, created_at FROM managed_folders ORDER BY relative_path',
         )
         .all() as ManagedFolderRow[];
       const foldersByPath = new Map(folderRows.map((folder) => [folder.path_identity, folder]));

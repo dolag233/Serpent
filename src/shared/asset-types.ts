@@ -32,6 +32,11 @@ export const managedFolderSummarySchema = z.strictObject({
   directAssetCount: z.number().int().nonnegative(),
   /** Immediate child managed folders. */
   childFolderCount: z.number().int().nonnegative(),
+  /**
+   * Row creation time (ISO-8601), for sidebar folder sorting (Serpent-db1835).
+   * Optional so rows summarized off non-navigation queries stay forward-compatible.
+   */
+  createdAt: z.string().min(1).optional(),
 });
 
 export type ManagedFolderSummary = z.infer<typeof managedFolderSummarySchema>;

@@ -1829,6 +1829,11 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   color: var(--text);
 }
 
+.nav-section-sort .tiny-action.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-soft-fg);
+}
+
 .nav-row {
   display: grid;
   width: 100%;

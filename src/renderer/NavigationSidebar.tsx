@@ -1,10 +1,12 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { Icon, type IconName } from "./Icons";
 import { IconActionButton } from "./icon-action-button";
@@ -49,7 +51,14 @@ import {
   buildUnifiedDirectoryNavEntries,
   filterCollapsedDirectoryEntries,
   managedFolderIdsWithChildren,
+  sortManagedTreeEntries,
+  type FolderTreeSortMode,
 } from "./unified-directory-nav";
+import {
+  focusFirstRovingItem,
+  handleRovingListKeyDown,
+  ROVING_OPTION_SELECTOR,
+} from "./roving-list-keyboard";
 import {
   isAllAssetsNavActive,
   isManagedFolderNavActive,
@@ -65,6 +74,14 @@ import {
   withCollapsedCollectionIds,
   type NavTreePreferences,
 } from "./nav-tree-preferences";
+import {
+  loadFolderSortPreferences,
+  saveFolderSortPreferences,
+  withFolderSort,
+  type FolderSortOrder,
+  type FolderSortPreferences,
+} from "./folder-sort-preferences";
+import { PortaledPopover } from "./PortaledPopover";
 import { PaneSurface } from "./ui/surfaces";
 
 // ---------------------------------------------------------------------------
@@ -481,6 +498,7 @@ function Section({
   secondaryActionClassName,
   onSecondaryActionMouseEnter,
   onSecondaryActionMouseLeave,
+  extraAction,
   children,
 }: {
   title: string;
@@ -496,6 +514,8 @@ function Section({
   secondaryActionClassName?: string;
   onSecondaryActionMouseEnter?: () => void;
   onSecondaryActionMouseLeave?: () => void;
+  /** Extra leading action node rendered first in the heading action group. */
+  extraAction?: ReactNode;
   children: ReactNode;
 }) {
   const t = useT();
@@ -505,8 +525,9 @@ function Section({
     <section className="nav-section">
       <div className="nav-section-heading">
         <span>{title}</span>
-        {(action || secondaryAction || toggleAction) && (
+        {(action || secondaryAction || toggleAction || extraAction) && (
           <span className="nav-section-actions">
+            {extraAction}
             {toggleAction && (
               <IconActionButton
                 icon={toggleActive ? "eye" : "eye-off"}
@@ -536,6 +557,170 @@ function Section({
       </div>
       {children}
     </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// FolderSortTrigger — folder tree sort control (Serpent-db1835).
+// Mirrors the browse sort panel (SortModeControl): a direction radio group
+// plus a field list, so adding a new field is one array entry, never an N-way
+// option explosion.
+// ---------------------------------------------------------------------------
+
+const FOLDER_SORT_ROVING_SELECTOR = `${ROVING_OPTION_SELECTOR}, [role="radio"]`;
+
+const FOLDER_SORT_FIELDS: readonly {
+  mode: FolderTreeSortMode;
+  labelKey: string;
+}[] = [
+  { mode: "name", labelKey: "nav.sortByName" },
+  { mode: "created", labelKey: "nav.sortByCreated" },
+  { mode: "count", labelKey: "nav.sortByCount" },
+];
+
+const FOLDER_SORT_ORDERS: readonly FolderSortOrder[] = ["asc", "desc"];
+
+function folderSortOrderLabel(
+  order: FolderSortOrder,
+  t: ReturnType<typeof useT>,
+): string {
+  return order === "asc" ? t("nav.sortAsc") : t("nav.sortDesc");
+}
+
+function FolderSortTrigger({
+  mode,
+  order,
+  onChange,
+}: {
+  mode: FolderTreeSortMode;
+  order: FolderSortOrder;
+  onChange: (mode: FolderTreeSortMode, order: FolderSortOrder) => void;
+}) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [keyboardNav, setKeyboardNav] = useState(false);
+  const anchorRef = useRef<HTMLSpanElement>(null);
+  const listId = useId();
+  const nonDefault = mode !== "name" || order !== "asc";
+
+  useEffect(() => {
+    if (!open) return;
+    const onMouseDown = (event: MouseEvent) => {
+      if (!(event.target instanceof Element)) return;
+      // PortaledPopover is not a DOM child of the anchor, so clicks inside
+      // the open list must not count as outside. Mirrors SortModeControl.
+      if (event.target.closest("[data-dimension-filter-popover]")) return;
+      const anchor = anchorRef.current;
+      if (!anchor || anchor.contains(event.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", onMouseDown, true);
+    const raf = requestAnimationFrame(() => {
+      const list = document.getElementById(listId);
+      if (list instanceof HTMLDivElement) {
+        focusFirstRovingItem(list, FOLDER_SORT_ROVING_SELECTOR);
+      }
+    });
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown, true);
+      cancelAnimationFrame(raf);
+    };
+  }, [listId, open]);
+
+  function onListKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (isImeKeyboardEvent(event.nativeEvent)) return;
+    const list = event.currentTarget;
+    const result = handleRovingListKeyDown({
+      key: event.key,
+      container: list,
+      itemSelector: FOLDER_SORT_ROVING_SELECTOR,
+    });
+    if (!result.handled) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (result.action === "escape") {
+      setOpen(false);
+    } else {
+      setKeyboardNav(true);
+    }
+  }
+
+  function pickField(next: FolderTreeSortMode) {
+    onChange(next, order);
+    setOpen(false);
+  }
+
+  function pickOrder(next: FolderSortOrder) {
+    onChange(mode, next);
+    setOpen(false);
+  }
+
+  return (
+    <span className="nav-section-sort" ref={anchorRef}>
+      <IconActionButton
+        icon={order === "asc" ? "sort-asc" : "sort-desc"}
+        label={t("nav.sortFolders")}
+        onClick={() => setOpen((current) => !current)}
+        className={`tiny-action${open || nonDefault ? " is-active" : ""}`}
+      />
+      {open && (
+        <PortaledPopover
+          anchorRef={anchorRef}
+          className={`dimension-filter-popover sort-mode-popover${keyboardNav ? " is-keyboard-navigation" : ""}`}
+          id={listId}
+          onKeyDown={onListKeyDown}
+          onPointerMove={() => setKeyboardNav(false)}
+          role="dialog"
+        >
+          <div
+            aria-label={t("nav.sortDirection")}
+            className="sort-mode-order-group"
+            role="radiogroup"
+          >
+            <div className="sort-mode-section-label">
+              {t("nav.sortDirection")}
+            </div>
+            {FOLDER_SORT_ORDERS.map((nextOrder) => (
+              <button
+                aria-checked={order === nextOrder}
+                className={`sort-mode-option sort-mode-order-option${order === nextOrder ? " is-active" : ""}`}
+                key={nextOrder}
+                onClick={() => pickOrder(nextOrder)}
+                role="radio"
+                tabIndex={-1}
+                type="button"
+              >
+                <Icon
+                  name={nextOrder === "asc" ? "sort-asc" : "sort-desc"}
+                  size={14}
+                />
+                <span>{folderSortOrderLabel(nextOrder, t)}</span>
+              </button>
+            ))}
+          </div>
+          <div
+            aria-label={t("nav.sortBy")}
+            className="sort-mode-field-list"
+            role="listbox"
+          >
+            <div className="sort-mode-section-label">{t("nav.sortBy")}</div>
+            {FOLDER_SORT_FIELDS.map((field) => (
+              <button
+                aria-selected={mode === field.mode}
+                className={`sort-mode-option${mode === field.mode ? " is-active" : ""}`}
+                key={field.mode}
+                onClick={() => pickField(field.mode)}
+                role="option"
+                tabIndex={-1}
+                type="button"
+              >
+                {t(field.labelKey)}
+              </button>
+            ))}
+          </div>
+        </PortaledPopover>
+      )}
+    </span>
   );
 }
 
@@ -790,6 +975,14 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
   const [navTreePrefs, setNavTreePrefs] = useState<NavTreePreferences>(() =>
     loadNavTreePreferences(),
   );
+  const [folderSortPrefs, setFolderSortPrefs] = useState<FolderSortPreferences>(
+    () => loadFolderSortPreferences(),
+  );
+  function changeFolderSort(mode: FolderTreeSortMode, order: FolderSortOrder) {
+    const next = withFolderSort(folderSortPrefs, { mode, order });
+    setFolderSortPrefs(next);
+    saveFolderSortPreferences(next);
+  }
   useEffect(() => {
     if (!assetDropTarget) return;
     const clear = () => setAssetDropTarget(null);
@@ -980,7 +1173,11 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
   }
 
   const directoryEntries = filterCollapsedDirectoryEntries(
-    buildUnifiedDirectoryNavEntries(folders, linkedFolders),
+    sortManagedTreeEntries(
+      buildUnifiedDirectoryNavEntries(folders, linkedFolders),
+      folderSortPrefs.mode,
+      folderSortPrefs.order,
+    ),
     collapsedFolderIds,
   );
   const foldersWithChildren = managedFolderIdsWithChildren(
@@ -1643,6 +1840,15 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           }
           onSecondaryActionMouseEnter={onLinkedFolderHintHover}
           onSecondaryActionMouseLeave={onLinkedFolderHintHoverEnd}
+          extraAction={
+            library ? (
+              <FolderSortTrigger
+                mode={folderSortPrefs.mode}
+                order={folderSortPrefs.order}
+                onChange={changeFolderSort}
+              />
+            ) : undefined
+          }
         >
           {library ? (
             <>
