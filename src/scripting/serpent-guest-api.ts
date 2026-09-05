@@ -495,6 +495,7 @@ export const SERPENT_GUEST_LINKED_FOLDER_METHODS = guestMethodsForPrefix('linked
 export const SERPENT_GUEST_FILE_METHODS = guestMethodsForPrefix('files');
 export const SERPENT_GUEST_TRASH_METHODS = guestMethodsForPrefix('trash');
 export const SERPENT_GUEST_PALETTE_METHODS = guestMethodsForPrefix('palettes');
+export const SERPENT_GUEST_MEDIA_METHODS = guestMethodsForPrefix('media');
 
 export const SERPENT_GUEST_NAMESPACES = [
   'assets',
