@@ -301,6 +301,7 @@ import {
   PluginSidebarViewPanel,
   usePluginSidebarViews,
 } from "./plugin-sidebar-views";
+import { PluginUiDialogHost, usePluginUiDialogRequest } from "./plugin-ui-dialog-host";
 import { PluginWorkspaceViews } from "./plugin-workspace-views";
 import { useExternalImportHandlers } from "./use-external-import-handlers";
 import { useFolderDragDropHandlers } from "./use-folder-drag-drop-handlers";
@@ -1436,6 +1437,8 @@ function AppInner() {
       setPluginContributionEpoch((current) => current + 1);
     });
   }, []);
+  const pluginManagerApi = (window as RendererWindow).serpent?.plugins;
+  const pluginUiDialogRequest = usePluginUiDialogRequest(pluginManagerApi);
   const pluginSidebarViews = usePluginSidebarViews(
     (window as RendererWindow).serpent?.plugins,
     library?.libraryId,
@@ -12032,6 +12035,12 @@ function AppInner() {
         )}
         </div>
         {previewAsset && library && api && (
+          <>
+          <PluginUiDialogHost
+            libraryId={library?.libraryId}
+            pluginApi={pluginManagerApi}
+            request={pluginUiDialogRequest}
+          />
           <AssetPreviewModal
             ref={previewModalRef}
             api={api}
@@ -12057,6 +12066,7 @@ function AppInner() {
             pluginApi={(window as RendererWindow).serpent?.plugins}
             pluginContributionRefreshKey={pluginContributionRefreshKey}
           />
+          </>
         )}
       </section>
       <InspectorPanel

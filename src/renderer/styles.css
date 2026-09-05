@@ -12399,3 +12399,32 @@ select.ai-config-input.ai-config-languages {
 .plugin-view-host-crashed button:hover {
   background: var(--ui-action-hover);
 }
+
+/* Plugin modal dialog (Serpent-a3de58) */
+.plugin-ui-dialog {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--divider);
+  border-radius: 10px;
+  background: var(--pane);
+  box-shadow: 0 8px 32px rgb(0 0 0 / 24%);
+}
+.plugin-ui-dialog-title {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--divider);
+  color: var(--text);
+  font-size: calc(12px * var(--ui-font-scale));
+  font-weight: 600;
+}
+.plugin-ui-dialog-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+.plugin-ui-dialog-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+}

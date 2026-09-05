@@ -44,6 +44,7 @@ export const PLUGIN_UI_VIEW_TYPES = [
   'viewer-overlay',
   'settings-page',
   'settings-detail',
+  'dialog',
 ] as const;
 export type PluginUiViewType = (typeof PLUGIN_UI_VIEW_TYPES)[number];
 
@@ -85,6 +86,18 @@ export const pluginUiIframeMessageSchema = z.discriminatedUnion('type', [
     requestId: requestIdSchema,
     key: storageKeySchema,
     value: pluginUiStorageValueSchema,
+  }),
+  /**
+   * Dialog-only: the plugin dialog completed and hands its JSON result back to
+   * the Host (which resolves the pending `serpent.ui.openDialog` call).
+   */
+  z.strictObject({
+    type: z.literal('plugin-ui.dialog-complete'),
+    result: z.unknown().optional(),
+  }),
+  /** Dialog-only: the plugin dialog was dismissed without a result. */
+  z.strictObject({
+    type: z.literal('plugin-ui.dialog-cancelled'),
   }),
 ]);
 export type PluginUiIframeMessage = z.infer<typeof pluginUiIframeMessageSchema>;
@@ -137,6 +150,16 @@ export const pluginUiHostMessageSchema = z.discriminatedUnion('type', [
     type: z.literal('plugin-ui.view-unmounted'),
     contributionId: contributionIdSchema,
     instanceId: instanceIdSchema,
+  }),
+  /**
+   * Dialog-only: the Host hands the `serpent.ui.openDialog` payload to the
+   * freshly-ready dialog frame.
+   */
+  z.strictObject({
+    type: z.literal('plugin-ui.dialog-payload'),
+    contributionId: contributionIdSchema,
+    instanceId: instanceIdSchema,
+    payload: pluginUiViewStateSchema,
   }),
   z.strictObject({
     type: z.literal('plugin-ui.command-result'),

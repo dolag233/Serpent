@@ -155,6 +155,8 @@ export function PluginIframeViewHost({
   className,
   title,
   state,
+  initialPayload,
+  onDialogComplete,
 }: {
   view: PluginIframeViewDescriptor;
   pluginApi: SerpentPluginManagerApi | undefined;
@@ -163,6 +165,12 @@ export function PluginIframeViewHost({
   title?: string;
   /** Host-side view context (selection, filters, …) announced on mount and pushed on change. */
   state?: unknown;
+  /**
+   * Dialog-only (Serpent-a3de58): payload handed to the frame right after the
+   * ready handshake, and completion sink for `plugin-ui.dialog-complete`.
+   */
+  initialPayload?: unknown;
+  onDialogComplete?: (result: unknown | null) => void;
 }): ReactNode {
   const t = useT();
   const { resolved, themeRevision } = useTheme();
@@ -282,7 +290,25 @@ export function PluginIframeViewHost({
         transition({ type: 'plugin-ready' });
         announceMounted();
         postPluginThemeToIframe(frame, { view, resolvedTheme: resolved, revision: themeRevision });
+        if (view.viewType === 'dialog') {
+          postToPluginIframe(frame, {
+            type: 'plugin-ui.dialog-payload',
+            contributionId: view.id,
+            instanceId: view.pluginInstanceId,
+            payload: initialPayload ?? null,
+          });
+        }
         return;
+      }
+      if (view.viewType === 'dialog' && onDialogComplete !== undefined) {
+        if (message.type === 'plugin-ui.dialog-complete') {
+          onDialogComplete(message.result ?? null);
+          return;
+        }
+        if (message.type === 'plugin-ui.dialog-cancelled') {
+          onDialogComplete(null);
+          return;
+        }
       }
       if (!readyRef.current || pluginApi === undefined || libraryId === undefined) return;
       if (message.type === 'plugin-ui.invoke-command') {
@@ -360,7 +386,7 @@ export function PluginIframeViewHost({
       mountedRef.current = false;
       transition({ type: 'dispose' });
     };
-  }, [announceMounted, libraryId, pluginApi, resolved, themeRevision, view]);
+  }, [announceMounted, initialPayload, libraryId, onDialogComplete, pluginApi, resolved, themeRevision, view]);
 
   const showPlaceholder = lifecycle === 'loading' || lifecycle === 'reloading';
   const crashed = lifecycle === 'crashed';

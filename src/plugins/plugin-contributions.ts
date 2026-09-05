@@ -22,6 +22,7 @@ export const pluginContributionKindSchema = z.enum([
   'viewer-action',
   'settings-section',
   'view',
+  'dialog',
   'shortcut',
   'hook',
   'job',
@@ -45,6 +46,7 @@ export const pluginContributionTargetSchema = z.enum([
   'inspector.views',
   'viewer.overlays',
   'settings.pages',
+  'dialogs',
   'shortcuts',
   'hooks',
   'jobs',
@@ -87,6 +89,8 @@ const pluginContributionRegistrationSchema = z.strictObject({
   settingMaximum: z.number().finite().optional(),
   settingStep: z.number().finite().positive().optional(),
   uiEntryPath: z.string().min(1).max(1_024).optional(),
+  dialogWidth: z.number().int().min(280).max(1_200).optional(),
+  dialogHeight: z.number().int().min(200).max(1_200).optional(),
   accelerator: z.string().min(1).max(64).optional(),
   uiDescriptor: pluginUiDescriptorSchema.optional(),
 });
@@ -371,6 +375,21 @@ export function registerManifestContributions(
       ...(view.entry ?? input.uiEntryPath
         ? { uiEntryPath: view.entry ?? input.uiEntryPath }
         : {}),
+    });
+    registered += 1;
+  }
+  for (const dialog of contributes.dialogs ?? []) {
+    registry.register({
+      pluginInstanceId: input.pluginInstanceId,
+      pluginId: input.pluginId,
+      libraryId: input.libraryId,
+      localId: dialog.id,
+      kind: 'dialog',
+      target: 'dialogs',
+      title: dialog.title,
+      uiEntryPath: dialog.entry,
+      dialogWidth: dialog.width,
+      dialogHeight: dialog.height,
     });
     registered += 1;
   }
@@ -898,4 +917,31 @@ export function listSettingsPageContributions(
   registry: PluginContributionRegistry,
 ): PluginViewContribution[] {
   return listViewContributions(registry, 'settings.pages');
+}
+
+export type PluginDialogContribution = {
+  id: string;
+  pluginId: string;
+  pluginInstanceId: string;
+  title: string;
+  entryPath: string;
+  width?: number;
+  height?: number;
+};
+
+export function listDialogContributions(
+  registry: PluginContributionRegistry,
+): PluginDialogContribution[] {
+  return registry.list()
+    .filter((contribution) => contribution.target === 'dialogs')
+    .map((contribution) => ({
+      id: contribution.id,
+      pluginId: contribution.pluginId,
+      pluginInstanceId: contribution.pluginInstanceId,
+      title: contribution.title,
+      entryPath: contribution.uiEntryPath ?? '',
+      ...(contribution.dialogWidth === undefined ? {} : { width: contribution.dialogWidth }),
+      ...(contribution.dialogHeight === undefined ? {} : { height: contribution.dialogHeight }),
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
 }

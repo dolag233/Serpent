@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { pluginUiStorageValueSchema } from './plugin-ui-protocol';
+import type { PluginUiDialogRequestPayload } from './plugin-ui-dialog-bridge';
 import {
   assetSummarySchema,
   filterClauseSchema,
@@ -80,6 +81,7 @@ const pluginHostContributionTargetSchema = z.enum([
   'inspector.views',
   'viewer.overlays',
   'settings.pages',
+  'dialogs',
   'shortcuts',
   'ui.descriptor',
 ]);
@@ -353,6 +355,21 @@ export const pluginManagerViewContributionSchema = z.strictObject({
 });
 export type PluginManagerViewContribution = z.infer<typeof pluginManagerViewContributionSchema>;
 
+export const pluginManagerDialogContributionSchema = z.strictObject({
+  kind: z.literal('dialog'),
+  id: z.string().min(1).max(255),
+  pluginId: pluginIdSchema,
+  pluginInstanceId: z.string().min(1).max(255),
+  title: z.string().min(1).max(160),
+  entryPath: z.string().min(1).max(1_024),
+  url: z.url().optional(),
+  themePackage: pluginThemePackageSchema.optional(),
+  target: z.literal('dialogs'),
+  width: z.number().int().min(280).max(1_200).optional(),
+  height: z.number().int().min(200).max(1_200).optional(),
+});
+export type PluginManagerDialogContribution = z.infer<typeof pluginManagerDialogContributionSchema>;
+
 export type PluginManagerSidebarViewContribution = Extract<
   PluginManagerViewContribution,
   { target: 'sidebar.entries' }
@@ -484,6 +501,7 @@ export const pluginManagerContributionSchema = z.discriminatedUnion('kind', [
   pluginManagerSettingsContributionSchema,
   pluginManagerUiDescriptorContributionSchema,
   pluginManagerViewContributionSchema,
+  pluginManagerDialogContributionSchema,
 ]);
 export type PluginManagerContribution = z.infer<typeof pluginManagerContributionSchema>;
 
@@ -754,6 +772,9 @@ export function parsePluginManagerResponse(input: unknown): PluginManagerRespons
 /** Narrow preload API; it intentionally has no filesystem or Electron access. */
 export interface SerpentPluginManagerApi {
   request(input: PluginManagerRequest): Promise<PluginManagerResponse>;
+  /** Main → Renderer request to host a plugin modal dialog (Serpent-a3de58). */
+  onPluginUiDialogRequest?(listener: (request: PluginUiDialogRequestPayload) => void): () => void;
+  resolvePluginUiDialog?(input: { requestId: string; result: unknown | null }): void;
   onInstallProgress?(listener: (event: PluginInstallProgress) => void): () => void;
   listPluginContributions(input: {
     libraryId?: string;

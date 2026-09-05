@@ -11,6 +11,7 @@ import {
   listCommandContributions,
   listMcpCommandContributions,
   listMenuContributions,
+  listDialogContributions,
   listInspectorSectionContributions,
   listInspectorViewContributions,
   listSettingsContributions,
@@ -1040,6 +1041,22 @@ export class PluginActivationCoordinator {
           pluginInstanceId: contribution.pluginInstanceId,
           title: contribution.title,
           target: 'workspace.views' as const,
+          ...this.#viewContributionAttachment(contribution, input.libraryId),
+        }));
+    }
+    if (input.target === 'dialogs') {
+      return listDialogContributions(this.options.contributions)
+        .filter((contribution) => activeInstanceIds.has(contribution.pluginInstanceId))
+        .map((contribution) => ({
+          kind: 'dialog' as const,
+          id: contribution.id,
+          pluginId: contribution.pluginId,
+          pluginInstanceId: contribution.pluginInstanceId,
+          title: contribution.title,
+          target: 'dialogs' as const,
+          entryPath: contribution.entryPath,
+          ...(contribution.width === undefined ? {} : { width: contribution.width }),
+          ...(contribution.height === undefined ? {} : { height: contribution.height }),
           ...this.#viewContributionAttachment(contribution, input.libraryId),
         }));
     }

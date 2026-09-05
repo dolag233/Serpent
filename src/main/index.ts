@@ -138,7 +138,15 @@ import {
 import {
   createAutomationCommandGateway,
   type AutomationCommandGateway,
+  type AutomationMediaBinariesHandler,
+  type AutomationUiDialogHandler,
 } from '../automation/command-gateway';
+import {
+  PLUGIN_UI_DIALOG_REQUEST_CHANNEL,
+  PLUGIN_UI_DIALOG_RESULT_CHANNEL,
+  pluginUiDialogResultPayloadSchema,
+} from '../shared/plugin-ui-dialog-bridge';
+import { resolveHostMediaBinaries } from './media-binary-env';
 import { PluginHostCommandError } from '../shared/plugin-host-command-error';
 import {
   APP_ASSET_HOST,
@@ -6342,6 +6350,21 @@ async function startApplication(): Promise<void> {
     selectSaveScript: selectAutomationScriptToSave,
     recentScripts: automationRecentScripts,
   });
+  const pendingPluginUiDialogs = new Map<string, {
+    resolve: (result: unknown | null) => void;
+    reject: (error: Error) => void;
+    cleanup: () => void;
+  }>();
+  let pluginUiDialogRequestSeq = 0;
+  ipcMain.handle(PLUGIN_UI_DIALOG_RESULT_CHANNEL, (_event, input: unknown) => {
+    const parsed = pluginUiDialogResultPayloadSchema.safeParse(input);
+    if (!parsed.success) return { ok: false };
+    const pending = pendingPluginUiDialogs.get(parsed.data.requestId);
+    if (pending !== undefined) {
+      pending.resolve(parsed.data.result);
+    }
+    return { ok: true };
+  });
   automationCommandGateway = createAutomationCommandGateway(
     automationWorkerAdapter,
     {
@@ -6367,6 +6390,55 @@ async function startApplication(): Promise<void> {
           }
           clipboard.writeText(workerResult.absolutePaths.join('\n'));
         },
+      },
+      mediaBinariesHandler: {
+        get: () => {
+          const binaries = resolveHostMediaBinaries();
+          if (binaries === undefined) {
+            throw new Error('MEDIA_BINARIES_NOT_FOUND');
+          }
+          return binaries;
+        },
+      },
+      uiDialogHandler: {
+        open: (input, context) => new Promise((resolve, reject) => {
+          const window = mainWindow;
+          if (!window || window.isDestroyed()) {
+            reject(new Error('DIALOG_WINDOW_UNAVAILABLE'));
+            return;
+          }
+          pluginUiDialogRequestSeq += 1;
+          const requestId = `plugin-ui-dialog-${pluginUiDialogRequestSeq}`;
+          const onWindowClosed = () => {
+            const pending = pendingPluginUiDialogs.get(requestId);
+            if (pending !== undefined) {
+              pendingPluginUiDialogs.delete(requestId);
+              pending.reject(new Error('DIALOG_WINDOW_UNAVAILABLE'));
+            }
+          };
+          pendingPluginUiDialogs.set(requestId, {
+            resolve: (result) => {
+              pendingPluginUiDialogs.delete(requestId);
+              window.removeListener('closed', onWindowClosed);
+              resolve(result);
+            },
+            reject: (error) => {
+              pendingPluginUiDialogs.delete(requestId);
+              window.removeListener('closed', onWindowClosed);
+              reject(error);
+            },
+            cleanup: () => window.removeListener('closed', onWindowClosed),
+          });
+          window.once('closed', onWindowClosed);
+          window.webContents.send(PLUGIN_UI_DIALOG_REQUEST_CHANNEL, {
+            requestId,
+            pluginId: context.pluginId ?? '',
+            pluginInstanceId: context.pluginInstanceId ?? '',
+            dialogId: input.dialogId,
+            libraryId: context.libraryId ?? '',
+            payload: input.payload ?? null,
+          });
+        }),
       },
       uiNotifyHandler: {
         notify: (input) => {
@@ -6655,6 +6727,8 @@ async function startApplication(): Promise<void> {
       source: 'plugin',
       libraryId: parsedTarget.data,
       grantedCapabilities: automationCapabilitiesFromPluginPermissions(context.permissions),
+      pluginId: context.pluginId,
+      pluginInstanceId: context.instanceId,
     });
     const commandInput = commandId === 'asset.search'
       ? normalizeAutomationAssetSearchInput(input)

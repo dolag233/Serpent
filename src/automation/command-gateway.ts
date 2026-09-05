@@ -61,6 +61,9 @@ export const automationExecutionContextSchema = z.strictObject({
     maxPendingPromises: z.number().int().positive(),
   }).optional(),
   abortSignal: z.custom<AbortSignal>((value) => value instanceof AbortSignal).optional(),
+  /** Present when the execution originates from a plugin instance. */
+  pluginId: nonBlankString.max(255).optional(),
+  pluginInstanceId: nonBlankString.max(255).optional(),
 });
 
 export type AutomationExecutionContext = z.infer<typeof automationExecutionContextSchema>;
@@ -277,6 +280,27 @@ export interface AutomationUiNotifyHandler {
   notify(input: AutomationCommandInput<'ui.notify'>): void | Promise<void>;
 }
 
+/**
+ * Main-owned modal dialog for `ui.dialog`. Resolves with the JSON completion
+ * payload posted by the dialog iframe, or null when the user dismissed it.
+ */
+export interface AutomationUiDialogHandler {
+  open(
+    input: AutomationCommandInput<'ui.dialog'>,
+    context: {
+      pluginId?: string;
+      pluginInstanceId?: string;
+      executionId: string;
+      libraryId: string | null;
+    },
+  ): Promise<unknown | null>;
+}
+
+/** Main-owned resolution of the bundled/system media executables. */
+export interface AutomationMediaBinariesHandler {
+  get(): { ffmpegPath: string; ffprobePath: string };
+}
+
 export interface AutomationUndoGroupHandler {
   create(input: { executionId: string; libraryId: string }): { undoGroupId: string };
   append(input: {
@@ -325,6 +349,8 @@ export interface AutomationCommandGatewayOptions {
   contextBarrier?: AutomationContextBarrier;
   executionStatusHandler?: AutomationExecutionStatusHandler;
   uiNotifyHandler?: AutomationUiNotifyHandler;
+  uiDialogHandler?: AutomationUiDialogHandler;
+  mediaBinariesHandler?: AutomationMediaBinariesHandler;
   undoGroupHandler?: AutomationUndoGroupHandler;
   historyEntryHandler?: AutomationHistoryEntryHandler;
   permissionBroker?: AutomationPermissionBroker;
@@ -419,6 +445,8 @@ export function createAutomationCommandGateway(
     contextBarrier,
     executionStatusHandler,
     uiNotifyHandler,
+    uiDialogHandler,
+    mediaBinariesHandler,
     undoGroupHandler,
     historyEntryHandler,
     permissionBroker,
@@ -958,6 +986,58 @@ export function createAutomationCommandGateway(
           executionId,
           result,
         });
+      }
+
+      if (descriptor.commandId === 'ui.dialog') {
+        if (!uiDialogHandler) {
+          return recordOutcome({ ok: false, error: createPublicError('INTERNAL_ERROR') });
+        }
+        const dialogInput = parsedInput.data as AutomationCommandInput<'ui.dialog'>;
+        try {
+          const result = {
+            result: (await uiDialogHandler.open(dialogInput, {
+              ...(context.pluginId === undefined ? {} : { pluginId: context.pluginId }),
+              ...(context.pluginInstanceId === undefined ? {} : { pluginInstanceId: context.pluginInstanceId }),
+              executionId,
+              libraryId: boundLibraryId,
+            })) ?? null,
+          };
+          if (!descriptor.resultSchema.safeParse(result).success) {
+            return recordOutcome(gatewayFailure('AUTOMATION_RESULT_INVALID'));
+          }
+          return recordOutcome({
+            ok: true,
+            apiVersion: AUTOMATION_API_VERSION,
+            commandId: 'ui.dialog',
+            executionId,
+            result,
+          });
+        } catch (error) {
+          auditLogger?.error('automation.ui-dialog.failed', error, { executionId });
+          return recordOutcome({ ok: false, error: toPublicError(error) });
+        }
+      }
+
+      if (descriptor.commandId === 'media.binaries.get') {
+        if (!mediaBinariesHandler) {
+          return recordOutcome({ ok: false, error: createPublicError('INTERNAL_ERROR') });
+        }
+        try {
+          const result = mediaBinariesHandler.get();
+          if (!descriptor.resultSchema.safeParse(result).success) {
+            return recordOutcome(gatewayFailure('AUTOMATION_RESULT_INVALID'));
+          }
+          return recordOutcome({
+            ok: true,
+            apiVersion: AUTOMATION_API_VERSION,
+            commandId: 'media.binaries.get',
+            executionId,
+            result,
+          });
+        } catch (error) {
+          auditLogger?.error('automation.media-binaries.failed', error, { executionId });
+          return recordOutcome({ ok: false, error: toPublicError(error) });
+        }
       }
 
       let approvedPlan: AutomationFileOperationPlanProof | undefined;

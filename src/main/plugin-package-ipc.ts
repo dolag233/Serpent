@@ -577,7 +577,11 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
         return {
           ok: true,
           contributions: contributions.map((contribution) => {
-            if (contribution.kind !== 'view' || contribution.entryPath === undefined || request.libraryId === undefined) {
+            if (
+              (contribution.kind !== 'view' && contribution.kind !== 'dialog')
+              || contribution.entryPath === undefined
+              || request.libraryId === undefined
+            ) {
               return contribution;
             }
             return {

@@ -201,6 +201,8 @@ export const pluginPermissionSchema = z.enum([
   'ui.viewer',
   'ui.settings',
   'ui.notify',
+  'ui.dialogs',
+  'media.binaries',
   'input.shortcut',
   'input.capture.viewer',
   'input.capture.application',
@@ -366,6 +368,22 @@ const contributionViewSchema = z.strictObject({
   /** Relative HTML entry for a sandboxed custom UI view. */
   entry: pluginPackagePathSchema.optional(),
 });
+export type PluginContributionView = z.infer<typeof contributionViewSchema>;
+
+/**
+ * Modal settings dialog (Serpent-a3de58): opened by a command through
+ * `serpent.ui.openDialog`, resolved with the iframe's completion payload.
+ * Requires the `ui.dialogs` permission.
+ */
+export const contributionDialogSchema = z.strictObject({
+  id: pluginLocalIdSchema,
+  title: z.string().min(1).max(160),
+  /** Relative HTML entry for the sandboxed dialog UI. */
+  entry: pluginPackagePathSchema,
+  width: z.number().int().min(280).max(1_200).optional(),
+  height: z.number().int().min(200).max(1_200).optional(),
+});
+export type PluginContributionDialog = z.infer<typeof contributionDialogSchema>;
 export const pluginSettingTypeSchema = z.enum(['boolean', 'number', 'slider', 'string', 'select']);
 export const pluginSettingValueSchema = z.union([
   z.boolean(),
@@ -738,6 +756,8 @@ export const pluginContributesSchema = z.strictObject({
   viewerActions: z.array(contributionViewerActionSchema).max(64).default([]),
   shortcuts: z.array(contributionShortcutSchema).max(64).default([]),
   views: z.array(contributionViewSchema).max(128).default([]),
+  /** Modal settings dialogs (Serpent-a3de58); opened via `serpent.ui.openDialog`. */
+  dialogs: z.array(contributionDialogSchema).max(32).optional(),
   settings: z.array(contributionSettingSchema).max(128).default([]),
   hooks: z.array(contributionHookSchema).max(128).default([]),
   jobs: z.array(contributionJobSchema).max(128).default([]),

@@ -134,6 +134,8 @@ export const automationCapabilitySchema = z.enum([
   'trash.write',
   'clipboard.write',
   'ui.notify',
+  'ui.dialogs',
+  'media.binaries',
 ]);
 export type AutomationCapability = z.infer<typeof automationCapabilitySchema>;
 
@@ -338,6 +340,22 @@ export const automationCapabilityRegistry = [
     defaultPolicy: 'allow',
     canPersist: false,
   },
+  {
+    capability: 'ui.dialogs',
+    displayName: '打开插件设置对话框',
+    description: '在 Serpent 桌面弹出该插件声明的模态设置对话框并读取其提交结果。',
+    riskTier: 'controlled',
+    defaultPolicy: 'ask',
+    canPersist: true,
+  },
+  {
+    capability: 'media.binaries',
+    displayName: '获取宿主媒体可执行文件路径',
+    description: '读取宿主解析的 FFmpeg/ffprobe 可执行文件路径（不授予任意路径或库文件访问）。',
+    riskTier: 'safe',
+    defaultPolicy: 'allow',
+    canPersist: false,
+  },
 ] as const satisfies readonly AutomationCapabilityDefinition[];
 
 export type AutomationCriticalOperationId =
@@ -517,6 +535,12 @@ export const automationCommandInputSchemas = {
     mode: z.literal('toast').default('toast'),
     title: z.string().min(1).max(120).optional(),
   }),
+  'ui.dialog': z.strictObject({
+    dialogId: nonBlankString,
+    /** Opaque JSON payload delivered to the dialog iframe after mount. */
+    payload: z.unknown().optional(),
+  }),
+  'media.binaries.get': z.strictObject({}),
   'folder.list': paginatedInputSchema({}),
   'linked-folder.list': paginatedInputSchema({}),
   'asset.list': paginatedInputSchema({
@@ -1422,6 +1446,13 @@ export const automationCommandResultSchemas = {
     mode: z.literal('toast'),
     severity: z.enum(['info', 'warning', 'error']),
   }),
+  'ui.dialog': z.strictObject({
+    result: z.unknown().nullable(),
+  }),
+  'media.binaries.get': z.strictObject({
+    ffmpegPath: nonBlankString,
+    ffprobePath: nonBlankString,
+  }),
   'folder.list': paginatedResultSchema(managedFolderSummarySchema),
   'folder.rename': managedFolderSummarySchema,
   'folder.move': z.strictObject({ movedCount: z.number().int().nonnegative(), skippedCount: z.number().int().nonnegative(), folders: z.array(managedFolderSummarySchema) }),
@@ -2078,6 +2109,40 @@ export const automationCommandRegistry = [
     libraryContext: 'none',
     toWorkerCommand: () => {
       throw new Error('ui.notify is resolved by Main and does not dispatch to the Worker.');
+    },
+    projectResult: () => undefined,
+  }),
+  readDescriptor({
+    commandId: 'ui.dialog',
+    summary: '打开插件声明的模态设置对话框，并等待用户提交的 JSON 结果（取消时返回 null）。',
+    inputSchema: automationCommandInputSchemas['ui.dialog'],
+    resultSchema: automationCommandResultSchemas['ui.dialog'],
+    workerResultSchema: z.never(),
+    requiredCapabilities: ['ui.dialogs'],
+    allowedSources: allInteractiveSources,
+    targetScope: 'library',
+    supportsBatch: false,
+    mcp: { public: false, toolName: 'serpent_ui_dialog', outputLimit: 1 },
+    libraryContext: 'none',
+    toWorkerCommand: () => {
+      throw new Error('ui.dialog is resolved by Main and does not dispatch to the Worker.');
+    },
+    projectResult: () => undefined,
+  }),
+  readDescriptor({
+    commandId: 'media.binaries.get',
+    summary: '获取宿主解析的 FFmpeg/ffprobe 可执行文件路径（env 覆盖 > 捆绑资源 > PATH）。',
+    inputSchema: automationCommandInputSchemas['media.binaries.get'],
+    resultSchema: automationCommandResultSchemas['media.binaries.get'],
+    workerResultSchema: z.never(),
+    requiredCapabilities: ['media.binaries'],
+    allowedSources: allInteractiveSources,
+    targetScope: 'library',
+    supportsBatch: false,
+    mcp: { public: false, toolName: 'serpent_media_binaries_get', outputLimit: 1 },
+    libraryContext: 'none',
+    toWorkerCommand: () => {
+      throw new Error('media.binaries.get is resolved by Main and does not dispatch to the Worker.');
     },
     projectResult: () => undefined,
   }),
