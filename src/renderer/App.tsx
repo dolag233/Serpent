@@ -121,6 +121,22 @@ import {
   saveFolderRecursivePreferences,
   withFolderRecursiveEnabled,
 } from "./folder-recursive-preferences";
+import {
+  hasFeatureHintBeenShown,
+  isFeatureHintEnabled,
+  loadFeatureHintPreferences,
+  saveFeatureHintPreferences,
+  withFeatureHintShown,
+} from "./feature-hint-preferences";
+import {
+  recursiveSubfoldersHintKey,
+  shouldFlashRecursiveSubfoldersHint,
+} from "./recursive-subfolders-hint";
+import {
+  LINKED_FOLDER_ADD_HINT_KEY,
+  shouldShowLinkedFolderAddHint,
+} from "./linked-folder-add-hint";
+import { resolveSearchFolderResults } from "./search-folder-results";
 import { useT, useLocale, translateForLocale, type AppLocale } from "./i18n";
 import type { AiApiFormat } from "../shared/ai-endpoints";
 import type { ApplicationMenuCommand } from "../shared/application-menu";
@@ -919,6 +935,73 @@ function AppInner() {
   const [folderRecursivePrefs, setFolderRecursivePrefs] = useState(() =>
     loadFolderRecursivePreferences(),
   );
+  // Serpent-b8a853: one-time feature hints for hidden UI affordances share a
+  // global switch (Settings → Feature hints) and per-key "seen" marks.
+  const [featureHintPrefs, setFeatureHintPrefs] = useState(() =>
+    loadFeatureHintPreferences(),
+  );
+  // Linked-folder "new user" hint: after adding a normal folder, briefly pulse
+  // the sidebar 导入链接文件夹 entry. Dismissed permanently by hovering it
+  // >0.5s or by actually importing a linked folder.
+  const [linkedFolderHintActive, setLinkedFolderHintActive] = useState(false);
+  const linkedFolderHintStopTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
+  const linkedFolderHintHoverTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
+  const includeSubfoldersHoverTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
+  const linkedFolderAddHintEligible =
+    shouldShowLinkedFolderAddHint({
+      hintsEnabled: isFeatureHintEnabled(featureHintPrefs),
+      alreadyDismissed: hasFeatureHintBeenShown(
+        featureHintPrefs,
+        LINKED_FOLDER_ADD_HINT_KEY,
+      ),
+      hasLinkedFolders: linkedFolders.length > 0,
+    });
+  useEffect(
+    () => () => {
+      if (linkedFolderHintStopTimerRef.current) {
+        clearTimeout(linkedFolderHintStopTimerRef.current);
+      }
+      if (linkedFolderHintHoverTimerRef.current) {
+        clearTimeout(linkedFolderHintHoverTimerRef.current);
+      }
+      if (includeSubfoldersHoverTimerRef.current) {
+        clearTimeout(includeSubfoldersHoverTimerRef.current);
+      }
+    },
+    [],
+  );
+  // Hovering a highlighted affordance for >0.5s dismisses that hint
+  // permanently (shared "all highlights" rule, Serpent-b8a853).
+  const linkedFolderHintShow =
+    linkedFolderHintActive && linkedFolderAddHintEligible;
+  const beginLinkedFolderHintHover = (): void => {
+    linkedFolderHintHoverTimerRef.current = setTimeout(() => {
+      linkedFolderHintHoverTimerRef.current = null;
+      setLinkedFolderHintActive(false);
+      if (linkedFolderHintStopTimerRef.current) {
+        clearTimeout(linkedFolderHintStopTimerRef.current);
+        linkedFolderHintStopTimerRef.current = null;
+      }
+      const next = withFeatureHintShown(
+        featureHintPrefs,
+        LINKED_FOLDER_ADD_HINT_KEY,
+      );
+      setFeatureHintPrefs(next);
+      saveFeatureHintPreferences(next);
+    }, 500);
+  };
+  const endLinkedFolderHintHover = (): void => {
+    if (linkedFolderHintHoverTimerRef.current) {
+      clearTimeout(linkedFolderHintHoverTimerRef.current);
+      linkedFolderHintHoverTimerRef.current = null;
+    }
+  };
   const [collectionEditor, setCollectionEditor] = useState<{
     collectionId: string;
     description: string;
@@ -1004,6 +1087,69 @@ function AppInner() {
   const [searchSnippets, setSearchSnippets] = useState<Map<string, string>>(
     new Map(),
   );
+  // Serpent-f74e48: while a text term is present, surface matching folders
+  // (name or relative path) as a "Folders" section above the asset grid.
+  const searchFolderResults = useMemo(() => {
+    if (searchValue.trim() === "") return [];
+    return resolveSearchFolderResults({
+      query: parseSearchExpression(searchValue),
+      folders,
+      linkedFolders,
+    });
+  }, [searchValue, folders, linkedFolders]);
+  // Serpent-f74e48: fetch the real FolderBrowseEntry (cover previews + counts)
+  // for search-matched folders so the reused asset-browser folder cards show
+  // the same previews as normal browsing. Enrichment is keyed by the matched
+  // ref set so a slow older response never overwrites a newer search.
+  const searchFolderMatchKey = searchFolderResults.length
+    ? searchFolderResults
+        .map((result) => `${result.locationKind}:${result.folderId}`)
+        .join("|")
+    : null;
+  const [searchFolderRealKey, setSearchFolderRealKey] = useState<string | null>(
+    null,
+  );
+  const [searchFolderRealEntries, setSearchFolderRealEntries] = useState<
+    FolderBrowseEntry[]
+  >([]);
+  const searchFolderEntriesKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!api || !library || searchFolderMatchKey === null) return;
+    searchFolderEntriesKeyRef.current = searchFolderMatchKey;
+    let cancelled = false;
+    void api
+      .listFolderEntriesByRefs({
+        libraryId: library.libraryId,
+        refs: searchFolderResults.map((result) => ({
+          locationKind: result.locationKind,
+          folderId: result.folderId,
+        })),
+      })
+      .then((result) => {
+        if (
+          !cancelled &&
+          result.ok &&
+          searchFolderEntriesKeyRef.current === searchFolderMatchKey
+        ) {
+          setSearchFolderRealKey(searchFolderMatchKey);
+          setSearchFolderRealEntries(result.value);
+        }
+      })
+      .catch(() => {
+        // Enrichment is best-effort: fall back to the lightweight entries.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [searchFolderMatchKey, searchFolderResults, library, api]);
+  // Serpent-b8a853: one-time hint for the include-subfolders icon. The hint
+  // key is per (library, folder scope); the actual flash decision needs the
+  // browse canvas mode (folders-only = child-folder cards but zero direct
+  // assets) which is computed below with browseCanvasBodyLayout.
+  const recursiveHintKey =
+    library && assetScope !== "all" && assetScope !== "root"
+      ? recursiveSubfoldersHintKey(library.libraryId, assetScope)
+      : null;
   const { open: openContextMenu, close: closeContextMenu } =
     useContextMenu();
   const hadDiscoveryInput = useRef(false);
@@ -2363,6 +2509,34 @@ function AppInner() {
     visibleAssets.length,
     canvasFolderBrowseEntries.length,
   );
+
+  // Serpent-b8a853: the include-subfolders hint pulses only for the folder-scope
+  // button (not the collection variant), in a folder browsing mode that shows
+  // child-folder cards but zero direct assets, while the recursive toggle is
+  // off, the global feature-hint switch is on, and the hint is not yet
+  // dismissed (the user has never expanded this folder's subfolders). The
+  // pulse is a pure derived state, so it keeps breathing while the condition
+  // holds and stops the moment the user enables recursive for the folder.
+  const recursiveHintActive =
+    recursiveHintKey !== null &&
+    assetScope !== "all" &&
+    assetScope !== "root" &&
+    !showTrash &&
+    !showTagManagement &&
+    !showPluginSidebarView &&
+    !activeTagId &&
+    !activeCollectionId &&
+    !activeSmartCollectionId &&
+    shouldFlashRecursiveSubfoldersHint({
+      recursiveEnabled: folderRecursive,
+      hintsEnabled: isFeatureHintEnabled(featureHintPrefs),
+      alreadyDismissed: hasFeatureHintBeenShown(
+        featureHintPrefs,
+        recursiveHintKey,
+      ),
+      hasChildFoldersWithoutDirectAssets:
+        browseCanvasBodyLayout.mode === "folders-only",
+    });
 
   const visibleAssetById = useMemo(() => {
     const map = new Map<string, (typeof visibleAssets)[number]>();
@@ -7028,6 +7202,14 @@ function AppInner() {
         throw new LibraryOperationError(result.error);
       }
       setNotice(t("toast.linkedFolderCreated", { name: result.value.displayName }));
+      // Using the linked-folder feature once dismisses this hint permanently.
+      const dismissedHint = withFeatureHintShown(
+        featureHintPrefs,
+        LINKED_FOLDER_ADD_HINT_KEY,
+      );
+      setFeatureHintPrefs(dismissedHint);
+      saveFeatureHintPreferences(dismissedHint);
+      setLinkedFolderHintActive(false);
       // The new linked-folder row is part of the navigation snapshot, not the
       // primary asset page. Wait for that snapshot here so the completed
       // operation never reports success while the sidebar still looks stale.
@@ -10015,6 +10197,143 @@ function AppInner() {
     return () => document.removeEventListener("keydown", onUndoRedoKeyDown);
   }, [busy, editableTextFocused, operationHistory, undoLastFileOp, redoLastOperation]);
 
+  // Serpent-f74e48: during a text search the ordinary folder-card-row is
+  // reused directly (matching folders appear as the same cards as browsing)
+  // instead of a bespoke "search results" section. The row is hoisted so it
+  // also renders when the asset grid resolves to the empty state (search can
+  // match folders while zero assets match). Folder results are FolderBrowseEntry
+  // and therefore render through the exact same FolderCard as the browser.
+  const searchActive = searchValue.trim() !== "";
+  const folderRowEntries =
+    !showTrash && searchActive && searchFolderResults.length > 0
+      ? searchFolderRealKey === searchFolderMatchKey &&
+        searchFolderRealEntries.length > 0
+        ? searchFolderRealEntries
+        : searchFolderResults
+      : canvasFolderBrowseEntries;
+  const folderCardRowVisible =
+    library !== null && folderRowEntries.length > 0;
+  const folderCardRowElement = folderCardRowVisible ? (
+    <div
+      className={
+        browseCanvasBodyLayout.mode === "folders-only"
+          ? "folder-card-row is-folders-only"
+          : "folder-card-row"
+      }
+      style={
+        {
+          "--folder-card-size": `${folderCardWidthPx}px`,
+          ...(panelResizing && panelReflowFrozenWidthRef.current
+            ? {
+                width: `${panelReflowFrozenWidthRef.current}px`,
+              }
+            : {}),
+        } as CSSProperties
+      }
+    >
+      {folderRowEntries.map((entry) => (
+        <FolderCard
+          draggable={!showTrash}
+          entry={entry}
+          key={entry.folderId}
+          libraryId={library.libraryId}
+          trashed={showTrash}
+          {...(showTrash
+            ? {}
+            : createFolderCardDropHandlers(entry.folderId))}
+          onDragStart={(event) => {
+            const folderIds = resolveDraggedFolderIds(
+              entry.folderId,
+              selectedFolderIds,
+            );
+            event.dataTransfer.setData(
+              MANAGED_FOLDERS_DRAG_TYPE,
+              JSON.stringify(folderIds),
+            );
+            event.dataTransfer.effectAllowed = "move";
+          }}
+          onClick={(folderId, event) => {
+            // During a search a folder-result click enters the folder (the
+            // browse-only selection semantics do not apply in search).
+            if (searchActive) {
+              void chooseFolder(folderId);
+              return;
+            }
+            handleFolderCardClick(folderId, event);
+          }}
+          onContextMenu={(clickedEntry, event) => {
+            event.preventDefault();
+            if (showTrash) {
+              openContextMenu(
+                {
+                  type: "trashed-folder",
+                  tombstoneId: clickedEntry.folderId,
+                  name: clickedEntry.name,
+                  relativePath: clickedEntry.relativePath,
+                },
+                { x: event.clientX, y: event.clientY },
+              );
+              return;
+            }
+            const intent = resolveBrowseContextMenuIntent(
+              { kind: "folder", id: clickedEntry.folderId },
+              {
+                assetIds: selectedAssetIds,
+                folderIds: selectedFolderIds,
+              },
+            );
+            if (intent.type === "single-folder") {
+              setSelectedFolderIds([intent.folderId]);
+              setSelectedAssetIds([]);
+              openContextMenu(
+                {
+                  type: "folder",
+                  folderId:
+                    clickedEntry.linkedFolderId ?? intent.folderId,
+                  name: clickedEntry.name,
+                  locationKind: clickedEntry.locationKind,
+                  linkedRelativePath:
+                    clickedEntry.locationKind === "linked" &&
+                    clickedEntry.relativePath
+                      ? clickedEntry.relativePath
+                      : undefined,
+                },
+                { x: event.clientX, y: event.clientY },
+              );
+              return;
+            }
+            if (intent.type !== "multi") return;
+            openContextMenu(
+              {
+                type: "multi-asset",
+                assetIds: [...intent.assetIds],
+                folderIds: [...intent.folderIds],
+                count:
+                  intent.assetIds.length + intent.folderIds.length,
+              },
+              { x: event.clientX, y: event.clientY },
+            );
+          }}
+          onDoubleClick={(folderId) => {
+            if (showTrash) {
+              const entry = folderRowEntries.find(
+                (item) => item.folderId === folderId,
+              );
+              if (!entry) return;
+              void enterTrashAt(entry.folderId);
+              return;
+            }
+            void chooseFolder(folderId);
+          }}
+          onMouseDown={(event) => {
+            cardMouseDownRef.current = event.button;
+          }}
+          selected={selectedFolderIdSet.has(entry.folderId)}
+        />
+      ))}
+    </div>
+  ) : null;
+
   return (
     <>
     <HoverTipHost />
@@ -10278,6 +10597,9 @@ function AppInner() {
           setAssetDragPreviewCopyMode(dragPreviewRef.current, copyMode);
         }}
         onImportFolderAsLinked={() => void importFolderAsLinked()}
+        linkedFolderHintActive={linkedFolderHintShow}
+        onLinkedFolderHintHover={beginLinkedFolderHintHover}
+        onLinkedFolderHintHoverEnd={endLinkedFolderHintHover}
         onRelinkFolder={(folderId) => void relinkFolder(folderId)}
         onConvertLinkedDialog={setConvertLinkedDialog}
         onAddCollection={(parentId) => {
@@ -10298,6 +10620,18 @@ function AppInner() {
         onInlineCollectionRenameCancel={cancelInlineCollectionRename}
         onAddFolder={() => {
           cancelInlineSmartCollectionEdit();
+          // Serpent-b8a853: while the user has never used linked folders,
+          // adding an ordinary folder pulses the 导入链接文件夹 entry.
+          if (linkedFolderAddHintEligible) {
+            setLinkedFolderHintActive(true);
+            if (linkedFolderHintStopTimerRef.current) {
+              clearTimeout(linkedFolderHintStopTimerRef.current);
+            }
+            linkedFolderHintStopTimerRef.current = setTimeout(() => {
+              linkedFolderHintStopTimerRef.current = null;
+              setLinkedFolderHintActive(false);
+            }, 8000);
+          }
           openInlineFolderCreate(selectedFolderId ?? null);
         }}
         onAddSmartCollection={() => {
@@ -10345,7 +10679,30 @@ function AppInner() {
               assetScope !== "root" && (
                 <button
                   aria-pressed={folderRecursive}
-                  className="workspace-include-subfolders"
+                  className={`workspace-include-subfolders${
+                    recursiveHintActive ? " is-feature-hinting" : ""
+                  }`}
+                  onMouseEnter={() => {
+                    // Hovering the highlighted affordance >0.5s dismisses the
+                    // hint permanently (shared all-highlights rule).
+                    includeSubfoldersHoverTimerRef.current = setTimeout(() => {
+                      includeSubfoldersHoverTimerRef.current = null;
+                      if (recursiveHintKey) {
+                        const hinted = withFeatureHintShown(
+                          featureHintPrefs,
+                          recursiveHintKey,
+                        );
+                        setFeatureHintPrefs(hinted);
+                        saveFeatureHintPreferences(hinted);
+                      }
+                    }, 500);
+                  }}
+                  onMouseLeave={() => {
+                    if (includeSubfoldersHoverTimerRef.current) {
+                      clearTimeout(includeSubfoldersHoverTimerRef.current);
+                      includeSubfoldersHoverTimerRef.current = null;
+                    }
+                  }}
                   onClick={() => {
                     // Include-subfolders changes the browse result set (REQ-VIEW-004).
                     void closeAssetPreview(false);
@@ -10360,6 +10717,16 @@ function AppInner() {
                     );
                     setFolderRecursivePrefs(nextPrefs);
                     saveFolderRecursivePreferences(nextPrefs);
+                    // Once the user has expanded this folder's children, the
+                    // hint is moot and must never pulse again (Serpent-b8a853).
+                    if (next && recursiveHintKey) {
+                      const hintedPrefs = withFeatureHintShown(
+                        featureHintPrefs,
+                        recursiveHintKey,
+                      );
+                      setFeatureHintPrefs(hintedPrefs);
+                      saveFeatureHintPreferences(hintedPrefs);
+                    }
                     const searchActive = currentQueryDefinition().search !== undefined;
                     void loadContent(library, assetScope, {
                       discovery: currentQueryDefinition(),
@@ -10897,121 +11264,7 @@ function AppInner() {
           ) : library ? (
             browseCanvasBodyLayout.mode !== "empty" ? (
               <>
-                {browseCanvasBodyLayout.showFolders && (
-                  <div
-                    className={
-                      browseCanvasBodyLayout.mode === "folders-only"
-                        ? "folder-card-row is-folders-only"
-                        : "folder-card-row"
-                    }
-                    style={
-                      {
-                        "--folder-card-size": `${folderCardWidthPx}px`,
-                        ...(panelResizing && panelReflowFrozenWidthRef.current
-                          ? {
-                              width: `${panelReflowFrozenWidthRef.current}px`,
-                            }
-                          : {}),
-                      } as CSSProperties
-                    }
-                  >
-                    {canvasFolderBrowseEntries.map((entry) => (
-                      <FolderCard
-                        draggable={!showTrash}
-                        entry={entry}
-                        key={entry.folderId}
-                        libraryId={library.libraryId}
-                        trashed={showTrash}
-                        {...(showTrash
-                          ? {}
-                          : createFolderCardDropHandlers(entry.folderId))}
-                        onDragStart={(event) => {
-                          const folderIds = resolveDraggedFolderIds(
-                            entry.folderId,
-                            selectedFolderIds,
-                          );
-                          event.dataTransfer.setData(
-                            MANAGED_FOLDERS_DRAG_TYPE,
-                            JSON.stringify(folderIds),
-                          );
-                          event.dataTransfer.effectAllowed = "move";
-                        }}
-                        onClick={(folderId, event) => {
-                          handleFolderCardClick(folderId, event);
-                        }}
-                        onContextMenu={(clickedEntry, event) => {
-                          event.preventDefault();
-                          if (showTrash) {
-                            openContextMenu(
-                              {
-                                type: "trashed-folder",
-                                tombstoneId: clickedEntry.folderId,
-                                name: clickedEntry.name,
-                                relativePath: clickedEntry.relativePath,
-                              },
-                              { x: event.clientX, y: event.clientY },
-                            );
-                            return;
-                          }
-                          const intent = resolveBrowseContextMenuIntent(
-                            { kind: "folder", id: clickedEntry.folderId },
-                            {
-                              assetIds: selectedAssetIds,
-                              folderIds: selectedFolderIds,
-                            },
-                          );
-                          if (intent.type === "single-folder") {
-                            setSelectedFolderIds([intent.folderId]);
-                            setSelectedAssetIds([]);
-                            openContextMenu(
-                              {
-                                type: "folder",
-                                folderId:
-                                  clickedEntry.linkedFolderId ??
-                                  intent.folderId,
-                                name: clickedEntry.name,
-                                locationKind: clickedEntry.locationKind,
-                                linkedRelativePath:
-                                  clickedEntry.locationKind === "linked" &&
-                                  clickedEntry.relativePath
-                                    ? clickedEntry.relativePath
-                                    : undefined,
-                              },
-                              { x: event.clientX, y: event.clientY },
-                            );
-                            return;
-                          }
-                          if (intent.type !== "multi") return;
-                          openContextMenu(
-                            {
-                              type: "multi-asset",
-                              assetIds: [...intent.assetIds],
-                              folderIds: [...intent.folderIds],
-                              count:
-                                intent.assetIds.length + intent.folderIds.length,
-                            },
-                            { x: event.clientX, y: event.clientY },
-                          );
-                        }}
-                        onDoubleClick={(folderId) => {
-                          if (showTrash) {
-                            const entry = canvasFolderBrowseEntries.find(
-                              (item) => item.folderId === folderId,
-                            );
-                            if (!entry) return;
-                            void enterTrashAt(entry.folderId);
-                            return;
-                          }
-                          void chooseFolder(folderId);
-                        }}
-                        onMouseDown={(event) => {
-                          cardMouseDownRef.current = event.button;
-                        }}
-                        selected={selectedFolderIdSet.has(entry.folderId)}
-                      />
-                    ))}
-                  </div>
-                )}
+                {folderCardRowElement}
                 {browseCanvasBodyLayout.showAssetGrid && (
                   <div
                     className={`asset-grid is-${assetViewMode}`}
@@ -11707,7 +11960,9 @@ function AppInner() {
                 )}
               </>
             ) : (
-              <div className="empty-library">
+              <>
+                {folderCardRowElement}
+                <div className="empty-library">
                 <div className="empty-orbit">
                   <Icon name={browseEmptyState.icon} size={24} />
                 </div>
@@ -11732,6 +11987,7 @@ function AppInner() {
                   </div>
                 ) : null}
               </div>
+              </>
             )
           ) : null}
         </div>

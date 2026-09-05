@@ -1311,6 +1311,8 @@ export const en = {
     hoverVideoSoundHint: "Play sound during video hover preview (off by default to avoid noise).",
     taskCompletionSound: "Task result sound",
     taskCompletionSoundHint: "Play a quiet sound only after imports, exports, or other eligible operations actually run longer than one minute.",
+    featureHints: "Feature hints",
+    featureHintsHint: "Show one-time hints that point out hidden ways to use the interface, such as expanding a folder's subfolders. Turning this off hides all hints.",
     languageHint: "Controls the interface language. Changes apply immediately.",
     imageSequenceAutoDetect: "Detect image sequences during import",
     imageSequenceAutoDetectHint:

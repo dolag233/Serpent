@@ -710,6 +710,11 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('folder.entries'),
+    entries: z.array(folderBrowseEntrySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('folder.list-trashed'),
     folders: z.array(trashedFolderSummarySchema),
   }),

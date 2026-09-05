@@ -2563,6 +2563,12 @@ async function commandFor(
         parentFolderId: request.parentFolderId,
         showIgnored: request.showIgnored,
       };
+    case "folder.entries-request":
+      return {
+        type: "folder.entries",
+        libraryId: request.libraryId,
+        refs: request.refs,
+      };
     case "folder.trash.request":
       return {
         type: "folder.trash",

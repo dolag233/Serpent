@@ -600,6 +600,21 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: result.entries };
   },
 
+  async listFolderEntriesByRefs(input: {
+    libraryId: string;
+    refs: Array<{ locationKind: 'managed' | 'linked'; folderId: string }>;
+  }): Promise<LibraryApiResult<FolderBrowseEntry[]>> {
+    const result = await request({
+      type: 'folder.entries-request',
+      ...input,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.entries') {
+      throw new Error('Unexpected folder-entries response.');
+    }
+    return { ok: true, value: result.entries };
+  },
+
   async trashFolder(input: {
     libraryId: string;
     folderId: string;

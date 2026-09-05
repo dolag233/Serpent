@@ -478,6 +478,9 @@ function Section({
   toggleLabel,
   secondaryAction,
   secondaryLabel,
+  secondaryActionClassName,
+  onSecondaryActionMouseEnter,
+  onSecondaryActionMouseLeave,
   children,
 }: {
   title: string;
@@ -489,6 +492,10 @@ function Section({
   toggleLabel?: string;
   secondaryAction?: () => void;
   secondaryLabel?: string;
+  /** Overrides the secondary action button class (feature hints). */
+  secondaryActionClassName?: string;
+  onSecondaryActionMouseEnter?: () => void;
+  onSecondaryActionMouseLeave?: () => void;
   children: ReactNode;
 }) {
   const t = useT();
@@ -519,6 +526,9 @@ function Section({
                 icon="link"
                 label={linkLabel}
                 onClick={secondaryAction}
+                className={secondaryActionClassName ?? "tiny-action"}
+                onMouseEnter={onSecondaryActionMouseEnter}
+                onMouseLeave={onSecondaryActionMouseLeave}
               />
             )}
           </span>
@@ -618,6 +628,10 @@ export interface NavigationSidebarProps {
 
   // --- Linked folder actions ---
   onImportFolderAsLinked: () => void;
+  /** Serpent-b8a853: pulse the sidebar "导入链接文件夹" entry as a feature hint. */
+  linkedFolderHintActive?: boolean;
+  onLinkedFolderHintHover?: () => void;
+  onLinkedFolderHintHoverEnd?: () => void;
   onRelinkFolder: (folderId: string) => void;
   onConvertLinkedDialog: (dialog: {
     folderId: string;
@@ -730,6 +744,9 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onAssetsDroppedOnCollection,
     onManagedAssetCopyModeChange,
     onImportFolderAsLinked,
+    linkedFolderHintActive,
+    onLinkedFolderHintHover,
+    onLinkedFolderHintHoverEnd,
     onRelinkFolder,
     onConvertLinkedDialog,
     onAddCollection,
@@ -1619,6 +1636,13 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           toggleLabel={t("nav.showIgnored")}
           secondaryAction={library ? onImportFolderAsLinked : undefined}
           secondaryLabel={t("nav.importLinkedFolder")}
+          secondaryActionClassName={
+            linkedFolderHintActive
+              ? "tiny-action is-feature-hinting"
+              : "tiny-action"
+          }
+          onSecondaryActionMouseEnter={onLinkedFolderHintHover}
+          onSecondaryActionMouseLeave={onLinkedFolderHintHoverEnd}
         >
           {library ? (
             <>

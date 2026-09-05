@@ -1295,6 +1295,8 @@ export const zhCN = {
     hoverVideoSoundHint: "悬停视频卡片播放时播放声音（默认关闭，避免噪音）。",
     taskCompletionSound: "任务结果提示音",
     taskCompletionSoundHint: "仅当导入、导出等操作实际耗时超过 1 分钟时，在完成或失败后播放轻提示音。关闭后不再播放。",
+    featureHints: "功能提示",
+    featureHintsHint: "在遇到隐藏用法（例如展开文件夹的子文件夹）时显示一次性提示。关闭后不再出现任何提示。",
     languageHint: "控制界面文案语言，立即生效。",
     imageSequenceAutoDetect: "导入时自动检测序列帧",
     imageSequenceAutoDetectHint:

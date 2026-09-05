@@ -13981,6 +13981,151 @@ export class LibraryService {
   }
 
   /**
+   * Serpent-f74e48: real FolderBrowseEntry (counts + covers) for concrete
+   * folder refs matched by text search — so search-result folder cards reuse
+   * the exact asset-browser cards (preview images included). Accepts managed
+   * ids, linked-root ids and encoded linked virtual subdirectory ids.
+   */
+  folderEntriesByRefs(input: {
+    libraryId: string;
+    refs: Array<{ locationKind: 'managed' | 'linked'; folderId: string }>;
+  }): FolderBrowseEntry[] {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const results: FolderBrowseEntry[] = [];
+
+    const managedIds = input.refs
+      .filter((ref) => ref.locationKind === 'managed')
+      .map((ref) => ref.folderId);
+    if (managedIds.length > 0) {
+      const placeholders = managedIds.map(() => '?').join(', ');
+      const rows = openLibrary.connection
+        .prepare(
+          `SELECT folder_id, parent_folder_id, name, relative_path, path_identity
+             FROM managed_folders
+            WHERE folder_id IN (${placeholders})`,
+        )
+        .all(...managedIds) as ManagedFolderRow[];
+      const rowById = new Map(rows.map((row) => [row.folder_id, row]));
+      const visibleIds = rows
+        .filter(
+          (row) =>
+            !this.explicitFolderIgnored(
+              openLibrary,
+              'managed',
+              null,
+              row.relative_path,
+            ),
+        )
+        .map((row) => row.folder_id);
+      const counts = this.managedFolderCountMaps(openLibrary, visibleIds, false);
+      const recursiveCounts = this.managedFolderRecursiveAssetCounts(
+        openLibrary,
+        rows,
+        false,
+      );
+      const coverMap = this.folderCoverArtifactMap(openLibrary, visibleIds, false);
+      const coverCandidateMap = this.folderCoverCandidateAssetMap(
+        openLibrary,
+        visibleIds,
+        false,
+      );
+      for (const folderId of managedIds) {
+        const row = rowById.get(folderId);
+        if (!row) continue;
+        if (
+          this.explicitFolderIgnored(
+            openLibrary,
+            'managed',
+            null,
+            row.relative_path,
+          )
+        ) {
+          continue;
+        }
+        const directAssetCount = counts.directAssetCounts.get(folderId) ?? 0;
+        results.push({
+          folderId: row.folder_id,
+          parentFolderId: row.parent_folder_id,
+          locationKind: 'managed' as const,
+          name: row.name,
+          relativePath: row.relative_path,
+          status: 'available' as const,
+          directAssetCount,
+          recursiveAssetCount:
+            recursiveCounts.get(folderId) ?? directAssetCount,
+          childFolderCount: counts.childFolderCounts.get(folderId) ?? 0,
+          coverArtifactIds: coverMap.get(folderId) ?? [],
+          coverAssetIds: coverCandidateMap.get(folderId) ?? [],
+          linkedFolderId: null,
+        });
+      }
+    }
+
+    const linkedRefs = input.refs.filter(
+      (ref) => ref.locationKind === 'linked',
+    );
+    for (const ref of linkedRefs) {
+      const resolved = this.resolveLinkedFolderScope(openLibrary, ref.folderId);
+      if (!resolved) continue;
+      const paths = this.listLinkedAssetRelativePaths(
+        openLibrary,
+        resolved.linkedFolderId,
+        false,
+      );
+      const isRoot = resolved.relativePath === '';
+      const descendantPaths = isRoot
+        ? paths
+        : paths.filter((filePath) =>
+            linkedAssetIsUnderDirectory(filePath, resolved.relativePath),
+          );
+      const directAssetCount = descendantPaths.filter((filePath) =>
+        linkedAssetIsDirectChild(filePath, resolved.relativePath),
+      ).length;
+      const name = isRoot
+        ? this.linkedFolderDisplayName(openLibrary, resolved.linkedFolderId)
+        : linkedDirectoryName(resolved.relativePath);
+      results.push({
+        folderId: ref.folderId,
+        parentFolderId: null,
+        locationKind: 'linked' as const,
+        name,
+        relativePath: resolved.relativePath,
+        status: resolved.status,
+        directAssetCount,
+        recursiveAssetCount: descendantPaths.length,
+        childFolderCount: 0,
+        coverArtifactIds: this.linkedDirectoryCoverArtifactIds(
+          openLibrary,
+          resolved.linkedFolderId,
+          resolved.relativePath,
+          false,
+        ),
+        coverAssetIds: this.linkedDirectoryCoverCandidateAssetIds(
+          openLibrary,
+          resolved.linkedFolderId,
+          resolved.relativePath,
+          false,
+        ),
+        linkedFolderId: resolved.linkedFolderId,
+      });
+    }
+
+    return results;
+  }
+
+  private linkedFolderDisplayName(
+    openLibrary: OpenLibrary,
+    linkedFolderId: string,
+  ): string {
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT display_name FROM linked_folders WHERE folder_id = ?`,
+      )
+      .get(linkedFolderId) as { display_name: string } | undefined;
+    return row?.display_name ?? 'Linked';
+  }
+
+  /**
    * Serpent-a9vh: virtual child folders for a linked root or linked subdir.
    * Returns null when `parentFolderId` is not a linked scope.
    */

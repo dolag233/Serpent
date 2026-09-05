@@ -2280,6 +2280,28 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         entries,
       };
     }
+    case 'folder.entries': {
+      const entries = libraryService.folderEntriesByRefs({
+        libraryId: request.command.libraryId,
+        refs: request.command.refs,
+      });
+      // Mirror the browse-entries behavior: schedule cover candidates so
+      // search-result folder cards get their previews too (Serpent-f74e48).
+      const coverAssetIds = entries.flatMap((entry) => entry.coverAssetIds);
+      if (coverAssetIds.length > 0) {
+        scheduleThumbnailScene(
+          request.command.libraryId,
+          'cover',
+          coverAssetIds,
+          entries.length * 3,
+        );
+      }
+      return {
+        ok: true,
+        type: 'folder.entries',
+        entries,
+      };
+    }
     case 'folder.list-trashed': {
       const folders = libraryService.listTrashedFolders(request.command.libraryId);
       return { ok: true, type: 'folder.list-trashed', folders };

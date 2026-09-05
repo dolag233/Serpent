@@ -297,6 +297,22 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     parentFolderId: z.string().min(1).max(4096).nullable(),
     showIgnored: z.boolean().optional(),
   }),
+  // Serpent-f74e48: real FolderBrowseEntry (covers + counts) for concrete
+  // folder refs matched by text search, so search results reuse the exact
+  // asset-browser folder cards.
+  z.strictObject({
+    type: z.literal('folder.entries-request'),
+    libraryId: identifierSchema,
+    refs: z
+      .array(
+        z.strictObject({
+          locationKind: z.enum(['managed', 'linked']),
+          folderId: z.string().min(1).max(4096),
+        }),
+      )
+      .min(1)
+      .max(16),
+  }),
   // Clarification #7 / Serpent-ekj: managed folder trash / permanent disk delete.
   z.strictObject({
     type: z.literal('folder.trash.request'),
@@ -1425,6 +1441,19 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     parentFolderId: folderScopeIdSchema.nullable(),
     showIgnored: z.boolean().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('folder.entries'),
+    libraryId: identifierSchema,
+    refs: z
+      .array(
+        z.strictObject({
+          locationKind: z.enum(['managed', 'linked']),
+          folderId: z.string().min(1).max(4096),
+        }),
+      )
+      .min(1)
+      .max(16),
   }),
   z.strictObject({
     type: z.literal('folder.list-trashed'),

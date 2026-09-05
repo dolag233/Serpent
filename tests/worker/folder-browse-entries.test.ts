@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -314,6 +314,78 @@ describe('folder browse entries', () => {
         expect.objectContaining({ folderId: targetFolder.folderId, directAssetCount: 1 }),
       ]),
     );
+    service.closeAll();
+  });
+
+  it('folderEntriesByRefs resolves real entries with covers for managed and linked folders (Serpent-f74e48)', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'BrowseRefs', selectedParentPath: root });
+
+    const parent = service.createManagedFolder({ libraryId: library.libraryId, name: 'Parent' });
+    const child = service.createManagedFolder({
+      libraryId: library.libraryId,
+      parentFolderId: parent.folderId,
+      name: 'Child',
+    });
+
+    const fixture = path.join(root, 'sample.png');
+    writeFileSync(fixture, VALID_1X1_PNG);
+    const imported = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      targetFolderId: child.folderId,
+      sourceKind: 'files',
+      sourcePaths: [fixture],
+    });
+    if ('importId' in imported) throw new Error('unexpected conflict plan');
+    const asset = imported.assets[0]!;
+
+    const artifactId = 'art_ref_cover';
+    const db = new TestDatabase(path.join(library.libraryPath, '.serpent', 'library.db'));
+    db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          width, height, generator_version, status, generated_at)
+       VALUES (?, ?, 'thumbnail', 'image/png', 68, ?, 1, 1, 'test', 'ready', ?)`,
+    ).run(
+      artifactId,
+      asset.currentRevisionId,
+      'artifacts/cover.png',
+      new Date().toISOString(),
+    );
+    db.close();
+
+    const managedEntry = service.folderEntriesByRefs({
+      libraryId: library.libraryId,
+      refs: [{ locationKind: 'managed', folderId: child.folderId }],
+    })[0];
+    expect(managedEntry).toMatchObject({
+      folderId: child.folderId,
+      locationKind: 'managed',
+      name: 'Child',
+      directAssetCount: 1,
+      recursiveAssetCount: 1,
+      coverArtifactIds: [artifactId],
+      coverAssetIds: [asset.assetId],
+    });
+
+    // Linked root resolves to the real display name.
+    const linkedSource = path.join(root, 'LinkedRef');
+    mkdirSync(linkedSource);
+    writeFileSync(path.join(linkedSource, 'linked.png'), VALID_1X1_PNG);
+    const linked = service.importFolderAsLinked({
+      libraryId: library.libraryId,
+      sourceRootPath: linkedSource,
+    });
+    const linkedEntry = service.folderEntriesByRefs({
+      libraryId: library.libraryId,
+      refs: [{ locationKind: 'linked', folderId: linked.folderId }],
+    })[0]!;
+    expect(linkedEntry.folderId).toBe(linked.folderId);
+    expect(linkedEntry.locationKind).toBe('linked');
+    expect(linkedEntry.name).toBe('LinkedRef');
+    expect(linkedEntry.directAssetCount).toBe(1);
+
     service.closeAll();
   });
 });

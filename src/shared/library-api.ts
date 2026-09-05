@@ -295,6 +295,10 @@ export interface SerpentLibraryApi {
     parentFolderId: string | null;
     showIgnored?: boolean;
   }): Promise<LibraryApiResult<FolderBrowseEntry[]>>;
+  listFolderEntriesByRefs(input: {
+    libraryId: string;
+    refs: Array<{ locationKind: 'managed' | 'linked'; folderId: string }>;
+  }): Promise<LibraryApiResult<FolderBrowseEntry[]>>;
   trashFolder(input: {
     libraryId: string;
     folderId: string;

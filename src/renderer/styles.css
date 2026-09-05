@@ -2801,6 +2801,43 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   color: var(--accent-soft-fg);
 }
 
+/* Serpent-b8a853: feature-hint attention highlight. Applies to any affordance
+   that teaches a hidden feature (include-subfolders icon, the sidebar
+   "导入链接文件夹" button), always visible and pulsing. Functional cue, not
+   decorative motion: it keeps pulsing even under prefers-reduced-motion (the
+   app-wide reduce-motion rule collapses animations to 0.01ms, which would
+   otherwise make the hint invisible). Theme tokens only. */
+.workspace-include-subfolders.is-feature-hinting,
+.tiny-action.is-feature-hinting {
+  background: var(--accent-soft);
+  color: var(--accent-soft-fg);
+  box-shadow: inset 0 0 0 1px var(--accent-ring);
+  animation: feature-hint-accent-pulse 2.2s ease-in-out infinite;
+}
+
+@keyframes feature-hint-accent-pulse {
+  0%,
+  100% {
+    background: var(--accent-soft);
+    color: var(--accent-soft-fg);
+    box-shadow: inset 0 0 0 1px transparent;
+  }
+  45%,
+  55% {
+    background: color-mix(in srgb, var(--accent) 26%, transparent);
+    box-shadow: inset 0 0 0 1px var(--accent-ring),
+      0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-include-subfolders.is-feature-hinting,
+  .tiny-action.is-feature-hinting {
+    animation-duration: 2.2s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
+
 /* Scope size reads as a quiet count pill beside the title. */
 .item-count {
   display: inline-flex;

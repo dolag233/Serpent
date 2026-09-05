@@ -18,6 +18,10 @@ import {
   loadTaskCompletionSoundPreferences,
   saveTaskCompletionSoundPreferences,
 } from "./task-completion-sound-preferences";
+import {
+  loadFeatureHintPreferences,
+  saveFeatureHintPreferences,
+} from "./feature-hint-preferences";
 import type {
   ImportConflictPreferences,
   RememberedDuplicateDecision,
@@ -104,11 +108,21 @@ export function GeneralSettingsPage({
   const [taskCompletionSoundEnabled, setTaskCompletionSoundEnabled] = useState(
     () => loadTaskCompletionSoundPreferences().enabled,
   );
+  const [featureHintsEnabled, setFeatureHintsEnabled] = useState(
+    () => loadFeatureHintPreferences().enabled,
+  );
 
   function toggleTaskCompletionSound(): void {
     const enabled = !taskCompletionSoundEnabled;
     saveTaskCompletionSoundPreferences({ version: 1, enabled });
     setTaskCompletionSoundEnabled(enabled);
+  }
+
+  function toggleFeatureHints(): void {
+    const enabled = !featureHintsEnabled;
+    const current = loadFeatureHintPreferences();
+    saveFeatureHintPreferences({ version: 2, enabled, seen: current.seen });
+    setFeatureHintsEnabled(enabled);
   }
 
   return (
@@ -145,6 +159,14 @@ export function GeneralSettingsPage({
           hint={t("settings.taskCompletionSoundHint")}
           label={t("settings.taskCompletionSound")}
           onChange={toggleTaskCompletionSound}
+        />
+      </SettingsCard>
+      <SettingsCard>
+        <SettingsToggleRow
+          checked={featureHintsEnabled}
+          hint={t("settings.featureHintsHint")}
+          label={t("settings.featureHints")}
+          onChange={toggleFeatureHints}
         />
       </SettingsCard>
       {onOpenAppLog ? (
