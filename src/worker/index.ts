@@ -2264,14 +2264,14 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       // the current folder's assets). Schedule the cover candidates at the
       // cover tier (400 > visible 350) so folder cards get covers before the
       // rest of the library's p50 path-alphabetical backfill. maxIds = up to
-      // 3 candidates per child folder.
+      // 4 candidates per child folder (Serpent-9021d1).
       const coverAssetIds = entries.flatMap((entry) => entry.coverAssetIds);
       if (coverAssetIds.length > 0) {
         scheduleThumbnailScene(
           request.command.libraryId,
           'cover',
           coverAssetIds,
-          entries.length * 3,
+          entries.length * 4,
         );
       }
       return {
@@ -2293,7 +2293,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
           request.command.libraryId,
           'cover',
           coverAssetIds,
-          entries.length * 3,
+          entries.length * 4,
         );
       }
       return {

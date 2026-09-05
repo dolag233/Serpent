@@ -101,7 +101,9 @@ describe('folder browse entries', () => {
       // Serpent-toh: parent badge includes assets under ChildA.
       recursiveAssetCount: 1,
       childFolderCount: 2,
-      coverArtifactIds: [],
+      // Serpent-9021d1: pure folders (no direct assets) pick up covers from child folders.
+      coverArtifactIds: [artifactId],
+      coverAssetIds: [asset.assetId],
     });
 
     const underParent = service.listFolderBrowseEntries({
@@ -385,6 +387,133 @@ describe('folder browse entries', () => {
     expect(linkedEntry.locationKind).toBe('linked');
     expect(linkedEntry.name).toBe('LinkedRef');
     expect(linkedEntry.directAssetCount).toBe(1);
+
+    service.closeAll();
+  });
+
+  it('pure folders pick up to 4 covers from child folders in round-robin order (Serpent-9021d1)', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'CollageCovers', selectedParentPath: root });
+
+    const parent = service.createManagedFolder({ libraryId: library.libraryId, name: 'ParentA' });
+    const sub1 = service.createManagedFolder({ libraryId: library.libraryId, parentFolderId: parent.folderId, name: 'Sub1' });
+    const sub2 = service.createManagedFolder({ libraryId: library.libraryId, parentFolderId: parent.folderId, name: 'Sub2' });
+    const sub3 = service.createManagedFolder({ libraryId: library.libraryId, parentFolderId: parent.folderId, name: 'Sub3' });
+    const sub4 = service.createManagedFolder({ libraryId: library.libraryId, parentFolderId: parent.folderId, name: 'Sub4' });
+
+    const subs = [sub1, sub2, sub3, sub4];
+    const subAssets: Array<{ assetId: string; currentRevisionId: string }> = [];
+
+    for (const [index, sub] of subs.entries()) {
+      const filePath = path.join(root, `img_${index}.png`);
+      writeFileSync(filePath, Buffer.concat([VALID_1X1_PNG, Buffer.from([index + 10])]));
+      const imported = service.prepareOrExecuteImport({
+        libraryId: library.libraryId,
+        targetFolderId: sub.folderId,
+        sourceKind: 'files',
+        sourcePaths: [filePath],
+      });
+      if ('importId' in imported) throw new Error('unexpected conflict plan');
+      subAssets.push(imported.assets[0]!);
+    }
+
+    const db = new TestDatabase(path.join(library.libraryPath, '.serpent', 'library.db'));
+    const insertArtifact = db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          width, height, generator_version, status, generated_at)
+       VALUES (?, ?, 'thumbnail', 'image/png', 68, ?, 1, 1, 'test', 'ready', ?)`,
+    );
+    const now = new Date().toISOString();
+    subAssets.forEach((asset, index) => {
+      insertArtifact.run(
+        `art_sub_${index}`,
+        asset.currentRevisionId,
+        `artifacts/sub_${index}.png`,
+        now,
+      );
+    });
+    db.close();
+
+    const atRoot = service.listFolderBrowseEntries({
+      libraryId: library.libraryId,
+      parentFolderId: null,
+    });
+    const parentEntry = atRoot.find((e) => e.folderId === parent.folderId)!;
+    expect(parentEntry.directAssetCount).toBe(0);
+    expect(parentEntry.childFolderCount).toBe(4);
+    expect(parentEntry.recursiveAssetCount).toBe(4);
+    expect(parentEntry.coverArtifactIds).toEqual(['art_sub_0', 'art_sub_1', 'art_sub_2', 'art_sub_3']);
+    expect(parentEntry.coverAssetIds).toEqual(subAssets.map((a) => a.assetId));
+
+    service.closeAll();
+  });
+
+  it('pure folders with 2 child folders round-robin pick 4 covers (Serpent-9021d1)', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'TwoChildCollage', selectedParentPath: root });
+
+    const parent = service.createManagedFolder({ libraryId: library.libraryId, name: 'ParentTwo' });
+    const sub1 = service.createManagedFolder({ libraryId: library.libraryId, parentFolderId: parent.folderId, name: 'SubA' });
+    const sub2 = service.createManagedFolder({ libraryId: library.libraryId, parentFolderId: parent.folderId, name: 'SubB' });
+
+    const assetsA: Array<{ assetId: string; currentRevisionId: string }> = [];
+    const assetsB: Array<{ assetId: string; currentRevisionId: string }> = [];
+
+    for (let i = 0; i < 2; i++) {
+      const fileA = path.join(root, `fileA_${i}.png`);
+      writeFileSync(fileA, Buffer.concat([VALID_1X1_PNG, Buffer.from([i + 30])]));
+      const impA = service.prepareOrExecuteImport({
+        libraryId: library.libraryId,
+        targetFolderId: sub1.folderId,
+        sourceKind: 'files',
+        sourcePaths: [fileA],
+      });
+      if ('importId' in impA) throw new Error('unexpected conflict');
+      assetsA.push(impA.assets[0]!);
+
+      const fileB = path.join(root, `fileB_${i}.png`);
+      writeFileSync(fileB, Buffer.concat([VALID_1X1_PNG, Buffer.from([i + 40])]));
+      const impB = service.prepareOrExecuteImport({
+        libraryId: library.libraryId,
+        targetFolderId: sub2.folderId,
+        sourceKind: 'files',
+        sourcePaths: [fileB],
+      });
+      if ('importId' in impB) throw new Error('unexpected conflict');
+      assetsB.push(impB.assets[0]!);
+    }
+
+    const db = new TestDatabase(path.join(library.libraryPath, '.serpent', 'library.db'));
+    const insertArtifact = db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          width, height, generator_version, status, generated_at)
+       VALUES (?, ?, 'thumbnail', 'image/png', 68, ?, 1, 1, 'test', 'ready', ?)`,
+    );
+    const now = new Date().toISOString();
+    insertArtifact.run('art_A_0', assetsA[0]!.currentRevisionId, 'artifacts/A0.png', now);
+    insertArtifact.run('art_A_1', assetsA[1]!.currentRevisionId, 'artifacts/A1.png', now);
+    insertArtifact.run('art_B_0', assetsB[0]!.currentRevisionId, 'artifacts/B0.png', now);
+    insertArtifact.run('art_B_1', assetsB[1]!.currentRevisionId, 'artifacts/B1.png', now);
+    db.close();
+
+    const atRoot = service.listFolderBrowseEntries({
+      libraryId: library.libraryId,
+      parentFolderId: null,
+    });
+    const parentEntry = atRoot.find((e) => e.folderId === parent.folderId)!;
+    expect(parentEntry.directAssetCount).toBe(0);
+    expect(parentEntry.childFolderCount).toBe(2);
+    expect(parentEntry.coverArtifactIds).toEqual(['art_A_0', 'art_B_0', 'art_A_1', 'art_B_1']);
+    expect(parentEntry.coverAssetIds).toEqual([
+      assetsA[0]!.assetId,
+      assetsB[0]!.assetId,
+      assetsA[1]!.assetId,
+      assetsB[1]!.assetId,
+    ]);
 
     service.closeAll();
   });

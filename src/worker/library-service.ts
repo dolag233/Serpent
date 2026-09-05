@@ -14084,6 +14084,9 @@ export class LibraryService {
       const directAssetCount = descendantPaths.filter((filePath) =>
         linkedAssetIsDirectChild(filePath, resolved.relativePath),
       ).length;
+      const prefixes = collectLinkedDirectoryPrefixes(paths);
+      const directChildDirs = directChildLinkedDirectories(prefixes, resolved.relativePath);
+      const pureChildDirs = directAssetCount === 0 && directChildDirs.length > 0 ? directChildDirs : [];
       const name = isRoot
         ? this.linkedFolderDisplayName(openLibrary, resolved.linkedFolderId)
         : linkedDirectoryName(resolved.relativePath);
@@ -14102,12 +14105,14 @@ export class LibraryService {
           resolved.linkedFolderId,
           resolved.relativePath,
           false,
+          pureChildDirs,
         ),
         coverAssetIds: this.linkedDirectoryCoverCandidateAssetIds(
           openLibrary,
           resolved.linkedFolderId,
           resolved.relativePath,
           false,
+          pureChildDirs,
         ),
         linkedFolderId: resolved.linkedFolderId,
       });
@@ -14169,7 +14174,9 @@ export class LibraryService {
       const directAssetCount = descendantPaths.filter((filePath) =>
         linkedAssetIsDirectChild(filePath, relativePath),
       ).length;
-      const childFolderCount = directChildLinkedDirectories(prefixes, relativePath).length;
+      const directChildDirs = directChildLinkedDirectories(prefixes, relativePath);
+      const childFolderCount = directChildDirs.length;
+      const pureChildDirs = directAssetCount === 0 && childFolderCount > 0 ? directChildDirs : [];
       return {
         folderId,
         parentFolderId: input.parentFolderId,
@@ -14185,6 +14192,7 @@ export class LibraryService {
           resolved.linkedFolderId,
           relativePath,
           input.showIgnored === true,
+          pureChildDirs,
         ),
         // Serpent-d0nv: cover candidates as asset ids (cover scene scheduling
         // + progressive refresh on thumbnail.ready). Candidates do NOT require
@@ -14195,6 +14203,7 @@ export class LibraryService {
           resolved.linkedFolderId,
           relativePath,
           input.showIgnored === true,
+          pureChildDirs,
         ),
         linkedFolderId: resolved.linkedFolderId,
       };
@@ -14272,6 +14281,7 @@ export class LibraryService {
     linkedFolderId: string,
     relativePath: string,
     showIgnored: boolean,
+    childDirs: string[] = [],
   ): string[] {
     if (!columnsFor(openLibrary.connection, 'revision_artifacts').has('status')) {
       return [];
@@ -14279,7 +14289,7 @@ export class LibraryService {
     const prefix = relativePath === '' ? '' : `${relativePath}/`;
     const rows = openLibrary.connection
       .prepare(
-        `SELECT ra.artifact_id
+        `SELECT ra.artifact_id, a.relative_file_path
            FROM assets a
            JOIN revision_artifacts ra
              ON ra.revision_id = a.current_revision_id
@@ -14294,8 +14304,7 @@ export class LibraryService {
               a.relative_file_path = ?
               OR (? != '' AND substr(a.relative_file_path, 1, ?) = ?)
             )
-          ORDER BY a.relative_file_path
-          LIMIT 3`,
+          ORDER BY a.relative_file_path`,
       )
       .all(
         linkedFolderId,
@@ -14303,12 +14312,44 @@ export class LibraryService {
         prefix,
         [...prefix].length,
         prefix,
-      ) as Array<{ artifact_id: string }>;
-    return rows.map((row) => row.artifact_id);
+      ) as Array<{ artifact_id: string; relative_file_path: string }>;
+
+    if (childDirs.length === 0) {
+      return rows.slice(0, 3).map((row) => row.artifact_id);
+    }
+
+    // Serpent-9021d1: Pure linked folder — round-robin across direct child directories
+    const childPrefixes = childDirs.map((d) => (d === '' ? '' : `${d}/`));
+    const byChild: string[][] = childDirs.map(() => []);
+    for (const row of rows) {
+      for (let i = 0; i < childDirs.length; i++) {
+        const cPrefix = childPrefixes[i]!;
+        if (row.relative_file_path === childDirs[i] || row.relative_file_path.startsWith(cPrefix)) {
+          byChild[i]!.push(row.artifact_id);
+          break;
+        }
+      }
+    }
+
+    const picked: string[] = [];
+    let round = 0;
+    while (picked.length < 4) {
+      let addedInRound = false;
+      for (let c = 0; c < childDirs.length && picked.length < 4; c++) {
+        const list = byChild[c];
+        if (list && round < list.length) {
+          picked.push(list[round]!);
+          addedInRound = true;
+        }
+      }
+      if (!addedInRound) break;
+      round++;
+    }
+    return picked;
   }
 
   /**
-   * Serpent-d0nv: linked-directory cover scheduling candidates — the top-3
+   * Serpent-d0nv: linked-directory cover scheduling candidates — the top-4
    * direct linked assets by path, with NO ready-thumbnail requirement (see
    * folderCoverCandidateAssetMap).
    */
@@ -14317,11 +14358,12 @@ export class LibraryService {
     linkedFolderId: string,
     relativePath: string,
     showIgnored: boolean,
+    childDirs: string[] = [],
   ): string[] {
     const prefix = relativePath === '' ? '' : `${relativePath}/`;
     const rows = openLibrary.connection
       .prepare(
-        `SELECT a.asset_id
+        `SELECT a.asset_id, a.relative_file_path
            FROM assets a
           WHERE a.linked_folder_id = ?
             AND a.location_kind = 'linked'
@@ -14331,8 +14373,7 @@ export class LibraryService {
               a.relative_file_path = ?
               OR (? != '' AND substr(a.relative_file_path, 1, ?) = ?)
             )
-          ORDER BY a.relative_file_path
-          LIMIT 3`,
+          ORDER BY a.relative_file_path`,
       )
       .all(
         linkedFolderId,
@@ -14340,8 +14381,40 @@ export class LibraryService {
         prefix,
         [...prefix].length,
         prefix,
-      ) as Array<{ asset_id: string }>;
-    return rows.map((row) => row.asset_id);
+      ) as Array<{ asset_id: string; relative_file_path: string }>;
+
+    if (childDirs.length === 0) {
+      return rows.slice(0, 3).map((row) => row.asset_id);
+    }
+
+    // Serpent-9021d1: Pure linked folder — round-robin across direct child directories
+    const childPrefixes = childDirs.map((d) => (d === '' ? '' : `${d}/`));
+    const byChild: string[][] = childDirs.map(() => []);
+    for (const row of rows) {
+      for (let i = 0; i < childDirs.length; i++) {
+        const cPrefix = childPrefixes[i]!;
+        if (row.relative_file_path === childDirs[i] || row.relative_file_path.startsWith(cPrefix)) {
+          byChild[i]!.push(row.asset_id);
+          break;
+        }
+      }
+    }
+
+    const picked: string[] = [];
+    let round = 0;
+    while (picked.length < 4) {
+      let addedInRound = false;
+      for (let c = 0; c < childDirs.length && picked.length < 4; c++) {
+        const list = byChild[c];
+        if (list && round < list.length) {
+          picked.push(list[round]!);
+          addedInRound = true;
+        }
+      }
+      if (!addedInRound) break;
+      round++;
+    }
+    return picked;
   }
 
   /**
@@ -14619,11 +14692,149 @@ export class LibraryService {
       existing.push(row.artifact_id);
       covers.set(row.folder_id, existing);
     }
+
+    // Serpent-9021d1: For pure folders (folders with directAssetCount === 0),
+    // pick up to 4 covers from their child folders in round-robin order so
+    // the folder card displays a 2x2 collage preview of its subfolder contents.
+    const missingFolderIds = folderIds.filter((id) => (covers.get(id)?.length ?? 0) === 0);
+    if (missingFolderIds.length > 0) {
+      this.populateChildFolderCovers(openLibrary, missingFolderIds, covers, showIgnored);
+    }
+
     return covers;
   }
 
   /**
-   * Serpent-d0nv: cover scheduling candidates — the top-3 direct assets per
+   * Serpent-9021d1: For pure folders (folders with directAssetCount === 0),
+   * pick up to 4 covers from their child folders in round-robin order so
+   * the folder card displays a 2x2 collage preview of its subfolder contents.
+   */
+  private populateChildFolderCovers(
+    openLibrary: OpenLibrary,
+    parentFolderIds: string[],
+    covers: Map<string, string[]>,
+    showIgnored = false,
+  ): void {
+    if (parentFolderIds.length === 0) return;
+
+    const allFolders = (
+      openLibrary.connection
+        .prepare('SELECT folder_id, parent_folder_id, relative_path, name FROM managed_folders')
+        .all() as ManagedFolderRow[]
+    ).filter(
+      (folder) => showIgnored || !this.explicitFolderIgnored(openLibrary, 'managed', null, folder.relative_path),
+    );
+
+    const parentToChildren = new Map<string, ManagedFolderRow[]>();
+    for (const folder of allFolders) {
+      if (folder.parent_folder_id) {
+        const list = parentToChildren.get(folder.parent_folder_id) ?? [];
+        list.push(folder);
+        parentToChildren.set(folder.parent_folder_id, list);
+      }
+    }
+    for (const list of parentToChildren.values()) {
+      list.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    }
+
+    const folderToDirectChild = new Map<string, { parentFolderId: string; childIndex: number }>();
+    const allDescendantFolderIds: string[] = [];
+
+    for (const parentId of parentFolderIds) {
+      const directChildren = parentToChildren.get(parentId) ?? [];
+      for (let i = 0; i < directChildren.length; i++) {
+        const child = directChildren[i]!;
+        const queue = [child.folder_id];
+        while (queue.length > 0) {
+          const currId = queue.shift()!;
+          if (!folderToDirectChild.has(currId)) {
+            folderToDirectChild.set(currId, { parentFolderId: parentId, childIndex: i });
+            allDescendantFolderIds.push(currId);
+          }
+          const subChildren = parentToChildren.get(currId);
+          if (subChildren) {
+            for (const sub of subChildren) {
+              queue.push(sub.folder_id);
+            }
+          }
+        }
+      }
+    }
+
+    if (allDescendantFolderIds.length === 0) return;
+
+    const placeholders = allDescendantFolderIds.map(() => '?').join(', ');
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT a.managed_folder_id AS folder_id, ra.artifact_id AS artifact_id
+           FROM assets a
+           JOIN revision_artifacts ra
+             ON ra.revision_id = a.current_revision_id
+            AND ra.invalidated_at IS NULL
+            AND ra.status = 'ready'
+            AND ra.kind = CASE
+              WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
+                OR LOWER(a.relative_file_path) LIKE '%.webm'
+                OR LOWER(a.relative_file_path) LIKE '%.mov'
+                OR LOWER(a.relative_file_path) LIKE '%.avi'
+                OR LOWER(a.relative_file_path) LIKE '%.wmv'
+                OR LOWER(a.relative_file_path) LIKE '%.mkv'
+                OR LOWER(a.relative_file_path) LIKE '%.m4v'
+              THEN 'video_poster'
+              ELSE 'thumbnail'
+            END
+          WHERE a.managed_folder_id IN (${placeholders})
+            AND a.deleted_at IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id
+            )
+            AND ${this.explicitIgnoreSql(openLibrary.connection, 'a', showIgnored)}
+          ORDER BY a.managed_folder_id, a.relative_file_path`,
+      )
+      .all(...allDescendantFolderIds) as Array<{ folder_id: string; artifact_id: string }>;
+
+    const artifactsByParentAndChild = new Map<string, Map<number, string[]>>();
+    for (const row of rows) {
+      const match = folderToDirectChild.get(row.folder_id);
+      if (!match) continue;
+      let childMap = artifactsByParentAndChild.get(match.parentFolderId);
+      if (!childMap) {
+        childMap = new Map();
+        artifactsByParentAndChild.set(match.parentFolderId, childMap);
+      }
+      const list = childMap.get(match.childIndex) ?? [];
+      list.push(row.artifact_id);
+      childMap.set(match.childIndex, list);
+    }
+
+    for (const parentId of parentFolderIds) {
+      const directChildren = parentToChildren.get(parentId) ?? [];
+      if (directChildren.length === 0) continue;
+      const childMap = artifactsByParentAndChild.get(parentId);
+      if (!childMap) continue;
+
+      const picked: string[] = [];
+      let round = 0;
+      while (picked.length < 4) {
+        let addedInRound = false;
+        for (let c = 0; c < directChildren.length && picked.length < 4; c++) {
+          const list = childMap.get(c);
+          if (list && round < list.length) {
+            picked.push(list[round]!);
+            addedInRound = true;
+          }
+        }
+        if (!addedInRound) break;
+        round++;
+      }
+      if (picked.length > 0) {
+        covers.set(parentId, picked);
+      }
+    }
+  }
+
+  /**
+   * Serpent-d0nv: cover scheduling candidates — the top-4 direct assets per
    * folder by path, with NO ready-thumbnail requirement. The cover thumbnail
    * scene (priority 400) schedules these asset ids so folders without covers
    * generate their cover before the p50 path-alphabetical backfill; assets
@@ -14660,7 +14871,129 @@ export class LibraryService {
       existing.push(row.asset_id);
       candidates.set(row.folder_id, existing);
     }
+
+    // Serpent-9021d1: Candidate assets for pure folders' child folder covers
+    // so thumbnail generation at `cover` scene schedules them proactively.
+    const missingFolderIds = folderIds.filter((id) => (candidates.get(id)?.length ?? 0) === 0);
+    if (missingFolderIds.length > 0) {
+      this.populateChildFolderCandidateAssets(openLibrary, missingFolderIds, candidates, showIgnored);
+    }
+
     return candidates;
+  }
+
+  /**
+   * Serpent-9021d1: For pure folders (folders with directAssetCount === 0),
+   * pick up to 4 candidate asset ids from their child folders in round-robin
+   * order so the cover thumbnail scene schedules them proactively.
+   */
+  private populateChildFolderCandidateAssets(
+    openLibrary: OpenLibrary,
+    parentFolderIds: string[],
+    candidates: Map<string, string[]>,
+    showIgnored = false,
+  ): void {
+    if (parentFolderIds.length === 0) return;
+
+    const allFolders = (
+      openLibrary.connection
+        .prepare('SELECT folder_id, parent_folder_id, relative_path, name FROM managed_folders')
+        .all() as ManagedFolderRow[]
+    ).filter(
+      (folder) => showIgnored || !this.explicitFolderIgnored(openLibrary, 'managed', null, folder.relative_path),
+    );
+
+    const parentToChildren = new Map<string, ManagedFolderRow[]>();
+    for (const folder of allFolders) {
+      if (folder.parent_folder_id) {
+        const list = parentToChildren.get(folder.parent_folder_id) ?? [];
+        list.push(folder);
+        parentToChildren.set(folder.parent_folder_id, list);
+      }
+    }
+    for (const list of parentToChildren.values()) {
+      list.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    }
+
+    const folderToDirectChild = new Map<string, { parentFolderId: string; childIndex: number }>();
+    const allDescendantFolderIds: string[] = [];
+
+    for (const parentId of parentFolderIds) {
+      const directChildren = parentToChildren.get(parentId) ?? [];
+      for (let i = 0; i < directChildren.length; i++) {
+        const child = directChildren[i]!;
+        const queue = [child.folder_id];
+        while (queue.length > 0) {
+          const currId = queue.shift()!;
+          if (!folderToDirectChild.has(currId)) {
+            folderToDirectChild.set(currId, { parentFolderId: parentId, childIndex: i });
+            allDescendantFolderIds.push(currId);
+          }
+          const subChildren = parentToChildren.get(currId);
+          if (subChildren) {
+            for (const sub of subChildren) {
+              queue.push(sub.folder_id);
+            }
+          }
+        }
+      }
+    }
+
+    if (allDescendantFolderIds.length === 0) return;
+
+    const placeholders = allDescendantFolderIds.map(() => '?').join(', ');
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT a.managed_folder_id AS folder_id, a.asset_id AS asset_id
+           FROM assets a
+          WHERE a.managed_folder_id IN (${placeholders})
+            AND a.deleted_at IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id
+            )
+            AND ${this.explicitIgnoreSql(openLibrary.connection, 'a', showIgnored)}
+          ORDER BY a.managed_folder_id, a.relative_file_path`,
+      )
+      .all(...allDescendantFolderIds) as Array<{ folder_id: string; asset_id: string }>;
+
+    const assetsByParentAndChild = new Map<string, Map<number, string[]>>();
+    for (const row of rows) {
+      const match = folderToDirectChild.get(row.folder_id);
+      if (!match) continue;
+      let childMap = assetsByParentAndChild.get(match.parentFolderId);
+      if (!childMap) {
+        childMap = new Map();
+        assetsByParentAndChild.set(match.parentFolderId, childMap);
+      }
+      const list = childMap.get(match.childIndex) ?? [];
+      list.push(row.asset_id);
+      childMap.set(match.childIndex, list);
+    }
+
+    for (const parentId of parentFolderIds) {
+      const directChildren = parentToChildren.get(parentId) ?? [];
+      if (directChildren.length === 0) continue;
+      const childMap = assetsByParentAndChild.get(parentId);
+      if (!childMap) continue;
+
+      const picked: string[] = [];
+      let round = 0;
+      while (picked.length < 4) {
+        let addedInRound = false;
+        for (let c = 0; c < directChildren.length && picked.length < 4; c++) {
+          const list = childMap.get(c);
+          if (list && round < list.length) {
+            picked.push(list[round]!);
+            addedInRound = true;
+          }
+        }
+        if (!addedInRound) break;
+        round++;
+      }
+      if (picked.length > 0) {
+        candidates.set(parentId, picked);
+      }
+    }
   }
 
   private summarizeManagedFolderRow(
