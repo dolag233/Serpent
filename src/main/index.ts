@@ -358,6 +358,7 @@ import {
   classifyDroppedSourcePaths,
   cleanupClipboardImage,
   cleanupStaleClipboardImages,
+  readClipboardImage,
   stageClipboardImage,
 } from "./desktop-ingestion";
 import {
@@ -4621,14 +4622,33 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     } else if (request.type === "asset.import-clipboard.request") {
       let image;
       try {
-        image =
+        if (
           !app.isPackaged &&
           process.env.SERPENT_E2E === "1" &&
           process.env.SERPENT_E2E_CLIPBOARD_IMAGE_PATH
-            ? nativeImage.createFromBuffer(
-                readFileSync(process.env.SERPENT_E2E_CLIPBOARD_IMAGE_PATH),
-              )
-            : clipboard.readImage();
+        ) {
+          image = nativeImage.createFromBuffer(
+            readFileSync(process.env.SERPENT_E2E_CLIPBOARD_IMAGE_PATH),
+          );
+        } else {
+          // Windows clipboard images arrive in several layouts; walk them all
+          // (Chromium bitmap, registered PNG, bare DIB, HTML references).
+          const extracted = readClipboardImage({
+            readImage: () => clipboard.readImage(),
+            readBuffer: (format) => clipboard.readBuffer(format),
+            readHTML: () => clipboard.readHTML(),
+            createFromBuffer: (buffer) => nativeImage.createFromBuffer(buffer),
+          });
+          if (!extracted) {
+            logger?.info(
+              "desktop-ingestion.clipboard-formats",
+              "no importable image on the clipboard",
+              { formats: clipboard.availableFormats() },
+            );
+            throw new Error("CLIPBOARD_IMAGE_NOT_FOUND");
+          }
+          image = extracted.image;
+        }
         const injectedNow =
           !app.isPackaged &&
           process.env.SERPENT_E2E === "1" &&

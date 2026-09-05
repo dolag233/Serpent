@@ -54,6 +54,7 @@ export type ApplicationMenuCommand =
   | "file.import-files"
   | "file.import-folder"
   | "file.import-linked-folder"
+  | "file.paste-image"
   | "edit.undo"
   | "edit.redo"
   | "edit.paste"
@@ -215,6 +216,7 @@ export function buildApplicationMenuTemplate(
         commandItem("file.import-files", "toolbar.importFiles"),
         commandItem("file.import-folder", "toolbar.importFolder"),
         commandItem("file.import-linked-folder", "toolbar.importLinkedFolder"),
+        commandItem("file.paste-image", "toolbar.pasteImage"),
       ]
     : [];
 

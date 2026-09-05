@@ -6435,6 +6435,20 @@ function AppInner() {
       handleAssetsDroppedOnFolder(folderId, assetIds, mode),
   });
 
+  // Paste-into-folder entry shared by the keyboard shortcut, Edit menu, and
+  // context menus: the clipboard may hold a bitmap image (invisible to the
+  // paste event on Windows) or OS file paths — try the image first and fall
+  // back to OS file paste. Serpent-a3de58.
+  const dispatchClipboardPaste = useCallback(
+    (destination: string | null) => {
+      void pasteClipboardImage({
+        targetFolderId: destination ?? undefined,
+        onNoClipboardImage: () => pasteOsClipboardFiles(destination),
+      });
+    },
+    [pasteClipboardImage, pasteOsClipboardFiles],
+  );
+
   const {
     assetRenameDialog,
     openAssetRename,
@@ -8945,7 +8959,7 @@ function AppInner() {
     onCopyFilePath: (assetId) => {
       void handleCopyFilePath(assetId);
     },
-    onPasteIntoFolder: pasteOsClipboardFiles,
+    onPasteIntoFolder: dispatchClipboardPaste,
     onRevealInFolder: (assetId) => {
       void handleRevealInFolder(assetId);
     },
@@ -9093,20 +9107,21 @@ function AppInner() {
       }
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
 
-      const hasImage =
-        event.clipboardData &&
-        Array.from(event.clipboardData.items).some((item) =>
-          item.type.startsWith("image/"),
-        );
-      if (hasImage) {
-        event.preventDefault();
-        void pasteClipboardImage();
-        return;
-      }
-
-      if (browsePasteDestination === undefined) return;
+      // Windows clipboard images are frequently bitmap-only (CF_DIB) that the
+      // renderer's clipboardData never reports as an image item. Delegate
+      // classification to Main's clipboard.readImage(): image first, then OS
+      // file paths, and stay silent when the clipboard holds neither.
       event.preventDefault();
-      pasteOsClipboardFiles(browsePasteDestination);
+      void pasteClipboardImage({
+        targetFolderId:
+          browsePasteDestination === undefined
+            ? managedImportTargetFolderIdRef.current
+            : (browsePasteDestination ?? undefined),
+        onNoClipboardImage: () => {
+          if (browsePasteDestination === undefined) return;
+          pasteOsClipboardFiles(browsePasteDestination);
+        },
+      });
     };
     document.addEventListener("paste", onPaste);
     return () => document.removeEventListener("paste", onPaste);
@@ -9115,6 +9130,7 @@ function AppInner() {
     busy,
     showTrash,
     browsePasteDestination,
+    managedImportTargetFolderIdRef,
     pasteClipboardImage,
     pasteOsClipboardFiles,
   ]);
@@ -10060,6 +10076,7 @@ function AppInner() {
       importFiles: () => void importAssets("files"),
       importFolder: () => void importAssets("folder"),
       importLinkedFolder: () => void importFolderAsLinked(),
+      pasteImage: () => void pasteClipboardImage(),
       importLibrary: () => {
         setOpenLibraryChooserOpen(false);
         setImportLibraryChooserOpen(true);
@@ -10079,7 +10096,7 @@ function AppInner() {
       },
       paste: () => {
         if (browsePasteDestination !== undefined) {
-          pasteOsClipboardFiles(browsePasteDestination);
+          dispatchClipboardPaste(browsePasteDestination);
         }
       },
       selectAll: () => void selectAllBrowseScope(),
@@ -11984,6 +12001,13 @@ function AppInner() {
                     >
                       {t("toolbar.importFolder")}
                     </button>
+                    <button
+                      className="secondary-button"
+                      onClick={() => void pasteClipboardImage()}
+                      type="button"
+                    >
+                      {t("toolbar.pasteImage")}
+                    </button>
                   </div>
                 ) : null}
               </div>
@@ -12855,7 +12879,7 @@ function AppInner() {
           void handleCopyFolder(folderId);
         }}
         onPasteIntoFolder={(folderId) => {
-          void pasteIntoFolder(folderId);
+          dispatchClipboardPaste(folderId);
         }}
         onCloneFolder={(folderId) => {
           void cloneFolder(folderId);

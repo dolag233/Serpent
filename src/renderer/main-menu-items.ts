@@ -49,6 +49,7 @@ const APPLICATION_MENU_ITEM_COMMANDS: Readonly<Record<string, ApplicationMenuCom
   "file.import-files": "file.import-files",
   "file.import-folder": "file.import-folder",
   "file.import-linked-folder": "file.import-linked-folder",
+  "file.paste-image": "file.paste-image",
   "edit.undo": "edit.undo",
   "edit.redo": "edit.redo",
   "library.create": "library.create",
@@ -102,6 +103,7 @@ export type MainMenuActions = {
   readonly importFiles: () => void;
   readonly importFolder: () => void;
   readonly importLinkedFolder: () => void;
+  readonly pasteImage: () => void;
   readonly importLibrary: () => void;
   readonly exportLibrary: () => void;
   readonly openLibrarySettings?: () => void;
@@ -193,6 +195,12 @@ export function buildMainMenuSections({
           label: label(locale, "toolbar.importLinkedFolder"),
           disabled: libraryDisabled,
           onSelect: actions.importLinkedFolder,
+        },
+        {
+          id: "file.paste-image",
+          label: label(locale, "toolbar.pasteImage"),
+          disabled: libraryDisabled,
+          onSelect: actions.pasteImage,
         },
       ],
     },

@@ -16,6 +16,7 @@ function createActions(): MainMenuActions {
     importFiles: vi.fn(),
     importFolder: vi.fn(),
     importLinkedFolder: vi.fn(),
+    pasteImage: vi.fn(),
     importLibrary: vi.fn(),
     exportLibrary: vi.fn(),
     undo: vi.fn(),
@@ -190,5 +191,31 @@ describe("main-menu-items (Serpent-bnah)", () => {
     const { sections } = build();
     const library = sections.find((section) => section.id === "library");
     expect(library?.items?.some((item) => item.id === "library.rename")).toBe(false);
+  });
+
+  it("routes paste-image in the File menu to the clipboard-image action (Serpent-a3de58)", () => {
+    const { actions, sections } = build();
+    const file = sections.find((section) => section.id === "file");
+    const item = file?.items?.find((candidate) => candidate.id === "file.paste-image");
+    expect(item?.label).toBe("粘贴图片");
+    expect(item?.disabled).toBe(false);
+    item?.onSelect?.();
+    expect(actions.pasteImage).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables paste-image when no library is open", () => {
+    const { sections } = build({
+      state: {
+        libraryOpen: false,
+        busy: false,
+        hasUndoableOperation: false,
+        hasRedoableOperation: false,
+        hasSelectedAssets: false,
+        hasPasteTarget: false,
+        hasBrowseAssets: false,
+      },
+    });
+    const file = sections.find((section) => section.id === "file");
+    expect(file?.items?.find((item) => item.id === "file.paste-image")?.disabled).toBe(true);
   });
 });
