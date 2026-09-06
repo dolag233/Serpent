@@ -151,8 +151,8 @@ JSONL 流程操作，禁止重新启用旧数据库同步。
 - **打包只在 dev 分支**（main 剥离 docs/internal 后 verify-package 门禁过不了，设计如此）；main 仅作发布基线。
 - **main 合流纪律**：剥离全部开发文件（`AGENTS.md`/`CLAUDE.md`/`docs/internal/`/`.beads/`/`.github/`），**单一提交完成**（merge --no-commit → git rm → 一次 commit），禁止「引入又删除」来回提交；`scripts/hooks/pre-commit` 守卫 main（`npm run install:git-hooks`）。
 - **产物命名**（自动更新按名字选资产，禁止裸 exe 或 Forge 默认名）：`Serpent-win-x86-64-<ver>-portable.zip` / `-setup.zip`（Inno `SerpentSetup.exe` 打包成 zip）/ macOS `Serpent-darwin-arm64-<ver>-portable.zip` / `-package.dmg`；每个资产配同名 `.sha256`。
-- **Changelog 中英双语**（中文在前），标题 `**Serpent <版本>** — 一句话 · English one-liner`，按重要度排序，次要改动概括；保存 `release-notes-<ver>.md`。
-- **Release**：`gh release create v<ver> --title "Serpent <ver>" --notes-file release-notes-<ver>.md --target main`（gh 在 `C:\Program Files\GitHub CLI\gh.exe`，PATH 可能缺失用全路径）；tag `v<ver>` 指向 main 发布基线。
+- **Changelog 中英双语**（中文在前），标题 `**Serpent <版本>** — 一句话 · English one-liner`，按重要度排序，次要改动概括；直接写入 GitHub Release 正文（可选 `release-meta.json` 短条目）。不在仓库维护 `release-notes-<ver>.md`；`gh release create --notes-file` 使用本地临时草稿，不要提交进 git。
+- **Release**：`gh release create v<ver> --title "Serpent <ver>" --notes-file <本地临时草稿.md> --target main`（gh 在 `C:\Program Files\GitHub CLI\gh.exe`，PATH 可能缺失用全路径）；tag `v<ver>` 指向 main 发布基线。
 - 打包后必须 `npm run rebuild:native` 恢复 dev 环境（FTS5 probe OK），并切回 dev 分支。
 
 ## 关键约束

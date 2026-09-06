@@ -90,7 +90,7 @@ Windows 安装器（Inno Setup，2026-08-08 决策替代 WiX MSI）：
 - **中英双语**：中文在前、英文在后，标题 `**Serpent <版本>** — <一句话主题> · <English one-liner>`。
 - **按重要程度排序**：新功能 > 性能/可靠性 > 错误提示 > 其他。
 - 重要功能逐条详细描述（中英对照条目，说明用户价值）；**UI 修改、简单 bug 修复用概括语句**（如「优化了若干 UI」「修复了若干稳定性问题」），不逐一列举。
-- 写好后保存为 `release-notes-<ver>.md`，`gh release create --notes-file` 使用。
+- **不在仓库维护 `release-notes-<ver>.md`**。Changelog 直接写入 GitHub Release 正文；关于窗口短条目可选写入 `release-meta.json` 资产（见 §4）。发布时用本地临时草稿配合 `gh release create --notes-file` 或 `gh release edit`，草稿不要提交进 git。
 
 参考：[v0.1.1 release notes](https://github.com/dolag233/Serpent/releases/tag/v0.1.1)（WebDAV 同步、外部资源库、数据恢复、性能、错误提示的写法与排序）。
 
@@ -100,7 +100,8 @@ Windows 安装器（Inno Setup，2026-08-08 决策替代 WiX MSI）：
 
 ```bash
 # 创建（target 指向发布分支 main；tag 指向 main 发布基线）
-gh release create v<ver> --title "Serpent <ver>" --notes-file release-notes-<ver>.md --target main
+# --notes-file 指向本地临时草稿，不要提交进仓库
+gh release create v<ver> --title "Serpent <ver>" --notes-file <本地临时草稿.md> --target main
 
 # 上传资产（macOS 4 个：dmg/portable + 各自 sha256）
 gh release upload v<ver> \
@@ -138,8 +139,8 @@ gh release upload v<ver> release-meta.json
 - [ ] main 合流用**单一提交**完成（merge --no-commit → git rm 开发文件 → 一次 commit），禁止「引入又删除」的来回提交
 - [ ] 全部发布门禁通过（media verify / verify-package / ufbx WASM）——**在 dev 分支打包**
 - [ ] 产物按 §4 规范名精确重命名（`win-x86-64` 不是 `win32-x64`；安装包是 `-setup.zip` 不是裸 exe）+ 每个资产同名 `.sha256`（只含哈希）
-- [ ] Changelog 中英双语（中文在前，标题 `**Serpent <版本>** — 一句话 · English one-liner`）、按重要度排序、次要改动概括
-- [ ] `gh release create v<ver> --title "Serpent <ver>" --notes-file release-notes-<ver>.md --target main`（gh 全路径调用）
+- [ ] Changelog 中英双语（中文在前，标题 `**Serpent <版本>** — 一句话 · English one-liner`）、按重要度排序、次要改动概括；已写入 GitHub Release 正文（可选 `release-meta.json`）
+- [ ] `gh release create v<ver> --title "Serpent <ver>" --notes-file <本地临时草稿.md> --target main`（gh 全路径调用；草稿不提交进仓库）
 - [ ] 资产上传齐全（macOS 4 / Windows 4），release 页核对标题/notes/资产/`--target main`
 - [ ] tag `v<ver>` 指向 main 发布基线（`git tag v<ver> <main-commit>` + `git push origin v<ver>`）
 - [ ] `npm run rebuild:native` 已恢复 dev 环境（FTS5 probe OK）
