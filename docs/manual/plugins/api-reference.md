@@ -263,6 +263,23 @@ interface PluginInvocationContext {
 菜单、工具栏、Inspector、查看页会带上当前选中资产的有界快照（`selection.assets`，最多 256 项，只有库内相对路径，没有绝对路径）。
 快照包含 `currentRevisionId` 和 `folderId`，替换原资产和导入到同一文件夹时不要再 `assets.list` 去补。插件要用这份快照识别「选中了谁」和媒体类型，不要为当前选择再调用 `assets.list`。只有 MCP/脚本等只给了 ID、没有快照时才按 `assetIds` 回查。
 
+#### 写回所需的最小选中快照
+
+Host 必须为 `invocation.selection.assets` 填充以下字段。插件应直接使用这份触发时快照，不要调用
+`assets.list` 重新发现当前选择：
+
+| 字段 | 约束与用途 |
+| --- | --- |
+| `id` | 稳定资产 ID |
+| `name` | 当前文件名/资产名称 |
+| `relativeFilePath` | 资源库内相对 POSIX 路径，绝不能是绝对路径 |
+| `mediaType` | `image`、`video`、`audio` 等媒体类型 |
+| `byteSize` | 当前内容字节数 |
+| `currentRevisionId` | 当前内容修订 ID；写回时作为 `replaceContent` 的 `expectedRevisionId` |
+| `locationKind` | `managed` 或 `linked` |
+
+如果 Host 仍因兼容旧版本而省略 `currentRevisionId`，插件不得猜测或回退到另一项资产；应刷新快照后再执行写回。
+
 ## 5. Guest API
 
 以下为当前生成 SDK 的公共面，所有方法均返回 Promise 或受约束的 AsyncIterable；具体领域输入/输出继续服从 Gateway schema。
@@ -367,8 +384,22 @@ const result = await serpent.ui.openDialog({
 const { ffmpegPath, ffprobePath } = await serpent.media.getBinaryPaths();
 ```
 
-`openDialog({ title, render })` 需要 `ui.dialogs`。`render` 在插件进程里执行，产出有界 widget 树；Host 用已有 primitive（`DialogShell` / `Field` / `Select` / `Switch` / `Slider` / `TextField`）绘制，页脚负责取消与提交。不要为对话框写 HTML/CSS，也不要用 Manifest JSON 描述表单。旧的 `openDialog({ dialogId, payload })` iframe 路径仍可作为 WebGL/第三方页的 escape hatch，并引用 `contributes.dialogs` 的 local id。`getBinaryPaths` 需要
-`media.binaries`，返回宿主内置（或 `SERPENT_FFMPEG_PATH` 覆盖）的 FFmpeg/ffprobe 绝对路径；插件不要再让用户填写路径，也不要捆绑第二套 FFmpeg。这两条命令不读写资源库，**全局插件可以直接调用，不必先 `serpent.forLibrary()`**。
+`openDialog({ title, render })` 需要 `ui.dialogs`，widget kit 是标准表单的默认路径。`render` 在插件进程里执行，产出有界
+widget 树；Host 用已有 primitive（`DialogShell` / `Field` / `Select` / `Switch` / `Slider` / `TextField`）绘制，页脚负责取消与提交。
+这个路径不使用 HTML/CSS，也不把 Manifest JSON 当作对话框 UI 语言。对于复杂界面或交互、WebGL、第三方页面，HTML/iframe
+对话框 `openDialog({ dialogId, payload })` 是受支持的一等路径，并引用 `contributes.dialogs` 的 local id；它是复杂 UI 的正式能力，
+不是待删除的临时方案。`getBinaryPaths` 需要 `media.binaries`，返回宿主内置（或 `SERPENT_FFMPEG_PATH` 覆盖）的 FFmpeg/ffprobe 绝对路径；
+插件不要再让用户填写路径，也不要捆绑第二套 FFmpeg。这两条命令不读写资源库，**全局插件可以直接调用，不必先
+`serpent.forLibrary()`**。
+
+#### 宿主媒体二进制与 FFmpeg 方言
+
+- 使用 `serpent.media.getBinaryPaths()` 获取宿主的 `ffmpegPath` 和 `ffprobePath`；不要捆绑第二套 FFmpeg，也不要让用户填写路径。
+- 当前捆绑二进制锁定为 FFmpeg 8.x，来源锁见 `resources/media-binaries/bundle-lock.json`，媒体包版本为 `media-v0.1.2`。
+- ffprobe JSON 输出使用 `-output_format json` 或 `-of json`；不要使用 `-print-format`，FFmpeg 8 会拒绝该写法。
+- 编码前始终在运行时执行 `ffmpeg -encoders` 探测，不要假设存在 `libx264` 或 `libx265`。非 GPL 构建会禁用这些编码器，Windows 常见可用的是 `libopenh264`；GPL 与非 GPL 构建差异见 `tests/unit/media-binaries.test.ts`。
+- 只有实际支持 CRF 的编码器才传 CRF 参数；不要把 CRF 当作所有编码器的通用选项。
+- 当前不提供 `getCapabilities()` API。
 
 ### `serpent.events` 与 `serpent.hooks`
 

@@ -6,6 +6,7 @@ import {
   createPluginContributionContext,
   createPluginInvocationContext,
   evaluatePluginContextExpression,
+  toPluginInvocationAssets,
 } from '../../src/plugins/plugin-context';
 
 function context(revision = 1) {
@@ -196,5 +197,26 @@ describe('plugin context kernel', () => {
       locationKind: 'managed',
     }]);
     expect(Object.isFrozen(invocation.selection.assets)).toBe(true);
+  });
+
+  it('keeps the complete write-back snapshot fields in the projected asset', () => {
+    expect(toPluginInvocationAssets([{
+      assetId: 'asset-1',
+      displayName: 'shot.mp4',
+      relativeFilePath: 'shots/shot.mp4',
+      mediaType: 'video',
+      byteSize: 2048,
+      currentRevisionId: 'revision-1',
+      managedFolderId: 'folder-1',
+      locationKind: 'managed',
+    }])).toEqual([expect.objectContaining({
+      id: 'asset-1',
+      name: 'shot.mp4',
+      relativeFilePath: 'shots/shot.mp4',
+      mediaType: 'video',
+      byteSize: 2048,
+      currentRevisionId: 'revision-1',
+      locationKind: 'managed',
+    })]);
   });
 });

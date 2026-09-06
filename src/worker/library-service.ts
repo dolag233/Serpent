@@ -10915,11 +10915,14 @@ export class LibraryService {
     planHash: string;
     assetStates: Array<{ assetId: string; stateToken: string }>;
   }): void {
+    const assetStateIds = input.assetStates.map((state) => state.assetId);
     if (input.assetIds.length === 0
+      || input.assetIds.some((assetId) => assetId.length === 0)
       || new Set(input.assetIds).size !== input.assetIds.length
       || input.assetStates.length !== input.assetIds.length
-      || input.assetStates.some((state) => !input.assetIds.includes(state.assetId))) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      || new Set(assetStateIds).size !== assetStateIds.length
+      || assetStateIds.some((assetId) => !input.assetIds.includes(assetId))) {
+      throw new LibraryServiceError('AUTOMATION_FILE_PLAN_INVALID');
     }
     const plan = this.previewAutomationFileOperation({
       libraryId: input.libraryId,

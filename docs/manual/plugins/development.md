@@ -188,9 +188,10 @@ Provider 和 Job。
 `first` 与 `last` 不能同时为 true。子菜单最多三级。`group`、`before`、`after` 用稳定 ID，不要按文案或 DOM 定位。
 缺失锚点只降级到目标 group 末尾；循环约束只拒绝相关边，不应让整张菜单消失。
 
-`when` 为 false 时不渲染，`enablement` 为 false 时保留但置灰，`checked` 控制 toggle/radio 的选中状态。三者都只能读取
-Context Key，不能执行 JavaScript、I/O 或 API 调用。表达式支持 `&&`、`||`、`!`、`==`、`!=`、`in`、`intersects`、`matches`、
-括号和数组字面量；单个表达式最多 4096 字符。
+`when` 为 false 时不渲染，`enablement` 为 false 时保留但置灰，`checked` 控制 toggle/radio 的选中状态。显示与置灰策略由插件
+根据自己的能力实现，Host 不提供 `accepts` 过滤，也不替插件过滤混合选中。三者都只能读取 Context Key，不能执行 JavaScript、
+I/O 或 API 调用。表达式支持 `&&`、`||`、`!`、`==`、`!=`、`in`、`intersects`、`matches`、括号和数组字面量；单个表达式最多
+4096 字符。
 
 快捷键 Contribution 只是默认 accelerator；菜单展示中央 Keybinding Registry 当前有效快捷键。插件设置的 `boolean`、`select`、
 `number` 和 `slider` 均由 Host 使用统一的原生样式、ARIA、加载和错误状态渲染；插件不需要自己实现 toggle、dropdown 或 slider。
@@ -255,11 +256,15 @@ Contribution Context 是 Host 发布的有界 UI 快照，只用于菜单/命令
 - `app.platform`、`app.locale`、`app.theme`、`app.busy`
 - `surface.id`、`surface.kind`、`window.windowId`
 - `library.id`、`library.open`、`library.writable`、`library.offline`
-- `selection.ref`、`count`、`primaryId`、`assetCount`、`folderCount`、`mixed`、扩展名/MIME/媒体类型、删除/不可用摘要
+- `selection.ref`、`count`、`primaryId`、`assetCount`、`folderCount`、`mixed`、`extensions`、`mediaKinds`、MIME 类型、删除/不可用摘要
 - `browse.folderId`、`collectionId`、`tagId`、`search`、`filter`
 - `viewer.active`、`assetId`、`extension`、`mimeType`、`mediaKind`、`fullscreen`
 
 Context 带 `contextId` 和单调递增 `revision`。它只含摘要；要读取完整资产，使用 Domain API。
+
+插件通过 `selection.mediaKinds`、`selection.extensions`、`selection.mixed` 和 `library.writable` 自己表达菜单策略。例如，
+只支持图片的命令可以用 `when` 隐藏，仍可出现在菜单但暂不可执行时用 `enablement` 置灰。图片与视频混合选中的处理规则属于
+插件能力与产品策略，不属于 Host 的统一过滤规则。
 
 Invocation Context 是命令触发时冻结的目标快照，包含 `contextId`、`revision`、目标 `libraryId`、selection refs/assetIds/folderIds/collectionIds、
 浏览范围和 viewer 目标。异步等待后不能重新猜测当前焦点或选择；在 `commands.register` 的 handler 中从 `context.invocation` 读取这份快照，
@@ -323,6 +328,9 @@ default 必须在 minimum/maximum 内，slider 的 step 必须大于 0。静态�
 可选 `entry` 指向包内 HTML。`ui.entry` 是包级 UI 入口；页面通过 typed bridge 使用 Host/后端能力，不能注入 React、访问宿主 DOM 或 Node。
 插件设置字段已经使用 Host 内部 UI library 的统一 primitives；插件仍不能把宿主 CSS class 当作 API。更复杂的 Host-rendered
 结构化 UI descriptor 使用 `contributes.ui`，设计与字段限制见 [`0029 UI 标准化执行方案与插件原生 UI 契约`](../../internal/implementation/0029-ui-standardization-execution-and-plugin-ui-contract.md)。
+标准表单默认使用 `serpent.ui.openDialog({ title, render })` 的 widget kit。复杂界面或交互、WebGL、第三方页面仍使用受支持的
+HTML/iframe 对话框 `openDialog({ dialogId, payload })`；这是正式的一等路径，不是准备删除的临时逃生口。Manifest JSON 仍不是
+对话框 UI 语言。
 
 ### 8.1 Plugin UI Contract v1
 

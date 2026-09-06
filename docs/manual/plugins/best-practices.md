@@ -46,10 +46,12 @@ exports.dispose = async function dispose(reason) {
 ## 3. 命令、菜单与 Invocation
 
 - 行为写在 `contributes.commands`；菜单、工具栏、Inspector 只引用 command id。
-- `when` 控制是否出现，`enablement` 控制是否可点。两者只能读 Context Key。
+- `when` 控制是否出现，`enablement` 控制是否可点；插件负责自己的显示/置灰策略，Host 不提供 `accepts` 过滤，也不替插件过滤混合选中。两者只能读 Context Key。
 - 异步等待之后不要重新读取「当前选择」。handler 使用 `context.invocation`（`libraryId`、`selection.assetIds`、`selection.assets` 等）。顶层 `targetLibraryId` / `assetIds` 只是兼容字段。当前选中资产的路径和 `mediaType` 在 `selection.assets` 里，不要再 `assets.list` 去找选中项。
 
-Image Upscaler 的资产菜单用子菜单挂 1x/2x/4x，并用 `selection.extensions intersects ['jpg','jpeg','png','webp']` 隐藏非图片选择；写库前检查 `library.writable` 以及选择中没有已删除/不可用资产。
+Host 发布 `selection.mediaKinds`、`selection.extensions`、`selection.mixed` 和 `library.writable` 等 Context Key。Image Upscaler 的资产菜单用子菜单挂
+1x/2x/4x，并用 `selection.extensions intersects ['jpg','jpeg','png','webp']` 隐藏非图片选择；写库前检查 `library.writable` 以及选择中没有已删除/不可用资产。
+图片与视频混合选中的处理规则由插件自己的 `when`/`enablement` 表达。
 
 ## 4. Job、进度与取消
 
@@ -86,7 +88,9 @@ Image Upscaler 先把整批图推理并 stage 完，再调用一次 `replaceCont
 
 布尔、下拉、数字、slider 声明在 `contributes.settings`，需要分组时再用 `contributes.ui` v1 的 `settings.groups` 引用 `settingId`。不要为这些控件自己做 HTML。`select` 的 `default` 必须是已声明 option。
 
-自定义布局才使用 `contributes.views` 的沙箱 iframe。iframe 不能碰宿主 DOM、React 或 Node。
+标准表单默认使用 widget kit；复杂布局才使用 `contributes.views` 的沙箱 iframe。复杂界面或交互、WebGL、第三方页面也可使用受支持的
+HTML/iframe 对话框 `openDialog({ dialogId, payload })`，这是正式的一等路径。对话框不要用 Manifest JSON 描述；iframe 不能碰宿主
+DOM、React 或 Node。
 
 ## 7. 原生二进制、模型与数据目录
 
@@ -106,6 +110,8 @@ Image Upscaler 先把整批图推理并 stage 完，再调用一次 `replaceCont
 3. Host 从 ZIP 解出的文件当前以 `0o600` 写入。macOS/Linux 上 `existsSync` 为真不等于可执行。解析到二进制后，非 Windows 平台应 `chmod 0o755`（若缺少执行位）。
 4. `spawn` 不要走 `shell: true`。`EACCES` / `ENOENT` 要转成用户能懂的错误，不要只把原始 `spawn ...` 抛到通知里。
 5. Windows 上删除刚用过的临时目录可能遇到 `EBUSY`。任务已经成功时，清理失败不应把 Job 改写成失败。
+
+媒体插件使用宿主 FFmpeg 的路径、版本和编码器探测约束，详见 [插件 API 参考：宿主媒体二进制与 FFmpeg 方言](api-reference.md#宿主媒体二进制与-ffmpeg-方言)。
 
 ## 8. 成品包与 ZIP 条目名
 

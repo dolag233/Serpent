@@ -1,7 +1,7 @@
 # 0029：UI 标准化执行方案与插件原生 UI 契约
 
 > 状态：设计完成，阶段实施中（Primitive、主题 profile 与高复用 feedback pattern 已落地）
-> 日期：2026-08-04；2026-09-06 补充：插件对话框默认走 `serpent.ui.openDialog({ title, render })` widget IR，Host primitive 绘制；iframe 仅作 Custom View escape hatch。禁止用 Manifest JSON 当对话框 UI 语言。
+> 日期：2026-08-04；2026-09-06 补充：标准表单默认走 `serpent.ui.openDialog({ title, render })` widget IR，Host primitive 绘制；复杂界面或交互继续保留 HTML/iframe 对话框与 Custom View 两条正式路径。禁止用 Manifest JSON 当对话框 UI 语言。
 > 关联工单：`Serpent-ex46`、`Serpent-ex46.1`、`Serpent-nzxh`、`Serpent-7nah`、`Serpent-fkq3`、`Serpent-gtih`
 > 前置研究：[Obsidian UI 与插件机制调研](../research/2026-08-04-obsidian-ui-plugin-research.md)
 
@@ -21,7 +21,7 @@ Serpent 的 UI 标准化不是一次 CSS 重命名，也不是把所有界面强
 - 组件的状态、键盘、ARIA、主题和层级行为可以单独测试；
 - domain surface 通过 adapter 使用通用表面，而不是重新实现基础交互；
 - 插件开发者不需要为 toggle、dropdown、slider、二级菜单、进度状态和字段错误重复造 UI；
-- 需要自由布局的复杂插件 UI 仍然可以实现，但通过隔离 Custom View，不进入 Host DOM。
+- 需要自由布局或复杂交互的插件 UI 仍然可以实现：使用隔离 Custom View 或受支持的 HTML/iframe 对话框，不进入 Host DOM。
 
 ## 2. 研究后的设计原则
 
@@ -29,13 +29,15 @@ Serpent 的 UI 标准化不是一次 CSS 重命名，也不是把所有界面强
 
 Obsidian 的可借鉴点是：插件使用宿主公开的 CSS variables 来获得主题兼容性；常见 UI 通过注册式 API 进入宿主容器；声明式设置由宿主负责渲染、搜索、持久化和校验；复杂功能才使用自由渲染的 View。
 
-Serpent 采用同样的分层，但保留更强的安全边界：普通插件不能直接访问宿主 DOM、任意文件系统、数据库或 Node API；Custom View 默认继续使用 sandboxed iframe/typed bridge。
+Serpent 采用同样的分层，但保留更强的安全边界：普通插件不能直接访问宿主 DOM、任意文件系统、数据库或 Node API；Custom View
+和 HTML/iframe 对话框继续使用 sandboxed iframe/typed bridge。
 
 ### 2.2 借鉴 VS Code：Command、Context、Contribution 和 ThemeColor 统一
 
 命令是行为源，菜单、工具栏、快捷键、命令面板和 Inspector/Viewer action 都引用稳定 command ID。`when` 负责是否出现，`enablement` 负责是否可用，`checked` 负责选中态；Context key 由 Host 管理并带命名空间、revision 和诊断。
 
-主题使用命名语义颜色和 token，而不是插件猜测宿主颜色或依赖 CSS 选择器。Custom View 是标准 Host API 不足时的后备能力，必须仍然主题化并满足键盘和可访问性要求。
+主题使用命名语义颜色和 token，而不是插件猜测宿主颜色或依赖 CSS 选择器。Custom View 和 HTML/iframe 对话框是复杂插件界面与
+交互的正式路径，必须仍然主题化并满足键盘和可访问性要求。
 
 ### 2.3 借鉴 IntelliJ Platform：Action System、UI Kit 和静态元数据
 
@@ -174,7 +176,8 @@ Surface 是应用可见的稳定表面，允许保留领域差异，但必须复
 | 插件视图 | ContributionViewHost、ContributionTabs、ThemeBridge | 插件的特殊内容和面板状态 | 入口与内容生命周期分离；reload/close/crash 可恢复 |
 | 脚本/MCP UI | DialogShell、StateSurface、Notice、LogPanel | 自动化命令和诊断内容 | 权限、错误、确认与 Host UI 语义一致 |
 
-迁移顺序遵守“先高复用、后高风险”：先 primitives/patterns，再菜单/设置/Dialog/Notice，再 Shell/Card/Inspector/Viewer，最后迁移插件 descriptor 和 Custom View bridge。
+迁移顺序遵守“先高复用、后高风险”：先 primitives/patterns，再菜单/设置/Dialog/Notice，再 Shell/Card/Inspector/Viewer，最后迁移插件
+descriptor、Custom View bridge 和 HTML/iframe 对话框 bridge。
 
 ## 5. Theme Contract v1 / Host Profile v2
 
@@ -267,7 +270,8 @@ type PluginThemeChanged = {
 
 #### A. Host-rendered semantic UI
 
-适用于设置、菜单、工具栏、Inspector action、Viewer action、通知、Job 状态和简单表单。插件提交 descriptor，Host 负责渲染、主题、焦点、ARIA、校验、持久化和权限显示。
+适用于设置、菜单、工具栏、Inspector action、Viewer action、通知、Job 状态和简单表单。标准表单默认使用 widget kit；
+插件提交 descriptor，Host 负责渲染、主题、焦点、ARIA、校验、持久化和权限显示。
 
 #### B. Host-managed View
 
@@ -275,7 +279,8 @@ type PluginThemeChanged = {
 
 #### C. Custom isolated UI
 
-适用于模型预览、复杂图表、自由布局画布、特殊媒体工具和第三方 Web UI。仍使用 sandboxed iframe/typed bridge；不授予宿主 DOM、React、任意 CSS 或任意 IPC。
+适用于模型预览、复杂图表、自由布局画布、特殊媒体工具和第三方 Web UI。复杂界面或交互也可以使用受支持的 HTML/iframe
+对话框；这两类路径都是正式能力，不是准备删除的临时逃生口。仍使用 sandboxed iframe/typed bridge；不授予宿主 DOM、React、任意 CSS 或任意 IPC。
 
 ### 6.2 Descriptor 通用结构
 
@@ -538,7 +543,7 @@ UI 变化不能只跑 snapshot。涉及 Renderer/Preload/Main/Worker、自定义
 - 不开放任意全局 CSS 主题覆盖作为普通插件能力。
 - 不在菜单打开时调用插件 RPC 或执行任意 Python/JavaScript predicate。
 - 不把所有 domain surface 合并成一个万能 Card/Viewer/Dialog。
-- 不因标准化而删除复杂媒体、模型预览和图形工具的 Custom View 能力。
+- 不因标准化而删除复杂媒体、模型预览和图形工具的 Custom View 或 HTML/iframe 对话框能力。
 - 不把应用重启后的 Job 恢复混入 UI 标准化。
 - 不以“内部已有组件文件”作为全量标准化完成证据；必须有迁移和验收证据。
 

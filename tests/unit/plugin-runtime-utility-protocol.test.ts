@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import { automationCapabilitiesFromPluginPermissions } from '../../src/plugins/plugin-permission-capabilities';
 import {
+  automationScriptCommandIdSchema,
+  pluginHostOnlyCommandIdSchema,
+} from '../../src/shared/automation-script-api';
+import {
   parsePluginRuntimeChildMessage,
   pluginRuntimeChildMessageSchema,
   pluginRuntimeParentMessageSchema,
@@ -32,6 +36,13 @@ describe('plugin permission → automation capability mapping', () => {
       'library.read',
       'tag.write',
     ]);
+  });
+});
+
+describe('plugin host command ids', () => {
+  it('keeps plugin-only command ids disjoint from automation script ids', () => {
+    const scriptCommandIds = new Set(automationScriptCommandIdSchema.options);
+    expect(pluginHostOnlyCommandIdSchema.options.some((id) => scriptCommandIds.has(id))).toBe(false);
   });
 });
 

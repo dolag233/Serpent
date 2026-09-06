@@ -2033,6 +2033,7 @@ export const zhCN = {
       CLIPBOARD_FILES_NOT_FOUND: "系统剪贴板中没有可粘贴的文件或文件夹，请先在访达中复制。",
       IMPORT_COLLECTION_ASSIGN_FAILED: "资产已经导入目标文件夹，但未能加入所选合集；资产不会丢失，请查看日志后重试合集操作。",
       INVALID_IMPORT_DECISION: "导入冲突处理选项无效。",
+      AUTOMATION_FILE_PLAN_INVALID: "文件操作计划无效，请刷新后重试。",
       INVALID_ASSET_METADATA: "请使用六位十六进制色值，并填写有效的 HTTP(S) 源链接。",
       INVALID_SEARCH_QUERY: "请使用支持的搜索字段：文件名、标签、描述、来源链接、文件夹路径或元数据。",
       INVALID_SMART_COLLECTION_QUERY: "保存智能合集前请先设置搜索词或至少一个过滤条件。",

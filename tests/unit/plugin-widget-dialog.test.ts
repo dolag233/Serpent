@@ -11,6 +11,7 @@ import {
 } from '../../src/plugins/plugin-widget-toolkit';
 import { pluginUiDialogRequestPayloadSchema } from '../../src/shared/plugin-ui-dialog-bridge';
 import { createSerpentGuestApi } from '../../src/scripting/serpent-guest-api';
+import { PLUGIN_WIDGET_OPEN_DIALOG_WRAP_SOURCE } from '../../src/scripting/plugin-widget-guest-source';
 
 describe('plugin widget IR', () => {
   it('rejects oversized or duplicate-id trees', () => {
@@ -170,6 +171,12 @@ describe('widget dialog session', () => {
 });
 
 describe('serpent.ui.openDialog widget wrap', () => {
+  it('coerces a remembered guest select value to the current options', () => {
+    expect(PLUGIN_WIDGET_OPEN_DIALOG_WRAP_SOURCE).toContain(
+      'allowed.indexOf(String(value)) === -1',
+    );
+  });
+
   it('still maps dialogId calls onto ui.dialog', async () => {
     const executeCommand = vi.fn(async () => ({ result: { crf: 23 } }));
     const serpent = createSerpentGuestApi({ executeCommand });

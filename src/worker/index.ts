@@ -3132,7 +3132,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     case 'asset.rename-file': {
       if (request.command.automationPlan) {
         if (request.command.newBaseName === undefined && request.command.newFileName === undefined) {
-          throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+          throw new LibraryServiceError('AUTOMATION_FILE_PLAN_INVALID');
         }
         libraryService.validateAutomationFileOperationPlan({
           libraryId: request.command.libraryId,

@@ -1102,6 +1102,40 @@ describe('restoreAssets', () => {
     service.closeAll();
   });
 
+  it('rejects an automation file-operation plan with no asset ids', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Empty Automation Plan', selectedParentPath: root });
+
+    expectServiceError(() => service.validateAutomationFileOperationPlan({
+      libraryId: created.libraryId,
+      operation: 'trash',
+      assetIds: [],
+      planHash: '0'.repeat(64),
+      expectedChangeSequence: 0,
+      assetStates: [],
+    }), 'AUTOMATION_FILE_PLAN_INVALID');
+    service.closeAll();
+  });
+
+  it('rejects an automation file-operation plan with mismatched asset states', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Mismatched Automation Plan', selectedParentPath: root });
+    writeFileSync(path.join(root, 'planned.png'), 'data');
+    const asset = importNoConflict(service, created.libraryId, path.join(root, 'planned.png')).assets[0]!;
+
+    expectServiceError(() => service.validateAutomationFileOperationPlan({
+      libraryId: created.libraryId,
+      operation: 'trash',
+      assetIds: [asset.assetId],
+      planHash: '0'.repeat(64),
+      expectedChangeSequence: 0,
+      assetStates: [{ assetId: 'different-asset', stateToken: 'token' }],
+    }), 'AUTOMATION_FILE_PLAN_INVALID');
+    service.closeAll();
+  });
+
   it('previews and validates an automation plan for rename-file with complete newFileName', () => {
     const root = temporaryRoot();
     const service = newService();

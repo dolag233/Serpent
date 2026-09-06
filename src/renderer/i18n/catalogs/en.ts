@@ -2050,6 +2050,7 @@ export const en = {
         "No files or folders on the clipboard. Copy them in Finder/Explorer and try again.",
       IMPORT_COLLECTION_ASSIGN_FAILED: "Assets were imported into the target folder but could not be added to the selected collection. They are not lost — check the logs and retry the collection action.",
       INVALID_IMPORT_DECISION: "Import conflict decision is invalid.",
+      AUTOMATION_FILE_PLAN_INVALID: "The file operation plan is not valid. Refresh and try again.",
       INVALID_ASSET_METADATA: "Use six-digit hex colors and a valid HTTP(S) source URL.",
       INVALID_SEARCH_QUERY: "Use supported search fields: filename, tags, description, source URL, folder path, or metadata.",
       INVALID_SMART_COLLECTION_QUERY: "Add a search query or at least one filter before saving a smart collection.",
