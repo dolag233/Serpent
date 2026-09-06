@@ -43,6 +43,8 @@ export type UseDialogEscapeDismissParams = {
   onDismissFatalAlert?: () => void;
   /** Serpent-kdnm: Escape on connection-failure dialog aborts remaining AI jobs. */
   onAbortAiConnectionFailure?: () => void;
+  onCancelBlockingImport?: () => void;
+  onCancelBlockingDelete?: () => void;
 };
 
 /**
@@ -78,6 +80,8 @@ export function useDialogEscapeDismiss({
   onDismissPluginTrustPrompt,
   onDismissFatalAlert,
   onAbortAiConnectionFailure,
+  onCancelBlockingImport,
+  onCancelBlockingDelete,
 }: UseDialogEscapeDismissParams): void {
   const t = useT();
   const { locale } = useLocale();
@@ -102,6 +106,15 @@ export function useDialogEscapeDismiss({
           return;
         case "abort-ai-connection-failure":
           onAbortAiConnectionFailure?.();
+          return;
+        case "hold-blocking-import":
+        case "hold-blocking-delete":
+          return;
+        case "cancel-blocking-delete":
+          onCancelBlockingDelete?.();
+          return;
+        case "cancel-blocking-import":
+          onCancelBlockingImport?.();
           return;
         case "cancel-asset-rename":
           cancelAssetRename();
@@ -217,6 +230,8 @@ export function useDialogEscapeDismiss({
     onDismissPluginTrustPrompt,
     onDismissFatalAlert,
     onAbortAiConnectionFailure,
+    onCancelBlockingImport,
+    onCancelBlockingDelete,
     locale,
     t,
   ]);

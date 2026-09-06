@@ -2522,7 +2522,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     case 'asset.import.prepare': {
       const command = request.command;
       const prepared = await withMediaSchedulingSuspended(request.command.libraryId, () =>
-        libraryService.prepareOrExecuteImport(command));
+        libraryService.prepareOrExecuteImportCancellable(command));
       if (!('importId' in prepared)) {
         scheduleThumbnailScene(
           request.command.libraryId,
@@ -2554,7 +2554,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     case 'asset.import.resolve': {
       const command = request.command;
       const completion = await withMediaSchedulingSuspended(undefined, () =>
-        libraryService.resolveImport(command));
+        libraryService.resolveImportCancellable(command));
       if (completion.assets.length > 0) {
         // The matching library already owns these opaque asset ids; schedule
         // through each open library without exposing paths to Main/Renderer.
@@ -3398,6 +3398,9 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     case 'library.import-cancel':
       libraryService.cancelImport(request.command.importId);
       return { ok: true, type: 'library.closed', libraryId: request.command.importId };
+    case 'asset.delete-cancel':
+      libraryService.cancelDiskDelete(request.command.operationId);
+      return { ok: true, type: 'library.closed', libraryId: request.command.operationId };
     case 'library.import-validate': {
       const validated = libraryService.validateImportSource(request.command.sourceFolderPath);
       return {
@@ -4885,14 +4888,20 @@ parentPort.on('message', async (event) => {
       }
     };
     try {
+      const cancelWhileTransferRuns =
+        request.command.type === 'library.import-cancel'
+        || request.command.type === 'library.export-cancel'
+        || request.command.type === 'asset.delete-cancel';
       response = {
         requestId: request.requestId,
-        result: await interactiveScheduler.schedule(scheduledRequest, runScheduled, {
-          ...(lifecycleBoundary
-            ? { cancelQueuedForLibrary: lifecycleLibraryId! }
-            : {}),
-          onAdmitted,
-        }),
+        result: cancelWhileTransferRuns
+          ? await runScheduled()
+          : await interactiveScheduler.schedule(scheduledRequest, runScheduled, {
+            ...(lifecycleBoundary
+              ? { cancelQueuedForLibrary: lifecycleLibraryId! }
+              : {}),
+            onAdmitted,
+          }),
       };
     } catch (error) {
       if (!(error instanceof SchedulerCancelledError)) throw error;

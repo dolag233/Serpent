@@ -86,6 +86,55 @@ describe("dialog-escape-stack", () => {
     ).toEqual({ kind: "abort-ai-connection-failure" });
   });
 
+  it("cancels a blocking import overlay from Escape, and swallows Escape while it is not cancelable", () => {
+    expect(
+      resolveDialogEscapeAction({
+        ...empty,
+        blockingImportOpen: true,
+        blockingImportCancelable: true,
+        dialogOpen: true,
+      }),
+    ).toEqual({ kind: "cancel-blocking-import" });
+    expect(
+      resolveDialogEscapeAction({
+        ...empty,
+        blockingImportOpen: true,
+        blockingImportCancelable: false,
+      }),
+    ).toEqual({ kind: "hold-blocking-import" });
+    expect(
+      isDialogEscapeLayerActive({
+        ...empty,
+        blockingImportOpen: true,
+        blockingImportCancelable: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("swallows Escape while a bulk delete overlay is covering the workspace", () => {
+    expect(
+      resolveDialogEscapeAction({
+        ...empty,
+        blockingDeleteOpen: true,
+        dialogOpen: true,
+      }),
+    ).toEqual({ kind: "hold-blocking-delete" });
+    expect(
+      resolveDialogEscapeAction({
+        ...empty,
+        blockingDeleteOpen: true,
+        blockingDeleteCancelable: true,
+        dialogOpen: true,
+      }),
+    ).toEqual({ kind: "cancel-blocking-delete" });
+    expect(
+      isDialogEscapeLayerActive({
+        ...empty,
+        blockingDeleteOpen: true,
+      }),
+    ).toBe(true);
+  });
+
   it("abandons import when only conflicts remain", () => {
     expect(
       resolveDialogEscapeAction({

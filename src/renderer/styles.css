@@ -3755,7 +3755,9 @@ input[type="range"] {
   backdrop-filter: none;
 }
 
-.library-loading-dialog {
+.library-loading-dialog,
+.import-progress-dialog,
+.blocking-progress-dialog {
   width: 100%;
   max-width: 36rem;
 }

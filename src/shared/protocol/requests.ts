@@ -898,6 +898,10 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     ),
   }),
   z.strictObject({
+    type: z.literal('asset.delete-cancel.request'),
+    operationId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('trash.list.request'),
     libraryId: identifierSchema,
   }),
@@ -2118,6 +2122,10 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
       (assetIds) => new Set(assetIds).size === assetIds.length,
       { message: 'assetIds must not contain duplicates.' },
     ),
+  }),
+  z.strictObject({
+    type: z.literal('asset.delete-cancel'),
+    operationId: identifierSchema,
   }),
   z.strictObject({
     type: z.literal('asset.delete-linked'),

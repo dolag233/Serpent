@@ -2377,6 +2377,33 @@ describe('external import progress events', () => {
       totalFiles: 385,
     });
   });
+
+  it('accepts bulk delete progress updates', () => {
+    expect(parseProgressEvent({
+      type: 'delete.progress',
+      operationId: 'delete-01',
+      libraryId: 'library-01',
+      kind: 'disk',
+      phase: 'run',
+      cancelable: true,
+      filesProcessed: 12,
+      totalFiles: 80,
+    })).toMatchObject({
+      kind: 'disk',
+      cancelable: true,
+      filesProcessed: 12,
+      totalFiles: 80,
+    });
+    expect(parseProgressEvent({
+      type: 'delete.progress',
+      operationId: 'delete-01',
+      libraryId: 'library-01',
+      kind: 'disk',
+      phase: 'cancelled',
+      filesProcessed: 5,
+      totalFiles: 80,
+    }).phase).toBe('cancelled');
+  });
 });
 
 describe('renderer-safe import plans', () => {

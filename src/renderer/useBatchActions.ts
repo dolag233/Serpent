@@ -387,7 +387,16 @@ export function useBatchActions({
         libraryId: library.libraryId,
         assetIds,
       });
-      if (!result.ok) throw new LibraryOperationError(result.error);
+      if (!result.ok) {
+        if (result.error.code === "CANCELLED") {
+          setNotice(translateForLocale(locale, "toast.diskDeleteCancelled"));
+          await refreshCollections(operationLibraryId);
+          if (!isCurrentLibrary(operationLibraryId)) return;
+          await reloadCurrentContent();
+          return;
+        }
+        throw new LibraryOperationError(result.error);
+      }
       setNotice(
         translateForLocale(locale, "toast.assetsDeletedFromDisk", {
           count: result.value.deletedCount,

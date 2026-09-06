@@ -145,7 +145,7 @@ export function CanvasToolbarControls({
           pressed={canvasPrefs.viewMode === "grid"}
         />
         <ToolButton
-          icon="menu"
+          icon="equal-approximately"
           label={masonry.label}
           onClick={masonry.run}
           pressed={canvasPrefs.viewMode === "masonry"}

@@ -331,10 +331,29 @@ export function parseSyncProgressEvent(input: unknown): SyncProgressEvent {
   return syncProgressEventSchema.parse(input);
 }
 
+export const deleteProgressEventSchema = z.strictObject({
+  type: z.literal('delete.progress'),
+  operationId: nonBlankString,
+  libraryId: nonBlankString,
+  kind: z.enum(['trash', 'disk', 'permanent']),
+  phase: z.enum(['run', 'complete', 'failed', 'cancelled']),
+  /** True when disk delete can be cancelled between files. */
+  cancelable: z.boolean().optional(),
+  filesProcessed: z.number().int().nonnegative(),
+  totalFiles: z.number().int().nonnegative(),
+});
+
+export type DeleteProgressEvent = z.infer<typeof deleteProgressEventSchema>;
+
+export function parseDeleteProgressEvent(input: unknown): DeleteProgressEvent {
+  return deleteProgressEventSchema.parse(input);
+}
+
 export const progressEventSchema = z.union([
   exportProgressEventSchema,
   importProgressEventSchema,
   syncProgressEventSchema,
+  deleteProgressEventSchema,
 ]);
 
 export type ProgressEvent = z.infer<typeof progressEventSchema>;

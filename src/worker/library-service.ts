@@ -589,6 +589,7 @@ import type {
   EagleImportResult,
   BillfishImportResult,
   ImportProgressEvent,
+  DeleteProgressEvent,
 } from '../shared/protocol/responses';
 import {
   copyNameForIndex,
@@ -3534,6 +3535,11 @@ interface PendingImport {
    * Assets for every file (O(n²) on a 20k Eagle library).
    */
   destinationIndex?: Map<string, ExistingDestination>;
+  /**
+   * SHA-256 of existing same-size library files hashed during prepare.
+   * Resolve reuses this so a no-conflict import does not re-read the library.
+   */
+  contentHashCache?: Map<string, string>;
 }
 
 interface ExistingAssetRow {
@@ -4331,7 +4337,7 @@ export interface LibraryServiceOptions {
   onAssetsChanged?: (event: AssetsChangedEvent) => void;
   onLibraryChanged?: (event: LibraryChangedEvent) => void;
   onDiagnostic?: (diagnostic: LibraryServiceDiagnostic) => void;
-  onProgress?: (event: ExportProgressEvent | ImportProgressEvent) => void;
+  onProgress?: (event: ExportProgressEvent | ImportProgressEvent | DeleteProgressEvent) => void;
   observerFactory?: AssetObserverFactory;
   scheduler?: DebounceScheduler;
   /** Injectable Sharp-compatible decoder for deterministic concurrency tests. */
@@ -4769,6 +4775,20 @@ interface ActiveImportTransfer {
  */
 function transferCheckpoint(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
+}
+
+function createProgressThrottle(minIntervalMs = 250): {
+  shouldEmit(force?: boolean): boolean;
+} {
+  let lastAt = 0;
+  return {
+    shouldEmit(force = false) {
+      const now = Date.now();
+      if (!force && now - lastAt < minIntervalMs) return false;
+      lastAt = now;
+      return true;
+    },
+  };
 }
 
 /**
@@ -6172,6 +6192,7 @@ export class LibraryService {
   private readonly networkScanByLibrary = new Map<string, NetworkScanState>();
   private readonly activeExports = new Map<string, TransferCancelState>();
   private readonly activeImports = new Map<string, TransferCancelState>();
+  private readonly activeDiskDeletes = new Map<string, TransferCancelState>();
   private readonly activeExportByLibraryId = new Map<string, string>();
   private readonly activeImportBySource = new Map<string, string>();
   private readonly activeImportByDestination = new Map<string, string>();
@@ -12852,7 +12873,11 @@ export class LibraryService {
     const deletedAssetCount =
       assetIds.length === 0
         ? 0
-        : await this.deleteActiveManagedAssetsFromDiskAsync(openLibrary, assetIds);
+        : await this.deleteActiveManagedAssetsFromDiskWithProgress(
+            input.libraryId,
+            openLibrary,
+            assetIds,
+          );
     const removedFolderCount = await this.removeManagedFolderRowsAndDirectoryAsync(
       openLibrary,
       folder,
@@ -13562,6 +13587,7 @@ export class LibraryService {
   private deleteActiveManagedAssetsFromDisk(
     openLibrary: OpenLibrary,
     assetIds: string[],
+    onFileDeleted?: (processed: number, total: number) => void,
   ): number {
     if (assetIds.length === 0) return 0;
     const placeholders = assetIds.map(() => '?').join(', ');
@@ -13578,7 +13604,8 @@ export class LibraryService {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
     }
 
-    for (const row of rows) {
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index]!;
       const filePath = this.folderPath(openLibrary, row.relative_file_path);
       try {
         if (existsSync(filePath)) {
@@ -13597,6 +13624,7 @@ export class LibraryService {
           throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
         }
       }
+      onFileDeleted?.(index + 1, rows.length);
     }
 
     openLibrary.connection.transaction(() => {
@@ -13611,9 +13639,38 @@ export class LibraryService {
     return rows.length;
   }
 
+  private finalizeDiskDeletedAssetRows(
+    openLibrary: OpenLibrary,
+    libraryId: string,
+    assetIds: string[],
+  ): void {
+    if (assetIds.length === 0) return;
+    openLibrary.connection.transaction(() => {
+      this.dissolveImageSequencesForAssets(openLibrary, assetIds);
+      for (const assetId of assetIds) {
+        openLibrary.connection
+          .prepare('DELETE FROM assets WHERE asset_id = ?')
+          .run(assetId);
+      }
+    })();
+    this.invalidateArtifactPathCache(libraryId);
+    this.options.onAssetsChanged?.({
+      type: 'asset.changed',
+      libraryId,
+      changedCount: assetIds.length,
+      missingCount: 0,
+      source: 'client',
+    });
+  }
+
   private async deleteActiveManagedAssetsFromDiskAsync(
     openLibrary: OpenLibrary,
+    libraryId: string,
     assetIds: string[],
+    options?: {
+      onFileDeleted?: (processed: number, total: number) => void;
+      cancelState?: TransferCancelState;
+    },
   ): Promise<number> {
     if (assetIds.length === 0) return 0;
     const placeholders = assetIds.map(() => '?').join(', ');
@@ -13630,7 +13687,16 @@ export class LibraryService {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
     }
 
-    for (const row of rows) {
+    const deletedFromDiskIds: string[] = [];
+    for (let index = 0; index < rows.length; index += 1) {
+      if (options?.cancelState?.cancelled) {
+        this.finalizeDiskDeletedAssetRows(openLibrary, libraryId, deletedFromDiskIds);
+        throw new LibraryServiceError('CANCELLED');
+      }
+      if (options?.cancelState) {
+        await transferCheckpoint();
+      }
+      const row = rows[index]!;
       const filePath = this.folderPath(openLibrary, row.relative_file_path);
       try {
         await removePathWithRetry(filePath, false);
@@ -13646,16 +13712,15 @@ export class LibraryService {
           throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
         }
       }
+      deletedFromDiskIds.push(row.asset_id);
+      options?.onFileDeleted?.(index + 1, rows.length);
     }
 
-    openLibrary.connection.transaction(() => {
-      this.dissolveImageSequencesForAssets(openLibrary, assetIds);
-      for (const row of rows) {
-        openLibrary.connection
-          .prepare('DELETE FROM assets WHERE asset_id = ?')
-          .run(row.asset_id);
-      }
-    })();
+    this.finalizeDiskDeletedAssetRows(
+      openLibrary,
+      libraryId,
+      rows.map((row) => row.asset_id),
+    );
 
     return rows.length;
   }
@@ -13700,8 +13765,92 @@ export class LibraryService {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
     }
     await this.cancelMediaJobsForAssets(openLibrary, assetIds);
-    await this.deleteActiveManagedAssetsFromDiskAsync(openLibrary, assetIds);
+    await this.deleteActiveManagedAssetsFromDiskWithProgress(
+      input.libraryId,
+      openLibrary,
+      assetIds,
+    );
     return { deletedCount: logicalCount };
+  }
+
+  private async deleteActiveManagedAssetsFromDiskWithProgress(
+    libraryId: string,
+    openLibrary: OpenLibrary,
+    assetIds: string[],
+  ): Promise<number> {
+    const operationId = randomUUID();
+    const cancelState: TransferCancelState = { cancelled: false };
+    this.activeDiskDeletes.set(operationId, cancelState);
+    const diskThrottle = createProgressThrottle();
+    let filesProcessed = 0;
+    const emitRun = (processed: number, totalFiles: number) => {
+      if (diskThrottle.shouldEmit(processed === totalFiles)) {
+        this.emitDeleteProgress({
+          operationId,
+          libraryId,
+          kind: 'disk',
+          phase: 'run',
+          cancelable: true,
+          filesProcessed: processed,
+          totalFiles,
+        });
+      }
+    };
+    this.emitDeleteProgress({
+      operationId,
+      libraryId,
+      kind: 'disk',
+      phase: 'run',
+      cancelable: true,
+      filesProcessed: 0,
+      totalFiles: assetIds.length,
+    });
+    try {
+      const deletedCount = await this.deleteActiveManagedAssetsFromDiskAsync(
+        openLibrary,
+        libraryId,
+        assetIds,
+        {
+          cancelState,
+          onFileDeleted: (processed, totalFiles) => {
+            filesProcessed = processed;
+            emitRun(processed, totalFiles);
+          },
+        },
+      );
+      this.emitDeleteProgress({
+        operationId,
+        libraryId,
+        kind: 'disk',
+        phase: 'complete',
+        filesProcessed: assetIds.length,
+        totalFiles: assetIds.length,
+      });
+      return deletedCount;
+    } catch (error) {
+      if (error instanceof LibraryServiceError && error.code === 'CANCELLED') {
+        this.emitDeleteProgress({
+          operationId,
+          libraryId,
+          kind: 'disk',
+          phase: 'cancelled',
+          filesProcessed,
+          totalFiles: assetIds.length,
+        });
+        throw error;
+      }
+      this.emitDeleteProgress({
+        operationId,
+        libraryId,
+        kind: 'disk',
+        phase: 'failed',
+        filesProcessed,
+        totalFiles: assetIds.length,
+      });
+      throw error;
+    } finally {
+      this.activeDiskDeletes.delete(operationId);
+    }
   }
 
 
@@ -33964,6 +34113,18 @@ export class LibraryService {
       originalPath: string;
       trashName: string;
     }> = [];
+    const operationId = input.operationId ?? randomUUID();
+    const totalDeleteFiles = rows.length;
+    let deletedFilesProcessed = 0;
+    const deleteThrottle = createProgressThrottle();
+    this.emitDeleteProgress({
+      operationId,
+      libraryId: input.libraryId,
+      kind: 'trash',
+      phase: 'run',
+      filesProcessed: 0,
+      totalFiles: totalDeleteFiles,
+    });
 
     try {
       // Phase 1: move files to trash when the source still exists on disk.
@@ -33980,7 +34141,10 @@ export class LibraryService {
             throw new LibraryServiceError('IMPORT_APPLY_FAILED', { cause: error });
           }
         }
-        if (!sourceExists) continue;
+        if (!sourceExists) {
+          deletedFilesProcessed += 1;
+          continue;
+        }
 
         const trashDir = path.join(openLibrary.summary.libraryPath, '.serpent', 'trash', row.asset_id);
         mkdirSync(trashDir, { recursive: true });
@@ -33991,10 +34155,20 @@ export class LibraryService {
           originalPath: sourcePath,
           trashName: filename,
         });
+        deletedFilesProcessed += 1;
+        if (deleteThrottle.shouldEmit(deletedFilesProcessed === totalDeleteFiles)) {
+          this.emitDeleteProgress({
+            operationId,
+            libraryId: input.libraryId,
+            kind: 'trash',
+            phase: 'run',
+            filesProcessed: deletedFilesProcessed,
+            totalFiles: totalDeleteFiles,
+          });
+        }
       }
 
       // Phase 2: write file_operations + update DB in a single transaction
-      const operationId = input.operationId ?? randomUUID();
       const now = new Date().toISOString();
       const trashRelativePrefix = '__trash__';
 
@@ -34058,8 +34232,24 @@ export class LibraryService {
         source: 'client',
       });
 
+      this.emitDeleteProgress({
+        operationId,
+        libraryId: input.libraryId,
+        kind: 'trash',
+        phase: 'complete',
+        filesProcessed: totalDeleteFiles,
+        totalFiles: totalDeleteFiles,
+      });
       return { trashedCount: logicalCount, operationId };
     } catch (error) {
+      this.emitDeleteProgress({
+        operationId,
+        libraryId: input.libraryId,
+        kind: 'trash',
+        phase: 'failed',
+        filesProcessed: deletedFilesProcessed,
+        totalFiles: totalDeleteFiles,
+      });
       // Rollback filesystem: move trashed files back
       for (const entry of [...movedEntries].reverse()) {
         try {
@@ -35032,8 +35222,55 @@ export class LibraryService {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
     }
 
-    this.deleteActiveManagedAssetsFromDisk(openLibrary, assetIds);
-    return { deletedCount: logicalCount };
+    const operationId = randomUUID();
+    const diskThrottle = createProgressThrottle();
+    let filesProcessed = 0;
+    this.emitDeleteProgress({
+      operationId,
+      libraryId: input.libraryId,
+      kind: 'disk',
+      phase: 'run',
+      filesProcessed: 0,
+      totalFiles: assetIds.length,
+    });
+    try {
+      this.deleteActiveManagedAssetsFromDisk(
+        openLibrary,
+        assetIds,
+        (processed, totalFiles) => {
+          filesProcessed = processed;
+          if (diskThrottle.shouldEmit(processed === totalFiles)) {
+            this.emitDeleteProgress({
+              operationId,
+              libraryId: input.libraryId,
+              kind: 'disk',
+              phase: 'run',
+              filesProcessed: processed,
+              totalFiles,
+            });
+          }
+        },
+      );
+      this.emitDeleteProgress({
+        operationId,
+        libraryId: input.libraryId,
+        kind: 'disk',
+        phase: 'complete',
+        filesProcessed: assetIds.length,
+        totalFiles: assetIds.length,
+      });
+      return { deletedCount: logicalCount };
+    } catch (error) {
+      this.emitDeleteProgress({
+        operationId,
+        libraryId: input.libraryId,
+        kind: 'disk',
+        phase: 'failed',
+        filesProcessed,
+        totalFiles: assetIds.length,
+      });
+      throw error;
+    }
   }
 
   deleteAssetsPermanent(input: {
@@ -35084,6 +35321,19 @@ export class LibraryService {
     let deletedCount = 0;
     const skippedReasons: Array<{ assetId: string; reason: PublicErrorReason }> = [];
     const deletedAssetIds: string[] = [];
+    const operationId = randomUUID();
+    const permanentThrottle = createProgressThrottle();
+    const emitPermanent = input.assetIds.length >= 2;
+    if (emitPermanent) {
+      this.emitDeleteProgress({
+        operationId,
+        libraryId: input.libraryId,
+        kind: 'permanent',
+        phase: 'run',
+        filesProcessed: 0,
+        totalFiles: rows.length,
+      });
+    }
 
     for (const row of rows) {
       // Remove trash directory
@@ -35118,6 +35368,16 @@ export class LibraryService {
       } else {
         deletedAssetIds.push(row.asset_id);
       }
+      if (emitPermanent && permanentThrottle.shouldEmit(deletedAssetIds.length + skippedReasons.length === rows.length)) {
+        this.emitDeleteProgress({
+          operationId,
+          libraryId: input.libraryId,
+          kind: 'permanent',
+          phase: 'run',
+          filesProcessed: deletedAssetIds.length + skippedReasons.length,
+          totalFiles: rows.length,
+        });
+      }
     }
 
     // Delete DB rows (cascades to revisions, metadata, tags, collections)
@@ -35149,6 +35409,17 @@ export class LibraryService {
         changedCount: deletedAssetIds.length,
         missingCount: 0,
         source: 'client',
+      });
+    }
+
+    if (emitPermanent) {
+      this.emitDeleteProgress({
+        operationId,
+        libraryId: input.libraryId,
+        kind: 'permanent',
+        phase: 'complete',
+        filesProcessed: rows.length,
+        totalFiles: rows.length,
       });
     }
 
@@ -35556,6 +35827,7 @@ export class LibraryService {
   private purgeTrashedAssetsById(
     libraryId: string,
     assetIds: string[],
+    onPurged?: (processed: number, total: number) => void,
   ): {
     purgedCount: number;
     skippedCount: number;
@@ -35565,11 +35837,12 @@ export class LibraryService {
     let skippedCount = 0;
     const failures: Array<{ assetId: string; reason: PublicErrorReason }> = [];
 
-    for (const assetId of assetIds) {
-      const result = this.deleteAssetsPermanent({ libraryId, assetIds: [assetId] });
+    for (let index = 0; index < assetIds.length; index += 1) {
+      const result = this.deleteAssetsPermanent({ libraryId, assetIds: [assetIds[index]!] });
       purgedCount += result.deletedCount;
       skippedCount += result.skippedCount;
       failures.push(...result.skippedReasons);
+      onPurged?.(index + 1, assetIds.length);
     }
 
     return { purgedCount, skippedCount, failures };
@@ -35587,10 +35860,65 @@ export class LibraryService {
       .prepare(`SELECT asset_id FROM assets WHERE deleted_at IS NOT NULL`)
       .all() as Array<{ asset_id: string }>;
 
-    const result = this.purgeTrashedAssetsById(
-      libraryId,
-      rows.map((row) => row.asset_id),
-    );
+    const operationId = randomUUID();
+    const emptyThrottle = createProgressThrottle();
+    if (rows.length > 0) {
+      this.emitDeleteProgress({
+        operationId,
+        libraryId,
+        kind: 'permanent',
+        phase: 'run',
+        filesProcessed: 0,
+        totalFiles: rows.length,
+      });
+    }
+
+    let result: {
+      purgedCount: number;
+      skippedCount: number;
+      failures: Array<{ assetId: string; reason: PublicErrorReason }>;
+    };
+    try {
+      result = this.purgeTrashedAssetsById(
+        libraryId,
+        rows.map((row) => row.asset_id),
+        (filesProcessed, totalFiles) => {
+          if (emptyThrottle.shouldEmit(filesProcessed === totalFiles)) {
+            this.emitDeleteProgress({
+              operationId,
+              libraryId,
+              kind: 'permanent',
+              phase: 'run',
+              filesProcessed,
+              totalFiles,
+            });
+          }
+        },
+      );
+    } catch (error) {
+      if (rows.length > 0) {
+        this.emitDeleteProgress({
+          operationId,
+          libraryId,
+          kind: 'permanent',
+          phase: 'failed',
+          filesProcessed: 0,
+          totalFiles: rows.length,
+        });
+      }
+      throw error;
+    }
+
+    if (rows.length > 0) {
+      this.emitDeleteProgress({
+        operationId,
+        libraryId,
+        kind: 'permanent',
+        phase: 'complete',
+        filesProcessed: rows.length,
+        totalFiles: rows.length,
+      });
+    }
 
     // Serpent-b3kf: never wipe all tombstones when some assets remain in trash.
     if (result.skippedCount === 0) {
@@ -37595,42 +37923,64 @@ export class LibraryService {
     byteSize: number,
     sha256: string,
     contentHashCache: Map<string, string>,
+    contentFingerprint?: string,
   ): {
     assetId: string;
     displayName: string;
     thumbnailArtifactId: string | null;
   } | null {
-    const rows = openLibrary.connection
-      .prepare(
-        `SELECT a.asset_id, a.relative_file_path,
-                ra.artifact_id AS thumbnail_artifact_id,
-                ra.status AS thumbnail_status
-           FROM assets a
-           JOIN revisions r ON r.revision_id = a.current_revision_id
-          LEFT JOIN revision_artifacts ra
-             ON ra.revision_id = a.current_revision_id
-            AND ra.kind = CASE
-              WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
-                OR LOWER(a.relative_file_path) LIKE '%.webm'
-                OR LOWER(a.relative_file_path) LIKE '%.mov'
-                OR LOWER(a.relative_file_path) LIKE '%.avi'
-                OR LOWER(a.relative_file_path) LIKE '%.wmv'
-                OR LOWER(a.relative_file_path) LIKE '%.mkv'
-                OR LOWER(a.relative_file_path) LIKE '%.m4v'
-              THEN 'video_poster'
-              ELSE 'thumbnail'
-            END
-            AND ra.invalidated_at IS NULL
-          WHERE a.deleted_at IS NULL
-            AND a.location_kind = 'managed'
-            AND r.byte_size = ?`,
-      )
-      .all(byteSize) as Array<{
+    const selectSameSize = `
+      SELECT a.asset_id, a.relative_file_path,
+             ra.artifact_id AS thumbnail_artifact_id,
+             ra.status AS thumbnail_status
+        FROM assets a
+        JOIN revisions r ON r.revision_id = a.current_revision_id
+       LEFT JOIN revision_artifacts ra
+          ON ra.revision_id = a.current_revision_id
+         AND ra.kind = CASE
+           WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
+             OR LOWER(a.relative_file_path) LIKE '%.webm'
+             OR LOWER(a.relative_file_path) LIKE '%.mov'
+             OR LOWER(a.relative_file_path) LIKE '%.avi'
+             OR LOWER(a.relative_file_path) LIKE '%.wmv'
+             OR LOWER(a.relative_file_path) LIKE '%.mkv'
+             OR LOWER(a.relative_file_path) LIKE '%.m4v'
+           THEN 'video_poster'
+           ELSE 'thumbnail'
+         END
+         AND ra.invalidated_at IS NULL
+       WHERE a.deleted_at IS NULL
+         AND a.location_kind = 'managed'
+         AND r.byte_size = ?`;
+    type MatchedAssetRow = {
       asset_id: string;
       relative_file_path: string;
       thumbnail_artifact_id: string | null;
       thumbnail_status: string | null;
-    }>;
+    };
+    const toMatch = (row: MatchedAssetRow) => ({
+      assetId: row.asset_id,
+      displayName: path.posix.basename(row.relative_file_path),
+      thumbnailArtifactId:
+        row.thumbnail_status === 'ready' ? row.thumbnail_artifact_id : null,
+    });
+
+    // Revisions already store a SHA-1 of file bytes. Matching that avoids
+    // hashing every same-size library file for each imported item.
+    if (contentFingerprint) {
+      const fingerprinted = openLibrary.connection
+        .prepare(`${selectSameSize} AND r.content_fingerprint = ?`)
+        .get(byteSize, contentFingerprint) as MatchedAssetRow | undefined;
+      if (fingerprinted) return toMatch(fingerprinted);
+    }
+
+    const rows = openLibrary.connection
+      .prepare(
+        contentFingerprint
+          ? `${selectSameSize} AND r.content_fingerprint IS NULL`
+          : selectSameSize,
+      )
+      .all(byteSize) as MatchedAssetRow[];
 
     for (const row of rows) {
       const absolutePath = this.folderPath(openLibrary, row.relative_file_path);
@@ -37643,14 +37993,7 @@ export class LibraryService {
           continue;
         }
       }
-      if (fileHash === sha256) {
-        return {
-          assetId: row.asset_id,
-          displayName: path.posix.basename(row.relative_file_path),
-          thumbnailArtifactId:
-            row.thumbnail_status === 'ready' ? row.thumbnail_artifact_id : null,
-        };
-      }
+      if (fileHash === sha256) return toMatch(row);
     }
     return null;
   }
@@ -37713,6 +38056,7 @@ export class LibraryService {
     byteSize: number,
     sha256: string,
     contentHashCache: Map<string, string>,
+    contentFingerprint?: string,
   ): string | null {
     return (
       this.findActiveManagedAssetByContent(
@@ -37720,6 +38064,7 @@ export class LibraryService {
         byteSize,
         sha256,
         contentHashCache,
+        contentFingerprint,
       )?.assetId ?? null
     );
   }
@@ -37765,6 +38110,7 @@ export class LibraryService {
         entry.byteSize,
         entrySha256,
         contentHashCache,
+        entry.contentFingerprint,
       ) !== null
     ) {
       return 'suspected-duplicate';
@@ -37933,6 +38279,10 @@ export class LibraryService {
     suppressAssetChangeEvents?: boolean;
     /** Shared destination identity map for multi-batch Eagle/Billfish conversion. */
     destinationIndex?: Map<string, ExistingDestination>;
+    /** When set, emit import.progress and honor cancelImport(importId). */
+    transferCancel?: TransferCancelState;
+    /** Yield so a cancel command can run while files are staged. */
+    yieldTransferCheckpoints?: boolean;
   }): ImportConflictPlan {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (this.linkedFolderRowForImport(openLibrary, input.targetFolderId)) {
@@ -38005,62 +38355,139 @@ export class LibraryService {
     } catch (error) {
       throw serviceError(error, 'IMPORT_APPLY_FAILED');
     }
+    const cancelState = input.transferCancel;
+    if (cancelState) {
+      this.activeImports.set(importId, cancelState);
+    }
+    const trackProgress = cancelState !== undefined && input.onStagedEntry === undefined;
+    const totalImportFiles = entries.length;
+    const totalImportBytes = entries.reduce((total, entry) => total + entry.byteSize, 0);
+    if (trackProgress) {
+      this.emitManagedImportProgress(importId, 'validate', 0, totalImportFiles, 0, totalImportBytes);
+    }
     let stagedEntries: ImportSourceEntry[];
     try {
       mkdirSync(stagePath, { recursive: true });
-      stagedEntries = [];
-      entries.forEach((entry, index) => {
-        const stagedPath = path.join(stagePath, String(index));
-        const byteSize = this.copySourceSnapshot(
-          entry,
-          stagedPath,
-          skipContentHash ? { bulk: true } : undefined,
-        );
-        if (skipContentHash) {
-          const staged: ImportSourceEntry = {
-            ...entry,
-            byteSize,
-            sourcePath: stagedPath,
-          };
-          if (entry.eagleMetadata?.thumbnailPath) {
-            try {
-              const copied = this.copyEagleThumbnailFile(
-                openLibrary,
-                entry.destinationRelativePath,
-                entry.eagleMetadata,
-              );
-              if (copied) staged.copiedThumbnail = copied;
-            } catch (error) {
-              this.diagnose('eagle-import.thumbnail-skipped', error, {
-                reason: 'EAGLE_THUMBNAIL_FAILED',
-              });
-            }
-          }
-          stagedEntries.push(staged);
-        } else {
-          const hashes = sha256AndContentFingerprintFileAtPath(stagedPath);
-          stagedEntries.push({
-            ...entry,
-            byteSize,
-            sha256: hashes.sha256,
-            contentFingerprint: hashes.contentFingerprint,
-            sourcePath: stagedPath,
-          });
-        }
-        input.onStagedEntry?.(index + 1, byteSize);
-        if (index === 0) this.failAt('crash-during-prepare-stage');
+      const stagedResult = this.stageImportSourceEntries({
+        openLibrary,
+        entries,
+        stagePath,
+        skipContentHash,
+        onStagedEntry: input.onStagedEntry,
+        importId: trackProgress ? importId : undefined,
+        totalFiles: totalImportFiles,
+        totalBytes: totalImportBytes,
+        cancelState,
+        yieldCheckpoints: input.yieldTransferCheckpoints === true,
       });
-    } catch (error) {
-      if (error instanceof LibraryServiceError && error.code === 'CANCELLED') throw error;
-      if (error instanceof SimulatedCrashError) {
-        throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
+      if (typeof (stagedResult as Promise<ImportSourceEntry[]>).then === 'function') {
+        return (stagedResult as Promise<ImportSourceEntry[]>).then((resolved) => {
+          return this.completePreparedImport({
+            input,
+            openLibrary,
+            importId,
+            operationPath,
+            directories,
+            stagedEntries: resolved,
+            skipContentHash,
+            destinationIndex,
+            preparingManifest,
+          });
+        }).catch((error: unknown) => {
+          this.failPreparedImport(error, {
+            importId,
+            operationPath,
+            openLibrary,
+            trackProgress,
+          });
+        }) as unknown as ImportConflictPlan;
       }
-      this.removeOperation(operationPath);
-      openLibrary.connection
-        .prepare("UPDATE file_operations SET status = 'failed', error_code = 'PREPARE_FAILED', updated_at = ? WHERE operation_id = ?")
-        .run(new Date().toISOString(), importId);
+      stagedEntries = stagedResult as ImportSourceEntry[];
+    } catch (error) {
+      this.failPreparedImport(error, {
+        importId,
+        operationPath,
+        openLibrary,
+        trackProgress,
+      });
+    }
+    return this.completePreparedImport({
+      input,
+      openLibrary,
+      importId,
+      operationPath,
+      directories,
+      stagedEntries,
+      skipContentHash,
+      destinationIndex,
+      preparingManifest,
+    });
+  }
+
+  private failPreparedImport(
+    error: unknown,
+    context: {
+      importId: string;
+      operationPath: string;
+      openLibrary: OpenLibrary;
+      trackProgress: boolean;
+    },
+  ): never {
+    if (error instanceof LibraryServiceError && error.code === 'CANCELLED') {
+      this.removeOperation(context.operationPath);
+      try {
+        context.openLibrary.connection
+          .prepare("UPDATE file_operations SET status = 'failed', error_code = 'CANCELLED', updated_at = ? WHERE operation_id = ?")
+          .run(new Date().toISOString(), context.importId);
+      } catch {
+        // Best-effort bookkeeping; the cancelled error is the one callers see.
+      }
+      this.activeImports.delete(context.importId);
+      if (context.trackProgress) {
+        this.emitManagedImportProgress(context.importId, 'cancelled', 0, 0, 0, 0);
+      }
+      throw error;
+    }
+    if (error instanceof SimulatedCrashError) {
       throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
     }
+    this.removeOperation(context.operationPath);
+    try {
+      context.openLibrary.connection
+        .prepare("UPDATE file_operations SET status = 'failed', error_code = 'PREPARE_FAILED', updated_at = ? WHERE operation_id = ?")
+        .run(new Date().toISOString(), context.importId);
+    } catch {
+      // Best-effort bookkeeping.
+    }
+    this.activeImports.delete(context.importId);
+    if (context.trackProgress) {
+      this.emitManagedImportProgress(context.importId, 'failed', 0, 0, 0, 0);
+    }
+    throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
+  }
+
+  private completePreparedImport(context: {
+    input: Parameters<LibraryService['prepareImport']>[0];
+    openLibrary: OpenLibrary;
+    importId: string;
+    operationPath: string;
+    directories: string[];
+    stagedEntries: ImportSourceEntry[];
+    skipContentHash: boolean;
+    destinationIndex: Map<string, ExistingDestination> | undefined;
+    preparingManifest: OperationManifest;
+  }): ImportConflictPlan {
+    const {
+      input,
+      openLibrary,
+      importId,
+      operationPath,
+      directories,
+      stagedEntries,
+      skipContentHash,
+      destinationIndex,
+      preparingManifest,
+    } = context;
     const seenDestinations = new Map<string, number>();
     const contentHashCache = new Map<string, string>();
     const seenContentHashes = new Set<string>();
@@ -38122,6 +38549,7 @@ export class LibraryService {
                   entry.byteSize,
                   entrySha256,
                   contentHashCache,
+                  entry.contentFingerprint,
                 );
             examples.push({
               displayName: path.posix.basename(entry.destinationRelativePath),
@@ -38217,6 +38645,7 @@ export class LibraryService {
         : {}),
       ...(skipContentHash ? { skipContentHash: true } : {}),
       ...(destinationIndex ? { destinationIndex } : {}),
+      contentHashCache,
     };
     this.pendingImports.set(importId, pending);
     this.scheduleImportExpiry(importId, pending);
@@ -38285,6 +38714,95 @@ export class LibraryService {
       suspectedDuplicate: 'skip',
       nameConflict: 'keep-both',
     });
+  }
+
+  async prepareOrExecuteImportCancellable(
+    input: Parameters<LibraryService['prepareOrExecuteImport']>[0],
+  ): Promise<ImportConflictPlan | ImportCompletion> {
+    if (input.automationPlan !== undefined) {
+      this.validateAutomationImportPlan(input);
+    }
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const linked = this.linkedFolderRowForImport(
+      openLibrary,
+      input.targetFolderId,
+    );
+    if (linked) {
+      return this.importPathsIntoLinkedFolder({
+        libraryId: input.libraryId,
+        linkedFolderId: linked.folder_id,
+        relativePath: linked.relative_path,
+        sourceKind: input.sourceKind,
+        sourcePaths: input.sourcePaths,
+        expandImageSequences: input.expandImageSequences === true,
+        imageSequenceFps: input.imageSequenceFps,
+      });
+    }
+    const cancelState: TransferCancelState = { cancelled: false };
+    const plan = await Promise.resolve(
+      this.prepareImport({
+        ...input,
+        transferCancel: cancelState,
+        yieldTransferCheckpoints: true,
+      }),
+    );
+    const finish = (completion: ImportCompletion): ImportCompletion => {
+      this.emitManagedImportProgress(
+        plan.importId,
+        'complete',
+        plan.fileCount,
+        plan.fileCount,
+        plan.totalBytes,
+        plan.totalBytes,
+      );
+      this.activeImports.delete(plan.importId);
+      return completion;
+    };
+    try {
+      if (input.automationPlan !== undefined) {
+        return finish(this.resolveImport({
+          importId: plan.importId,
+          suspectedDuplicate: 'skip',
+          nameConflict: 'keep-both',
+        }));
+      }
+      if (plan.suspectedDuplicateCount !== 0 || plan.nameConflictCount !== 0) {
+        return plan;
+      }
+      return finish(this.resolveImport({
+        importId: plan.importId,
+        suspectedDuplicate: 'skip',
+        nameConflict: 'keep-both',
+      }));
+    } catch (error) {
+      this.activeImports.delete(plan.importId);
+      throw error;
+    }
+  }
+
+  async resolveImportCancellable(
+    input: Parameters<LibraryService['resolveImport']>[0],
+  ): Promise<ImportCompletion> {
+    if (!this.activeImports.has(input.importId)) {
+      this.activeImports.set(input.importId, { cancelled: false });
+    }
+    try {
+      const completion = this.resolveImport(input);
+      this.emitManagedImportProgress(
+        input.importId,
+        'complete',
+        completion.importedCount + completion.replacedCount + completion.skippedCount,
+        completion.importedCount + completion.replacedCount + completion.skippedCount,
+        0,
+        0,
+      );
+      return completion;
+    } catch (error) {
+      this.activeImports.delete(input.importId);
+      throw error;
+    } finally {
+      this.activeImports.delete(input.importId);
+    }
   }
 
   private ensureEagleCollections(
@@ -39334,7 +39852,7 @@ export class LibraryService {
     };
 
     try {
-      const contentHashCache = new Map<string, string>();
+      const contentHashCache = pending.contentHashCache ?? new Map<string, string>();
       const seenContentHashes = new Set<string>();
       const occupiedContentHashes = new Map<string, string>();
       const sequenceBatchPaths = new Set<string>();
@@ -39433,6 +39951,7 @@ export class LibraryService {
                   entry.byteSize,
                   entrySha256,
                   contentHashCache,
+                  entry.contentFingerprint,
                 );
             if (retainedAssetId) mergedAssetIds.add(retainedAssetId);
             else skippedCount += 1;
@@ -42951,12 +43470,161 @@ export class LibraryService {
 
   // ── Library Export / Import ────────────────────────────────────────
 
-  private emitProgress(event: ExportProgressEvent | ImportProgressEvent): void {
+  private emitProgress(event: ExportProgressEvent | ImportProgressEvent | DeleteProgressEvent): void {
     try {
       this.options.onProgress?.(event);
     } catch {
       // Progress is best effort and must never throw back into an operation.
     }
+  }
+
+  private emitManagedImportProgress(
+    importId: string,
+    phase: ImportProgressEvent['phase'],
+    filesProcessed: number,
+    totalFiles: number,
+    bytesProcessed: number,
+    totalBytes: number,
+  ): void {
+    this.emitProgress({
+      type: 'import.progress',
+      importId,
+      phase,
+      cancelable: true,
+      filesProcessed,
+      totalFiles,
+      bytesProcessed,
+      totalBytes,
+    });
+  }
+
+  private emitDeleteProgress(event: Omit<DeleteProgressEvent, 'type'>): void {
+    this.emitProgress({ type: 'delete.progress', ...event });
+  }
+
+  private stageOneImportSourceEntry(input: {
+    openLibrary: OpenLibrary;
+    entry: ImportSourceEntry;
+    stagedPath: string;
+    skipContentHash: boolean;
+  }): ImportSourceEntry {
+    const byteSize = this.copySourceSnapshot(
+      input.entry,
+      input.stagedPath,
+      input.skipContentHash ? { bulk: true } : undefined,
+    );
+    if (input.skipContentHash) {
+      const staged: ImportSourceEntry = {
+        ...input.entry,
+        byteSize,
+        sourcePath: input.stagedPath,
+      };
+      if (input.entry.eagleMetadata?.thumbnailPath) {
+        try {
+          const copied = this.copyEagleThumbnailFile(
+            input.openLibrary,
+            input.entry.destinationRelativePath,
+            input.entry.eagleMetadata,
+          );
+          if (copied) staged.copiedThumbnail = copied;
+        } catch (error) {
+          this.diagnose('eagle-import.thumbnail-skipped', error, {
+            reason: 'EAGLE_THUMBNAIL_FAILED',
+          });
+        }
+      }
+      return staged;
+    }
+    const hashes = sha256AndContentFingerprintFileAtPath(input.stagedPath);
+    return {
+      ...input.entry,
+      byteSize,
+      sha256: hashes.sha256,
+      contentFingerprint: hashes.contentFingerprint,
+      sourcePath: input.stagedPath,
+    };
+  }
+
+  private stageImportSourceEntries(input: {
+    openLibrary: OpenLibrary;
+    entries: ImportSourceEntry[];
+    stagePath: string;
+    skipContentHash: boolean;
+    onStagedEntry?: (processedCount: number, bytesProcessed: number) => void;
+    importId?: string;
+    totalFiles: number;
+    totalBytes: number;
+    cancelState?: TransferCancelState;
+    yieldCheckpoints?: boolean;
+  }): ImportSourceEntry[] | Promise<ImportSourceEntry[]> {
+    const stagedEntries: ImportSourceEntry[] = [];
+    const throttle = createProgressThrottle();
+    let bytesProcessed = 0;
+    const stageIndex = (index: number): void => {
+      if (input.cancelState?.cancelled) {
+        if (input.importId) {
+          this.emitManagedImportProgress(
+            input.importId,
+            'cancelled',
+            index,
+            input.totalFiles,
+            bytesProcessed,
+            input.totalBytes,
+          );
+        }
+        throw new LibraryServiceError('CANCELLED');
+      }
+      const entry = input.entries[index]!;
+      const stagedPath = path.join(input.stagePath, String(index));
+      const staged = this.stageOneImportSourceEntry({
+        openLibrary: input.openLibrary,
+        entry,
+        stagedPath,
+        skipContentHash: input.skipContentHash,
+      });
+      stagedEntries.push(staged);
+      bytesProcessed += staged.byteSize;
+      input.onStagedEntry?.(index + 1, staged.byteSize);
+      if (index === 0) this.failAt('crash-during-prepare-stage');
+      if (
+        input.importId
+        && throttle.shouldEmit(index === input.entries.length - 1)
+      ) {
+        this.emitManagedImportProgress(
+          input.importId,
+          'copy',
+          index + 1,
+          input.totalFiles,
+          bytesProcessed,
+          input.totalBytes,
+        );
+      }
+    };
+    if (input.yieldCheckpoints) {
+      return (async () => {
+        if (input.importId) {
+          this.emitManagedImportProgress(
+            input.importId,
+            'copy',
+            0,
+            input.totalFiles,
+            0,
+            input.totalBytes,
+          );
+        }
+        for (let index = 0; index < input.entries.length; index += 1) {
+          if (index === 0 || index % 8 === 0) {
+            await transferCheckpoint();
+          }
+          stageIndex(index);
+        }
+        return stagedEntries;
+      })();
+    }
+    for (let index = 0; index < input.entries.length; index += 1) {
+      stageIndex(index);
+    }
+    return stagedEntries;
   }
 
   private transferPathKey(candidatePath: string): string {
@@ -43600,6 +44268,13 @@ export class LibraryService {
 
   cancelImport(importId: string): void {
     const state = this.activeImports.get(importId);
+    if (!state) throw new LibraryServiceError('IMPORT_NOT_FOUND');
+    state.cancelled = true;
+    state.onCancel?.();
+  }
+
+  cancelDiskDelete(operationId: string): void {
+    const state = this.activeDiskDeletes.get(operationId);
     if (!state) throw new LibraryServiceError('IMPORT_NOT_FOUND');
     state.cancelled = true;
     state.onCancel?.();

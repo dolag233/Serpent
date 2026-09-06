@@ -542,6 +542,77 @@ describe('pending import plans', () => {
     service.closeAll();
   });
 
+  it('does not treat other same-size files as content duplicates', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Library', selectedParentPath: root });
+    const sourceDir = mkdtempSync(path.join(root, 'src-'));
+    writeFileSync(path.join(sourceDir, 'alpha.bin'), 'same-size-a');
+    writeFileSync(path.join(sourceDir, 'beta.bin'), 'same-size-b');
+    writeFileSync(path.join(sourceDir, 'alpha-copy.bin'), 'same-size-a');
+    writeFileSync(path.join(sourceDir, 'gamma.bin'), 'same-size-c');
+
+    const imported = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [
+        path.join(sourceDir, 'alpha.bin'),
+        path.join(sourceDir, 'beta.bin'),
+      ],
+    });
+    expect('importedCount' in imported).toBe(true);
+
+    const unique = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [path.join(sourceDir, 'gamma.bin')],
+    });
+    expect(unique.libraryDuplicateCount).toBe(0);
+    expect(unique.nameConflictCount).toBe(0);
+
+    const duplicate = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [path.join(sourceDir, 'alpha-copy.bin')],
+    });
+    expect(duplicate.libraryDuplicateCount).toBe(1);
+    expect(duplicate.examples[0]?.existingDisplayName).toBe('alpha.bin');
+    service.closeAll();
+  });
+
+  it('still detects library duplicates when stored fingerprints are missing', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Library', selectedParentPath: root });
+    const sourceDir = mkdtempSync(path.join(root, 'src-'));
+    writeFileSync(path.join(sourceDir, 'model.fbx'), 'legacy-fingerprint-bytes');
+    writeFileSync(path.join(sourceDir, 'copy.fbx'), 'legacy-fingerprint-bytes');
+
+    const imported = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [path.join(sourceDir, 'model.fbx')],
+    });
+    expect('importedCount' in imported).toBe(true);
+    const revisionId = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    })[0]!.currentRevisionId;
+    const connection = (service as unknown as {
+      openById: Map<string, { connection: { prepare(sql: string): { run(...args: unknown[]): void } } }>;
+    }).openById.get(library.libraryId)!.connection;
+    connection.prepare('UPDATE revisions SET content_fingerprint = NULL WHERE revision_id = ?').run(revisionId);
+
+    const conflict = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [path.join(sourceDir, 'copy.fbx')],
+    });
+    expect(conflict.libraryDuplicateCount).toBe(1);
+    expect(conflict.examples[0]?.existingDisplayName).toBe('model.fbx');
+    service.closeAll();
+  });
+
   it('carries the existing asset thumbnail in name-conflict examples when ready (Serpent-793k)', async () => {
     const root = temporaryRoot();
     const service = new LibraryService();

@@ -1,8 +1,7 @@
 import type { ReactNode } from "react";
 
+import { BlockingProgressOverlay } from "./BlockingProgressOverlay";
 import { useT } from "./i18n";
-import { Progress } from "./ui/primitives";
-import { DialogShell } from "./ui/patterns";
 
 export type LibraryLoadingOverlayProps = {
   readonly name: string | null;
@@ -38,33 +37,15 @@ export function LibraryLoadingOverlay({
       );
 
   return (
-    <div
-      className="dialog-backdrop library-loading-backdrop"
-      data-library-loading-overlay="true"
-      role="presentation"
-    >
-      <DialogShell
-        className="library-loading-dialog"
-        contentClassName="library-loading-content"
-        dialogId="library-loading-dialog"
-        footer={
-          onSwitchLibrary ? (
-            <button
-              className="secondary-button"
-              onClick={onSwitchLibrary}
-              type="button"
-            >
-              {t("progress.switchLibraryWhileLoading")}
-            </button>
-          ) : undefined
-        }
-        title={title}
-      >
-        <Progress
-          aria-label={title}
-          indeterminate
-        />
-      </DialogShell>
-    </div>
+    <BlockingProgressOverlay
+      cancelLabel={
+        onSwitchLibrary ? t("progress.switchLibraryWhileLoading") : undefined
+      }
+      indeterminate
+      kind="library-loading"
+      onCancel={onSwitchLibrary}
+      solidBackdrop
+      title={title}
+    />
   );
 }

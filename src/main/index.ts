@@ -3410,6 +3410,8 @@ async function commandFor(
     }
     case "library.import.cancel.request":
       return { type: "library.import-cancel", importId: request.importId };
+    case "asset.delete-cancel.request":
+      return { type: "asset.delete-cancel", operationId: request.operationId };
     case "library.import.copy.request": {
       const importId = request.importId;
       const sourcePath = pendingImportSources.get(importId);

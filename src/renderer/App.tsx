@@ -71,6 +71,11 @@ import { LibrarySwitcher, buildRecentLibraryMenuEntries, type RecentLibraryMenuE
 import {
   LibraryLoadingOverlay,
 } from "./LibraryLoadingOverlay";
+import { ImportProgressOverlay } from "./ImportProgressOverlay";
+import { DeleteProgressOverlay } from "./DeleteProgressOverlay";
+import { BlockingProgressOverlay } from "./BlockingProgressOverlay";
+import { isBlockingImportOverlayVisible } from "./import-progress-copy";
+import { isActiveDeleteProgress, isDeleteProgressCancelable } from "./delete-progress-copy";
 import { activeLibrarySwitchActivity } from "./library-switch-safety";
 import { createLibraryTransitionLock } from "./library-transition-lock";
 import {
@@ -401,6 +406,7 @@ import type {
   ExportProgressEvent,
   ImportProgressEvent,
   SyncProgressEvent,
+  DeleteProgressEvent,
 } from "../shared/protocol/responses";
 import { AssetPreviewModal, type AssetPreviewModalHandle } from "./AssetPreviewModal";
 import { TextAssetPreviewTile } from "./TextAssetPreviewTile";
@@ -442,8 +448,6 @@ import {
 } from "./browse/virtual-browse-layout";
 import { formatBytes, formatShortDate } from "./format-file-meta";
 import {
-  isLibraryOpenTransferKind,
-  libraryTransferHeadlineKey,
   libraryTransferKindFromOperation,
   type LibraryTransferKind,
 } from "./library-transfer-progress";
@@ -1421,6 +1425,8 @@ function AppInner() {
     useState<ImportProgressEvent | null>(null);
   const importProgressRef = useRef(importProgress);
   importProgressRef.current = importProgress;
+  const [deleteProgress, setDeleteProgress] =
+    useState<DeleteProgressEvent | null>(null);
   const [libraryTransferKind, setLibraryTransferKind] = useState<LibraryTransferKind>("import");
   const [libraryTransferName, setLibraryTransferName] = useState("");
 
@@ -6965,7 +6971,10 @@ function AppInner() {
               autoDetectImageSequences: imageSequencePrefs.autoDetectOnImport,
             });
       if (!result.ok) {
-        if (result.error.code === "CANCELLED") return;
+        if (result.error.code === "CANCELLED") {
+          setNotice(t("toast.importCancelled"));
+          return;
+        }
         throw new LibraryOperationError(result.error);
       }
       if (isImportConflictPlan(result.value)) {
@@ -6986,6 +6995,7 @@ function AppInner() {
         toMessage(caught, t("toast.importFailed"), locale),
       );
     } finally {
+      setImportProgress(null);
       setUiState("ready");
     }
   }
@@ -6994,22 +7004,15 @@ function AppInner() {
     if (!api || !library || importProgress) return;
     const startedAt = Date.now();
     setLibraryTransferKind("import");
-    setImportProgress({
-      type: "import.progress",
-      importId: "",
-      phase: "validate",
-      cancelable: true,
-      filesProcessed: 0,
-      totalFiles: 0,
-      bytesProcessed: 0,
-      totalBytes: 0,
-    });
     setError(null);
     setNotice(null);
     try {
       const result = await api.importEagleLibrary({ libraryId: library.libraryId });
       if (!result.ok) {
-        if (result.error.code === "CANCELLED") return;
+        if (result.error.code === "CANCELLED") {
+          setNotice(t("toast.importCancelled"));
+          return;
+        }
         throw new LibraryOperationError(result.error);
       }
       setNotice(importSummaryMessage(result.value, locale));
@@ -7031,22 +7034,15 @@ function AppInner() {
     if (!api || !library || importProgress) return;
     const startedAt = Date.now();
     setLibraryTransferKind("import");
-    setImportProgress({
-      type: "import.progress",
-      importId: "",
-      phase: "validate",
-      cancelable: true,
-      filesProcessed: 0,
-      totalFiles: 0,
-      bytesProcessed: 0,
-      totalBytes: 0,
-    });
     setError(null);
     setNotice(null);
     try {
       const result = await api.importBillfishLibrary({ libraryId: library.libraryId });
       if (!result.ok) {
-        if (result.error.code === "CANCELLED") return;
+        if (result.error.code === "CANCELLED") {
+          setNotice(t("toast.importCancelled"));
+          return;
+        }
         throw new LibraryOperationError(result.error);
       }
       setNotice(importSummaryMessage(result.value, locale));
@@ -7952,7 +7948,14 @@ function AppInner() {
           libraryId: library.libraryId,
           assetIds,
         });
-        if (!result.ok) throw new LibraryOperationError(result.error);
+        if (!result.ok) {
+          if (result.error.code === "CANCELLED") {
+            setNotice(t("toast.diskDeleteCancelled"));
+            await reloadCurrentContent({ blockingNavigation: false });
+            return;
+          }
+          throw new LibraryOperationError(result.error);
+        }
         deletedAssets = result.value.deletedCount;
         const collectionResult = await api.listCollections({
           libraryId: library.libraryId,
@@ -7979,6 +7982,11 @@ function AppInner() {
       playTaskCompletionSound(startedAt);
     } catch (caught) {
       playTaskCompletionSound(startedAt);
+      if (caught instanceof LibraryOperationError && caught.code === "CANCELLED") {
+        setNotice(t("toast.diskDeleteCancelled"));
+        await reloadCurrentContent({ blockingNavigation: false });
+        return;
+      }
       setError(toMessage(caught, t("toast.folderDeleteFromDiskFailed"), locale));
     } finally {
       setUiState("ready");
@@ -8329,6 +8337,19 @@ function AppInner() {
     }
   }
 
+  async function cancelDiskDelete() {
+    if (!api || !deleteProgress?.operationId) return;
+    try {
+      const result = await api.cancelDiskDelete({
+        operationId: deleteProgress.operationId,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setNotice(t("toast.cancellingDiskDelete"));
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.cancelDiskDeleteFailed"), locale));
+    }
+  }
+
   async function cancelImport() {
     if (!api) return;
     if (!importProgress?.importId) {
@@ -8350,15 +8371,6 @@ function AppInner() {
 
   async function startImport() {
     if (!api) return;
-    setImportProgress({
-      type: "import.progress",
-      importId: "",
-      phase: "validate",
-      filesProcessed: 0,
-      totalFiles: 0,
-      bytesProcessed: 0,
-      totalBytes: 0,
-    });
     try {
       const result = await api.importLibrary();
       if (!result.ok) {
@@ -8382,15 +8394,6 @@ function AppInner() {
   async function startImportZip() {
     if (!api) return;
     const startedAt = Date.now();
-    setImportProgress({
-      type: "import.progress",
-      importId: "",
-      phase: "validate",
-      filesProcessed: 0,
-      totalFiles: 0,
-      bytesProcessed: 0,
-      totalBytes: 0,
-    });
     try {
       const result = await api.importLibraryZip();
       if (!result.ok) {
@@ -8494,8 +8497,7 @@ function AppInner() {
   async function completeImportCopy() {
     if (!api || !importValidated) return;
     // Serpent-1tio: the validated dialog must disappear the moment the import
-    // starts; the persistent activity strip (正在导入资源库) is the only
-    // indicator from here until completion.
+    // starts; the blocking import overlay is the only indicator from here until completion.
     const validated = importValidated;
     const startedAt = Date.now();
     setImportValidated(null);
@@ -8787,9 +8789,25 @@ function AppInner() {
             setNotice(t("settings.sync.statusSyncing"));
           }
         }
+      } else if (event.type === "delete.progress") {
+        if (event.phase === "complete" || event.phase === "failed" || event.phase === "cancelled") {
+          setDeleteProgress(null);
+        } else {
+          setDeleteProgress(event);
+        }
       }
     });
   }, [api, setNotice, t]);
+
+  const blockingImportOverlayVisible = isBlockingImportOverlayVisible(
+    uiState,
+    importProgress,
+  );
+  const blockingDeleteOverlayVisible =
+    isActiveDeleteProgress(deleteProgress) && deleteProgress.totalFiles >= 2;
+  const blockingDeleteCancelable = isDeleteProgressCancelable(deleteProgress);
+  const blockingImportCancelable =
+    Boolean(importProgress?.importId) && importProgress?.cancelable !== false;
 
   const dialogEscapeSnapshot = useMemo((): DialogEscapeSnapshot => {
     return {
@@ -8817,6 +8835,10 @@ function AppInner() {
       fatalAlertOpen: Boolean(fatalAlertMessage),
       aiConnectionFailureOpen: aiConnectionFailureGate.open,
       conflictsImportId: conflictPhase ? (conflicts?.importId ?? null) : null,
+      blockingImportOpen: blockingImportOverlayVisible,
+      blockingImportCancelable,
+      blockingDeleteOpen: blockingDeleteOverlayVisible,
+      blockingDeleteCancelable,
     };
   }, [
     assetRenameDialog,
@@ -8844,6 +8866,10 @@ function AppInner() {
     aiConnectionFailureGate.open,
     conflicts?.importId,
     conflictPhase,
+    blockingImportOverlayVisible,
+    blockingImportCancelable,
+    blockingDeleteOverlayVisible,
+    blockingDeleteCancelable,
   ]);
 
   useDialogEscapeDismiss({
@@ -8890,6 +8916,12 @@ function AppInner() {
     setError,
     onDismissFatalAlert: dismissFatalAlert,
     onAbortAiConnectionFailure: onAiConnectionFailureAbort,
+    onCancelBlockingImport: () => {
+      void cancelImport();
+    },
+    onCancelBlockingDelete: () => {
+      void cancelDiskDelete();
+    },
   });
 
   const dialogFocusTrapActive = Boolean(
@@ -8918,7 +8950,13 @@ function AppInner() {
       linkedRulesEditor ||
       convertLinkedDialog.folderId ||
       libraryLoadingVisible ||
-      pluginUiDialogOpen,
+      pluginUiDialogOpen ||
+      blockingImportOverlayVisible ||
+      blockingDeleteOverlayVisible ||
+      Boolean(
+        exportProgress &&
+          !["complete", "cancelled", "failed"].includes(exportProgress.phase),
+      ),
   );
   useDialogFocusTrap(
     dialogFocusTrapActive,
@@ -10378,7 +10416,7 @@ function AppInner() {
     <HoverTipHost />
     <PluginUiDialogHost onOpenChange={setPluginUiDialogOpen} pluginApi={pluginManagerApi} />
     <EditTextContextMenuHost />
-    {libraryLoading && libraryLoadingVisible ? (
+    {libraryLoading && libraryLoadingVisible && !blockingImportOverlayVisible && !blockingDeleteOverlayVisible ? (
       <LibraryLoadingOverlay
         name={libraryLoading.name}
         operation={libraryLoading.operation}
@@ -10391,6 +10429,52 @@ function AppInner() {
                 setOpenLibraryChooserOpen(true);
               }
         }
+      />
+    ) : null}
+    {blockingImportOverlayVisible ? (
+      <ImportProgressOverlay
+        onCancel={() => {
+          void cancelImport();
+        }}
+        progress={importProgress}
+        transferKind={libraryTransferKind}
+        transferName={libraryTransferName}
+      />
+    ) : null}
+    {blockingDeleteOverlayVisible && !blockingImportOverlayVisible ? (
+      <DeleteProgressOverlay
+        onCancel={() => {
+          void cancelDiskDelete();
+        }}
+        progress={deleteProgress}
+      />
+    ) : null}
+    {exportProgress &&
+    !["complete", "cancelled", "failed"].includes(exportProgress.phase) &&
+    !blockingImportOverlayVisible &&
+    !blockingDeleteOverlayVisible ? (
+      <BlockingProgressOverlay
+        cancelLabel={t("progress.cancelExport")}
+        detail={
+          exportProgress.phase === "snapshot-db"
+            ? t("progress.snapshotDb")
+            : exportProgress.phase === "enumerate"
+              ? t("progress.enumerateFiles")
+              : exportProgress.phase === "compress"
+                ? t("progress.compressing")
+                : t("progress.copyingFiles", {
+                    processed: exportProgress.filesProcessed,
+                    total: exportProgress.totalFiles,
+                    bytesProcessed: formatBytes(exportProgress.bytesProcessed),
+                    bytesTotal: formatBytes(exportProgress.totalBytes),
+                  })
+        }
+        indeterminate={exportProgress.totalFiles <= 0}
+        kind="export"
+        max={exportProgress.totalFiles > 0 ? exportProgress.totalFiles : undefined}
+        onCancel={exportProgress.exportId ? () => void cancelExport() : undefined}
+        title={t("progress.exportingLibrary")}
+        value={exportProgress.totalFiles > 0 ? exportProgress.filesProcessed : undefined}
       />
     ) : null}
     <main
@@ -11133,119 +11217,6 @@ function AppInner() {
                 document.body,
               )
             : null}
-          {uiState === "importing" && !importProgress && (
-            <div className="activity-strip" role="status">
-              <span className="activity-pulse" />
-              <span className="activity-strip-message">
-                {t("toolbar.importingProgress")}
-              </span>
-            </div>
-          )}
-          {exportProgress &&
-            !["complete", "cancelled", "failed"].includes(
-              exportProgress.phase,
-            ) && (
-              <div className="activity-strip" role="status">
-                <span className="activity-pulse" />
-                <span className="activity-strip-message">
-                  {t("progress.exportingLibrary")}
-                  {exportProgress.phase === "snapshot-db"
-                    ? t("progress.snapshotDb")
-                    : exportProgress.phase === "enumerate"
-                      ? t("progress.enumerateFiles")
-                      : exportProgress.phase === "compress"
-                        ? t("progress.compressing")
-                        : t("progress.copyingFiles", {
-                            processed: exportProgress.filesProcessed,
-                            total: exportProgress.totalFiles,
-                            bytesProcessed: formatBytes(
-                              exportProgress.bytesProcessed,
-                            ),
-                            bytesTotal: formatBytes(exportProgress.totalBytes),
-                          })}
-                </span>
-                <button
-                  className="secondary-button"
-                  disabled={!exportProgress.exportId}
-                  onClick={() => void cancelExport()}
-                  type="button"
-                >
-                  {t("progress.cancelExport")}
-                </button>
-              </div>
-            )}
-          {importProgress &&
-            !["complete", "cancelled", "failed"].includes(
-              importProgress.phase,
-            ) && (
-              <div className="activity-strip import-progress-strip" role="status">
-                <span className="activity-pulse" />
-                <div className="import-progress-body">
-                  <span className="activity-strip-message">
-                    {(() => {
-                      const headline = libraryTransferHeadlineKey(libraryTransferKind);
-                      return headline.name
-                        ? t(headline.key, { name: libraryTransferName })
-                        : t(headline.key);
-                    })()}
-                    {importProgress.phase === "validate"
-                      ? importProgress.totalFiles > 0
-                        ? t("progress.readingSourceItems", {
-                            processed: importProgress.filesProcessed,
-                            total: importProgress.totalFiles,
-                          })
-                        : t("progress.validating")
-                      : importProgress.phase === "copy"
-                        ? importProgress.totalFiles > 0
-                          ? t("progress.copyingFiles", {
-                              processed: importProgress.filesProcessed,
-                              total: importProgress.totalFiles,
-                              bytesProcessed: formatBytes(importProgress.bytesProcessed),
-                              bytesTotal: formatBytes(importProgress.totalBytes),
-                            })
-                          : t("progress.copying")
-                        : t("progress.opening")}
-                  </span>
-                  {importProgress.totalFiles > 0 && (
-                    <div
-                      aria-valuemax={importProgress.totalFiles}
-                      aria-valuemin={0}
-                      aria-valuenow={Math.min(
-                        importProgress.filesProcessed,
-                        importProgress.totalFiles,
-                      )}
-                      className="task-progress-track import-progress-bar"
-                      role="progressbar"
-                    >
-                      <div
-                        className="task-progress-fill"
-                        style={{
-                          width: `${Math.round(
-                            (Math.min(
-                              importProgress.filesProcessed,
-                              importProgress.totalFiles,
-                            ) /
-                              importProgress.totalFiles) *
-                              100,
-                          )}%`,
-                        }}
-                      />
-                    </div>
-                  )}
-                </div>
-                {importProgress.cancelable !== false && (
-                  <button
-                    className="secondary-button"
-                    onClick={() => void cancelImport()}
-                    type="button"
-                  >
-                    {isLibraryOpenTransferKind(libraryTransferKind)
-                      ? t("progress.cancelOpen")
-                      : t("progress.cancelImport")}
-                  </button>
-                )}
-              </div>
-            )}
         <div
           className={`workspace-canvas${previewAsset ? " is-viewing" : previewRestoring ? " is-restoring" : ""}${externalDropActive ? " is-external-drop" : ""}`}
           onDragEnter={handleExternalDragEnter}

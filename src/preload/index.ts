@@ -186,6 +186,8 @@ import {
   parseImportProgressEvent,
   type SyncProgressEvent,
   parseSyncProgressEvent,
+  type DeleteProgressEvent,
+  parseDeleteProgressEvent,
   type TagOperationSkip,
 } from '../shared/protocol/responses';
 import type {
@@ -1560,6 +1562,13 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { deletedCount: result.deletedCount } };
   },
 
+  async cancelDiskDelete({ operationId }: { operationId: string }) {
+    const result = await request({ type: 'asset.delete-cancel.request', operationId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.closed') throw new Error('Unexpected delete-cancel response.');
+    return { ok: true as const, value: { operationId } };
+  },
+
   async listTrash({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<AssetSummary[]>> {
     const result = await request({ type: 'trash.list.request', libraryId });
     if (!result.ok) return failure(result);
@@ -1776,7 +1785,7 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true as const, value: result };
   },
 
-  onProgress(listener: (event: ExportProgressEvent | ImportProgressEvent | SyncProgressEvent) => void) {
+  onProgress(listener: (event: ExportProgressEvent | ImportProgressEvent | SyncProgressEvent | DeleteProgressEvent) => void) {
     const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
       try {
         listener(parseExportProgressEvent(input));
@@ -1792,6 +1801,12 @@ const library: SerpentLibraryApi = Object.freeze({
       }
       try {
         listener(parseSyncProgressEvent(input));
+        return;
+      } catch {
+        // Try delete progress.
+      }
+      try {
+        listener(parseDeleteProgressEvent(input));
       } catch {
         // Not a progress event.
       }
