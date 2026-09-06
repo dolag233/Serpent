@@ -47,7 +47,7 @@ exports.dispose = async function dispose(reason) {
 
 - 行为写在 `contributes.commands`；菜单、工具栏、Inspector 只引用 command id。
 - `when` 控制是否出现，`enablement` 控制是否可点。两者只能读 Context Key。
-- 异步等待之后不要重新读取「当前选择」。handler 使用 `context.invocation`（`libraryId`、`selection.assetIds` 等）。顶层 `targetLibraryId` / `assetIds` 只是兼容字段。
+- 异步等待之后不要重新读取「当前选择」。handler 使用 `context.invocation`（`libraryId`、`selection.assetIds`、`selection.assets` 等）。顶层 `targetLibraryId` / `assetIds` 只是兼容字段。当前选中资产的路径和 `mediaType` 在 `selection.assets` 里，不要再 `assets.list` 去找选中项。
 
 Image Upscaler 的资产菜单用子菜单挂 1x/2x/4x，并用 `selection.extensions intersects ['jpg','jpeg','png','webp']` 隐藏非图片选择；写库前检查 `library.writable` 以及选择中没有已删除/不可用资产。
 

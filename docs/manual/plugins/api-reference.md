@@ -70,7 +70,7 @@ collection.write  ai.enqueue  job.manage  file.import  file.move
 file.rename  trash.write  clipboard.read  clipboard.write  content.read
 content.write  net.fetch  storage.read  storage.write  data.files
 secrets.read  secrets.write  ui.workspace  ui.inspector  ui.viewer
-ui.settings  ui.notify  input.shortcut  input.capture.viewer
+ui.settings  ui.notify  ui.dialogs  media.binaries  input.shortcut  input.capture.viewer
 input.capture.application  hook.blocking  preview.provider
 thumbnail.provider  metadata.extractor  import.provider export.provider
 ai.provider  derived-field.provider  search.provider  theme.trusted-css
@@ -245,7 +245,14 @@ interface PluginContributionContext {
 ```ts
 interface PluginInvocationContext {
   contextId: string; revision: number; libraryId: string;
-  selection: { ref?: string; refs: string[]; assetIds: string[]; folderIds: string[]; collectionIds: string[] };
+  selection: {
+    ref?: string; refs: string[]; assetIds: string[]; folderIds: string[]; collectionIds: string[];
+    assets?: Array<{
+      id: string; name: string; relativeFilePath: string; mediaType: string; byteSize: number;
+      durationMs?: number | null; currentRevisionId?: string; folderId?: string | null;
+      locationKind: 'managed' | 'linked'; linkedFolderId?: string | null;
+    }>;
+  };
   browse: { folderId?: string; collectionId?: string; tagId?: string; search?: string; filter?: string };
   viewer: { active: boolean; assetId?: string };
 }
@@ -253,6 +260,8 @@ interface PluginInvocationContext {
 
 异步命令必须使用这份快照，不要在等待之后读取新的 UI 选择。命令 handler 的 `context.invocation` 提供这份快照；顶层
 `targetLibraryId` 与 ID 数组仍保留为便捷字段。`collectionIds` 只表示触发时的合集目标，合集浏览范围仍在 `invocation.browse.collectionId`。
+菜单、工具栏、Inspector、查看页会带上当前选中资产的有界快照（`selection.assets`，最多 256 项，只有库内相对路径，没有绝对路径）。
+快照包含 `currentRevisionId` 和 `folderId`，替换原资产和导入到同一文件夹时不要再 `assets.list` 去补。插件要用这份快照识别「选中了谁」和媒体类型，不要为当前选择再调用 `assets.list`。只有 MCP/脚本等只给了 ID、没有快照时才按 `assetIds` 回查。
 
 ## 5. Guest API
 
@@ -280,6 +289,7 @@ serpent.assets.replaceContentBatch(items): Promise<{ operationId: string; items:
 
 通过 Automation Gateway 暴露的公共分页列表 API（包括 `folder.list`、`asset.list` 和资产搜索）的 `limit` 都是正整数，默认值由 API
 决定，最大值为 **200**（包含 200）；传入 201 或更大值会得到 `AUTOMATION_INVALID_REQUEST`。插件应按页读取结果，不要把 256 当作合法页大小。
+`assets.list({ recursive: true })` 才会包含文件夹内的资产；省略 `recursive` 时只返回库根下的资产。已知一组资产 ID 且 **invocation 没有快照** 时，用 `assets.list({ assetIds, limit })` 按 ID 查询（每页最多 200 个）。当前选中项必须读 `invocation.selection.assets` / `assetIds`，不要为找几个选中 ID 去递归扫全库。Guest 页投影提供 `id`、`name`、`mediaType`、`mimeType`、`byteSize`、`currentRevisionId`、库内 `relativeFilePath`（POSIX 相对路径）；绝对路径、盘符路径和 `..` 段会被清空，不含库绝对路径。
 
 权限是独立的门槛：例如读取 extracted metadata 需要 `metadata.read`，不能因为已经拥有 `asset.read` 或 `content.read` 就假定
 `asset.extracted-metadata.get` 一定可用。权限不足应作为结构化失败处理；插件可以在有权限时读取 metadata，否则用已声明的 content 能力自行解析。
@@ -322,6 +332,43 @@ storage 的公开返回值是裸值，不带 IPC 包装层：
 
 只有 `data.getDirectory` 保留 `{ path, scope }` 结构。不要读取 `{ value }`、`{ ok }`、`{ deleted }` 或 `{ keys }`；这些是 Host
 内部传输结果，不属于插件 API 契约。
+
+### `serpent.ui` 与 `serpent.media`
+
+```ts
+await serpent.ui.notify({ severity: 'info', message: '…', title?: string });
+
+const result = await serpent.ui.openDialog({
+  title: '媒体压缩',
+  submitLabel: '开始处理',
+  render(ui) {
+    const mode = ui.state('percent');
+    return ui.column(
+      ui.heading('图像设置'),
+      ui.note('将压缩选中的图片。'),
+      ui.select({
+        id: 'imageTargetMode',
+        label: '压缩目标',
+        value: mode.get(),
+        onChange: mode.set,
+        options: [
+          { value: 'percent', label: '按原体积百分比' },
+          { value: 'size', label: '目标文件大小' },
+        ],
+      }),
+      mode.get() === 'percent'
+        ? ui.number({ id: 'imagePercent', label: '目标体积（%）', value: 50, min: 5, max: 95 })
+        : null,
+    );
+  },
+});
+// result 是各控件 id 对应的当前值；取消或关闭时为 null。
+
+const { ffmpegPath, ffprobePath } = await serpent.media.getBinaryPaths();
+```
+
+`openDialog({ title, render })` 需要 `ui.dialogs`。`render` 在插件进程里执行，产出有界 widget 树；Host 用已有 primitive（`DialogShell` / `Field` / `Select` / `Switch` / `Slider` / `TextField`）绘制，页脚负责取消与提交。不要为对话框写 HTML/CSS，也不要用 Manifest JSON 描述表单。旧的 `openDialog({ dialogId, payload })` iframe 路径仍可作为 WebGL/第三方页的 escape hatch，并引用 `contributes.dialogs` 的 local id。`getBinaryPaths` 需要
+`media.binaries`，返回宿主内置（或 `SERPENT_FFMPEG_PATH` 覆盖）的 FFmpeg/ffprobe 绝对路径；插件不要再让用户填写路径，也不要捆绑第二套 FFmpeg。这两条命令不读写资源库，**全局插件可以直接调用，不必先 `serpent.forLibrary()`**。
 
 ### `serpent.events` 与 `serpent.hooks`
 

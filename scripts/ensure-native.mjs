@@ -13,6 +13,8 @@ const require = createRequire(import.meta.url);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const electronPath = require('electron');
 
+process.env.VcpkgEnabled = 'false';
+
 if (typeof electronPath !== 'string') {
   throw new TypeError('The local electron package did not resolve to an executable path.');
 }

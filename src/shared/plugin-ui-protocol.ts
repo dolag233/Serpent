@@ -99,6 +99,12 @@ export const pluginUiIframeMessageSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('plugin-ui.dialog-cancelled'),
   }),
+  /** Dialog-only: the iframe reports content size so the host can avoid a fixed height. */
+  z.strictObject({
+    type: z.literal('plugin-ui.dialog-content-size'),
+    width: z.number().int().nonnegative().max(4_000),
+    height: z.number().int().positive().max(4_000),
+  }),
 ]);
 export type PluginUiIframeMessage = z.infer<typeof pluginUiIframeMessageSchema>;
 
@@ -160,6 +166,12 @@ export const pluginUiHostMessageSchema = z.discriminatedUnion('type', [
     contributionId: contributionIdSchema,
     instanceId: instanceIdSchema,
     payload: pluginUiViewStateSchema,
+  }),
+  /** Dialog-only: the host footer asked the iframe to submit its current form. */
+  z.strictObject({
+    type: z.literal('plugin-ui.dialog-request-submit'),
+    contributionId: contributionIdSchema,
+    instanceId: instanceIdSchema,
   }),
   z.strictObject({
     type: z.literal('plugin-ui.command-result'),

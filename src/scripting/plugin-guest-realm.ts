@@ -3,7 +3,8 @@ import {
   runQuickJsSandboxPrototype,
   type QuickJsSandboxPrototypeHost,
 } from './quickjs-sandbox-prototype';
-import type { AutomationScriptCommandId } from '../shared/automation-script-api';
+import { PLUGIN_WIDGET_OPEN_DIALOG_WRAP_SOURCE } from './plugin-widget-guest-source';
+import type { PluginHostCommandId } from '../shared/automation-script-api';
 import type { PluginDomainEvent } from '../plugins/plugin-domain-events';
 import type { PluginHookDecision, PluginHookInvoke } from '../plugins/plugin-hooks';
 import type { PluginJobComplete, PluginJobRecord } from '../plugins/plugin-jobs';
@@ -22,6 +23,7 @@ import type {
   PluginInputCaptureEvent,
   PluginInputCaptureOptions,
 } from '../shared/plugin-input-capture';
+import type { PluginWidgetEvent } from '../shared/plugin-widget-ir';
 
 /**
  * Standard plugin entries may use ESM `export` forms or plain function
@@ -352,6 +354,7 @@ export function buildPluginSetupSource(entryJavaScript: string, context: {
     '    });',
     '  };',
     '}',
+    PLUGIN_WIDGET_OPEN_DIALOG_WRAP_SOURCE,
     'const __pluginSubscriptions = [];',
     'const __disposePluginSubscriptions = function() {',
     '  for (let index = __pluginSubscriptions.length - 1; index >= 0; index -= 1) {',
@@ -404,7 +407,7 @@ export async function runPluginGuestActivate(input: {
     instanceScope: 'global' | 'library';
   };
   executeAutomationCommand: (
-    commandId: AutomationScriptCommandId,
+    commandId: PluginHostCommandId,
     commandInput: unknown,
     options?: {
       causeChain?: readonly string[];
@@ -441,6 +444,8 @@ export async function runPluginGuestActivate(input: {
   waitForInputCaptureEvent?: (
     sessionId: string,
   ) => Promise<PluginInputCaptureEvent | null>;
+  waitForWidgetEvent?: (sessionId: string) => Promise<PluginWidgetEvent | null>;
+  closeWidgetSession?: (sessionId: string) => void;
   enqueuePluginJob?: (input: {
     handlerId: string;
     payload: Record<string, unknown>;
@@ -559,6 +564,12 @@ export async function runPluginGuestActivate(input: {
     ...(input.waitForInputCaptureEvent === undefined
       ? {}
       : { waitForInputCaptureEvent: input.waitForInputCaptureEvent }),
+    ...(input.waitForWidgetEvent === undefined
+      ? {}
+      : { waitForWidgetEvent: input.waitForWidgetEvent }),
+    ...(input.closeWidgetSession === undefined
+      ? {}
+      : { closeWidgetSession: input.closeWidgetSession }),
     ...(input.setActiveCauseChain === undefined
       ? {}
       : { setActiveCauseChain: input.setActiveCauseChain }),

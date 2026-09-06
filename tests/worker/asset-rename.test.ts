@@ -475,4 +475,33 @@ describe('asset file rename (REQ-MENU-002)', () => {
     expect(boundary.asset.relativeFilePath).toBe(`${'c'.repeat(251)}.png`);
     service.closeAll();
   });
+
+  it('emits asset.changed after renaming so the canvas can refresh the file extension', () => {
+    const events: Array<{ type: string; source?: string; changedCount: number; libraryId: string }> = [];
+    const temp = root();
+    const service = newService({ onAssetsChanged: (event) => events.push(event) });
+    const library = service.createLibrary({ displayName: 'RenameNotify', selectedParentPath: temp });
+    const source = path.join(temp, 'clip.mp4');
+    writeFileSync(source, 'fake-mp4');
+    const asset = importFile(service, library.libraryId, source).assets[0]!;
+    const beforeCount = events.length;
+
+    const renamed = service.renameAssetFile({
+      libraryId: library.libraryId,
+      assetId: asset.assetId,
+      newFileName: 'clip.webm',
+    });
+    expect(renamed.asset.displayName).toBe('clip.webm');
+    expect(renamed.asset.relativeFilePath).toBe('clip.webm');
+    expect(events.slice(beforeCount)).toEqual([
+      expect.objectContaining({
+        type: 'asset.changed',
+        libraryId: library.libraryId,
+        changedCount: 1,
+        missingCount: 0,
+        source: 'client',
+      }),
+    ]);
+    service.closeAll();
+  });
 });

@@ -33,8 +33,12 @@ import type { PluginRuntimeDeactivateReason } from '../shared/plugin-runtime-uti
 import {
   createSerpentGuestApi,
 } from './serpent-guest-api';
+import {
+  createPluginWidgetEventQueue,
+  type PluginWidgetEventQueue,
+} from '../plugins/plugin-widget-toolkit';
 import { projectPluginStorageResult } from './plugin-storage-result';
-import type { AutomationScriptCommandId } from '../shared/automation-script-api';
+import type { PluginHostCommandId } from '../shared/automation-script-api';
 import { pluginTargetLibraryIdSchema } from '../plugins/plugin-commands';
 import type {
   PluginInputCaptureEvent,
@@ -152,6 +156,7 @@ type ActiveInstance = {
   searchControllers: Map<string, AbortController>;
   commandHandlers: Map<string, (context: PluginCommandContext) => unknown | Promise<unknown>>;
   inputCaptureQueues: Map<string, InputCaptureQueue>;
+  widgetEventQueues: Map<string, PluginWidgetEventQueue>;
   activeCauseChain: string[];
 };
 
@@ -195,7 +200,7 @@ function createSerpentBridge(
   postMessage: (message: PluginTrustedChildMessage) => void,
 ): Record<string, unknown> {
   const callHost = (
-    commandId: AutomationScriptCommandId,
+    commandId: PluginHostCommandId,
     input: unknown,
     commandOptions?: {
       causeChain?: readonly string[];
@@ -438,7 +443,20 @@ function createSerpentBridge(
     }),
   };
 
-  const guestApi = createSerpentGuestApi({ executeCommand: callHost });
+  const guestApi = createSerpentGuestApi({
+    executeCommand: callHost,
+    widgetDialog: {
+      nextEvent: (sessionId) => {
+        const queue = instance.widgetEventQueues.get(sessionId) ?? createPluginWidgetEventQueue();
+        instance.widgetEventQueues.set(sessionId, queue);
+        return queue.next();
+      },
+      close: (sessionId) => {
+        instance.widgetEventQueues.get(sessionId)?.end();
+        instance.widgetEventQueues.delete(sessionId);
+      },
+    },
+  });
   return {
     ...guestApi,
     signal: instance.abortController.signal,
@@ -449,7 +467,20 @@ function createSerpentBridge(
         throw new Error('Invalid target library id.');
       }
       return {
-        ...createSerpentGuestApi({ executeCommand: callHost }, parsed.data),
+        ...createSerpentGuestApi({
+          executeCommand: callHost,
+          widgetDialog: {
+            nextEvent: (sessionId) => {
+              const queue = instance.widgetEventQueues.get(sessionId) ?? createPluginWidgetEventQueue();
+              instance.widgetEventQueues.set(sessionId, queue);
+              return queue.next();
+            },
+            close: (sessionId) => {
+              instance.widgetEventQueues.get(sessionId)?.end();
+              instance.widgetEventQueues.delete(sessionId);
+            },
+          },
+        }, parsed.data),
         jobs: createJobs(parsed.data),
       };
     },
@@ -530,6 +561,8 @@ export function createPluginTrustedHostHandler(options: {
     current.jobSignals.clear();
     for (const queue of current.inputCaptureQueues.values()) queue.end();
     current.inputCaptureQueues.clear();
+    for (const queue of current.widgetEventQueues.values()) queue.end();
+    current.widgetEventQueues.clear();
     for (const pending of current.pendingHostRequests.values()) {
       pending.reject(new Error('The trusted plugin instance ended.'));
     }
@@ -575,6 +608,7 @@ export function createPluginTrustedHostHandler(options: {
       searchControllers: new Map(),
       commandHandlers: new Map(),
       inputCaptureQueues: new Map(),
+      widgetEventQueues: new Map(),
       activeCauseChain: [],
     };
     instances.set(request.instanceId, active);
@@ -646,6 +680,7 @@ export function createPluginTrustedHostHandler(options: {
     for (const controller of current.searchControllers.values()) controller.abort();
     current.searchControllers.clear();
     for (const queue of current.inputCaptureQueues.values()) queue.end();
+    for (const queue of current.widgetEventQueues.values()) queue.end();
     for (const pending of current.pendingHostRequests.values()) {
       pending.reject(new Error('The trusted plugin instance was deactivated.'));
     }
@@ -947,6 +982,14 @@ export function createPluginTrustedHostHandler(options: {
             ...(complete.errorDetail === undefined ? {} : { errorDetail: complete.errorDetail }),
           });
         })();
+        return;
+      }
+      if (message.type === 'plugin-trusted.widget-event') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        const queue = current.widgetEventQueues.get(message.sessionId) ?? createPluginWidgetEventQueue();
+        current.widgetEventQueues.set(message.sessionId, queue);
+        queue.push(message.event);
         return;
       }
       if (message.type === 'plugin-trusted.input-capture.started') {

@@ -225,7 +225,7 @@ describe('QuickJS/WASM sandbox engine prototype', () => {
     expect(commands).toEqual([{ commandId: 'library.change-sequence', input: {} }]);
   });
 
-  it('exposes asset automation without leaking relative or absolute paths to the script guest', async () => {
+  it('exposes asset automation without leaking absolute paths to the script guest', async () => {
     const commands: Array<{ commandId: string; input: unknown }> = [];
     const result = await runQuickJsSandboxPrototype(
       `
@@ -245,7 +245,7 @@ describe('QuickJS/WASM sandbox engine prototype', () => {
         return {
           first: assets.items[0],
           folder: folders.items[0],
-          hasRelativePath: 'relativeFilePath' in assets.items[0],
+          leakedAbsolutePath: assets.items[0].relativeFilePath === '/must-not-reach-script/first.png',
           tag: metadata.tags[0].name,
           aiDescription: aiContent.description,
           aiTag: aiContent.tags[0],
@@ -342,10 +342,20 @@ describe('QuickJS/WASM sandbox engine prototype', () => {
 
     expect(result.value).toEqual({
       first: {
-        id: 'asset-a', name: 'first.png', rating: 4, favorite: true, locationKind: 'managed', folderId: 'folder-a',
+        id: 'asset-a',
+        name: 'first.png',
+        rating: 4,
+        favorite: true,
+        locationKind: 'managed',
+        folderId: 'folder-a',
+        currentRevisionId: '',
+        mimeType: null,
+        mediaType: null,
+        byteSize: 0,
+        relativeFilePath: '',
       },
       folder: { id: 'folder-a', parentId: null, name: 'References' },
-      hasRelativePath: false,
+      leakedAbsolutePath: false,
       tag: 'concept',
       aiDescription: 'AI description',
       aiTag: 'generated',

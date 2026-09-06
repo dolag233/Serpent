@@ -945,3 +945,25 @@ export function listDialogContributions(
     }))
     .sort((left, right) => left.id.localeCompare(right.id));
 }
+
+/**
+ * Iframe documents share `serpent-plugin://`. The protocol allowlist must
+ * include every Manifest target that has an HTML entry, including dialogs.
+ */
+export function listPluginUiFrameContributions(
+  registry: PluginContributionRegistry,
+): Array<{
+  id: string;
+  pluginId: string;
+  pluginInstanceId: string;
+  entryPath?: string;
+}> {
+  return [
+    ...listWorkspaceViewContributions(registry),
+    ...listSidebarViewContributions(registry),
+    ...listInspectorViewContributions(registry),
+    ...listViewerOverlayContributions(registry),
+    ...listSettingsPageContributions(registry),
+    ...listDialogContributions(registry),
+  ];
+}

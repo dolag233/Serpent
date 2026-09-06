@@ -100,6 +100,7 @@ describe('plugin context kernel', () => {
     });
     expect(Object.isFrozen(invocation)).toBe(true);
     expect(Object.isFrozen(invocation.selection)).toBe(true);
+    expect(invocation.selection.assets).toEqual([]);
     const later = context(2);
     expect(invocation.revision).toBe(1);
     expect(later.revision).toBe(2);
@@ -164,5 +165,36 @@ describe('plugin context kernel', () => {
       deadlineMs: 1,
     });
     await vi.waitFor(() => expect(cache.read(delayedKey)).toBe(false));
+  });
+
+  it('copies selected asset snapshots onto the invocation context', () => {
+    const current = context();
+    const invocation = createPluginInvocationContext(current, {
+      libraryId: 'library-1',
+      selection: {
+        assetIds: ['asset-1'],
+        assets: [{
+          id: 'asset-1',
+          name: 'shot.mp4',
+          relativeFilePath: '项目/shot.mp4',
+          mediaType: 'video',
+          byteSize: 2048,
+          currentRevisionId: 'rev-9',
+          folderId: 'folder-1',
+          locationKind: 'managed',
+        }],
+      },
+    });
+    expect(invocation.selection.assets).toEqual([{
+      id: 'asset-1',
+      name: 'shot.mp4',
+      relativeFilePath: '项目/shot.mp4',
+      mediaType: 'video',
+      byteSize: 2048,
+      currentRevisionId: 'rev-9',
+      folderId: 'folder-1',
+      locationKind: 'managed',
+    }]);
+    expect(Object.isFrozen(invocation.selection.assets)).toBe(true);
   });
 });

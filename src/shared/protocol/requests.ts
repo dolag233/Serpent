@@ -1517,6 +1517,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     folderId: folderScopeIdSchema.optional(),
     recursive: z.boolean(),
     showIgnored: z.boolean().optional(),
+    assetIds: z.array(identifierSchema).min(1).max(200).optional(),
   }),
   z.strictObject({
     type: z.literal('asset.sequence.create'),
@@ -2059,6 +2060,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
       { message: 'assetIds must not contain duplicates.' },
     ),
     newBaseName: assetFileBaseNameSchema.optional(),
+    newFileName: assetFileBaseNameSchema.optional(),
     renameItems: z.array(z.strictObject({
       assetId: identifierSchema,
       newBaseName: assetFileBaseNameSchema,

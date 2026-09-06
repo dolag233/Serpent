@@ -32,12 +32,16 @@ import {
   type PluginRuntimeDeactivateReason,
   type PluginRuntimeParentMessage,
 } from '../shared/plugin-runtime-utility-protocol';
-import type { AutomationScriptCommandId } from '../shared/automation-script-api';
+import type { PluginHostCommandId } from '../shared/automation-script-api';
 import type {
   PluginInputCaptureEvent,
   PluginInputCaptureOptions,
 } from '../shared/plugin-input-capture';
 import type { PluginJobCheckpoint } from '../plugins/plugin-jobs';
+import {
+  createPluginWidgetEventQueue,
+  type PluginWidgetEventQueue,
+} from '../plugins/plugin-widget-toolkit';
 
 type PendingHostRequest = {
   resolve(value: unknown): void;
@@ -100,6 +104,7 @@ type ActiveInstance = {
   searchQueue: ReturnType<typeof createPluginSearchEventQueue>;
   commandQueue: ReturnType<typeof createPluginCommandInvokeQueue>;
   inputCaptureQueues: Map<string, InputCaptureQueue>;
+  widgetEventQueues: Map<string, PluginWidgetEventQueue>;
   jobSignals: Map<string, 'pause' | 'cancel'>;
   activeCauseChain: string[];
 };
@@ -174,6 +179,8 @@ export function createPluginStandardHostHandler(options: {
     current.commandQueue.close();
     for (const queue of current.inputCaptureQueues.values()) queue.end();
     current.inputCaptureQueues.clear();
+    for (const queue of current.widgetEventQueues.values()) queue.end();
+    current.widgetEventQueues.clear();
     current.jobSignals.clear();
     current.commandQueue.close();
     for (const pending of current.pendingHostRequests.values()) {
@@ -222,13 +229,14 @@ export function createPluginStandardHostHandler(options: {
       searchQueue: createPluginSearchEventQueue(),
       commandQueue: createPluginCommandInvokeQueue(),
       inputCaptureQueues: new Map(),
+      widgetEventQueues: new Map(),
       jobSignals: new Map(),
       activeCauseChain: [],
     };
     instances.set(request.instanceId, active);
 
     const callHost = (
-      commandId: AutomationScriptCommandId,
+      commandId: PluginHostCommandId,
       input: unknown,
       commandOptions?: {
         causeChain?: readonly string[];
@@ -507,6 +515,19 @@ export function createPluginStandardHostHandler(options: {
       respondCommandComplete,
       requestInputCapture,
       releaseInputCapture,
+      waitForWidgetEvent: (sessionId) => {
+        const current = instances.get(request.instanceId);
+        if (current === undefined) return Promise.resolve(null);
+        const queue = current.widgetEventQueues.get(sessionId) ?? createPluginWidgetEventQueue();
+        current.widgetEventQueues.set(sessionId, queue);
+        return queue.next();
+      },
+      closeWidgetSession: (sessionId) => {
+        const current = instances.get(request.instanceId);
+        if (current === undefined) return;
+        current.widgetEventQueues.get(sessionId)?.end();
+        current.widgetEventQueues.delete(sessionId);
+      },
       waitForInputCaptureEvent: (sessionId) => {
         const queue = active.inputCaptureQueues.get(sessionId) ?? createInputCaptureQueue();
         active.inputCaptureQueues.set(sessionId, queue);
@@ -576,6 +597,7 @@ export function createPluginStandardHostHandler(options: {
     current.jobQueue.close();
     current.providerQueue.close();
     current.searchQueue.close();
+    for (const queue of current.widgetEventQueues.values()) queue.end();
     for (const pending of current.pendingHostRequests.values()) {
       pending.reject(new Error('The plugin instance was deactivated.'));
     }
@@ -697,6 +719,14 @@ export function createPluginStandardHostHandler(options: {
         if (pending === undefined) return;
         current.pendingHostRequests.delete(message.requestId);
         pending.reject(new Error(`${message.code}: ${message.message}`));
+        return;
+      }
+      if (message.type === 'plugin-runtime.widget-event') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        const queue = current.widgetEventQueues.get(message.sessionId) ?? createPluginWidgetEventQueue();
+        current.widgetEventQueues.set(message.sessionId, queue);
+        queue.push(message.event);
         return;
       }
       if (message.type === 'plugin-runtime.host-result'

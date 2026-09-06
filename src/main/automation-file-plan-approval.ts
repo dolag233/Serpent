@@ -114,7 +114,8 @@ function planCommandFor(
         libraryId,
         operation: 'rename-file',
         assetIds: [input.assetId],
-        newBaseName: input.newBaseName,
+        ...(input.newBaseName === undefined ? {} : { newBaseName: input.newBaseName }),
+        ...(input.newFileName === undefined ? {} : { newFileName: input.newFileName }),
       };
     }
     case 'asset.rename-files': {

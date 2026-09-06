@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import type { PluginContributionContext } from "../plugins/plugin-context";
+import type { PluginContributionContext, PluginInvocationAssetSource } from "../plugins/plugin-context";
 import { parseElectronAccelerator } from "../shared/plugin-accelerator";
 import type { SerpentPluginManagerApi } from "../shared/plugin-manager-api";
 import {
@@ -123,6 +123,7 @@ export async function runPluginShortcutCommand(
   item: PluginShortcutDescriptor,
   context: {
     assetIds?: string[];
+    assets?: readonly PluginInvocationAssetSource[];
   },
   contributionContext?: PluginContributionContext,
 ): Promise<void> {
@@ -137,6 +138,7 @@ export function usePluginShortcutKeyboard(args: {
   readonly refreshKey: string | null;
   readonly previewOpen: boolean;
   readonly selectedAssetIds: readonly string[];
+  readonly selectedAssets?: readonly PluginInvocationAssetSource[];
   readonly context?: PluginContributionContext;
 }): void {
   const {
@@ -147,6 +149,7 @@ export function usePluginShortcutKeyboard(args: {
     refreshKey,
     previewOpen,
     selectedAssetIds,
+    selectedAssets,
     context,
   } = args;
   const shortcuts = usePluginShortcutContributions(
@@ -175,6 +178,9 @@ export function usePluginShortcutKeyboard(args: {
         ...(selectedAssetIds.length === 0
           ? {}
           : { assetIds: [...selectedAssetIds] }),
+        ...(selectedAssets === undefined || selectedAssets.length === 0
+          ? {}
+          : { assets: selectedAssets }),
       }, context);
     };
 
@@ -189,6 +195,7 @@ export function usePluginShortcutKeyboard(args: {
     pluginApi,
     previewOpen,
     selectedAssetIds,
+    selectedAssets,
     context,
     shortcuts,
   ]);

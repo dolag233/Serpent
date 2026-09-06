@@ -28,6 +28,7 @@ export function createPluginUiUrl(input: {
   url.pathname = url.pathname.replace(/\/$/u, '');
   url.searchParams.set('libraryId', input.libraryId);
   url.searchParams.set('contributionId', input.contributionId);
+  url.searchParams.set('instanceId', input.instanceId);
   return url.toString();
 }
 

@@ -142,9 +142,12 @@ import {
   type AutomationUiDialogHandler,
 } from '../automation/command-gateway';
 import {
+  PLUGIN_UI_DIALOG_PATCH_CHANNEL,
   PLUGIN_UI_DIALOG_REQUEST_CHANNEL,
   PLUGIN_UI_DIALOG_RESULT_CHANNEL,
+  PLUGIN_UI_WIDGET_EVENT_CHANNEL,
   pluginUiDialogResultPayloadSchema,
+  pluginUiWidgetEventPayloadSchema,
 } from '../shared/plugin-ui-dialog-bridge';
 import { resolveHostMediaBinaries } from './media-binary-env';
 import { PluginHostCommandError } from '../shared/plugin-host-command-error';
@@ -196,6 +199,11 @@ import { PluginActivationCoordinator } from './plugin-activation-coordinator';
 import { PluginJobScheduler } from './plugin-job-scheduler';
 import { PluginProviderScheduler } from './plugin-provider-scheduler';
 import { pluginTargetLibraryIdSchema } from '../plugins/plugin-commands';
+import {
+  PLUGIN_GLOBAL_RUNTIME_LIBRARY_ID,
+  pluginHostCommandRequiresBoundLibrary,
+  resolvePluginHostCommandLibraryId,
+} from '../plugins/plugin-host-command-target';
 import { PluginStorageStore, PluginStorageStoreError } from './plugin-storage-store';
 import { PluginSettingsStore } from './plugin-settings-store';
 import { PluginMcpExposureStore } from './plugin-mcp-exposure-store';
@@ -6354,16 +6362,42 @@ async function startApplication(): Promise<void> {
     resolve: (result: unknown | null) => void;
     reject: (error: Error) => void;
     cleanup: () => void;
+    pluginInstanceId: string;
+    sessionId?: string;
   }>();
+  const pendingPluginUiDialogsBySession = new Map<string, string>();
   let pluginUiDialogRequestSeq = 0;
-  ipcMain.handle(PLUGIN_UI_DIALOG_RESULT_CHANNEL, (_event, input: unknown) => {
+  // Preload uses ipcRenderer.send (same as widget events). handle() only
+  // receives invoke(), so submit/cancel never resolved the plugin command.
+  ipcMain.on(PLUGIN_UI_DIALOG_RESULT_CHANNEL, (_event, input: unknown) => {
     const parsed = pluginUiDialogResultPayloadSchema.safeParse(input);
-    if (!parsed.success) return { ok: false };
+    if (!parsed.success) return;
     const pending = pendingPluginUiDialogs.get(parsed.data.requestId);
-    if (pending !== undefined) {
-      pending.resolve(parsed.data.result);
-    }
-    return { ok: true };
+    if (pending === undefined) return;
+    pending.resolve(parsed.data.result);
+  });
+  ipcMain.on(PLUGIN_UI_WIDGET_EVENT_CHANNEL, (_event, input: unknown) => {
+    const parsed = pluginUiWidgetEventPayloadSchema.safeParse(input);
+    if (!parsed.success) return;
+    const requestId = pendingPluginUiDialogsBySession.get(parsed.data.sessionId);
+    if (requestId === undefined) return;
+    const pending = pendingPluginUiDialogs.get(requestId);
+    if (pending === undefined) return;
+    const event = {
+      type: parsed.data.type,
+      nodeId: parsed.data.nodeId,
+      value: parsed.data.value,
+    };
+    pluginRuntimeSupervisor?.deliverWidgetEvent(
+      pending.pluginInstanceId,
+      parsed.data.sessionId,
+      event,
+    );
+    pluginTrustedRuntimeSupervisor?.deliverWidgetEvent(
+      pending.pluginInstanceId,
+      parsed.data.sessionId,
+      event,
+    );
   });
   automationCommandGateway = createAutomationCommandGateway(
     automationWorkerAdapter,
@@ -6409,36 +6443,73 @@ async function startApplication(): Promise<void> {
           }
           pluginUiDialogRequestSeq += 1;
           const requestId = `plugin-ui-dialog-${pluginUiDialogRequestSeq}`;
+          const pluginInstanceId = context.pluginInstanceId ?? '';
+          const sessionId = 'sessionId' in input ? input.sessionId : undefined;
           const onWindowClosed = () => {
             const pending = pendingPluginUiDialogs.get(requestId);
             if (pending !== undefined) {
               pendingPluginUiDialogs.delete(requestId);
+              if (pending.sessionId !== undefined) {
+                pendingPluginUiDialogsBySession.delete(pending.sessionId);
+              }
               pending.reject(new Error('DIALOG_WINDOW_UNAVAILABLE'));
             }
           };
           pendingPluginUiDialogs.set(requestId, {
             resolve: (result) => {
               pendingPluginUiDialogs.delete(requestId);
+              if (sessionId !== undefined) pendingPluginUiDialogsBySession.delete(sessionId);
               window.removeListener('closed', onWindowClosed);
               resolve(result);
             },
             reject: (error) => {
               pendingPluginUiDialogs.delete(requestId);
+              if (sessionId !== undefined) pendingPluginUiDialogsBySession.delete(sessionId);
               window.removeListener('closed', onWindowClosed);
               reject(error);
             },
             cleanup: () => window.removeListener('closed', onWindowClosed),
+            pluginInstanceId,
+            ...(sessionId === undefined ? {} : { sessionId }),
           });
+          if (sessionId !== undefined) pendingPluginUiDialogsBySession.set(sessionId, requestId);
           window.once('closed', onWindowClosed);
+          if ('tree' in input) {
+            window.webContents.send(PLUGIN_UI_DIALOG_REQUEST_CHANNEL, {
+              requestId,
+              pluginId: context.pluginId ?? '',
+              pluginInstanceId,
+              libraryId: context.libraryId ?? PLUGIN_GLOBAL_RUNTIME_LIBRARY_ID,
+              sessionId: input.sessionId,
+              title: input.title,
+              ...(input.submitLabel === undefined ? {} : { submitLabel: input.submitLabel }),
+              tree: input.tree,
+            });
+            return;
+          }
           window.webContents.send(PLUGIN_UI_DIALOG_REQUEST_CHANNEL, {
             requestId,
             pluginId: context.pluginId ?? '',
-            pluginInstanceId: context.pluginInstanceId ?? '',
+            pluginInstanceId,
             dialogId: input.dialogId,
-            libraryId: context.libraryId ?? '',
+            libraryId: context.libraryId ?? PLUGIN_GLOBAL_RUNTIME_LIBRARY_ID,
             payload: input.payload ?? null,
           });
         }),
+        patch: (input) => {
+          const requestId = pendingPluginUiDialogsBySession.get(input.sessionId);
+          if (requestId === undefined) {
+            throw new Error('DIALOG_SESSION_NOT_FOUND');
+          }
+          const window = mainWindow;
+          if (!window || window.isDestroyed()) {
+            throw new Error('DIALOG_WINDOW_UNAVAILABLE');
+          }
+          window.webContents.send(PLUGIN_UI_DIALOG_PATCH_CHANNEL, {
+            requestId,
+            tree: input.tree,
+          });
+        },
       },
       uiNotifyHandler: {
         notify: (input) => {
@@ -6451,6 +6522,9 @@ async function startApplication(): Promise<void> {
             severity: input.severity,
             mode: 'toast',
             message: input.message.trim().slice(0, 500),
+            ...(typeof input.title === 'string' && input.title.trim().length > 0
+              ? { title: input.title.trim().slice(0, 120) }
+              : {}),
           });
         },
       },
@@ -6698,34 +6772,42 @@ async function startApplication(): Promise<void> {
     if (!cause.ok) {
       throw new Error(cause.message);
     }
-    const targetLibraryId = context.targetLibraryId ?? context.libraryId;
-    if (targetLibraryId === '__serpent_global_runtime__') {
-      throw new Error('A global plugin must choose an open library with serpent.forLibrary().');
-    }
-    const parsedTarget = pluginTargetLibraryIdSchema.safeParse(targetLibraryId);
-    if (!parsedTarget.success) {
-      throw new Error('The plugin command target library is invalid.');
+    const resolvedTarget = resolvePluginHostCommandLibraryId({
+      commandId,
+      libraryId: context.libraryId,
+      ...(context.targetLibraryId === undefined ? {} : { targetLibraryId: context.targetLibraryId }),
+    });
+    if (!resolvedTarget.ok) {
+      throw new Error(resolvedTarget.message);
     }
     const activeInstance = pluginActivationCoordinator?.findActiveInstance(context.instanceId);
     if (activeInstance === undefined) {
       throw new Error('The plugin instance is no longer active.');
     }
-    if (activeInstance.instanceScope === 'library'
-      && activeInstance.activationLibraryId !== parsedTarget.data) {
-      throw new Error('A library-scoped plugin cannot target another library.');
+    let boundLibraryId = resolvedTarget.libraryId;
+    if (boundLibraryId !== null) {
+      if (activeInstance.instanceScope === 'library'
+        && activeInstance.activationLibraryId !== boundLibraryId) {
+        throw new Error('A library-scoped plugin cannot target another library.');
+      }
+      const libraries = await workerClient?.request({ type: 'library.list' });
+      const libraryIsOpen = libraries?.ok === true
+        && libraries.type === 'library.list'
+        && libraries.libraries.some((library) => library.libraryId === boundLibraryId);
+      if (!libraryIsOpen) {
+        if (pluginHostCommandRequiresBoundLibrary(commandId)) {
+          throw new Error('The plugin command target library is not open.');
+        }
+        boundLibraryId = null;
+      }
     }
-    const libraries = await workerClient?.request({ type: 'library.list' });
-    if (!libraries?.ok || libraries.type !== 'library.list'
-      || !libraries.libraries.some((library) => library.libraryId === parsedTarget.data)) {
-      throw new Error('The plugin command target library is not open.');
-    }
-    const executionId = context.targetLibraryId === undefined
+    const executionId = context.targetLibraryId === undefined || boundLibraryId === null
       ? context.instanceId
-      : `${context.instanceId}:${parsedTarget.data}`;
+      : `${context.instanceId}:${boundLibraryId}`;
     pluginAutomationContexts.set(executionId, {
       executionId,
       source: 'plugin',
-      libraryId: parsedTarget.data,
+      libraryId: boundLibraryId,
       grantedCapabilities: automationCapabilitiesFromPluginPermissions(context.permissions),
       pluginId: context.pluginId,
       pluginInstanceId: context.instanceId,

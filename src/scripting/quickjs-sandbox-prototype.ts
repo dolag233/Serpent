@@ -7,11 +7,12 @@ import {
 } from 'quickjs-emscripten';
 import ts from 'typescript';
 import { utf8ByteLength } from '../shared/script-sandbox-limits';
-import type { AutomationScriptCommandId } from '../shared/automation-script-api';
+import type { PluginHostCommandId } from '../shared/automation-script-api';
 import { automationScriptHostFailureFromError } from '../shared/automation-host-command-error';
 import { pluginTargetLibraryIdSchema } from '../plugins/plugin-commands';
 import {
   SERPENT_GUEST_COMMANDS,
+  SERPENT_SCRIPT_GUEST_COMMANDS,
 } from './serpent-guest-api';
 import { projectPluginStorageResult } from './plugin-storage-result';
 import type { PluginDomainEvent } from '../plugins/plugin-domain-events';
@@ -35,6 +36,7 @@ import type {
   PluginInputCaptureEvent,
   PluginInputCaptureOptions,
 } from '../shared/plugin-input-capture';
+import type { PluginWidgetEvent } from '../shared/plugin-widget-ir';
 
 /**
  * This is an engine-selection prototype, not the public Script Runtime API.
@@ -53,7 +55,7 @@ export interface QuickJsSandboxPrototypeHost {
    * binds the two public asset methods below to fixed command IDs.
    */
   executeAutomationCommand?(
-    commandId: AutomationScriptCommandId,
+    commandId: PluginHostCommandId,
     input: unknown,
     options?: {
       causeChain?: readonly string[];
@@ -150,6 +152,8 @@ export interface QuickJsSandboxPrototypeHost {
   waitForInputCaptureEvent?(
     sessionId: string,
   ): Promise<PluginInputCaptureEvent | null>;
+  waitForWidgetEvent?(sessionId: string): Promise<PluginWidgetEvent | null>;
+  closeWidgetSession?(sessionId: string): void;
 }
 
 export interface QuickJsSandboxPrototypeLimits {
@@ -1367,11 +1371,14 @@ export async function runQuickJsSandboxPrototype(
       const jobs = context.newObject();
       const mediaJobs = context.newObject();
       const aiJobs = context.newObject();
+      const guestCommands = host.waitUntilDeactivate === undefined
+        ? SERPENT_SCRIPT_GUEST_COMMANDS
+        : SERPENT_GUEST_COMMANDS;
       const createGuestCommandApi = (targetLibraryId?: string): QuickJSHandle => {
         const api = context.newObject();
         const namespaces = new Map<string, QuickJSHandle>();
         try {
-          for (const definition of SERPENT_GUEST_COMMANDS) {
+          for (const definition of guestCommands) {
             const [namespace, method] = definition.path.split('.');
             if (namespace === undefined || method === undefined) {
               throw new Error(`Invalid Guest API command path: ${definition.path}`);
@@ -1470,6 +1477,26 @@ export async function runQuickJsSandboxPrototype(
       listMediaJobs.dispose();
       getAiJobStatus.dispose();
       enqueueAi.dispose();
+      if (host.waitForWidgetEvent !== undefined) {
+        const uiNamespace = context.getProp(serpent, 'ui');
+        const nextWidgetEvent = context.newFunction('__nextWidgetEvent', (sessionIdHandle) => createDeferredHostCall(
+          host.waitForWidgetEvent!(String(context.dump(sessionIdHandle))),
+          (value) => (value === null ? context.null : newQuickJsJsonValue(context, value)),
+        ));
+        const createSessionId = context.newFunction('__createWidgetSessionId', () => (
+          context.newString(globalThis.crypto.randomUUID())
+        ));
+        const closeWidgetSession = context.newFunction('__closeWidgetSession', (sessionIdHandle) => {
+          host.closeWidgetSession?.(String(context.dump(sessionIdHandle)));
+        });
+        context.setProp(uiNamespace, '__nextWidgetEvent', nextWidgetEvent);
+        context.setProp(uiNamespace, '__createWidgetSessionId', createSessionId);
+        context.setProp(uiNamespace, '__closeWidgetSession', closeWidgetSession);
+        nextWidgetEvent.dispose();
+        createSessionId.dispose();
+        closeWidgetSession.dispose();
+        uiNamespace.dispose();
+      }
     }
     context.setProp(consoleObject, 'log', log);
     context.setProp(context.global, 'serpent', serpent);

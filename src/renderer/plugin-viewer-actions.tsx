@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 
-import type { PluginContributionContext } from "../plugins/plugin-context";
+import type { PluginContributionContext, PluginInvocationAssetSource } from "../plugins/plugin-context";
 import type { SerpentPluginManagerApi } from "../shared/plugin-manager-api";
 import {
   resolvePluginContributionConditions,
@@ -97,6 +97,7 @@ export function PluginViewerActionButtons({
   pluginApi,
   libraryId,
   assetId,
+  asset,
   disabled = false,
   refreshKey,
   context,
@@ -104,6 +105,7 @@ export function PluginViewerActionButtons({
   pluginApi: SerpentPluginManagerApi | undefined;
   libraryId: string | undefined;
   assetId: string;
+  asset?: PluginInvocationAssetSource;
   disabled?: boolean;
   refreshKey: string | null;
   context?: PluginContributionContext;
@@ -132,6 +134,7 @@ export function PluginViewerActionButtons({
             if (pluginApi === undefined || libraryId === undefined) return;
             void runPluginMenuCommand(pluginApi, libraryId, item, {
               assetIds: [assetId],
+              ...(asset === undefined ? {} : { assets: [asset] }),
               contributionContext: context,
             });
           }}

@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -542,38 +541,6 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
           ...(request.libraryId === undefined ? {} : { libraryId: request.libraryId }),
           ...(request.target === undefined ? {} : { target: request.target }),
         }) ?? [];
-        try {
-          const active = request.libraryId === undefined
-            ? []
-            : (options.activationCoordinator?.listActiveInstances(request.libraryId) ?? []);
-          writeFileSync(
-            path.join(
-              process.env.SERPENT_E2E_USER_DATA_PATH
-                ?? path.join(process.env.HOME ?? '/tmp', 'Library/Application Support/Serpent'),
-              'plugin-contrib-diag.json',
-            ),
-            `${JSON.stringify({
-              at: new Date().toISOString(),
-              libraryId: request.libraryId ?? null,
-              target: request.target ?? null,
-              trackedOpenLibraries:
-                options.activationCoordinator?.trackedOpenLibraryIds() ?? [],
-              active,
-              contributionCount: contributions.length,
-              contributions: contributions.map((item) => ({
-                kind: item.kind,
-                id: item.id,
-                pluginId: item.pluginId,
-                pluginInstanceId: item.pluginInstanceId,
-                target: item.target,
-                entryPath: 'entryPath' in item ? item.entryPath : undefined,
-              })),
-            }, null, 2)}\n`,
-            'utf8',
-          );
-        } catch {
-          // diagnostic only
-        }
         return {
           ok: true,
           contributions: contributions.map((contribution) => {
@@ -636,6 +603,7 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
           ...(request.assetIds === undefined ? {} : { assetIds: request.assetIds }),
           ...(request.folderIds === undefined ? {} : { folderIds: request.folderIds }),
           ...(request.collectionIds === undefined ? {} : { collectionIds: request.collectionIds }),
+          ...(request.invocation === undefined ? {} : { invocation: request.invocation }),
         });
         if (result.complete.status !== 'succeeded') {
           const message = pluginCommandFailureMessage(result.complete.errorDetail);

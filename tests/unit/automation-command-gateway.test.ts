@@ -5,6 +5,7 @@ import {
   automationCapabilityRegistry,
   automationCapabilitySchema,
   automationCriticalOperationRegistry,
+  automationCommandInputSchemas,
   AUTOMATION_MAX_PAGE_SIZE,
   type AutomationCapability,
   describeAutomationCommands,
@@ -149,7 +150,7 @@ const emptyHistoryStatus = {
 
 describe('Automation Command Registry', () => {
   it('contains complete read/write descriptors and exports JSON/TypeScript contracts', () => {
-    expect(automationCommandRegistry).toHaveLength(86);
+    expect(automationCommandRegistry).toHaveLength(87);
     expect(new Set(automationCommandRegistry.map((command) => command.commandId)).size)
       .toBe(automationCommandRegistry.length);
     const registryIds = new Set(automationCommandRegistry.map((command) => command.commandId));
@@ -287,6 +288,10 @@ describe('Automation Command Registry', () => {
     expect(declaration).toContain('const serpent: SerpentAutomationApi');
     expect(declaration).toContain('interface SerpentScriptAssetSearchPage');
     expect(declaration).toContain('readonly currentRevisionId: string;');
+    expect(declaration).toContain('readonly mimeType: string | null;');
+    expect(declaration).toContain('readonly byteSize: number;');
+    expect(declaration).toContain('readonly relativeFilePath: string;');
+    expect(declaration).toContain('list(input?: { folderId?: string; recursive?: boolean; assetIds?: readonly string[]; limit?: number; offset?: number })');
     expect(declaration).toContain('search(input: { query: string | null; limit?: number; offset?: number })');
     expect(declaration).toContain('changeSequence(): Promise<{ readonly changeSequence: number }>');
     expect(declaration).toContain('setRating(assetIds: readonly string[]');
@@ -304,6 +309,49 @@ describe('Automation Command Registry', () => {
     expect(declaration).toContain('enqueue(input?: { assetIds?: readonly string[]');
     expect(declaration).not.toContain('zod');
     expect(declaration).not.toContain('cli');
+  });
+
+  it('accepts a complete file name on asset.rename-file and forwards it to the worker', () => {
+    const schema = automationCommandInputSchemas['asset.rename-file'];
+    expect(schema.parse({
+      assetId: 'asset-01',
+      newFileName: 'clip.webm',
+    })).toEqual({
+      assetId: 'asset-01',
+      newFileName: 'clip.webm',
+    });
+    expect(schema.parse({
+      assetId: 'asset-01',
+      newBaseName: 'clip',
+    })).toEqual({
+      assetId: 'asset-01',
+      newBaseName: 'clip',
+    });
+    expect(() => schema.parse({
+      assetId: 'asset-01',
+      newBaseName: 'clip',
+      newFileName: 'clip.webm',
+    })).toThrow();
+    expect(() => schema.parse({ assetId: 'asset-01' })).toThrow();
+
+    const descriptor = getAutomationCommandDescriptor('asset.rename-file');
+    expect(descriptor).toBeDefined();
+    expect(descriptor!.toWorkerCommand('library-01', {
+      assetId: 'asset-01',
+      newFileName: 'clip.webm',
+    })).toMatchObject({
+      type: 'asset.rename-file',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+      newFileName: 'clip.webm',
+    });
+    expect(descriptor!.toWorkerCommand('library-01', {
+      assetId: 'asset-01',
+      newBaseName: 'clip',
+    })).toMatchObject({
+      type: 'asset.rename-file',
+      newBaseName: 'clip',
+    });
   });
 
   it('keeps capability risk metadata complete and separates critical operations', () => {
@@ -2029,6 +2077,30 @@ describe('Automation Command Gateway', () => {
       ok: false,
       error: { code: 'AUTOMATION_INVALID_REQUEST' },
     });
+  });
+
+  it('forwards asset.list assetIds to the Worker', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'asset.list',
+      assets: [asset('asset-2')],
+    });
+    const commandGateway = gateway(worker);
+
+    await expect(commandGateway.execute(request('asset.list', {
+      assetIds: ['asset-2'],
+      limit: 1,
+      offset: 0,
+    }))).resolves.toMatchObject({
+      ok: true,
+      result: { items: [expect.objectContaining({ assetId: 'asset-2' })], total: 1 },
+    });
+    expect(worker.commands).toEqual([{
+      type: 'asset.list',
+      libraryId: 'library-1',
+      recursive: false,
+      assetIds: ['asset-2'],
+    }]);
   });
 
   it('accepts the 200-item folder page boundary but rejects 201', async () => {

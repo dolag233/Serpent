@@ -12,10 +12,12 @@ export function PluginJobActivityBanner({
   job,
   onRunInBackground,
   onDismiss,
+  queuedMoreCount = 0,
 }: {
   job: PluginJobRecord;
   onRunInBackground: () => void;
   onDismiss: () => void;
+  queuedMoreCount?: number;
 }) {
   const t = useT();
   const progressMessage = formatPluginJobProgressMessage(job);
@@ -62,6 +64,11 @@ export function PluginJobActivityBanner({
         >
           <span aria-hidden="true" className="plugin-job-activity-status-mark" />
           <span className="plugin-job-activity-plugin">{formatPluginJobPluginName(job.ownerPluginId)}</span>
+          {queuedMoreCount > 0 ? (
+            <span className="plugin-job-activity-queued-more">
+              {t("dialog.mediaJobs.pluginJobQueuedMore", { count: queuedMoreCount })}
+            </span>
+          ) : null}
         </span>
       )}
       valueText={progressPercentage}

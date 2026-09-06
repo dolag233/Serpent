@@ -10,6 +10,9 @@ import { VitePlugin } from '@electron-forge/plugin-vite';
 const projectRoot = import.meta.dirname;
 const appIconBase = path.join(projectRoot, 'assets', 'icons', 'app');
 
+// Serpent Windows: keep MSBuild builds hermetic from user-wide vcpkg integration
+process.env.VcpkgEnabled = 'false';
+
 function nativeMediaPlatform(platform: string, arch: string): string {
   const expectedHost = `${process.platform}-${process.arch}`;
   const target = `${platform}-${arch}`;

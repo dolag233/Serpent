@@ -2,11 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import type { PluginJobRecord } from "../../src/plugins/plugin-jobs";
 import {
+  countOtherLivePluginJobs,
   hasActivePluginJobs,
   selectPluginJobActivity,
 } from "../../src/renderer/plugin-job-activity";
 
-function job(status: PluginJobRecord["status"]): PluginJobRecord {
+function job(
+  status: PluginJobRecord["status"],
+  overrides: Partial<PluginJobRecord> = {},
+): PluginJobRecord {
   return {
     jobId: "11111111-1111-4111-8111-111111111111",
     libraryId: "library-1",
@@ -23,6 +27,7 @@ function job(status: PluginJobRecord["status"]): PluginJobRecord {
     recoveryStrategy: "idempotent",
     createdAt: "2026-08-02T00:00:00.000Z",
     updatedAt: "2026-08-02T00:00:00.000Z",
+    ...overrides,
   };
 }
 
@@ -155,5 +160,30 @@ describe("hasActivePluginJobs", () => {
         Date.parse("2026-08-02T00:00:10.000Z"),
       ),
     ).toBe(interrupted);
+  });
+
+  it("keeps a running job on the banner when a newer job is queued", () => {
+    const running = job("running", {
+      jobId: "running-job",
+      createdAt: "2026-08-02T00:00:00.000Z",
+      progress: 0.4,
+    });
+    const queued = job("queued", {
+      jobId: "queued-job",
+      createdAt: "2026-08-02T00:01:00.000Z",
+      progress: 0,
+    });
+    const pluginJobs = {
+      queued: 1,
+      running: 1,
+      succeeded: 0,
+      failed: 0,
+      paused: 0,
+      cancelled: 0,
+      interrupted: 0,
+      jobs: [queued, running],
+    };
+    expect(selectPluginJobActivity(pluginJobs)).toBe(running);
+    expect(countOtherLivePluginJobs(pluginJobs, running.jobId)).toBe(1);
   });
 });

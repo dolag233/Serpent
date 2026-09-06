@@ -572,7 +572,8 @@ export const zhCN = {
   contextMenu: {
     pluginCommands: "插件命令",
     pluginGroups: {
-      imageProcessing: "图像处理"
+      imageProcessing: "图像处理",
+      mediaTools: "媒体工具"
     }
   },
   collectionPicker: {
@@ -928,6 +929,7 @@ export const zhCN = {
       openPluginJobs: "查看插件任务",
       runInBackground: "后台运行",
       closePluginJobActivity: "关闭插件任务提示",
+      pluginJobQueuedMore: "另有 {count} 个排队",
       pluginJobStatus: {
         queued: "排队中",
         running: "处理中",
@@ -1108,6 +1110,7 @@ export const zhCN = {
   /** REQ-PREF-001 / Serpent-9es: 浏览区通用设置面板；主题/语言复用 shell.theme 与 shell.language 下的键。文件名/大小/日期共用一条 cardFieldsHint。 */
   plugin: {
     viewLoadFailed: "插件视图加载失败",
+    dialogSubmit: "开始处理",
   },
   settings: {
     title: "通用设置",

@@ -707,7 +707,8 @@ textarea.ui-field__control {
 }
 
 .ui-menu-surface [role="menuitem"],
-.ui-menu-surface [role="menuitemcheckbox"] {
+.ui-menu-surface [role="menuitemcheckbox"],
+.ui-menu-surface [role="option"] {
   display: flex;
   width: 100%;
   align-items: center;
@@ -724,17 +725,25 @@ textarea.ui-field__control {
 
 .ui-menu-surface [role="menuitem"]:hover:not(:disabled),
 .ui-menu-surface [role="menuitemcheckbox"]:hover:not(:disabled),
+.ui-menu-surface [role="option"]:hover:not(:disabled),
 .ui-menu-surface [role="menuitem"]:focus-visible,
-.ui-menu-surface [role="menuitemcheckbox"]:focus-visible {
+.ui-menu-surface [role="menuitemcheckbox"]:focus-visible,
+.ui-menu-surface [role="option"]:focus-visible {
   outline: 0;
   background: var(--ui-action-hover);
 }
 
 .ui-menu-surface [role="menuitem"]:disabled,
 .ui-menu-surface [role="menuitemcheckbox"]:disabled,
+.ui-menu-surface [role="option"]:disabled,
 .ui-menu-surface [aria-disabled="true"] {
   color: var(--ui-content-disabled);
   cursor: not-allowed;
+}
+
+.ui-menu-surface [role="option"][aria-selected="true"],
+.ui-menu-surface [role="option"].is-selected {
+  background: var(--ui-action-selected);
 }
 
 .ui-menu-surface [role="separator"] {

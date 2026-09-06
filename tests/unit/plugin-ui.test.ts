@@ -175,6 +175,7 @@ describe('plugin custom UI contract', () => {
       libraryId: 'library-a',
       relativePath: 'entry/index.html',
     });
+    expect(new URL(url).searchParams.get('instanceId')).toBe('instance-a');
     expect(parsePluginUiAssetRequest(
       'serpent-plugin://com.example.iframe/instance-a/../secret.js?libraryId=library-a&contributionId=bad',
     )).toBeUndefined();

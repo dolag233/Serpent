@@ -1,7 +1,7 @@
 # 0029：UI 标准化执行方案与插件原生 UI 契约
 
 > 状态：设计完成，阶段实施中（Primitive、主题 profile 与高复用 feedback pattern 已落地）
-> 日期：2026-08-04
+> 日期：2026-08-04；2026-09-06 补充：插件对话框默认走 `serpent.ui.openDialog({ title, render })` widget IR，Host primitive 绘制；iframe 仅作 Custom View escape hatch。禁止用 Manifest JSON 当对话框 UI 语言。
 > 关联工单：`Serpent-ex46`、`Serpent-ex46.1`、`Serpent-nzxh`、`Serpent-7nah`、`Serpent-fkq3`、`Serpent-gtih`
 > 前置研究：[Obsidian UI 与插件机制调研](../research/2026-08-04-obsidian-ui-plugin-research.md)
 

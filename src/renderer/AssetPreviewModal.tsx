@@ -1254,6 +1254,7 @@ const AssetPreviewModalContent = forwardRef<
           ) : null}
           <PluginViewerActionButtons
             assetId={asset.assetId}
+            asset={asset}
             context={pluginContributionContext}
             libraryId={libraryId}
             pluginApi={pluginApi}

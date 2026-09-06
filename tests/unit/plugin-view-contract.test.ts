@@ -5,6 +5,7 @@ import {
   buildPluginIframeViewDescriptors,
   type PluginViewLifecycleState,
 } from '../../src/renderer/plugin-iframe-view-host';
+import { shouldIgnoreInitialFrameLoad } from '../../src/renderer/plugin-ui-dialog-session';
 import {
   parsePluginUiHostMessage,
   parsePluginUiIframeMessage,
@@ -36,6 +37,14 @@ describe('plugin view lifecycle state machine', () => {
     const doubleReload = nextPluginViewState('reloading', { type: 'frame-load' });
     expect(doubleReload).toBe('reloading');
     expect(nextPluginViewState('reloading', { type: 'plugin-ready' })).toBe('ready');
+  });
+
+  it('does not apply the first load after classic-script ready (placeholder would cover the form)', () => {
+    let state: PluginViewLifecycleState = 'loading';
+    state = nextPluginViewState(state, { type: 'plugin-ready' });
+    expect(state).toBe('ready');
+    expect(nextPluginViewState(state, { type: 'frame-load' })).toBe('reloading');
+    expect(shouldIgnoreInitialFrameLoad({ ready: true, loadCount: 1 })).toBe(true);
   });
 
   it('crashes on frame errors and recovers via retry', () => {

@@ -69,6 +69,9 @@ function pluginMenuGroupLabel(group: string, t: TranslateFn): string {
   if (group === "image-processing") {
     return t("contextMenu.pluginGroups.imageProcessing");
   }
+  if (group === "media-tools") {
+    return t("contextMenu.pluginGroups.mediaTools");
+  }
   return group;
 }
 
@@ -151,6 +154,7 @@ function PluginMenuItems(props: {
           label={group
             ? (props.resolveGroupLabel?.(group) ?? group)
             : undefined}
+          labelCase="preserve"
         >
           {items.map(renderItem)}
         </ContextMenuSection>
@@ -586,6 +590,9 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     if (!props.pluginApi || !props.libraryId) return;
     void runPluginMenuCommand(props.pluginApi, props.libraryId, item, {
       ...context,
+      assets: (context.assetIds ?? [])
+        .map((assetId) => props.assets.find((asset) => asset.assetId === assetId))
+        .filter((asset): asset is typeof props.assets[number] => asset !== undefined),
       contributionContext: pluginContributionContext,
     });
   };

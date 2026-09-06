@@ -33,6 +33,7 @@ import {
   workerResultSchema,
   type WorkerResult,
 } from '../shared/protocol/responses';
+import { pluginWidgetNodeSchema } from '../shared/plugin-widget-ir';
 
 /**
  * The Automation API is intentionally versioned independently from the
@@ -535,10 +536,22 @@ export const automationCommandInputSchemas = {
     mode: z.literal('toast').default('toast'),
     title: z.string().min(1).max(120).optional(),
   }),
-  'ui.dialog': z.strictObject({
-    dialogId: nonBlankString,
-    /** Opaque JSON payload delivered to the dialog iframe after mount. */
-    payload: z.unknown().optional(),
+  'ui.dialog': z.union([
+    z.strictObject({
+      dialogId: nonBlankString,
+      /** Opaque JSON payload delivered to the dialog iframe after mount. */
+      payload: z.unknown().optional(),
+    }),
+    z.strictObject({
+      sessionId: z.string().uuid(),
+      title: nonBlankString.max(160),
+      submitLabel: z.string().min(1).max(64).optional(),
+      tree: pluginWidgetNodeSchema,
+    }),
+  ]),
+  'ui.widget-patch': z.strictObject({
+    sessionId: z.string().uuid(),
+    tree: pluginWidgetNodeSchema,
   }),
   'media.binaries.get': z.strictObject({}),
   'folder.list': paginatedInputSchema({}),
@@ -546,6 +559,7 @@ export const automationCommandInputSchemas = {
   'asset.list': paginatedInputSchema({
     folderId: nonBlankString.optional(),
     recursive: z.boolean().default(false),
+    assetIds: z.array(nonBlankString).min(1).max(AUTOMATION_MAX_PAGE_SIZE).optional(),
   }),
   'asset.metadata.get': z.strictObject({ assetId: nonBlankString }),
   'asset.ai-content.get': z.strictObject({ assetId: nonBlankString }),
@@ -634,8 +648,12 @@ export const automationCommandInputSchemas = {
   }),
   'asset.rename-file': z.strictObject({
     assetId: nonBlankString,
-    newBaseName: nonBlankString.max(255),
-  }),
+    newBaseName: nonBlankString.max(255).optional(),
+    newFileName: nonBlankString.max(255).optional(),
+  }).refine(
+    (value) => (value.newBaseName !== undefined) !== (value.newFileName !== undefined),
+    { message: 'Choose either a base name or a complete file name.' },
+  ),
   'asset.rename-files': z.strictObject({
     items: z.array(z.strictObject({
       assetId: nonBlankString,
@@ -1449,6 +1467,9 @@ export const automationCommandResultSchemas = {
   'ui.dialog': z.strictObject({
     result: z.unknown().nullable(),
   }),
+  'ui.widget-patch': z.strictObject({
+    patched: z.literal(true),
+  }),
   'media.binaries.get': z.strictObject({
     ffmpegPath: nonBlankString,
     ffprobePath: nonBlankString,
@@ -2114,7 +2135,7 @@ export const automationCommandRegistry = [
   }),
   readDescriptor({
     commandId: 'ui.dialog',
-    summary: '打开插件声明的模态设置对话框，并等待用户提交的 JSON 结果（取消时返回 null）。',
+    summary: '打开插件模态对话框（Host widget 树或 Manifest iframe），并等待用户提交的 JSON 结果（取消时返回 null）。',
     inputSchema: automationCommandInputSchemas['ui.dialog'],
     resultSchema: automationCommandResultSchemas['ui.dialog'],
     workerResultSchema: z.never(),
@@ -2126,6 +2147,23 @@ export const automationCommandRegistry = [
     libraryContext: 'none',
     toWorkerCommand: () => {
       throw new Error('ui.dialog is resolved by Main and does not dispatch to the Worker.');
+    },
+    projectResult: () => undefined,
+  }),
+  readDescriptor({
+    commandId: 'ui.widget-patch',
+    summary: '在已打开的插件 widget 对话框会话中替换控件树。',
+    inputSchema: automationCommandInputSchemas['ui.widget-patch'],
+    resultSchema: automationCommandResultSchemas['ui.widget-patch'],
+    workerResultSchema: z.never(),
+    requiredCapabilities: ['ui.dialogs'],
+    allowedSources: ['plugin'] as const,
+    targetScope: 'library',
+    supportsBatch: false,
+    mcp: { public: false, toolName: 'serpent_ui_widget_patch', outputLimit: 1 },
+    libraryContext: 'none',
+    toWorkerCommand: () => {
+      throw new Error('ui.widget-patch is resolved by Main and does not dispatch to the Worker.');
     },
     projectResult: () => undefined,
   }),
@@ -2481,7 +2519,7 @@ export const automationCommandRegistry = [
   {
     commandId: 'asset.rename-file',
     apiVersion: AUTOMATION_API_VERSION,
-    summary: '重命名一项资产的真实文件，只接受不含扩展名的新文件名。',
+    summary: '重命名一项资产的真实文件；可只改主文件名并保留扩展名，或传入完整文件名以改变扩展名。',
     deprecated: false,
     inputSchema: automationCommandInputSchemas['asset.rename-file'],
     resultSchema: automationCommandResultSchemas['asset.rename-file'],
@@ -2501,7 +2539,12 @@ export const automationCommandRegistry = [
     approvalPolicy: 'plan',
     mcp: { public: false, toolName: 'serpent_asset_rename_file', outputLimit: 1 },
     toWorkerCommand: (libraryId, input: AutomationCommandInput<'asset.rename-file'>, plan) => ({
-      type: 'asset.rename-file', libraryId, assetId: input.assetId, newBaseName: input.newBaseName,
+      type: 'asset.rename-file',
+      libraryId,
+      assetId: input.assetId,
+      ...(input.newFileName === undefined
+        ? { newBaseName: input.newBaseName }
+        : { newFileName: input.newFileName }),
       ...(plan === undefined ? {} : { automationPlan: plan }),
     }),
     projectResult: (result) => {
@@ -2795,6 +2838,7 @@ export const automationCommandRegistry = [
       libraryId,
       recursive: input.recursive,
       ...(input.folderId === undefined ? {} : { folderId: input.folderId }),
+      ...(input.assetIds === undefined ? {} : { assetIds: input.assetIds }),
     }),
     projectResult: (result, _libraryId, input) => {
       const parsed = assetListWorkerResultSchema.safeParse(result);
@@ -3611,6 +3655,9 @@ export function generateAutomationTypeDeclaration(
     '    readonly favorite: boolean;',
     "    readonly locationKind: 'managed' | 'linked';",
     '    readonly folderId: string | null;',
+    '    readonly mimeType: string | null;',
+    '    readonly byteSize: number;',
+    '    readonly relativeFilePath: string;',
     '  }',
     '',
     '  interface SerpentScriptAssetSearchPage {',
@@ -3785,7 +3832,7 @@ export function generateAutomationTypeDeclaration(
     '    };',
     '    readonly assets: {',
     '      search(input: { query: string | null; limit?: number; offset?: number }): Promise<SerpentScriptAssetSearchPage>;',
-    '      list(input?: { folderId?: string; recursive?: boolean; limit?: number; offset?: number }): Promise<SerpentScriptAssetSearchPage>;',
+    '      list(input?: { folderId?: string; recursive?: boolean; assetIds?: readonly string[]; limit?: number; offset?: number }): Promise<SerpentScriptAssetSearchPage>;',
     '      getMetadata(assetId: string): Promise<SerpentScriptAssetMetadata>;',
     '      getAiContent(assetId: string): Promise<SerpentAiContent>;',
     '      setMetadata(input: { assetId: string; expectedVersion: number; description?: string | null; rating?: 0 | 1 | 2 | 3 | 4 | 5; favorite?: boolean; sourcePageUrl?: string | null; author?: string | null }): Promise<SerpentScriptAssetMetadata>;',
@@ -3798,7 +3845,7 @@ export function generateAutomationTypeDeclaration(
     '      stageContent(assetId: string, dataBase64: string, options?: { readonly stagingToken?: string; readonly complete?: boolean }): Promise<{ readonly assetId: string; readonly stagingToken: string; readonly byteSize: number; readonly complete: boolean }>;',
     '      replaceContentBatch(items: readonly ({ readonly assetId: string; readonly dataBase64: string; readonly expectedRevisionId: string } | { readonly assetId: string; readonly stagingToken: string; readonly expectedRevisionId: string })[]): Promise<{ readonly operationId: string; readonly items: readonly { readonly assetId: string; readonly revisionId: string; readonly byteSize: number }[] }>;',
     "      moveToFolder(assetIds: readonly string[], targetFolderId: string | null, options?: { readonly conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<{ readonly movedCount: number; readonly skippedCount: number; readonly operationId: string | null }>;",
-    '      renameFile(assetId: string, newBaseName: string): Promise<{ readonly assetId: string; readonly name: string }>;',
+    '      renameFile(assetId: string, newBaseName: string, options?: { readonly fileName?: string }): Promise<{ readonly assetId: string; readonly name: string }>;',
     "      renameFiles(items: readonly { readonly assetId: string; readonly newBaseName: string }[]): Promise<{ readonly renamedCount: number; readonly skipped: readonly { readonly assetId: string; readonly reason: 'asset_not_found' | 'asset_unavailable' | 'name_conflict' | 'invalid_name' }[] }>;",
     '    };',
     '    readonly trash: {',

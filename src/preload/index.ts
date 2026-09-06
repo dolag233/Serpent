@@ -128,11 +128,17 @@ import {
 } from '../shared/app-update';
 import { shellNotifyPayloadSchema, type ShellNotifyPayload } from '../shared/shell-notify';
 import {
+  PLUGIN_UI_DIALOG_PATCH_CHANNEL,
   PLUGIN_UI_DIALOG_REQUEST_CHANNEL,
   PLUGIN_UI_DIALOG_RESULT_CHANNEL,
+  PLUGIN_UI_WIDGET_EVENT_CHANNEL,
+  pluginUiDialogPatchPayloadSchema,
   pluginUiDialogRequestPayloadSchema,
   pluginUiDialogResultPayloadSchema,
+  pluginUiWidgetEventPayloadSchema,
+  type PluginUiDialogPatchPayload,
   type PluginUiDialogRequestPayload,
+  type PluginUiWidgetEventPayload,
 } from '../shared/plugin-ui-dialog-bridge';
 import {
   commandCompletedPayloadSchema,
@@ -2844,10 +2850,26 @@ const plugins: SerpentPluginManagerApi = Object.freeze({
       ipcRenderer.removeListener(PLUGIN_UI_DIALOG_REQUEST_CHANNEL, handler);
     };
   },
+  onPluginUiDialogPatch(listener: (input: PluginUiDialogPatchPayload) => void) {
+    const handler = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      const parsed = pluginUiDialogPatchPayloadSchema.safeParse(input);
+      if (!parsed.success) return;
+      listener(parsed.data);
+    };
+    ipcRenderer.on(PLUGIN_UI_DIALOG_PATCH_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(PLUGIN_UI_DIALOG_PATCH_CHANNEL, handler);
+    };
+  },
   resolvePluginUiDialog(input: { requestId: string; result: unknown | null }): void {
     const parsed = pluginUiDialogResultPayloadSchema.safeParse(input);
     if (!parsed.success) return;
     ipcRenderer.send(PLUGIN_UI_DIALOG_RESULT_CHANNEL, parsed.data);
+  },
+  sendPluginUiWidgetEvent(input: PluginUiWidgetEventPayload): void {
+    const parsed = pluginUiWidgetEventPayloadSchema.safeParse(input);
+    if (!parsed.success) return;
+    ipcRenderer.send(PLUGIN_UI_WIDGET_EVENT_CHANNEL, parsed.data);
   },
   async listPluginContributions(input: {
     libraryId?: string;

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { automationScriptCommandIdSchema } from './automation-script-api';
+import { pluginHostCommandIdSchema } from './automation-script-api';
 import { pluginPermissionSchema } from '../plugins/plugin-manifest';
 import {
   pluginCauseChainSchema,
@@ -45,6 +45,7 @@ import {
   pluginInputCaptureOptionsSchema,
 } from './plugin-input-capture';
 import { pluginInputCaptureErrorCodeSchema } from './plugin-input-capture-protocol';
+import { pluginWidgetEventSchema } from './plugin-widget-ir';
 
 const instanceIdSchema = z.string().uuid();
 const requestIdSchema = z.string().uuid();
@@ -220,6 +221,12 @@ export const pluginTrustedParentMessageSchema = z.discriminatedUnion('type', [
     code: pluginInputCaptureErrorCodeSchema,
     message: z.string().min(1).max(1_024),
   }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.widget-event'),
+    instanceId: instanceIdSchema,
+    sessionId: requestIdSchema,
+    event: pluginWidgetEventSchema,
+  }),
 ]);
 export type PluginTrustedParentMessage = z.infer<typeof pluginTrustedParentMessageSchema>;
 
@@ -254,7 +261,7 @@ export const pluginTrustedChildMessageSchema = z.discriminatedUnion('type', [
     type: z.literal('plugin-trusted.host-command'),
     instanceId: instanceIdSchema,
     requestId: requestIdSchema,
-    commandId: automationScriptCommandIdSchema,
+    commandId: pluginHostCommandIdSchema,
     input: z.unknown(),
     targetLibraryId: targetLibraryIdSchema.optional(),
     causeChain: pluginCauseChainSchema.optional(),

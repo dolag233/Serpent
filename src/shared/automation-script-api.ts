@@ -64,6 +64,21 @@ export const automationScriptCommandIdSchema = z.enum([
 ]);
 export type AutomationScriptCommandId = z.infer<typeof automationScriptCommandIdSchema>;
 
+/**
+ * Extra Main-owned commands that plugins may send as `host-command`.
+ * Scripts stay on {@link automationScriptCommandIdSchema}; do not add these there.
+ */
+export const pluginHostOnlyCommandIdSchema = z.enum([
+  'ui.dialog',
+  'ui.widget-patch',
+  'media.binaries.get',
+]);
+export const pluginHostCommandIdSchema = z.union([
+  automationScriptCommandIdSchema,
+  pluginHostOnlyCommandIdSchema,
+]);
+export type PluginHostCommandId = z.infer<typeof pluginHostCommandIdSchema>;
+
 export const automationScriptStartInputSchema = z.strictObject({
   libraryId: identifier.nullable(),
   source: automationScriptSourceSchema,

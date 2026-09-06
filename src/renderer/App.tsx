@@ -241,6 +241,7 @@ import { AiConnectionFailureDialog } from "./AiConnectionFailureDialog";
 import { FatalAlertDialog } from "./FatalAlertDialog";
 import { useAiConnectionFailure } from "./use-ai-connection-failure";
 import {
+  countOtherLivePluginJobs,
   hasActivePluginJobs,
   selectPluginJobActivity,
 } from "./plugin-job-activity";
@@ -301,7 +302,7 @@ import {
   PluginSidebarViewPanel,
   usePluginSidebarViews,
 } from "./plugin-sidebar-views";
-import { PluginUiDialogHost, usePluginUiDialogRequest } from "./plugin-ui-dialog-host";
+import { PluginUiDialogHost } from "./plugin-ui-dialog-host";
 import { PluginWorkspaceViews } from "./plugin-workspace-views";
 import { useExternalImportHandlers } from "./use-external-import-handlers";
 import { useFolderDragDropHandlers } from "./use-folder-drag-drop-handlers";
@@ -1438,7 +1439,6 @@ function AppInner() {
     });
   }, []);
   const pluginManagerApi = (window as RendererWindow).serpent?.plugins;
-  const pluginUiDialogRequest = usePluginUiDialogRequest(pluginManagerApi);
   const pluginSidebarViews = usePluginSidebarViews(
     (window as RendererWindow).serpent?.plugins,
     library?.libraryId,
@@ -2025,6 +2025,7 @@ function AppInner() {
     window.addEventListener("keydown", handleDragCancel);
     return () => window.removeEventListener("keydown", handleDragCancel);
   }, [draggedMemberId]);
+  const [pluginUiDialogOpen, setPluginUiDialogOpen] = useState(false);
   const [thumbnailFailures, setThumbnailFailures] = useState<
     Map<string, string>
   >(new Map());
@@ -2040,6 +2041,10 @@ function AppInner() {
     pluginJobActivityCandidate?.jobId === hiddenPluginJobActivityId
       ? null
       : pluginJobActivityCandidate;
+  const pluginJobQueuedMore = countOtherLivePluginJobs(
+    pluginJobs,
+    pluginJobActivity?.jobId,
+  );
   const backgroundJobsActive = useMemo(() => {
     if (aiAnalyzing) return true;
     const mediaActive =
@@ -2402,6 +2407,10 @@ function AppInner() {
     browse: pluginBrowseScope,
     viewer: pluginViewerState,
   }), [busy, library?.libraryId, locale, pluginBrowseScope, pluginViewerState, selectedAssetIds, visibleAssets]);
+  const selectedVisibleAssets = useMemo(
+    () => visibleAssets.filter((asset) => selectedAssetIds.includes(asset.assetId)),
+    [selectedAssetIds, visibleAssets],
+  );
 
   // Serpent-6pcd: assets at the current trash hop only (no source-folder grouping).
   const assetRenderSections = useMemo(
@@ -8908,7 +8917,8 @@ function AppInner() {
       (mediaJobsOpen && library !== null) ||
       linkedRulesEditor ||
       convertLinkedDialog.folderId ||
-      libraryLoadingVisible,
+      libraryLoadingVisible ||
+      pluginUiDialogOpen,
   );
   useDialogFocusTrap(
     dialogFocusTrapActive,
@@ -8990,6 +9000,7 @@ function AppInner() {
     refreshKey: pluginSidebarRefreshKey,
     previewOpen: Boolean(previewAsset),
     selectedAssetIds,
+    selectedAssets: selectedVisibleAssets,
     context: pluginSurfaceContext,
   });
 
@@ -9951,10 +9962,18 @@ function AppInner() {
       }
     };
     void poll();
-    const timer = window.setInterval(() => void poll(), 2_000);
+    const timer = window.setInterval(() => void poll(), 1_000);
+    const onPluginCommandCompleted = (event: Event) => {
+      const detail = (event as CustomEvent<{ libraryId?: string }>).detail;
+      if (!detail?.libraryId || detail.libraryId === library.libraryId) {
+        void poll();
+      }
+    };
+    window.addEventListener("serpent:plugin-command-completed", onPluginCommandCompleted);
     return () => {
       active = false;
       window.clearInterval(timer);
+      window.removeEventListener("serpent:plugin-command-completed", onPluginCommandCompleted);
     };
   }, [api, library]);
 
@@ -10357,6 +10376,7 @@ function AppInner() {
   return (
     <>
     <HoverTipHost />
+    <PluginUiDialogHost onOpenChange={setPluginUiDialogOpen} pluginApi={pluginManagerApi} />
     <EditTextContextMenuHost />
     {libraryLoading && libraryLoadingVisible ? (
       <LibraryLoadingOverlay
@@ -10881,6 +10901,7 @@ function AppInner() {
               pluginApi={(window as RendererWindow).serpent?.plugins}
               refreshKey={pluginContributionRefreshKey}
               selectedAssetIds={selectedAssetIds}
+              selectedAssets={selectedVisibleAssets}
               context={pluginSurfaceContext}
             />
             <WorkspaceToolsOverflow
@@ -11066,6 +11087,7 @@ function AppInner() {
             job={pluginJobActivity}
             onDismiss={() => hidePluginJobActivity(pluginJobActivity.jobId)}
             onRunInBackground={() => hidePluginJobActivity(pluginJobActivity.jobId)}
+            queuedMoreCount={pluginJobQueuedMore}
           />
         )}
         <div
@@ -12036,11 +12058,6 @@ function AppInner() {
         </div>
         {previewAsset && library && api && (
           <>
-          <PluginUiDialogHost
-            libraryId={library?.libraryId}
-            pluginApi={pluginManagerApi}
-            request={pluginUiDialogRequest}
-          />
           <AssetPreviewModal
             ref={previewModalRef}
             api={api}

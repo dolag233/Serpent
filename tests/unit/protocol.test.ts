@@ -768,6 +768,23 @@ describe('renderer request protocol', () => {
     });
   });
 
+  it('accepts a complete file name when changing the asset extension', () => {
+    expect(parseWorkerRequest({
+      requestId: 'rename-ext',
+      command: {
+        type: 'asset.rename-file',
+        libraryId: 'library-01',
+        assetId: 'asset-01',
+        newFileName: 'clip.webm',
+      },
+    }).command).toEqual({
+      type: 'asset.rename-file',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+      newFileName: 'clip.webm',
+    });
+  });
+
   it('rejects path-shaped and malformed asset rename base names at the schema layer', () => {
     const rejectedBaseNames = [
       '../escape',

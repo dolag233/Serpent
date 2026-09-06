@@ -10652,6 +10652,7 @@ export class LibraryService {
     operation: 'trash' | 'replace-content' | 'move' | 'rename-file' | 'rename-files' | 'restore-if-original-vacant';
     assetIds: string[];
     newBaseName?: string;
+    newFileName?: string;
     renameItems?: Array<{ assetId: string; newBaseName: string }>;
     targetFolderId?: string | null;
     conflictStrategy?: 'keep-both' | 'replace' | 'skip';
@@ -10807,12 +10808,20 @@ export class LibraryService {
         const requestedBaseName = input.operation === 'rename-file'
           ? input.newBaseName
           : renameItems.get(assetId);
-        if (row.deleted_at === null && row.availability === 'available' && requestedBaseName !== undefined) {
+        const requestedFileName = input.operation === 'rename-file'
+          ? input.newFileName
+          : undefined;
+        if (
+          row.deleted_at === null
+          && row.availability === 'available'
+          && (requestedBaseName !== undefined || requestedFileName !== undefined)
+        ) {
           try {
-            const baseName = normalizeAssetFileBaseName(requestedBaseName);
             const currentFileName = path.posix.basename(row.relative_file_path);
             const extension = path.posix.extname(currentFileName);
-            const newFileName = `${baseName}${extension}`;
+            const newFileName = requestedFileName !== undefined
+              ? normalizeAssetFileBaseName(requestedFileName)
+              : `${normalizeAssetFileBaseName(requestedBaseName!)}${extension}`;
             const currentDirectory = path.posix.dirname(row.relative_file_path);
             destination = currentDirectory === '.'
               ? newFileName
@@ -10898,6 +10907,7 @@ export class LibraryService {
     operation: 'trash' | 'replace-content' | 'move' | 'rename-file' | 'rename-files' | 'restore-if-original-vacant';
     assetIds: string[];
     newBaseName?: string;
+    newFileName?: string;
     renameItems?: Array<{ assetId: string; newBaseName: string }>;
     targetFolderId?: string | null;
     conflictStrategy?: 'keep-both' | 'replace' | 'skip';
@@ -10916,6 +10926,7 @@ export class LibraryService {
       operation: input.operation,
       assetIds: input.assetIds,
       ...(input.newBaseName === undefined ? {} : { newBaseName: input.newBaseName }),
+      ...(input.newFileName === undefined ? {} : { newFileName: input.newFileName }),
       ...(input.renameItems === undefined ? {} : { renameItems: input.renameItems }),
       ...(input.targetFolderId === undefined ? {} : { targetFolderId: input.targetFolderId }),
       ...(input.conflictStrategy === undefined ? {} : { conflictStrategy: input.conflictStrategy }),
@@ -15987,8 +15998,11 @@ export class LibraryService {
     folderId?: string;
     recursive: boolean;
     showIgnored?: boolean;
+    assetIds?: readonly string[];
   }): AssetSummary[] {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const idList = [...new Set((input.assetIds ?? []).filter((id) => id.length > 0))].slice(0, 200);
+    const byIds = idList.length > 0;
     const managedFolder = input.folderId
       ? openLibrary.connection
           .prepare(
@@ -15999,7 +16013,7 @@ export class LibraryService {
     const linkedScope = input.folderId && !managedFolder
       ? this.resolveLinkedFolderScope(openLibrary, input.folderId)
       : null;
-    if (input.folderId && !managedFolder && !linkedScope) {
+    if (!byIds && input.folderId && !managedFolder && !linkedScope) {
       throw new LibraryServiceError('FOLDER_NOT_FOUND');
     }
     // Serpent-verg.2 — lenient read (0031 §1): display/derived columns added
@@ -16070,10 +16084,12 @@ export class LibraryService {
             AND video_meta.invalidated_at IS NULL
           WHERE ${hasTable(connection, 'linked_ignored_assets')
             ? 'NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id) AND '
-            : ''}${this.explicitIgnoreSql(connection, 'a', input.showIgnored === true)}
+            : ''}${this.explicitIgnoreSql(connection, 'a', input.showIgnored === true)}${
+            byIds ? ` AND a.asset_id IN (${idList.map(() => '?').join(',')})` : ''
+          }
           ORDER BY a.relative_file_path`,
       )
-      .all() as Array<AssetSummaryRow & {
+      .all(...idList) as Array<AssetSummaryRow & {
         deleted_at: string | null;
         trashed_from_relative_path: string | null;
         thumbnail_status: 'ready' | 'pending' | 'generating' | 'failed' | null;
@@ -16103,6 +16119,7 @@ export class LibraryService {
     const assets = rows
       .map((row) => ({ ...degradedFill, ...row }))
       .filter((row) => {
+        if (byIds) return true;
         if (managedFolder) {
           if (!input.recursive) return row.managed_folder_id === managedFolder.folder_id;
           return (
@@ -33745,6 +33762,13 @@ export class LibraryService {
 
     const [asset] = this.managedMoveSummaries(openLibrary, [row.asset_id]);
     if (!asset) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    this.options.onAssetsChanged?.({
+      type: 'asset.changed',
+      libraryId: input.libraryId,
+      changedCount: 1,
+      missingCount: 0,
+      source: 'client',
+    });
     return { asset };
   }
 

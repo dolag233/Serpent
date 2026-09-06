@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import type { AssetSummary } from '../shared/asset-types';
+
 const boundedId = z.string().min(1).max(255);
 const boundedText = z.string().max(512);
 const boundedList = <T extends z.ZodType>(item: T, max = 256) => z.array(item).max(max);
@@ -69,6 +71,20 @@ export const pluginContributionContextSchema = z.strictObject({
 
 export type PluginContributionContext = z.infer<typeof pluginContributionContextSchema>;
 
+export const pluginInvocationAssetSchema = z.strictObject({
+  id: boundedId,
+  name: z.string().min(1).max(512),
+  relativeFilePath: z.string().max(4096),
+  mediaType: z.enum(['image', 'video', 'audio', 'text', 'model', 'document', 'other']),
+  byteSize: z.number().int().nonnegative(),
+  durationMs: z.number().int().nonnegative().nullable().optional(),
+  currentRevisionId: boundedId.optional(),
+  folderId: boundedId.nullable().optional(),
+  locationKind: z.enum(['managed', 'linked']),
+  linkedFolderId: boundedId.nullable().optional(),
+});
+export type PluginInvocationAsset = z.infer<typeof pluginInvocationAssetSchema>;
+
 export const pluginInvocationContextSchema = z.strictObject({
   contextId: boundedId,
   revision: z.number().int().positive(),
@@ -79,6 +95,7 @@ export const pluginInvocationContextSchema = z.strictObject({
     assetIds: boundedList(boundedId, 10_000),
     folderIds: boundedList(boundedId, 10_000),
     collectionIds: boundedList(boundedId, 10_000),
+    assets: boundedList(pluginInvocationAssetSchema, 256).optional().default([]),
   }),
   browse: z.strictObject({
     folderId: boundedId.optional(),
@@ -95,14 +112,47 @@ export const pluginInvocationContextSchema = z.strictObject({
 
 export type PluginInvocationContext = z.infer<typeof pluginInvocationContextSchema>;
 
+export type PluginInvocationAssetSource = {
+  assetId: string;
+  displayName: string;
+  relativeFilePath: string;
+  mediaType: AssetSummary['mediaType'];
+  byteSize: number;
+  durationMs?: number | null;
+  currentRevisionId?: string;
+  managedFolderId?: string | null;
+  locationKind: AssetSummary['locationKind'];
+  linkedFolderId?: string | null;
+};
+
+export function toPluginInvocationAssets(
+  assets: readonly PluginInvocationAssetSource[],
+): PluginInvocationAsset[] {
+  return assets.slice(0, 256).map((asset) => ({
+    id: asset.assetId,
+    name: asset.displayName,
+    relativeFilePath: asset.relativeFilePath,
+    mediaType: asset.mediaType,
+    byteSize: asset.byteSize,
+    ...(asset.durationMs == null ? {} : { durationMs: asset.durationMs }),
+    ...(typeof asset.currentRevisionId === 'string' && asset.currentRevisionId.length > 0
+      ? { currentRevisionId: asset.currentRevisionId }
+      : {}),
+    ...(asset.managedFolderId === undefined ? {} : { folderId: asset.managedFolderId }),
+    locationKind: asset.locationKind,
+    ...(asset.linkedFolderId == null ? {} : { linkedFolderId: asset.linkedFolderId }),
+  }));
+}
+
 export type PluginInvocationTarget = {
   libraryId?: string;
   selection?: {
     ref?: string;
     refs?: readonly string[];
     assetIds?: readonly string[];
-  folderIds?: readonly string[];
-  collectionIds?: readonly string[];
+    folderIds?: readonly string[];
+    collectionIds?: readonly string[];
+    assets?: readonly PluginInvocationAsset[];
   };
 };
 
@@ -144,8 +194,9 @@ export function createPluginInvocationContext(
       ref: selection?.ref ?? parsed.selection.ref,
       refs: [...(selection?.refs ?? [])],
       assetIds: [...(selection?.assetIds ?? [])],
-    folderIds: [...(selection?.folderIds ?? [])],
+      folderIds: [...(selection?.folderIds ?? [])],
       collectionIds: [...(selection?.collectionIds ?? [])],
+      assets: [...(selection?.assets ?? [])],
     },
     browse: parsed.browse,
     viewer: {

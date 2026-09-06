@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { pluginUiStorageValueSchema } from './plugin-ui-protocol';
-import type { PluginUiDialogRequestPayload } from './plugin-ui-dialog-bridge';
+import type { PluginUiDialogPatchPayload, PluginUiDialogRequestPayload, PluginUiWidgetEventPayload } from './plugin-ui-dialog-bridge';
 import {
   assetSummarySchema,
   filterClauseSchema,
@@ -774,7 +774,9 @@ export interface SerpentPluginManagerApi {
   request(input: PluginManagerRequest): Promise<PluginManagerResponse>;
   /** Main → Renderer request to host a plugin modal dialog (Serpent-a3de58). */
   onPluginUiDialogRequest?(listener: (request: PluginUiDialogRequestPayload) => void): () => void;
+  onPluginUiDialogPatch?(listener: (patch: PluginUiDialogPatchPayload) => void): () => void;
   resolvePluginUiDialog?(input: { requestId: string; result: unknown | null }): void;
+  sendPluginUiWidgetEvent?(input: PluginUiWidgetEventPayload): void;
   onInstallProgress?(listener: (event: PluginInstallProgress) => void): () => void;
   listPluginContributions(input: {
     libraryId?: string;

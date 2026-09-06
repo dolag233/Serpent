@@ -921,4 +921,113 @@ describe('PluginActivationCoordinator', () => {
       contributionId: command!.id,
     })).rejects.toThrow('The plugin command contribution is not active.');
   });
+
+  it('serves dialog HTML and sibling scripts through the plugin UI protocol', async () => {
+    const { createContributionRegistry } = await import('../../src/plugins/plugin-contributions');
+    const contributions = createContributionRegistry();
+    const pluginPackage = {
+      lock: { pluginId: 'com.example.dialog', version: '1.0.0', packageHash: 'a'.repeat(64) },
+      manifest: {
+        runtime: { mode: 'restricted' as const, entry: 'dist/main.js', instanceScope: 'global' as const },
+        permissions: ['ui.dialogs' as const],
+        contributes: {
+          commands: [],
+          menus: {},
+          settings: [],
+          toolbar: [],
+          inspector: [],
+          viewerActions: [],
+          shortcuts: [],
+          views: [],
+          hooks: [],
+          jobs: [],
+          providers: [],
+          themes: [],
+          dialogs: [{
+            id: 'compress',
+            title: 'Compress',
+            entry: 'entry/ui/panel.html',
+          }],
+        },
+      },
+      packageDirectory: '/plugins/dialog',
+      scope: 'user' as const,
+    };
+    const coordinator = new PluginActivationCoordinator({
+      packageManager: {
+        getSafeMode: async () => false,
+        listInstalled: async ({ scope }: { scope: string }) => scope === 'user'
+          ? [{ status: 'valid', package: pluginPackage }]
+          : [],
+        listGlobalActivationCandidates: async () => [pluginPackage],
+        resolve: async () => ({
+          status: 'resolved',
+          selection: 'use-global',
+          package: pluginPackage,
+        }),
+      } as never,
+      supervisor: {
+        activate: vi.fn(async () => undefined),
+        deactivate: vi.fn(),
+        deactivateLibrary: vi.fn(),
+      } as never,
+      contributions,
+      readEntryFile: async () => 'async function setup() {}',
+      globalRuntimeContext: {
+        libraryId: '__serpent_global_runtime__',
+        libraryDirectory: '/user-data',
+      },
+    });
+
+    await coordinator.refreshGlobal();
+    const active = coordinator.listActiveInstances('library-1');
+    const instanceId = active[0]?.instanceId;
+    expect(instanceId).toEqual(expect.any(String));
+    const dialog = coordinator.listContributions({
+      libraryId: 'library-1',
+      target: 'dialogs',
+    })[0];
+    expect(dialog).toMatchObject({
+      kind: 'dialog',
+      pluginId: 'com.example.dialog',
+      entryPath: 'entry/ui/panel.html',
+    });
+    if (dialog === undefined || instanceId === undefined) {
+      throw new Error('Expected an active dialog contribution.');
+    }
+
+    const html = coordinator.resolvePluginUiAsset({
+      libraryId: 'library-1',
+      pluginId: 'com.example.dialog',
+      instanceId,
+      contributionId: dialog.id,
+      relativePath: 'entry/ui/panel.html',
+    });
+    expect(html?.pluginId).toBe('com.example.dialog');
+    expect(html?.absolutePath.replaceAll('\\', '/')).toMatch(/\/entry\/ui\/panel\.html$/u);
+
+    const sibling = coordinator.resolvePluginUiAsset({
+      libraryId: '__serpent_global_runtime__',
+      pluginId: 'com.example.dialog',
+      instanceId,
+      contributionId: dialog.id,
+      relativePath: 'entry/ui/panel.js',
+    });
+    expect(sibling?.absolutePath.replaceAll('\\', '/')).toMatch(/\/entry\/ui\/panel\.js$/u);
+
+    expect(coordinator.resolvePluginUiAsset({
+      libraryId: 'library-1',
+      pluginId: 'com.example.dialog',
+      instanceId,
+      contributionId: dialog.id,
+      relativePath: 'entry/secret.js',
+    })).toBeUndefined();
+    expect(coordinator.resolvePluginUiAsset({
+      libraryId: 'library-1',
+      pluginId: 'com.example.dialog',
+      instanceId,
+      contributionId: dialog.id,
+      relativePath: 'src/panel-host-contract.js',
+    })).toBeUndefined();
+  });
 });

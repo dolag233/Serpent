@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 
 import type { SerpentPluginManagerApi } from "../shared/plugin-manager-api";
-import type { PluginContributionContext } from "../plugins/plugin-context";
+import type { PluginContributionContext, PluginInvocationAssetSource } from "../plugins/plugin-context";
 import {
   resolvePluginContributionConditions,
   runPluginMenuCommand,
@@ -99,6 +99,7 @@ export function PluginInspectorSections({
   pluginApi,
   libraryId,
   selectedAssetIds,
+  selectedAssets,
   disabled = false,
   refreshKey,
   context,
@@ -106,6 +107,7 @@ export function PluginInspectorSections({
   pluginApi: SerpentPluginManagerApi | undefined;
   libraryId: string | undefined;
   selectedAssetIds: readonly string[];
+  selectedAssets?: readonly PluginInvocationAssetSource[];
   disabled?: boolean;
   refreshKey: string | null;
   context?: PluginContributionContext;
@@ -134,6 +136,9 @@ export function PluginInspectorSections({
                 if (pluginApi === undefined || libraryId === undefined) return;
                 void runPluginMenuCommand(pluginApi, libraryId, item, {
                   assetIds: [...selectedAssetIds],
+                  ...(selectedAssets === undefined || selectedAssets.length === 0
+                    ? {}
+                    : { assets: selectedAssets }),
                   contributionContext: context,
                 });
               }}

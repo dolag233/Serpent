@@ -437,6 +437,49 @@ describe('Plugin package IPC bridge', () => {
     });
   });
 
+  it('forwards invocation context to the activation coordinator', async () => {
+    const userData = temporaryRoot('serpent-plugin-ipc-invocation-user-');
+    const runCommand = vi.fn(async () => ({
+      complete: {
+        invokeId: '59847245-d394-4012-ad75-35f837393a8f',
+        status: 'succeeded' as const,
+      },
+      timedOut: false,
+    }));
+    const handler = createPluginPackageRequestHandler({
+      manager: createManager(userData),
+      resolveLibraryDirectory: async () => userData,
+      chooseLocalPackage: async () => undefined,
+      activationCoordinator: { runCommand } as never,
+    });
+    const invocation = {
+      contextId: 'context-1',
+      revision: 1,
+      libraryId: 'library-a',
+      selection: {
+        refs: ['asset-1'],
+        assetIds: ['asset-1'],
+        folderIds: [],
+        collectionIds: [],
+        assets: [],
+      },
+      browse: {},
+      viewer: { active: false },
+    };
+
+    await expect(handler({
+      type: 'plugin-manager.run-command',
+      libraryId: 'library-a',
+      contributionId: 'com.example.probe.command',
+      invocation,
+    })).resolves.toEqual({ ok: true, executed: true });
+    expect(runCommand).toHaveBeenCalledWith(expect.objectContaining({
+      libraryId: 'library-a',
+      contributionId: 'com.example.probe.command',
+      invocation,
+    }));
+  });
+
   it('returns both exact conflict candidates, then requires library trust before it resolves', async () => {
     const userSource = temporaryRoot('serpent-plugin-ipc-user-source-');
     const librarySource = temporaryRoot('serpent-plugin-ipc-library-source-');

@@ -1102,6 +1102,45 @@ describe('restoreAssets', () => {
     service.closeAll();
   });
 
+  it('previews and validates an automation plan for rename-file with complete newFileName', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Rename File Plan', selectedParentPath: root });
+    writeFileSync(path.join(root, 'video.mp4'), 'video-payload');
+    const asset = importNoConflict(service, created.libraryId, path.join(root, 'video.mp4')).assets[0]!;
+
+    const plan = service.previewAutomationFileOperation({
+      libraryId: created.libraryId,
+      operation: 'rename-file',
+      assetIds: [asset.assetId],
+      newFileName: 'video.webm',
+    });
+    expect(plan).toMatchObject({
+      targetCount: 1,
+      executableCount: 1,
+      blockedCount: 0,
+      conflictCount: 0,
+    });
+
+    service.validateAutomationFileOperationPlan({
+      libraryId: created.libraryId,
+      operation: 'rename-file',
+      assetIds: [asset.assetId],
+      newFileName: 'video.webm',
+      planHash: plan.planHash,
+      expectedChangeSequence: plan.changeSequence,
+      assetStates: plan.assetStates,
+    });
+
+    const renamed = service.renameAssetFile({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+      newFileName: 'video.webm',
+    });
+    expect(renamed.asset.displayName).toBe('video.webm');
+    service.closeAll();
+  });
+
   it('rejects restoring an active (non-trashed) asset', () => {
     const root = temporaryRoot();
     const service = newService();

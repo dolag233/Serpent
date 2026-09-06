@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 
 import type { SerpentPluginManagerApi } from "../shared/plugin-manager-api";
-import type { PluginContributionContext } from "../plugins/plugin-context";
+import type { PluginContributionContext, PluginInvocationAssetSource } from "../plugins/plugin-context";
 import {
   resolvePluginContributionConditions,
   runPluginMenuCommand,
@@ -98,6 +98,7 @@ export async function runPluginToolbarCommand(
   item: PluginToolbarDescriptor,
   context: {
     assetIds?: string[];
+    assets?: readonly PluginInvocationAssetSource[];
   },
   contributionContext?: PluginContributionContext,
 ): Promise<void> {
@@ -108,6 +109,7 @@ export function PluginToolbarButtons({
   pluginApi,
   libraryId,
   selectedAssetIds,
+  selectedAssets,
   disabled = false,
   refreshKey,
   context,
@@ -115,6 +117,7 @@ export function PluginToolbarButtons({
   pluginApi: SerpentPluginManagerApi | undefined;
   libraryId: string | undefined;
   selectedAssetIds: readonly string[];
+  selectedAssets?: readonly PluginInvocationAssetSource[];
   disabled?: boolean;
   refreshKey: string | null;
   context?: PluginContributionContext;
@@ -144,6 +147,9 @@ export function PluginToolbarButtons({
               ...(selectedAssetIds.length === 0
                 ? {}
                 : { assetIds: [...selectedAssetIds] }),
+              ...(selectedAssets === undefined || selectedAssets.length === 0
+                ? {}
+                : { assets: selectedAssets }),
             }, context);
           }}
           type="button"

@@ -370,20 +370,6 @@ const contributionViewSchema = z.strictObject({
 });
 export type PluginContributionView = z.infer<typeof contributionViewSchema>;
 
-/**
- * Modal settings dialog (Serpent-a3de58): opened by a command through
- * `serpent.ui.openDialog`, resolved with the iframe's completion payload.
- * Requires the `ui.dialogs` permission.
- */
-export const contributionDialogSchema = z.strictObject({
-  id: pluginLocalIdSchema,
-  title: z.string().min(1).max(160),
-  /** Relative HTML entry for the sandboxed dialog UI. */
-  entry: pluginPackagePathSchema,
-  width: z.number().int().min(280).max(1_200).optional(),
-  height: z.number().int().min(200).max(1_200).optional(),
-});
-export type PluginContributionDialog = z.infer<typeof contributionDialogSchema>;
 export const pluginSettingTypeSchema = z.enum(['boolean', 'number', 'slider', 'string', 'select']);
 export const pluginSettingValueSchema = z.union([
   z.boolean(),
@@ -491,6 +477,21 @@ const contributionSettingSchema = z.discriminatedUnion('type', [
 ]);
 
 export type PluginSettingDefinition = z.infer<typeof contributionSettingSchema>;
+
+/**
+ * Modal iframe dialog opened through `serpent.ui.openDialog({ dialogId })`.
+ * Prefer `openDialog({ title, render })` (Host widget kit). `entry` is the
+ * Custom View escape hatch for WebGL/third-party pages.
+ * Requires the `ui.dialogs` permission.
+ */
+export const contributionDialogSchema = z.strictObject({
+  id: pluginLocalIdSchema,
+  title: z.string().min(1).max(160),
+  entry: pluginPackagePathSchema,
+  width: z.number().int().min(280).max(1_200).optional(),
+  height: z.number().int().min(200).max(1_200).optional(),
+});
+export type PluginContributionDialog = z.infer<typeof contributionDialogSchema>;
 
 export function getPluginSettingDefault(setting: PluginSettingDefinition): PluginSettingValue {
   if (setting.default !== undefined) return setting.default;
@@ -810,6 +811,7 @@ export const pluginManifestSchema = pluginManifestObjectSchema.superRefine((mani
     ...manifest.contributes.viewerActions.map((contribution) => contribution.id),
     ...manifest.contributes.shortcuts.map((contribution) => contribution.id),
     ...manifest.contributes.views.map((contribution) => contribution.id),
+    ...(manifest.contributes.dialogs ?? []).map((contribution) => contribution.id),
     ...manifest.contributes.settings.map((contribution) => contribution.id),
     ...manifest.contributes.hooks.map((contribution) => contribution.id),
     ...manifest.contributes.jobs.map((contribution) => contribution.id),

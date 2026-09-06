@@ -20,6 +20,10 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { killStaleSerpentDevProcesses } from './kill-stale-dev.mjs';
+
+process.env.VcpkgEnabled = 'false';
+
 const require = createRequire(import.meta.url);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -59,7 +63,8 @@ function run(command, args, options = {}) {
 // node-gyp's clean step does not remove foreign applocal DLLs reliably; make
 // sure no stale artifact can survive into the verified output.
 if (existsSync(buildDir)) {
-  rmSync(buildDir, { recursive: true, force: true });
+  killStaleSerpentDevProcesses(repoRoot);
+  rmSync(buildDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
 
 console.log('[rebuild-native] Rebuilding better-sqlite3 for Electron (VcpkgEnabled=false)...');

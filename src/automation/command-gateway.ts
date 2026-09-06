@@ -282,7 +282,8 @@ export interface AutomationUiNotifyHandler {
 
 /**
  * Main-owned modal dialog for `ui.dialog`. Resolves with the JSON completion
- * payload posted by the dialog iframe, or null when the user dismissed it.
+ * payload (widget field snapshot or iframe `dialog-complete`), or null when
+ * the user dismissed it. Widget sessions may patch the tree while open.
  */
 export interface AutomationUiDialogHandler {
   open(
@@ -294,6 +295,7 @@ export interface AutomationUiDialogHandler {
       libraryId: string | null;
     },
   ): Promise<unknown | null>;
+  patch?(input: AutomationCommandInput<'ui.widget-patch'>): void;
 }
 
 /** Main-owned resolution of the bundled/system media executables. */
@@ -1014,6 +1016,29 @@ export function createAutomationCommandGateway(
           });
         } catch (error) {
           auditLogger?.error('automation.ui-dialog.failed', error, { executionId });
+          return recordOutcome({ ok: false, error: toPublicError(error) });
+        }
+      }
+
+      if (descriptor.commandId === 'ui.widget-patch') {
+        if (!uiDialogHandler?.patch) {
+          return recordOutcome({ ok: false, error: createPublicError('INTERNAL_ERROR') });
+        }
+        try {
+          uiDialogHandler.patch(parsedInput.data as AutomationCommandInput<'ui.widget-patch'>);
+          const result = { patched: true as const };
+          if (!descriptor.resultSchema.safeParse(result).success) {
+            return recordOutcome(gatewayFailure('AUTOMATION_RESULT_INVALID'));
+          }
+          return recordOutcome({
+            ok: true,
+            apiVersion: AUTOMATION_API_VERSION,
+            commandId: 'ui.widget-patch',
+            executionId,
+            result,
+          });
+        } catch (error) {
+          auditLogger?.error('automation.ui-widget-patch.failed', error, { executionId });
           return recordOutcome({ ok: false, error: toPublicError(error) });
         }
       }

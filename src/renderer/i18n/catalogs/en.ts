@@ -584,7 +584,8 @@ export const en = {
   contextMenu: {
     pluginCommands: "Plugin commands",
     pluginGroups: {
-      imageProcessing: "Image processing"
+      imageProcessing: "Image processing",
+      mediaTools: "Media tools"
     }
   },
   collectionPicker: {
@@ -941,6 +942,7 @@ export const en = {
       openPluginJobs: "View plugin jobs",
       runInBackground: "Run in background",
       closePluginJobActivity: "Close plugin job activity",
+      pluginJobQueuedMore: "{count} more queued",
       pluginJobStatus: {
         queued: "Queued",
         running: "Processing",
@@ -1124,6 +1126,7 @@ export const en = {
   /** REQ-PREF-001 / Serpent-9es: file name / size / date share one cardFieldsHint. */
   plugin: {
     viewLoadFailed: "Plugin view failed to load",
+    dialogSubmit: "Start",
   },
   settings: {
     title: "Settings",

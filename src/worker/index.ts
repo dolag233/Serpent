@@ -3131,14 +3131,15 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     }
     case 'asset.rename-file': {
       if (request.command.automationPlan) {
-        if (request.command.newBaseName === undefined) {
+        if (request.command.newBaseName === undefined && request.command.newFileName === undefined) {
           throw new LibraryServiceError('INVALID_IMPORT_DECISION');
         }
         libraryService.validateAutomationFileOperationPlan({
           libraryId: request.command.libraryId,
           operation: 'rename-file',
           assetIds: [request.command.assetId],
-          newBaseName: request.command.newBaseName,
+          ...(request.command.newBaseName === undefined ? {} : { newBaseName: request.command.newBaseName }),
+          ...(request.command.newFileName === undefined ? {} : { newFileName: request.command.newFileName }),
           planHash: request.command.automationPlan.planHash,
           expectedChangeSequence: request.command.automationPlan.expectedChangeSequence,
           assetStates: request.command.automationPlan.assetStates,
