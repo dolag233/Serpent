@@ -6851,6 +6851,10 @@ select.ai-config-input.ai-config-languages {
   margin: 0;
 }
 
+.app-settings-page-heading > .plugin-install-back {
+  margin-bottom: 10px;
+}
+
 .app-settings-page-heading p {
   margin: 6px 0 0;
   color: var(--tertiary);
@@ -7188,16 +7192,352 @@ select.ai-config-input.ai-config-languages {
   gap: 12px;
 }
 
-.plugin-settings-overview,
-.plugin-settings-scope-card,
-.plugin-settings-install-panel,
-.plugin-settings-package {
+.plugin-settings-scope-title {
+  width: max-content;
+  max-width: 100%;
+}
+
+.plugin-settings-scope-title[data-hover-tip] {
+  cursor: help;
+}
+
+.plugin-settings-scope-card > .app-settings-row-copy {
+  margin-bottom: 14px;
+}
+
+.plugin-settings-overview-header {
+  width: 100%;
+  padding-bottom: 16px;
+}
+
+.plugin-settings-overview-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  align-self: flex-end;
+  gap: 8px;
+}
+
+.plugin-settings-overview-actions .primary-button,
+.plugin-settings-overview-actions .secondary-button {
+  white-space: nowrap;
+}
+
+.plugin-community-page {
+  display: grid;
+  gap: 12px;
+}
+
+.plugin-community-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  background: var(--canvas);
+  color: var(--tertiary);
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.plugin-community-search:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--divider));
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.plugin-community-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: calc(12px * var(--ui-font-scale));
+}
+
+.plugin-community-search input:focus {
+  outline: 0;
+  box-shadow: none;
+}
+
+.plugin-community-search input::placeholder {
+  color: var(--tertiary);
+}
+
+.plugin-community-list {
+  display: grid;
+  gap: 8px;
+}
+
+.plugin-community-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 13px;
+  border: 1px solid color-mix(in srgb, var(--divider) 88%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--raised) 55%, var(--pane));
+}
+
+.plugin-community-card:hover,
+.plugin-community-card:focus-within {
+  border-color: color-mix(in srgb, var(--divider) 55%, var(--text));
+  background: color-mix(in srgb, var(--raised) 72%, var(--pane));
+}
+
+.plugin-community-card-open {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.plugin-community-card-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.plugin-community-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: var(--raised-2);
+  color: var(--secondary);
+  flex: 0 0 auto;
+}
+
+.plugin-community-card-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.plugin-community-card-action {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  flex: 0 0 auto;
+}
+
+.plugin-community-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.plugin-community-title-row strong {
+  color: var(--text);
+  font-size: calc(13px * var(--ui-font-scale));
+  font-weight: var(--ui-font-weight-semibold);
+  line-height: 1.35;
+}
+
+.plugin-community-badge {
+  display: inline-flex;
+  align-items: center;
+  height: var(--shell-chip-height);
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--raised-2);
+  color: var(--secondary);
+  font-size: calc(10px * var(--ui-font-scale));
+  font-weight: var(--ui-font-weight-semibold);
+  line-height: 1;
+}
+
+.plugin-community-badge--first-party {
+  background: var(--accent-soft);
+  color: var(--accent-soft-fg);
+}
+
+.plugin-community-badge--certified {
+  color: var(--text);
+}
+
+.plugin-community-badge--removed {
+  color: var(--danger);
+}
+
+.plugin-community-installed {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: var(--shell-chip-height);
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--raised-2);
+  color: var(--secondary);
+  font-size: calc(11px * var(--ui-font-scale));
+  font-weight: var(--ui-font-weight-semibold);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.plugin-community-detail {
+  display: grid;
+  align-items: stretch;
+  justify-content: stretch;
+  gap: 14px;
+  padding: 14px 16px;
+}
+
+.plugin-community-detail.plugin-community-card:hover,
+.plugin-community-detail.plugin-community-card:focus-within {
+  border-color: color-mix(in srgb, var(--divider) 88%, transparent);
+  background: color-mix(in srgb, var(--raised) 55%, var(--pane));
+}
+
+.plugin-community-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.plugin-community-meta.metadata-list {
+  margin: 0;
+}
+
+.plugin-community-meta.metadata-list > div {
+  grid-template-columns: 5.5em minmax(0, 1fr);
+  min-height: 22px;
+  font-size: calc(12px * var(--ui-font-scale));
+}
+
+.plugin-community-readme-section {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.plugin-community-readme-section > h4 {
+  margin: 0;
+  color: var(--text);
+  font-size: calc(12px * var(--ui-font-scale));
+  font-weight: var(--ui-font-weight-semibold);
+}
+
+.plugin-community-readme {
   display: grid;
   gap: 10px;
+  min-width: 0;
+  color: var(--text);
+  font-size: calc(12px * var(--ui-font-scale));
+  line-height: 1.55;
+}
+
+.plugin-community-readme h4,
+.plugin-community-readme h5,
+.plugin-community-readme h6 {
+  margin: 0;
+  color: var(--text);
+  font-weight: var(--ui-font-weight-semibold);
+  line-height: 1.35;
+}
+
+.plugin-community-readme h4 {
+  font-size: calc(14px * var(--ui-font-scale));
+}
+
+.plugin-community-readme h5 {
+  font-size: calc(13px * var(--ui-font-scale));
+}
+
+.plugin-community-readme h6 {
+  font-size: calc(12px * var(--ui-font-scale));
+}
+
+.plugin-community-readme p,
+.plugin-community-readme ul,
+.plugin-community-readme ol,
+.plugin-community-readme blockquote {
+  margin: 0;
+}
+
+.plugin-community-readme ul,
+.plugin-community-readme ol {
+  padding-left: 1.2em;
+}
+
+.plugin-community-readme blockquote {
+  padding-left: 10px;
+  border-left: 2px solid var(--divider);
+  color: var(--secondary);
+}
+
+.plugin-community-readme hr {
+  margin: 4px 0;
+  border: 0;
+  border-top: 1px solid var(--divider);
+}
+
+.plugin-community-readme pre {
+  overflow-x: auto;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--raised-2);
+}
+
+.plugin-community-readme code {
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--ui-font-scale));
+}
+
+.plugin-community-readme p code,
+.plugin-community-readme li code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--raised-2);
+}
+
+.plugin-community-readme-link,
+.plugin-community-readme-image {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.plugin-community-readme-link:hover,
+.plugin-community-readme-image:hover {
+  text-decoration: underline;
+}
+
+.plugin-settings-package {
+  padding: 4px 0 12px;
 }
 
 .plugin-settings-package.has-divider {
-  padding-top: 14px;
+  padding-top: 16px;
   border-top: 1px solid var(--divider);
 }
 
@@ -7216,7 +7556,8 @@ select.ai-config-input.ai-config-languages {
 .plugin-settings-package-title {
   display: flex;
   align-items: center;
-  gap: 4px;
+  flex-wrap: wrap;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -7232,6 +7573,10 @@ select.ai-config-input.ai-config-languages {
   font-weight: var(--ui-font-weight-semibold);
   color: var(--text);
   line-height: 1.35;
+}
+
+.plugin-settings-package-name[data-hover-tip] {
+  cursor: help;
 }
 
 .plugin-settings-package-version-inline {
@@ -7332,12 +7677,13 @@ select.ai-config-input.ai-config-languages {
 }
 
 .plugin-settings-safe-mode {
-  padding-top: 13px;
+  padding-top: 16px;
+  padding-bottom: 16px;
   border-top: 1px solid var(--divider);
 }
 
 .plugin-settings-global-auto-update {
-  padding-top: 13px;
+  padding-top: 16px;
   border-top: 1px solid var(--divider);
 }
 
@@ -7355,8 +7701,13 @@ select.ai-config-input.ai-config-languages {
 
 .plugin-install-dialog {
   display: grid;
-  gap: 12px;
+  gap: 0;
   width: min(440px, calc(100vw - 40px));
+}
+
+.plugin-install-dialog > [data-dialog-content="true"] {
+  display: grid;
+  gap: 14px;
 }
 
 .plugin-install-choice-grid {
@@ -7686,6 +8037,20 @@ select.ai-config-input.ai-config-languages {
   .plugin-install-github-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .plugin-community-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .plugin-community-card-open {
+    width: 100%;
+  }
+
+  .plugin-community-card-action {
+    justify-content: flex-end;
+    padding-top: 0;
   }
 }
 

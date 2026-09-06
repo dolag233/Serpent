@@ -215,6 +215,7 @@ import { pluginJobOwnerCanRetry, pluginJobOwnerMatches } from '../plugins/plugin
 import { loadOrCreatePluginDeviceId } from './plugin-device-identity';
 import { createPluginPackageRequestHandler } from './plugin-package-ipc';
 import { PluginPackageManager } from './plugin-package-manager';
+import { PluginCommunityCatalogStore } from './plugin-community-catalog-store';
 import { PLUGIN_API_VERSION } from '../plugins/plugin-manifest';
 import {
   createPluginDomainEvent,
@@ -7932,6 +7933,9 @@ async function startApplication(): Promise<void> {
     ? undefined
     : createPluginPackageRequestHandler({
       manager: pluginPackageManager,
+      communityCatalog: new PluginCommunityCatalogStore({
+        userDataDirectory: app.getPath('userData'),
+      }),
       activationCoordinator: pluginActivationCoordinator,
       settingsStore: pluginSettingsStore,
       storageStore: pluginStorageStore,
@@ -7996,6 +8000,7 @@ async function startApplication(): Promise<void> {
             || requestType === 'plugin-manager.safe-mode'
             || requestType === 'plugin-manager.install-local'
             || requestType === 'plugin-manager.install-github'
+            || requestType === 'plugin-manager.install-community'
             || requestType === 'plugin-manager.uninstall'
             || requestType === 'plugin-manager.trust'
             || requestType === 'plugin-manager.reload') {

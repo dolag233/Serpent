@@ -3,6 +3,8 @@
 > 更新时间：2026-09-06
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
+- **2026-09-06 官方插件社区**：设置 → 插件 → 打开插件社区，从 `Serpent-Plugin-Pool` raw catalog 浏览并安装一方/已认证插件；钉死 Release ZIP + sha256，禁止 zipball；失败用缓存并标未更新。点卡片进入详情：先显示作者/版本/仓库/运行模式/平台与简介，再按应用语言渲染 README（`README.zh-CN.md` / `README.en.md` 回退 `README.md`）。高级安装仍支持本地与 GitHub URL。不预装插件。见 [分发手册](../manual/plugins/distribution-and-updates.md) 与 PLUGIN-051 / PLUGIN-052 / PLUGIN-UI-002。
+
 - **2026-09-06 MediaConverter 插件平台复盘**：无限制媒体插件联调暴露 Host 契约缺口（命令白名单照抄脚本、对话框曾做成 iframe、选中快照字段不全、rename 计划误用导入冲突码、FFmpeg 只给路径、rename 不发画布事件等）。产品纠正：菜单显示/置灰由插件 `when`/`enablement` 实现，不要 Host `accepts`；HTML/iframe 对话框保留给复杂界面。复盘见 [2026-09-06-media-converter-plugin-platform-retrospective.md](development/2026-09-06-media-converter-plugin-platform-retrospective.md)。Epic `Serpent-627bef`。
 
 - **2026-08-29 `Serpent-ebff32` / `Serpent-9c9f97` 0.1.5 阻断**：平铺选中环被行

@@ -19,6 +19,9 @@ export type PluginPackageManagerErrorCode =
   | 'PLUGIN_PLATFORM_ASSET_MISSING'
   | 'PLUGIN_PACKAGE_INCOMPATIBLE'
   | 'PLUGIN_PACKAGE_ALREADY_EXISTS'
+  | 'PLUGIN_PACKAGE_HASH_MISMATCH'
+  | 'PLUGIN_CATALOG_UNAVAILABLE'
+  | 'PLUGIN_COMMUNITY_ENTRY_INVALID'
   | 'PLUGIN_LOCK_INVALID'
   | 'PLUGIN_DEVICE_STATE_INVALID'
   | 'PLUGIN_RESOLUTION_INVALID';
@@ -107,6 +110,20 @@ export interface PluginInstallFromGitHubInput {
   client: PluginGitHubClient;
   /** Prefer Release assets for this host; defaults to process.platform/arch. */
   platformToken?: string;
+  signal?: AbortSignal;
+  downloadOptions?: PluginGitHubDownloadOptions;
+}
+
+export interface PluginInstallFromCommunityInput {
+  pluginId: string;
+  repository: string;
+  releaseTag: string;
+  version: string;
+  assetFileName: string;
+  sha256: string;
+  scope: PluginInstallationScope;
+  libraryDirectory?: string;
+  client: PluginGitHubClient;
   signal?: AbortSignal;
   downloadOptions?: PluginGitHubDownloadOptions;
 }

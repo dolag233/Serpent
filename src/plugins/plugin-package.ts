@@ -43,6 +43,8 @@ export const pluginPackageSourceSchema = z.discriminatedUnion('kind', [
     ref: z.string().min(1).max(255),
     commitSha: z.string().regex(/^[a-f0-9]{40,64}$/u),
     fingerprint: z.string().min(1).max(1_024),
+    /** Official directory installs are pinned; GitHub latest auto-update must not apply. */
+    channel: z.literal('community').optional(),
   }),
 ]);
 export type PluginPackageSource = z.infer<typeof pluginPackageSourceSchema>;

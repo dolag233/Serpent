@@ -775,12 +775,24 @@ const repositorySchema = z.url().refine((value) => {
   return url.protocol === 'https:' && url.hostname === 'github.com' && repositoryPath.length === 2;
 }, 'Repository must be an HTTPS GitHub repository URL.');
 
+export const pluginManifestLocaleCopySchema = z.strictObject({
+  name: z.string().min(1).max(160).optional(),
+  description: z.string().min(1).max(2_000).optional(),
+});
+
+export const pluginManifestLocalesSchema = z.strictObject({
+  'zh-CN': pluginManifestLocaleCopySchema.optional(),
+  en: pluginManifestLocaleCopySchema.optional(),
+});
+export type PluginManifestLocales = z.infer<typeof pluginManifestLocalesSchema>;
+
 const pluginManifestObjectSchema = z.strictObject({
   manifestVersion: z.literal(PLUGIN_MANIFEST_VERSION),
   id: pluginIdSchema,
   version: semverSchema,
   name: z.string().min(1).max(160),
   description: z.string().min(1).max(2_000),
+  locales: pluginManifestLocalesSchema.optional(),
   author: z.string().min(1).max(160),
   license: z.string().min(1).max(160),
   repository: repositorySchema.optional(),

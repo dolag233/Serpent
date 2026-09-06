@@ -3,6 +3,8 @@ import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  type PluginCommunityCatalogSnapshot,
+  type PluginCommunityPluginSummary,
   type PluginManagerPackageSummary,
   type PluginManagerPluginSettingSection,
   type PluginManagerResolutionCandidate,
@@ -25,6 +27,15 @@ import {
   type PluginManifest,
   type PluginSettingValue,
 } from '../plugins/plugin-manifest';
+import {
+  currentPluginPlatformToken,
+  selectPluginReleaseAsset,
+} from '../plugins/plugin-release-asset';
+import {
+  communityPluginAuthor,
+} from '../plugins/plugin-community-readme';
+import type { PluginCommunityCatalogStore } from './plugin-community-catalog-store';
+import type { PluginCommunityEntry } from '../plugins/plugin-community-catalog';
 import {
   PluginSettingsStoreError,
 } from './plugin-settings-store';
@@ -79,6 +90,7 @@ function pluginCommandFailureMessage(value: string | undefined): string | undefi
 
 export interface PluginPackageIpcOptions {
   manager: PluginPackageManager;
+  communityCatalog?: PluginCommunityCatalogStore;
   activationCoordinator?: PluginActivationCoordinator;
   settingsStore?: PluginSettingsStore;
   storageStore?: PluginStorageStore;
@@ -116,6 +128,7 @@ function sourceSummary(source: InstalledPluginPackage['lock']['source']): Plugin
       repository: source.repository,
       ref: source.ref,
       commitSha: source.commitSha,
+      ...(source.channel === undefined ? {} : { channel: source.channel }),
     };
   }
   return { kind: source.kind };
@@ -156,6 +169,7 @@ function summary(entry: PluginInstalledPackageStatus): PluginManagerPackageSumma
     version: entry.package.lock.version,
     name: entry.package.manifest.name,
     description: entry.package.manifest.description,
+    ...(entry.package.manifest.locales === undefined ? {} : { locales: entry.package.manifest.locales }),
     packageHash: entry.package.lock.packageHash,
     runtimeMode: entry.package.manifest.runtime.mode,
     permissions: [...entry.package.manifest.permissions],
@@ -458,6 +472,43 @@ async function installLocal(
   return true;
 }
 
+function communityPluginSummary(entry: PluginCommunityEntry): PluginCommunityPluginSummary {
+  const platformToken = currentPluginPlatformToken();
+  const compatible = selectPluginReleaseAsset(
+    entry.assets.map((asset) => ({ name: asset.fileName })),
+    platformToken,
+    { pluginId: entry.id, version: entry.version },
+  ) !== undefined;
+  return {
+    pluginId: entry.id,
+    tier: entry.tier,
+    repository: `https://github.com/${entry.repo}`,
+    releaseTag: entry.releaseTag,
+    version: entry.version,
+    runtimeMode: entry.runtimeMode,
+    author: communityPluginAuthor(entry),
+    name: entry.name,
+    description: entry.description,
+    platforms: entry.assets.map((asset) => asset.platform),
+    compatible,
+  };
+}
+
+function toCommunityCatalogSnapshot(
+  snapshot: Awaited<ReturnType<PluginCommunityCatalogStore['load']>>,
+): PluginCommunityCatalogSnapshot {
+  return {
+    stale: snapshot.stale,
+    ...(snapshot.fetchedAt === undefined ? {} : { fetchedAt: snapshot.fetchedAt }),
+    plugins: snapshot.catalog.plugins.map(communityPluginSummary),
+    removed: snapshot.catalog.removed.map((entry) => ({
+      pluginId: entry.id,
+      reason: entry.reason,
+    })),
+    ...(snapshot.errorCode === undefined ? {} : { errorCode: snapshot.errorCode }),
+  };
+}
+
 function libraryIdFor(request: PluginManagerRequest): string | undefined {
   return request.type === 'plugin-manager.resolve'
     || request.type === 'plugin-manager.reload'
@@ -684,6 +735,35 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
         return { ok: true, ai: result };
       }
 
+      if (request.type === 'plugin-manager.community-catalog') {
+        if (options.communityCatalog === undefined) {
+          return {
+            ok: false,
+            code: 'operation-failed',
+            failureCode: 'PLUGIN_CATALOG_UNAVAILABLE',
+            message: 'The plugin directory is unavailable.',
+          };
+        }
+        const snapshot = await options.communityCatalog.load({ refresh: request.refresh !== false });
+        return { ok: true, catalog: toCommunityCatalogSnapshot(snapshot) };
+      }
+
+      if (request.type === 'plugin-manager.community-readme') {
+        if (options.communityCatalog === undefined) {
+          return {
+            ok: false,
+            code: 'operation-failed',
+            failureCode: 'PLUGIN_CATALOG_UNAVAILABLE',
+            message: 'The plugin directory is unavailable.',
+          };
+        }
+        const readme = await options.communityCatalog.loadReadme({
+          pluginId: request.pluginId,
+          locale: request.locale,
+        });
+        return { ok: true, readme: readme ?? null };
+      }
+
       if (request.type === 'plugin-manager.install-local') {
         if (!await installLocal(request, libraryDirectory, options)) {
           return { ok: false, code: 'selection-cancelled' };
@@ -717,6 +797,81 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
             code: 'operation-failed',
             failureCode: 'PLUGIN_INSTALL_FAILED',
             message: message ?? 'GitHub plugin installation failed.',
+          };
+        } finally {
+          installOperations.delete(operationId);
+        }
+      } else if (request.type === 'plugin-manager.install-community') {
+        if (options.communityCatalog === undefined) {
+          return {
+            ok: false,
+            code: 'operation-failed',
+            failureCode: 'PLUGIN_CATALOG_UNAVAILABLE',
+            message: 'The plugin directory is unavailable.',
+          };
+        }
+        const snapshot = await options.communityCatalog.load({ refresh: true });
+        const entry = snapshot.catalog.plugins.find((item) => item.id === request.pluginId);
+        if (entry === undefined) {
+          return {
+            ok: false,
+            code: 'operation-failed',
+            failureCode: 'PLUGIN_COMMUNITY_ENTRY_INVALID',
+            message: snapshot.catalog.removed.some((item) => item.id === request.pluginId)
+              ? 'This plugin was removed from the official directory.'
+              : 'This plugin is not listed in the official directory.',
+          };
+        }
+        const platformToken = currentPluginPlatformToken();
+        const selected = selectPluginReleaseAsset(
+          entry.assets.map((asset) => ({ name: asset.fileName })),
+          platformToken,
+          { pluginId: entry.id, version: entry.version },
+        );
+        const asset = selected === undefined
+          ? undefined
+          : entry.assets.find((item) => item.fileName === selected.name);
+        if (asset === undefined) {
+          return {
+            ok: false,
+            code: 'operation-failed',
+            failureCode: 'PLUGIN_PLATFORM_ASSET_MISSING',
+            message: `No plugin Release ZIP matches this platform (${platformToken}).`,
+          };
+        }
+        const operationId = request.operationId ?? randomUUID();
+        const operation = new PluginInstallOperation(
+          operationId,
+          (event) => options.notifyInstallProgress?.(event),
+        );
+        installOperations.set(operationId, operation);
+        try {
+          await options.manager.installFromCommunity({
+            pluginId: entry.id,
+            repository: `https://github.com/${entry.repo}`,
+            releaseTag: entry.releaseTag,
+            version: entry.version,
+            assetFileName: asset.fileName,
+            sha256: asset.sha256,
+            scope: request.scope,
+            libraryDirectory,
+            client: createGitHubPluginClient(),
+            signal: operation.signal,
+            downloadOptions: operation.downloadOptions(),
+          });
+          operation.setCompleted();
+        } catch (error) {
+          if (operation.stopped || error instanceof PluginInstallCancelledError) {
+            return { ok: false, code: 'selection-cancelled' };
+          }
+          const message = pluginCommandFailureMessage(error instanceof Error ? error.message : undefined);
+          operation.setFailed(message ?? 'Community plugin installation failed.');
+          if (error instanceof PluginPackageManagerError) return pluginFailureResponse(error);
+          return {
+            ok: false,
+            code: 'operation-failed',
+            failureCode: 'PLUGIN_INSTALL_FAILED',
+            message: message ?? 'Community plugin installation failed.',
           };
         } finally {
           installOperations.delete(operationId);

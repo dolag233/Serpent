@@ -1,8 +1,9 @@
 # 插件分发、Release 命名与更新策略
 
-> 状态：产品规范（2026-08-01）  
-> 安装通道：**GitHub** · **本地 ZIP** · **本地文件夹**  
+> 状态：产品规范（2026-09-06）  
+> 安装通道：**官方插件社区** · **GitHub（高级）** · **本地 ZIP** · **本地文件夹**  
 > 实现跟踪：`Serpent-u3nx`（Release asset + 平台匹配）、`Serpent-8r91`（更新提示与自动更新）  
+> 官方目录：https://github.com/dolag233/Serpent-Plugin-Pool
 
 > 相关：[插件开发手册](development.md)、[插件开发最佳实践](best-practices.md)、[0024](../../internal/implementation/0024-script-plugin-platform.md)、[ADR-0026](../../internal/adr/0026-plugin-runtime-installation-and-trust.md)
 
@@ -10,24 +11,29 @@
 
 | 通道 | 用户操作 | Serpent 行为 |
 | --- | --- | --- |
-| **本地文件夹** | 选择已构建的插件目录 | 校验清单与 `runtime.entry` 后拷贝进安装根 |
-| **本地 ZIP** | 选择符合规范的 `.zip` | 解压后同上校验 |
-| **GitHub** | 粘贴 `https://github.com/owner/repo` 或 Release 页 URL | **优先**取匹配当前平台的 **Release asset ZIP**；不得默认对源码 zipball 跑 `npm install`/`build` |
+| **插件社区** | 设置 → 插件 → 打开插件社区，选官方/已认证插件安装 | Main 拉 GitHub raw `catalog.v1.json`，按条目钉死的 Release ZIP + sha256 安装；**禁止 zipball** |
+| **本地文件夹** | 高级安装：选择已构建的插件目录 | 校验清单与 `runtime.entry` 后拷贝进安装根 |
+| **本地 ZIP** | 高级安装：选择符合规范的 `.zip` | 解压后同上校验 |
+| **GitHub** | 高级安装：粘贴 `https://github.com/owner/repo` 或 Release 页 URL | **优先**取匹配当前平台的 **Release asset ZIP**；没有规范 asset 时才回退源码 zipball（仅此高级通道） |
 
-三条通道装入后的包形态必须相同：**成品包**（见 §3），不是未构建源码树。
+Serpent **不预装**任何插件。社区目录失败时使用上次缓存，并标明「未更新」。
 
-本地「源码目录 + 现场 npm」**不做**：用户路径仅为成品包三通道。
+认证 ≠ 信任：无限制插件仍走 ADR-0026 确认。社区安装钉死 `releaseTag` / `fileName` / `sha256`，不跟随 GitHub 最新 Release 自动更新。
+
+三条成品包装入后的包形态必须相同：**成品包**（见 §3），不是未构建源码树。
+
+本地「源码目录 + 现场 npm」**不做**：用户路径仅为成品包通道。
 
 ### 1.1 设置页安装流程
 
-设置 → 插件 → 安装插件只保留两个入口：
+设置 → 插件：
 
-- **本地安装**：打开系统选择器，选择已构建的插件文件夹或 `.zip` 压缩包。
-- **从 GitHub 安装**：进入独立页面，输入完整 GitHub 地址或 `owner/repository`。页面会显示解析、下载和安装阶段；下载阶段支持暂停、继续和停止。关闭按钮会停止当前下载并关闭面板。
+- **打开插件社区**：滑入整页目录（搜索、官方 badge、安装范围、返回）。
+- **高级安装**：本地文件夹/ZIP，或粘贴 GitHub URL（可 zipball 回退）。
 
-GitHub 下载失败、仓库不存在、没有当前平台 Release 包或插件包校验失败时，安装页面会保留可读的失败原因；不会把本机绝对路径显示给 Renderer。
+社区通道下载失败、哈希不符、没有当前平台包或插件包校验失败时，保留可读失败原因；不会把本机绝对路径显示给 Renderer。
 
-自动更新是「设置 → 插件」总览区的设备级开关。开启后，支持规范 GitHub Release asset 的插件统一参与兼容更新检查；新安装的 GitHub 插件也继承该策略。关闭后不再自动下载，仍可使用插件卡片上的手动更新按钮。
+自动更新是「设置 → 插件」总览区的设备级开关，只作用于**非社区钉死**的 GitHub 插件。社区插件的新版本必须先改目录仓条目并合并。
 
 ### 1.2 安装目录与版本替换
 
@@ -80,6 +86,8 @@ userData/plugins/<pluginId>/
 ```text
 serpent-plugin.json
 README.md
+README.zh-CN.md          # 可选；社区详情中文优先
+README.en.md             # 可选；社区详情英文优先
 LICENSE
 <entry 指向的已编译 JS>   # 如 entry/main.js 或 dist/main.js
 [可选 ui/ 等清单声明文件]
@@ -87,6 +95,13 @@ LICENSE
 ```
 
 禁止依赖用户机器现场执行 `npm install` / `npm run build` 才能通过校验。
+
+社区详情页按应用语言，从**钉死的 Release tag** 拉取 README（走 `raw.githubusercontent.com`，禁止 zipball）：
+
+- 中文：`README.zh-CN.md` → `README.zh.md` → `README.md`
+- 英文：`README.en.md` → `README.md`
+
+图片不会嵌进 Serpent 窗口；相对路径会变成可在浏览器打开的 GitHub 链接。目录可选 `author`；缺省时详情作者显示 GitHub owner。
 
 ### 3.1 ZIP 条目路径
 

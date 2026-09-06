@@ -12,10 +12,12 @@ import {
 import { pluginProviderMediaSchema, pluginProviderMetadataSchema, pluginProviderAiAnalysisSchema, pluginProviderExportDescriptorSchema, pluginProviderImportPlanSchema } from '../plugins/plugin-providers';
 import { pluginThemePackageSchema } from '../plugins/plugin-themes';
 import { pluginRuntimeModeSchema } from '../plugins/plugin-runtime-mode';
+import { PLUGIN_PLATFORM_TOKENS } from '../plugins/plugin-release-asset';
 import { pluginInvocationContextSchema } from '../plugins/plugin-context';
 import { pluginUiDescriptorSchema } from './plugin-ui-descriptor';
 import {
   pluginContextExpressionSchema,
+  pluginManifestLocalesSchema,
   pluginSettingTypeSchema,
   pluginSettingValueSchema,
 } from '../plugins/plugin-manifest';
@@ -54,6 +56,7 @@ export const pluginManagerSourceSummarySchema = z.discriminatedUnion('kind', [
     repository: githubRepositorySchema,
     ref: z.string().min(1).max(255),
     commitSha: z.string().regex(/^[a-f0-9]{40,64}$/u),
+    channel: z.literal('community').optional(),
   }),
 ]);
 export type PluginManagerSourceSummary = z.infer<typeof pluginManagerSourceSummarySchema>;
@@ -177,6 +180,21 @@ export const pluginManagerRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('plugin-manager.install-github'),
     ...scopedRequestFields,
     repository: z.string().min(1).max(512).refine((value) => isGitHubPluginInstallUrl(value), 'Expected a GitHub owner/repository or URL.'),
+    operationId: pluginInstallOperationIdSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin-manager.community-catalog'),
+    refresh: z.boolean().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin-manager.community-readme'),
+    pluginId: pluginIdSchema,
+    locale: z.enum(['zh-CN', 'en']),
+  }),
+  z.strictObject({
+    type: z.literal('plugin-manager.install-community'),
+    ...scopedRequestFields,
+    pluginId: pluginIdSchema,
     operationId: pluginInstallOperationIdSchema.optional(),
   }),
   z.strictObject({
@@ -589,6 +607,7 @@ export const pluginManagerPackageSummarySchema = z.strictObject({
   version: versionSchema,
   name: z.string().min(1).max(255),
   description: z.string().max(2_000),
+  locales: pluginManifestLocalesSchema.optional(),
   packageHash: packageHashSchema,
   runtimeMode: runtimeModeSchema,
   permissions: z.array(z.string().min(1).max(128)).max(64),
@@ -609,6 +628,53 @@ export const pluginManagerPackageSummarySchema = z.strictObject({
   updatePolicy: z.enum(['follow-latest', 'pinned']).optional(),
 });
 export type PluginManagerPackageSummary = z.infer<typeof pluginManagerPackageSummarySchema>;
+
+export const pluginCommunityLocalizedTextSchema = z.strictObject({
+  'zh-CN': z.string().min(1).max(2_000),
+  en: z.string().min(1).max(2_000),
+});
+
+export const pluginCommunityPluginSummarySchema = z.strictObject({
+  pluginId: pluginIdSchema,
+  tier: z.enum(['first-party', 'certified']),
+  repository: githubRepositorySchema,
+  releaseTag: z.string().min(1).max(255),
+  version: versionSchema,
+  runtimeMode: z.enum(['restricted', 'unrestricted']),
+  author: z.string().min(1).max(160),
+  name: z.strictObject({
+    'zh-CN': z.string().min(1).max(160),
+    en: z.string().min(1).max(160),
+  }),
+  description: pluginCommunityLocalizedTextSchema,
+  platforms: z.array(z.enum(PLUGIN_PLATFORM_TOKENS)).min(1).max(16),
+  compatible: z.boolean(),
+});
+export type PluginCommunityPluginSummary = z.infer<typeof pluginCommunityPluginSummarySchema>;
+
+export const pluginCommunityRemovedSummarySchema = z.strictObject({
+  pluginId: pluginIdSchema,
+  reason: pluginCommunityLocalizedTextSchema,
+});
+export type PluginCommunityRemovedSummary = z.infer<typeof pluginCommunityRemovedSummarySchema>;
+
+export const pluginCommunityCatalogSnapshotSchema = z.strictObject({
+  stale: z.boolean(),
+  fetchedAt: z.string().min(1).max(64).optional(),
+  plugins: z.array(pluginCommunityPluginSummarySchema).max(10_000),
+  removed: z.array(pluginCommunityRemovedSummarySchema).max(10_000),
+  errorCode: z.string().min(1).max(128).optional(),
+});
+export type PluginCommunityCatalogSnapshot = z.infer<typeof pluginCommunityCatalogSnapshotSchema>;
+
+export const pluginCommunityReadmeSnapshotSchema = z.strictObject({
+  pluginId: pluginIdSchema,
+  fileName: z.enum(['README.zh-CN.md', 'README.zh.md', 'README.en.md', 'README.md']),
+  locale: z.enum(['zh-CN', 'en']),
+  requestedLocale: z.enum(['zh-CN', 'en']),
+  markdown: z.string().max(262_144),
+});
+export type PluginCommunityReadmeSnapshot = z.infer<typeof pluginCommunityReadmeSnapshotSchema>;
 
 export const pluginManagerResolutionCandidateSchema = z.strictObject({
   scope: scopeSchema,
@@ -698,6 +764,14 @@ export const pluginManagerResponseSchema = z.union([
     resolutions: z.array(pluginManagerResolutionSummarySchema).max(20_000),
     safeMode: z.boolean(),
     autoUpdateAll: z.boolean().optional(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    catalog: pluginCommunityCatalogSnapshotSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    readme: pluginCommunityReadmeSnapshotSchema.nullable(),
   }),
   z.strictObject({
     ok: z.literal(true),
