@@ -25,8 +25,6 @@ Local folders, local ZIP archives, and GitHub URLs you paste yourself use **Adva
 
 The plugin appears in the plugin list after installation. Follow the plugin author’s own instructions if it needs additional setup.
 
-![Plugin manager and installation entry](../assets/ui/extension.png)
-
 ## Enable and disable
 
 - Turn on **Enable** on the plugin card.
@@ -46,4 +44,4 @@ Uninstalling a plugin does not remove personal settings it may have saved. Reins
 
 Check that it was installed in the intended scope, then reopen plugin settings. If it still does not work, contact the plugin author with your Serpent version, operating system, and plugin name. Never include an API key or other private data in a report.
 
-Developers should read the [extension author manual](../manual/README.md).
+Developers should read the [plugin developer manual](../manual/README.md).
