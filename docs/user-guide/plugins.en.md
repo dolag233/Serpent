@@ -42,10 +42,6 @@ GitHub plugins can check for updates from plugin settings. Automatic updates are
 
 Uninstalling a plugin does not remove personal settings it may have saved. Reinstall it later if you want to keep those settings; if the plugin provides its own cleanup action, prefer that action.
 
-## Browser extension
-
-For the browser extension (Chrome / Edge / Firefox), see [Browser extension](browser-extension.md).
-
 ## If a plugin does not work
 
 Check that it was installed in the intended scope, then reopen plugin settings. If it still does not work, contact the plugin author with your Serpent version, operating system, and plugin name. Never include an API key or other private data in a report.
