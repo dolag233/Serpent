@@ -211,6 +211,66 @@ export function electronLaunchEnv(
   );
 }
 
+/** Open the in-app settings dialog (Windows uses the shell main menu). */
+export async function openAppSettingsDialog(
+  application: ElectronApplication,
+  window: Page,
+): Promise<Locator> {
+  if (process.platform === 'win32') {
+    await window.getByRole('button', { name: '主菜单' }).click();
+    await window.getByRole('menuitem', { name: '设置', exact: true }).click();
+  } else {
+    await window.getByRole('button', { name: '设置' }).click();
+  }
+  const dialog = window.getByRole('dialog', { name: '通用设置' });
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+/** Open the Plugins tab inside the settings dialog. */
+export async function openPluginSettingsTab(settingsDialog: Locator): Promise<void> {
+  await settingsDialog.getByRole('tab', { name: '插件' }).click();
+}
+
+/**
+ * Open advanced plugin install (local folder/ZIP or GitHub). The primary entry
+ * is now「打开插件社区」; tests that install fixed E2E packages use「高级安装」.
+ */
+export async function openPluginAdvancedInstallDialog(
+  window: Page,
+  settingsDialog: Locator,
+): Promise<Locator> {
+  await settingsDialog.getByRole('button', { name: '高级安装' }).click();
+  const installDialog = window.getByRole('dialog', { name: '安装插件' });
+  await expect(installDialog).toBeVisible();
+  return installDialog;
+}
+
+/** Paste a clipboard image through the real File menu path for this platform. */
+export async function pasteClipboardImageThroughFileMenu(
+  application: ElectronApplication,
+  window: Page,
+): Promise<void> {
+  if (process.platform === 'win32') {
+    await window.getByRole('button', { name: '主菜单' }).click();
+    await window.getByRole('menuitem', { name: '文件', exact: true }).click();
+    await window
+      .locator('[data-main-menu-submenu="file"]')
+      .getByRole('menuitem', { name: '粘贴图片' })
+      .click();
+    return;
+  }
+  if (process.platform === 'darwin') {
+    // Native macOS menu clicks are flaky in Playwright; the empty-state action
+    // routes through the same pasteImage handler as File > Paste image.
+    const emptyStatePaste = window.getByRole('button', { name: '粘贴图片' });
+    await expect(emptyStatePaste).toBeVisible();
+    await emptyStatePaste.click();
+    return;
+  }
+  await clickNativeApplicationMenuItem(application, 'file.paste-image');
+}
+
 /** Close via top-left library switcher (Inspector no longer exposes close/path). */
 export async function closeLibraryViaSwitcher(
   window: Page,

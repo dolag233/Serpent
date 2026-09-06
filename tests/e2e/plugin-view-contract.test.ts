@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { _electron as electron, expect, test, type Frame } from '@playwright/test';
 
-import { resolveElectronExecutablePath, resolveSessionLogPath, electronLaunchEnv } from './electron-test-helpers';
+import { electronLaunchEnv, openAppSettingsDialog, openPluginAdvancedInstallDialog, openPluginSettingsTab, resolveElectronExecutablePath, resolveSessionLogPath } from './electron-test-helpers';
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -100,11 +100,9 @@ test('plugin view contract: mount, theme-without-reload, reload, unmount, librar
     await window.getByRole('textbox', { name: '名称' }).fill(libraryOne);
     await window.getByRole('button', { name: '创建', exact: true }).click();
 
-    await window.getByRole('button', { name: '设置' }).click();
-    const settingsDialog = window.getByRole('dialog', { name: '通用设置' });
-    await settingsDialog.getByRole('tab', { name: '插件' }).click();
-    await settingsDialog.getByRole('button', { name: '安装插件' }).click();
-    const installDialog = window.getByRole('dialog', { name: '安装插件' });
+    const settingsDialog = await openAppSettingsDialog(application, window);
+    await openPluginSettingsTab(settingsDialog);
+    const installDialog = await openPluginAdvancedInstallDialog(window, settingsDialog);
     await installDialog.getByLabel('安装范围').selectOption('library');
     const installButton = installDialog.getByRole('button', { name: '本地安装' });
     await expect(installButton).toBeEnabled();
@@ -135,14 +133,13 @@ test('plugin view contract: mount, theme-without-reload, reload, unmount, librar
       }
       throw error;
     }
-    await settingsDialog.getByRole('button', { name: '信任', exact: true }).click();
+    window.once('dialog', (browserDialog) => browserDialog.accept());
+    const libraryCard = settingsDialog.locator('.plugin-settings-scope-card').filter({ hasText: '资源库插件' });
+    await libraryCard.locator('label.plugin-settings-enable-toggle').click();
     // Activation is asynchronous (Host start + contribution refresh); wait for
     // the enable toggle to become active before leaving the dialog — a 5s
     // budget (as in the palette-tools baseline) is too tight here.
-    const enableToggle = settingsDialog
-      .locator('.plugin-settings-scope-card')
-      .filter({ hasText: '资源库插件' })
-      .getByRole('checkbox', { name: '启用插件' });
+    const enableToggle = libraryCard.getByRole('checkbox', { name: '启用插件' });
     await expect(enableToggle).toBeEnabled({ timeout: 30_000 });
     await expect(enableToggle).toBeChecked();
     await settingsDialog.press('Escape');

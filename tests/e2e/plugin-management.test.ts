@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { _electron as electron, expect, test } from '@playwright/test';
 
-import { resolveElectronExecutablePath, electronLaunchEnv } from './electron-test-helpers';
+import { electronLaunchEnv, openAppSettingsDialog, openPluginAdvancedInstallDialog, openPluginSettingsTab, resolveElectronExecutablePath } from './electron-test-helpers';
 import manifestFixture from '../fixtures/plugin-manifests/palette-tools.serpent-plugin.json';
 
 test.describe.configure({ timeout: 120_000 });
@@ -47,24 +47,13 @@ test('installs a library plugin through the settings bridge, then trusts and Saf
     await window.getByRole('textbox', { name: '名称' }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
 
-    if (process.platform === 'win32') {
-      // Windows 无工具栏设置齿轮（8-09~8-12 菜单重构）——从应用菜单栏打开。
-      await window.getByRole('button', { name: '主菜单' }).click();
-      await window
-        .getByRole('menuitem', { name: '设置', exact: true })
-        .click();
-    } else {
-      await window.getByRole('button', { name: '设置' }).click();
-    }
-    const dialog = window.getByRole('dialog', { name: '通用设置' });
-    await dialog.getByRole('tab', { name: '插件' }).click();
+    const dialog = await openAppSettingsDialog(application, window);
+    await openPluginSettingsTab(dialog);
     await expect(dialog.getByText('暂未安装插件。', { exact: true }).first()).toBeVisible();
     const globalAutoUpdate = dialog.getByRole('checkbox', { name: '自动更新' });
     await expect(globalAutoUpdate).toBeVisible();
     await expect(globalAutoUpdate).not.toBeChecked();
-    await dialog.getByRole('button', { name: '安装插件' }).click();
-    const installDialog = window.getByRole('dialog', { name: '安装插件' });
-    await expect(installDialog).toBeVisible();
+    const installDialog = await openPluginAdvancedInstallDialog(window, dialog);
     await expect(installDialog.getByRole('button', { name: '本地安装' })).toBeVisible();
     await expect(installDialog.getByRole('button', { name: '从 GitHub 安装' })).toBeVisible();
     await installDialog.getByRole('button', { name: '从 GitHub 安装' }).click();
@@ -101,8 +90,10 @@ test('installs a library plugin through the settings bridge, then trusts and Saf
     });
     await Promise.all([consentDialog, enableRow.click({ force: true })]);
     await expect(enableToggle).toBeChecked();
+    await expect(enableToggle).toBeEnabled();
     await enableRow.click({ force: true });
     await expect(enableToggle).not.toBeChecked();
+    await expect(enableToggle).toBeEnabled();
     await enableRow.click({ force: true });
     await expect(enableToggle).toBeChecked();
 

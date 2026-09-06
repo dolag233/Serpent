@@ -138,8 +138,6 @@ import {
 import {
   createAutomationCommandGateway,
   type AutomationCommandGateway,
-  type AutomationMediaBinariesHandler,
-  type AutomationUiDialogHandler,
 } from '../automation/command-gateway';
 import {
   PLUGIN_UI_DIALOG_PATCH_CHANNEL,
