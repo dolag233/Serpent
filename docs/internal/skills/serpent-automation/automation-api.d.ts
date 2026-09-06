@@ -89,7 +89,10 @@ declare global {
     | 'smart-collection.update'
     | 'smart-collection.delete'
     | 'smart-collection.execute'
-    | 'ai.enqueue';
+    | 'ai.enqueue'
+    | 'ui.dialog'
+    | 'ui.widget-patch'
+    | 'media.binaries.get';
 
   interface SerpentPage<T> {
     readonly items: readonly T[];
