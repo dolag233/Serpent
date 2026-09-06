@@ -18,28 +18,35 @@
 
   **Organization and browsing**: Sidebar folders sort by name, date, or count; empty folder cards show a 2×2 collage of child previews; search can return folders; workspace views push onto navigation history.
 
-- **应用体验**：四档界面字体大小；Windows 粘贴图片恢复可用；启动后自动打开上次资源库；查看器去掉多余关闭按钮；链接文件夹在保存/移动/复制/拖拽中与托管文件夹平权。
+- **教学提示**：首次使用时提示链接文件夹、展开子文件夹等功能。
 
-  **App experience**: Four UI font-size tiers; Windows image paste restored; last-used library reopens on launch; redundant viewer close control removed; linked folders share save/move/copy/drag behavior with managed folders.
+  **Teaching hints**: First-run cues for linked folders, expanding subfolders, and similar features.
+
+- **链接文件夹**：保存、移动、复制、拖拽和恢复定位时与托管文件夹同等对待，不再强制复制。
+
+  **Linked folders**: Save, move, copy, drag, and restore-locate now treat linked folders like managed folders, without forcing a copy.
+
+- **应用外观**：四档界面字体大小；侧栏文件夹展开/收起图标对齐；查看器去掉多余关闭按钮。
+
+  **Appearance**: Four UI font-size tiers; sidebar folder expand/collapse icons aligned; redundant viewer close control removed.
+
+- **启动体验**：启动后自动打开上次使用的资源库。
+
+  **Startup**: Reopens the last-used library on launch.
 
 ## 性能与可靠性 / Performance and reliability
 
-- 取消资产内容读写的 32 MiB 策略上限，大文件可由插件分块读写。
-- 过滤、忽略规则与发现工具栏继续收口；导航后退与首次打开体验更稳。
+- 取消 Worker 对本地资源操作的请求限时，长时间导入、扫描和预览不再被掐断；同时取消资产内容读写的 32 MiB 策略上限，大文件可由插件分块读写。
+- 收口媒体超时与主题过滤；导航后退与首次打开更稳。
 
-  Lifted the 32 MiB content read/write policy cap so plugins can stage large files in chunks. Filter, ignore-rule, and discovery-toolbar polish; more reliable navigation back and first-open restore.
+  Removed Worker request time limits on local library work so long imports, scans, and previews are no longer cut off; also lifted the 32 MiB content read/write policy cap so plugins can stage large files in chunks. Media timeouts and theme filtering are tightened; navigation back and first-open restore are more reliable.
 
 ## 修复 / Fixes
 
-- 修复若干插件写回、对话框、粘贴图片与文件夹交互问题。
+- 优化资源库忽略规则：托管与链接位置共用 Git 风格语法并持久化，保存后立即作用于浏览、搜索和扫描。
+- 修复 Windows 粘贴图片、插件写回与对话框等问题。
 - 优化若干 UI 细节与稳定性问题。
 
-  - Fixed several plugin write-back, dialog, image-paste, and folder-interaction issues.
+  - Improved library ignore rules: Git-style patterns persist for managed and linked locations and apply immediately to browse, search, and scan.
+  - Fixed Windows image paste, plugin write-back, and dialog issues.
   - Various UI polish and stability fixes.
-
-## 已知限制 / Known limitations
-
-- 本版本 Windows 安装包与便携版在发布当时构建；macOS 产物需在 Apple Silicon 机器另行打包上传。
-- NAS/SMB 资源库与部分大型库性能门禁仍需要持续平台验收。
-
-  Windows setup and portable builds are produced at release time; macOS artifacts need a separate Apple Silicon package-and-upload. NAS/SMB libraries and parts of the large-library performance gates still need continued platform validation.
