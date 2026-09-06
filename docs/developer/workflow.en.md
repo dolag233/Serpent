@@ -7,7 +7,7 @@ This guide is for contributors joining Serpent for the first time. It explains t
 | Branch | Purpose | What belongs there |
 | --- | --- | --- |
 | `main` | Release baseline | Shippable source, tests, resources, public docs, and build configuration; packages are built from here |
-| `dev` | Daily development integration | A descendant of `main` plus `.beads/`, `AGENTS.md`, `docs/internal/`, and other collaboration material |
+| `dev` | Daily development integration | A descendant of `main` plus `.beads/`, `AGENTS.md`, [`docs/internal/`](https://github.com/dolag233/Serpent/tree/dev/docs/internal), and other collaboration material |
 
 `main` is for “ready to release”; `dev` is for “safe to keep developing”. Feature branches must start from `dev`. Development, acceptance, ticket assignment, and internal records happen on `dev` or its feature branches. The current development branch in this repository is `dev`.
 
@@ -26,11 +26,11 @@ Push `dev` through the normal hooks. Because `main` has no Beads mirror, follow 
 
 Before coding, read:
 
-- `docs/product-brief.md` — product goals and MVP boundaries;
-- `docs/internal/project-status.md` — current frontier, risks, and platform evidence;
-- `docs/internal/domain-model.md` — entities, relationships, and terminology;
-- `docs/internal/development-process.md` — quality gates and definition of done;
-- `docs/internal/qa/human-acceptance-checklist.md` — human acceptance queue and withdrawn feedback.
+- [Product brief](../product-brief.md) — product goals and MVP boundaries;
+- [Project status](https://github.com/dolag233/Serpent/blob/dev/docs/internal/project-status.md) — current frontier, risks, and platform evidence;
+- [Domain model](https://github.com/dolag233/Serpent/blob/dev/docs/internal/domain-model.md) — entities, relationships, and terminology;
+- [Development process](https://github.com/dolag233/Serpent/blob/dev/docs/internal/development-process.md) — quality gates and definition of done;
+- [Human acceptance checklist](https://github.com/dolag233/Serpent/blob/dev/docs/internal/qa/human-acceptance-checklist.md) — human acceptance queue and withdrawn feedback.
 
 Confirm that the worktree does not contain another agent’s uncommitted changes:
 
@@ -98,10 +98,10 @@ When a test fails, decide whether it is a regression or a deliberate spec change
 
 - User behavior: `docs/user-guide/`, with synchronized English/Chinese pages and screenshots;
 - Product boundaries, terminology, and irreversible decisions: product brief, domain model, or ADR;
-- Implementation plan and acceptance criteria: `docs/internal/implementation/`;
-- Why it was built this way, how it was verified, and remaining risk: `docs/internal/development/`;
-- Standards/Spec review: `docs/internal/reviews/`;
-- Automated, platform, and human evidence: `docs/internal/qa/` and the continuous acceptance checklist.
+- Implementation plan and acceptance criteria: [`docs/internal/implementation/`](https://github.com/dolag233/Serpent/tree/dev/docs/internal/implementation);
+- Why it was built this way, how it was verified, and remaining risk: [`docs/internal/development/`](https://github.com/dolag233/Serpent/tree/dev/docs/internal/development);
+- Standards/Spec review: [`docs/internal/reviews/`](https://github.com/dolag233/Serpent/tree/dev/docs/internal/reviews);
+- Automated, platform, and human evidence: [`docs/internal/qa/`](https://github.com/dolag233/Serpent/tree/dev/docs/internal/qa) and the continuous acceptance checklist.
 
 Any “verified” statement must include the command, commit baseline, platform, and result summary. Screenshots, logs, and fixtures must not expose API keys, tokens, private paths, or original user assets.
 

@@ -99,7 +99,7 @@ The Windows installer `SerpentSetup.exe` is built with **Inno Setup** (same appr
 - Per-machine install (UAC elevation), automatic uninstaller `unins000.exe` and Apps & Features entry
 - Getting Inno Setup: NuGet package `Tools.InnoSetup` (no admin needed, extract and use), see CLAUDE.md
 
-> History: Squirrel (no wizard / no path selection / uninstall leftovers) and WiX MSI (MSI language switching requires a custom bootstrapper, confirmed by the community) were both tried and rolled back — see `docs/internal/development/2026-08-08-windows-packaging-and-squirrel-installer-development-log.md`.
+> History: Squirrel (no wizard / no path selection / uninstall leftovers) and WiX MSI (MSI language switching requires a custom bootstrapper, confirmed by the community) were both tried and rolled back — see the [Windows packaging development log](https://github.com/dolag233/Serpent/blob/dev/docs/internal/development/2026-08-08-windows-packaging-and-squirrel-installer-development-log.md).
 
 ## Media binary promotion (Serpent-Build)
 
@@ -134,7 +134,7 @@ The extension ships inside the app bundle (`Resources/extension`), not via a sto
 npm run extension:build   # builds dist/extension
 ```
 
-`prePackage` rebuilds it automatically. Manual loading instructions are in the [user guide](../user-guide/installation.en.md).
+`prePackage` rebuilds it automatically. Manual loading instructions are in the [user guide](../user-guide/installation.md).
 
 ## Signing
 
@@ -148,6 +148,6 @@ npm run extension:build   # builds dist/extension
 3. **Signing upgrade**: SignPath application / Apple Developer account
 4. **CI/CD**: local CICD (2026-08-09 decision: main repo dropped GitHub Actions;
    each platform runs `npm run release:local`; the browser-extension repo keeps
-   Actions for release publishing). See `docs/internal/development/local-cicd.md`.
+   Actions for release publishing). See [local CICD](https://github.com/dolag233/Serpent/blob/dev/docs/internal/development/local-cicd.md).
 
 See the research doc for details.

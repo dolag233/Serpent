@@ -1,25 +1,25 @@
 # User Guide
 
-A Serpent usage guide for end users. Chinese version: [README.md](README.md)
+A Serpent usage guide for end users. For Chinese, switch the site language; in the repository see `README.md`.
 
-- [Install](installation.en.md) — macOS / Windows, upgrades
-- [Basics](basics.en.md) — libraries, importing, browsing, organization, file actions, and the viewer
-- [Search and filters](search-and-filters.en.md) — advanced query syntax, filter dimensions, and Shift multi-select
-- [WebDAV cloud sync](sync.en.md) — server configuration, library binding, auto-sync, opening remote synced libraries
-- [AI analysis](ai.en.md) — supported assets, automatic/manual analysis, jobs, and privacy
-- [Browser extension](browser-extension.en.md) — save web images/videos from Chrome / Edge / Firefox
-- [Using plugins](plugins.en.md) — install, enable, update, and uninstall plugins
-- [Automation](automation.en.md) — automation scripts and MCP client connections
-- [Troubleshooting](troubleshooting.en.md) — common problems and fixes
+- [Install](installation.md) — macOS / Windows, upgrades
+- [Basics](basics.md) — libraries, importing, browsing, organization, file actions, and the viewer
+- [Search and filters](search-and-filters.md) — advanced query syntax, filter dimensions, and Shift multi-select
+- [WebDAV cloud sync](sync.md) — server configuration, library binding, auto-sync, opening remote synced libraries
+- [AI analysis](ai.md) — supported assets, automatic/manual analysis, jobs, and privacy
+- [Browser extension](browser-extension.md) — save web images/videos from Chrome / Edge / Firefox
+- [Using plugins](plugins.md) — install, enable, update, and uninstall plugins
+- [Automation](automation.md) — automation scripts and MCP client connections
+- [Troubleshooting](troubleshooting.md) — common problems and fixes
 
 ## Quick start
 
-1. Install Serpent (see [Install](installation.en.md))
+1. Install Serpent (see [Install](installation.md))
 2. Launch the app and create a local library
 3. Drag images, videos, audio, 3D models, or text into the window, or click Import
 4. Assets appear on the canvas. Double-click to open the viewer; right-click for more actions. Thumbnails, metadata, and AI analysis complete progressively in the background
 
-Data stays in your local library directory; for syncing across machines, use WebDAV cloud sync (see [Sync](sync.en.md)).
+Data stays in your local library directory; for syncing across machines, use WebDAV cloud sync (see [Sync](sync.md)).
 
 ## Interface at a glance
 
@@ -27,7 +27,7 @@ A typical workspace has library navigation on the left, the asset canvas in the 
 
 ![Serpent library overview](../assets/ui/Serpent-Preview.png)
 
-See [Basics](basics.en.md) for the complete workflow.
+See [Basics](basics.md) for the complete workflow.
 
 ```mermaid
 flowchart LR

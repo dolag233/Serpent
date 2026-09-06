@@ -13,12 +13,12 @@
 - [新增媒体格式支持](media-format-support.md)——从共享注册表到导入、预览、过滤、协议和验收
 - [分支与开发工作流](workflow.md)——`main`/`dev` 定位、Beads 工单、文档记录、验收和交接经验
 
-其他软件文档：
+其他软件文档（内部记录仅仓库 `dev` 分支，网站不发布）：
 
-- [开发流程](../internal/development-process.md)——切片流程与质量门禁
-- [领域模型](../internal/domain-model.md) / [术语表](../glossary.md)
-- [架构决策记录](../internal/adr/)——ADR-0000 起
-- [实施规格](../internal/implementation/)——切片规格
+- [开发流程](https://github.com/dolag233/Serpent/blob/dev/docs/internal/development-process.md)——切片流程与质量门禁
+- [领域模型](https://github.com/dolag233/Serpent/blob/dev/docs/internal/domain-model.md) / [术语表](../glossary.md)
+- [架构决策记录](https://github.com/dolag233/Serpent/tree/dev/docs/internal/adr)——ADR-0000 起
+- [实施规格](https://github.com/dolag233/Serpent/tree/dev/docs/internal/implementation)——切片规格
 
 ## 第二部分：扩展开发
 

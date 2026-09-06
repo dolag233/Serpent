@@ -1,6 +1,6 @@
 # 使用手册
 
-面向最终用户的 Serpent 使用指南。英文版：[README.en.md](README.en.md)
+面向最终用户的 Serpent 使用指南。英文版请切换站点语言；仓库内见同目录 `README.en.md`。
 
 - [安装](installation.md)——macOS / Windows 安装、升级
 - [基本使用](basics.md)——资源库、导入、浏览、标签、合集、文件操作和查看器

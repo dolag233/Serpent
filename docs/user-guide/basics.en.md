@@ -91,7 +91,7 @@ Normal `Delete` / macOS `⌘⌫` moves an asset or folder to Trash. Windows `Shi
 
 ## WebDAV cloud sync
 
-Serpent can sync a library across machines over WebDAV: configure servers globally, bind each library, set auto-sync and the poll interval, and open remote synced libraries. See [Sync and external libraries](sync.en.md).
+Serpent can sync a library across machines over WebDAV: configure servers globally, bind each library, set auto-sync and the poll interval, and open remote synced libraries. See [Sync and external libraries](sync.md).
 
 ## Shortcuts
 
@@ -107,4 +107,4 @@ Serpent can sync a library across machines over WebDAV: configure servers global
 | Copy / Paste | ⌘C / ⌘V | Ctrl+C / Ctrl+V |
 | Fit viewer | Numpad `.` | Numpad `.` |
 
-See [Search and filters](search-and-filters.en.md) for query examples and [AI analysis](ai.en.md) for AI setup and jobs.
+See [Search and filters](search-and-filters.md) for query examples and [AI analysis](ai.md) for AI setup and jobs.

@@ -32,7 +32,7 @@ Unsigned development builds may trigger SmartScreen. Verify the source, then cho
 
 ## Browser extension
 
-Download the browser extension (Chrome / Edge / Firefox) from the [extension releases](https://github.com/dolag233/Serpent-Extension/releases). Installation and usage: see [Browser extension](browser-extension.en.md).
+Download the browser extension (Chrome / Edge / Firefox) from the [extension releases](https://github.com/dolag233/Serpent-Extension/releases). Installation and usage: see [Browser extension](browser-extension.md).
 
 ## Upgrading
 

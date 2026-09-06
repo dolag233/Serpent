@@ -176,7 +176,7 @@ MVP 常用格式：PNG、JPG/JPEG、GIF、WebP、BMP、TIFF、TGA、EXR、ICO、
 - 全屏查看：从资产查看页面显式进入的沉浸显示方式，不与“进入资产查看页面”混为同一动作。
 - 外部打开：调用系统默认或用户指定的创作软件正式打开文件。
 
-资产查看页面不常驻显示底部缩放条，也不使用占满顶部的工程式工具栏。正式实施前先研究成熟图片查看器并验证交互原型；缩放需要对触控板 pinch 足够灵敏、围绕手势焦点，并在放大后提供不会与资产切换或媒体控制冲突的平移方式。详细验收见 `internal/implementation/0013-asset-viewer-navigation-and-gestures-vertical-slice.md`。
+资产查看页面不常驻显示底部缩放条，也不使用占满顶部的工程式工具栏。正式实施前先研究成熟图片查看器并验证交互原型；缩放需要对触控板 pinch 足够灵敏、围绕手势焦点，并在放大后提供不会与资产切换或媒体控制冲突的平移方式。详细验收见 [0013 查看器导航与手势](https://github.com/dolag233/Serpent/blob/dev/docs/internal/implementation/0013-asset-viewer-navigation-and-gestures-vertical-slice.md)。
 
 所有资产在悬停时都放大卡片。在放大状态下，视频和 GIF 支持按设置自动播放或悬停播放，音频支持播放；其他格式逐步增加适合自身的快速交互。放大交互需先通过独立原型验证视觉效果与易用性；若验证不通过，MVP 使用普通资产卡片和显式预览入口，不为保留该交互牺牲可用性。
 
@@ -211,7 +211,7 @@ Serpent 不设置隐藏优先级。
 
 第一阶段支持官方插件社区（[Serpent-Plugin-Pool](https://github.com/dolag233/Serpent-Plugin-Pool) 钉死的 Release ZIP）、本地包、本地目录和符合规范的 GitHub 仓库 URL，并且不会执行
 远程仓库中的依赖安装、构建或生命周期脚本。完整边界见
-[`0024-script-plugin-platform.md`](internal/implementation/0024-script-plugin-platform.md)。
+[`0024-script-plugin-platform.md`](https://github.com/dolag233/Serpent/blob/dev/docs/internal/implementation/0024-script-plugin-platform.md)。
 
 资产调用外部应用只通过右键菜单中的“使用外部应用打开/打开方式”进入。
 
@@ -233,7 +233,7 @@ MVP 的设计容量上限为单个资源库最多约 10 万个文件、2 TB 原�
 
 MVP 性能行为要求：
 
-- **给用户以安全感。** 打开或切换资源库若持续超过 3 秒，才显示一行明确的资源库身份和“切换资源库”按钮；在文件夹、合集、标签、回收站摘要和首批资产查询形成一致快照前，不展示新资源库的部分首屏，也不保留旧资源库的导航。结构确认完成后再进入主界面。详见 [`docs/internal/ui/0006-progressive-loading-ux-principles.md`](internal/ui/0006-progressive-loading-ux-principles.md)。
+- **给用户以安全感。** 打开或切换资源库若持续超过 3 秒，才显示一行明确的资源库身份和“切换资源库”按钮；在文件夹、合集、标签、回收站摘要和首批资产查询形成一致快照前，不展示新资源库的部分首屏，也不保留旧资源库的导航。结构确认完成后再进入主界面。详见 [`docs/internal/ui/0006-progressive-loading-ux-principles.md`](https://github.com/dolag233/Serpent/blob/dev/docs/internal/ui/0006-progressive-loading-ux-principles.md)。
 - **普通内容路径继续渐进。** 文件夹/合集范围切换、缩略图、查看器原图、搜索、导入和 AI 结果仍可先显示首屏或占位，再在后台补齐；打开资源库不等于同步完成全部缩略图、索引或 AI。
 - 普通过滤、排序和关键词搜索在 1 秒内返回首屏。
 - 新增文件立即显示占位项，缩略图和 AI 在后台完成。
@@ -353,10 +353,10 @@ MVP：
 
 ## 相关研究
 
-- [创意资产的版本、同步、锁与审批](internal/research/asset-versioning-and-sync.md)：建议 MVP 推迟版本管理 UI，但底层预留稳定资产身份、不可变修订与冲突保全。
-- [Electron 后台任务架构调研](internal/research/electron-background-worker-architecture.md)：建议沙箱化 Renderer、精简 Main、单个 UtilityProcess 和按需 FFmpeg 子进程。
-- [数据库与全文搜索技术调研](internal/research/database-and-fulltext-search.md)：建议 better-sqlite3、SQLite FTS5、应用单实例、每库单连接和按存储位置切换 journal 模式。
-- [媒体解析与预览技术栈](internal/research/media-preview-stack.md)：建议 Chromium 播放、LGPL-only FFmpeg、sharp、OpenImageIO 和 OpenColorIO。
+- [创意资产的版本、同步、锁与审批](https://github.com/dolag233/Serpent/blob/dev/docs/internal/research/asset-versioning-and-sync.md)：建议 MVP 推迟版本管理 UI，但底层预留稳定资产身份、不可变修订与冲突保全。
+- [Electron 后台任务架构调研](https://github.com/dolag233/Serpent/blob/dev/docs/internal/research/electron-background-worker-architecture.md)：建议沙箱化 Renderer、精简 Main、单个 UtilityProcess 和按需 FFmpeg 子进程。
+- [数据库与全文搜索技术调研](https://github.com/dolag233/Serpent/blob/dev/docs/internal/research/database-and-fulltext-search.md)：建议 better-sqlite3、SQLite FTS5、应用单实例、每库单连接和按存储位置切换 journal 模式。
+- [媒体解析与预览技术栈](https://github.com/dolag233/Serpent/blob/dev/docs/internal/research/media-preview-stack.md)：建议 Chromium 播放、LGPL-only FFmpeg、sharp、OpenImageIO 和 OpenColorIO。
 
 ## 访谈原则
 

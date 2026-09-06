@@ -44,7 +44,7 @@ Uninstalling a plugin does not remove personal settings it may have saved. Reins
 
 ## Browser extension
 
-For the browser extension (Chrome / Edge / Firefox), see [Browser extension](browser-extension.en.md).
+For the browser extension (Chrome / Edge / Firefox), see [Browser extension](browser-extension.md).
 
 ## If a plugin does not work
 

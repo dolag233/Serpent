@@ -5,7 +5,7 @@
 > 实现跟踪：`Serpent-u3nx`（Release asset + 平台匹配）、`Serpent-8r91`（更新提示与自动更新）  
 > 官方目录：https://github.com/dolag233/Serpent-Plugin-Pool
 
-> 相关：[插件开发手册](development.md)、[插件开发最佳实践](best-practices.md)、[0024](../../internal/implementation/0024-script-plugin-platform.md)、[ADR-0026](../../internal/adr/0026-plugin-runtime-installation-and-trust.md)
+> 相关：[插件开发手册](development.md)、[插件开发最佳实践](best-practices.md)、[0024](https://github.com/dolag233/Serpent/blob/dev/docs/internal/implementation/0024-script-plugin-platform.md)、[ADR-0026](https://github.com/dolag233/Serpent/blob/dev/docs/internal/adr/0026-plugin-runtime-installation-and-trust.md)
 
 ## 1. 安装通道（产品面）
 

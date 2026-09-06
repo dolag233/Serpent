@@ -6,19 +6,19 @@ Developer documentation is split into two parts.
 
 For developers working on Serpent itself: architecture, building from source, testing.
 
-- [Setup](setup.en.md) — dependencies, first build, development environment
-- [Build & packaging](build-packaging.en.md) — package / make / release pipeline / signing
-- [Architecture](architecture.en.md) — process model, directory layout, key design
-- [Testing](testing.en.md) — test layers and how to run them
-- [Adding media format support](media-format-support.en.md) — registry, import, preview, filters, protocols, and acceptance
-- [Branches and workflow](workflow.en.md) — `main`/`dev`, Beads tickets, development records, acceptance, and handoff
+- [Setup](setup.md) — dependencies, first build, development environment
+- [Build & packaging](build-packaging.md) — package / make / release pipeline / signing
+- [Architecture](architecture.md) — process model, directory layout, key design
+- [Testing](testing.md) — test layers and how to run them
+- [Adding media format support](media-format-support.md) — registry, import, preview, filters, protocols, and acceptance
+- [Branches and workflow](workflow.md) — `main`/`dev`, Beads tickets, development records, acceptance, and handoff
 
-Other software docs:
+Other software docs (internal records live on the repo `dev` branch and are not published to the site):
 
-- [Development process](../internal/development-process.md) — slice workflow and quality gates
-- [Domain model](../internal/domain-model.md) / [Glossary](../glossary.md)
-- [Architecture decision records](../internal/adr/) — ADR-0000 onward
-- [Implementation specs](../internal/implementation/) — slice specs
+- [Development process](https://github.com/dolag233/Serpent/blob/dev/docs/internal/development-process.md) — slice workflow and quality gates
+- [Domain model](https://github.com/dolag233/Serpent/blob/dev/docs/internal/domain-model.md) / [Glossary](../glossary.md)
+- [Architecture decision records](https://github.com/dolag233/Serpent/tree/dev/docs/internal/adr) — ADR-0000 onward
+- [Implementation specs](https://github.com/dolag233/Serpent/tree/dev/docs/internal/implementation) — slice specs
 
 ## Part 2: Extension development
 
@@ -30,4 +30,4 @@ For developers writing plugins, scripts or MCP adapters. **No software-architect
 - [Script development guide](../manual/scripts/development.md) + [API reference](../manual/scripts/api-reference.md)
 - [MCP development guide](../manual/mcp/development.md) + [API reference](../manual/mcp/api-reference.md)
 
-End users: see [Using plugins](../user-guide/plugins.en.md), [Browser extension](../user-guide/browser-extension.en.md), and [Automation](../user-guide/automation.en.md).
+End users: see [Using plugins](../user-guide/plugins.md), [Browser extension](../user-guide/browser-extension.md), and [Automation](../user-guide/automation.md).

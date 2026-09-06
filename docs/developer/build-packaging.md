@@ -97,7 +97,7 @@ Windows 安装器 `SerpentSetup.exe` 用 **Inno Setup** 构建（VS Code 同款�
 - per-machine 安装（UAC 提权）、自动生成卸载器 `unins000.exe` 与应用和功能条目
 - Inno Setup 工具获取：NuGet 包 `Tools.InnoSetup`（免管理员，解压即用），见 CLAUDE.md
 
-> 历史：早期尝试过 Squirrel（无向导/无路径选择/卸载残留）与 WiX MSI（MSI 语言切换需自定义 bootstrapper，社区确认不可内置）均已回退，见 `docs/internal/development/2026-08-08-windows-packaging-and-squirrel-installer-development-log.md`。
+> 历史：早期尝试过 Squirrel（无向导/无路径选择/卸载残留）与 WiX MSI（MSI 语言切换需自定义 bootstrapper，社区确认不可内置）均已回退，见 [Windows 打包开发日志](https://github.com/dolag233/Serpent/blob/dev/docs/internal/development/2026-08-08-windows-packaging-and-squirrel-installer-development-log.md)。
 
 ## 媒体二进制晋升（Serpent-Build）
 
@@ -145,6 +145,6 @@ npm run extension:build   # 构建 dist/extension
 3. **签名升级**：SignPath 申请 / Apple Developer 账号
 4. **CI/CD**：本地 CICD（2026-08-09 决策：主仓库放弃 GitHub Actions，
    双平台各自跑 `npm run release:local`；浏览器扩展仓库保留 Actions 发布）。
-   详见 `docs/internal/development/local-cicd.md`。
+   详见 [本地 CICD](https://github.com/dolag233/Serpent/blob/dev/docs/internal/development/local-cicd.md)。
 
 详见研究文档。

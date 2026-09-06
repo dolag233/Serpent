@@ -7,7 +7,7 @@
 | 分支 | 定位 | 应该包含什么 |
 | --- | --- | --- |
 | `main` | 发布基线 | 可交付的软件代码、测试、资源、公开文档和构建配置；从这里打包和发布 |
-| `dev` | 日常开发集成分支 | `main` 的后代，加上 `.beads/`、`AGENTS.md`、`docs/internal/` 等开发协作资料 |
+| `dev` | 日常开发集成分支 | `main` 的后代，加上 `.beads/`、`AGENTS.md`、[`docs/internal/`](https://github.com/dolag233/Serpent/tree/dev/docs/internal) 等开发协作资料 |
 
 `main` 的目标是“拿来发布”，`dev` 的目标是“方便持续开发”。功能分支必须从 `dev` 创建；开发、验收、工单认领和内部记录都在 `dev` 或其功能分支完成。当前仓库的开发分支名就是 `dev`。
 
@@ -26,11 +26,11 @@ git ls-tree main --name-only
 
 在写代码前阅读：
 
-- `docs/product-brief.md`：产品目标与 MVP 边界；
-- `docs/internal/project-status.md`：当前前沿、已知风险和平台证据；
-- `docs/internal/domain-model.md`：实体、关系和术语；
-- `docs/internal/development-process.md`：质量门禁与完成定义；
-- `docs/internal/qa/human-acceptance-checklist.md`：哪些能力待人类验收、哪些反馈已撤回。
+- [产品简报](../product-brief.md)：产品目标与 MVP 边界；
+- [项目状态](https://github.com/dolag233/Serpent/blob/dev/docs/internal/project-status.md)：当前前沿、已知风险和平台证据；
+- [领域模型](https://github.com/dolag233/Serpent/blob/dev/docs/internal/domain-model.md)：实体、关系和术语；
+- [开发流程](https://github.com/dolag233/Serpent/blob/dev/docs/internal/development-process.md)：质量门禁与完成定义；
+- [人类验收清单](https://github.com/dolag233/Serpent/blob/dev/docs/internal/qa/human-acceptance-checklist.md)：哪些能力待人类验收、哪些反馈已撤回。
 
 再确认工作树没有别的 agent 的未提交改动：
 
@@ -98,10 +98,10 @@ npm run verify:mainline
 
 - 面向用户的行为写入 `docs/user-guide/`，并同步中英文和截图；
 - 产品边界、术语和不可逆决定写入产品简报、领域模型或 ADR；
-- 实施方案和验收条件写入 `docs/internal/implementation/`；
-- 为什么这样做、怎样验证、还剩什么风险写入 `docs/internal/development/`；
-- 双轴代码审查（Standards / Spec）写入 `docs/internal/reviews/`；
-- 自动化、平台和人工操作证据写入 `docs/internal/qa/` 与持续验收清单。
+- 实施方案和验收条件写入 [`docs/internal/implementation/`](https://github.com/dolag233/Serpent/tree/dev/docs/internal/implementation)；
+- 为什么这样做、怎样验证、还剩什么风险写入 [`docs/internal/development/`](https://github.com/dolag233/Serpent/tree/dev/docs/internal/development)；
+- 双轴代码审查（Standards / Spec）写入 [`docs/internal/reviews/`](https://github.com/dolag233/Serpent/tree/dev/docs/internal/reviews)；
+- 自动化、平台和人工操作证据写入 [`docs/internal/qa/`](https://github.com/dolag233/Serpent/tree/dev/docs/internal/qa) 与持续验收清单。
 
 文档中的“已验证”必须带命令、提交基线、平台和结果摘要。截图、日志和测试资源不得泄露 API Key、Token、私人路径或原始用户资产。
 
