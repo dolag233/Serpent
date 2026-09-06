@@ -15,7 +15,7 @@ export function killStaleSerpentDevProcesses(root = projectRoot) {
   if (process.platform === "win32") {
     try {
       execSync(
-        `wmic process where "CommandLine like '%${root.replaceAll("\\", "\\\\")}%electron%'" call terminate`,
+        'powershell -NoProfile -Command "Get-Process -Name electron -ErrorAction SilentlyContinue | Stop-Process -Force"',
         { stdio: "ignore" },
       );
     } catch {

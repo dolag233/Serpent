@@ -14,6 +14,6 @@
 
 ## 内部开发记录（不交付）
 
-开发过程文档集中在 [internal/](internal/README.md)：架构决策（ADR）、实施规格、开发日志、QA 报告、代码审查、技术调研、开发流程与项目状态。
+开发过程文档集中在仓库 `dev` 分支的 [`docs/internal/`](https://github.com/dolag233/Serpent/tree/dev/docs/internal)（不随网站发布）：架构决策（ADR）、实施规格、开发日志、QA 报告、代码审查、技术调研、开发流程与项目状态。
 
 > 开发 agent 的入口文档见 `AGENTS.md` / `CLAUDE.md`。

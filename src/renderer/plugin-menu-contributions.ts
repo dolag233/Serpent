@@ -10,7 +10,9 @@ import type { PluginUiMenuItem } from "../shared/plugin-ui-descriptor";
 import {
   evaluatePluginContextExpression,
   createPluginInvocationContext,
+  toPluginInvocationAssets,
   type PluginContributionContext,
+  type PluginInvocationAssetSource,
   type PluginInvocationContext,
 } from "../plugins/plugin-context";
 import type { PluginContextExpression } from "../plugins/plugin-manifest";
@@ -757,6 +759,7 @@ export async function runPluginMenuCommand(
     assetIds?: string[];
     folderIds?: string[];
     collectionIds?: string[];
+    assets?: readonly PluginInvocationAssetSource[];
     contributionContext?: PluginContributionContext;
     invocationContext?: PluginInvocationContext;
   },
@@ -775,6 +778,9 @@ export async function runPluginMenuCommand(
           ...(context.assetIds === undefined ? {} : { assetIds: context.assetIds }),
           ...(context.folderIds === undefined ? {} : { folderIds: context.folderIds }),
           ...(context.collectionIds === undefined ? {} : { collectionIds: context.collectionIds }),
+          ...(context.assets === undefined || context.assets.length === 0
+            ? {}
+            : { assets: toPluginInvocationAssets(context.assets) }),
         },
       })
   );
@@ -788,6 +794,14 @@ export async function runPluginMenuCommand(
     ...(invocation === undefined ? {} : { invocation }),
   });
   if (!result.ok) {
-    console.warn("plugin-command-failed", item.id, result.code);
+    console.warn(
+      "plugin-command-failed",
+      item.id,
+      result.code,
+      result.failureCode,
+      result.message,
+    );
+  } else if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("serpent:plugin-command-completed", { detail: { libraryId } }));
   }
 }

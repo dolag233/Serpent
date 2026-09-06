@@ -22,6 +22,7 @@ import {
 } from '../shared/plugin-ui-protocol';
 import { useT } from './i18n';
 import { useTheme } from './theme';
+import { pluginUiIframeReadyMatches, shouldIgnoreInitialFrameLoad } from './plugin-ui-dialog-session';
 
 /* ------------------------------------------------------------------ *
  * Lifecycle state machine (pure, unit-tested)
@@ -155,6 +156,10 @@ export function PluginIframeViewHost({
   className,
   title,
   state,
+  initialPayload,
+  onDialogComplete,
+  onDialogContentSize,
+  dialogSubmitNonce,
 }: {
   view: PluginIframeViewDescriptor;
   pluginApi: SerpentPluginManagerApi | undefined;
@@ -163,6 +168,15 @@ export function PluginIframeViewHost({
   title?: string;
   /** Host-side view context (selection, filters, …) announced on mount and pushed on change. */
   state?: unknown;
+  /**
+   * Dialog-only (Serpent-a3de58): payload handed to the frame right after the
+   * ready handshake, and completion sink for `plugin-ui.dialog-complete`.
+   */
+  initialPayload?: unknown;
+  onDialogComplete?: (result: unknown | null) => void;
+  onDialogContentSize?: (size: { width: number; height: number }) => void;
+  /** Increment to ask a ready dialog iframe to submit its current form. */
+  dialogSubmitNonce?: number;
 }): ReactNode {
   const t = useT();
   const { resolved, themeRevision } = useTheme();
@@ -171,6 +185,7 @@ export function PluginIframeViewHost({
   const readyRef = useRef(false);
   const mountedRef = useRef(false);
   const lifecycleRef = useRef<PluginViewLifecycleState>('loading');
+  const loadCountRef = useRef(0);
   const [lifecycle, setLifecycleState] = useState<PluginViewLifecycleState>('loading');
 
   function transition(event: PluginViewLifecycleEvent) {
@@ -183,6 +198,20 @@ export function PluginIframeViewHost({
   // resets the handshake, and the fresh document's load event re-enters
   // 'loading' naturally (no state reset in an effect here).
   const instanceKey = `${view.id}:${view.scope}:${view.scope === 'library' ? (libraryId ?? 'none') : 'global'}`;
+
+  useEffect(() => {
+    loadCountRef.current = 0;
+  }, [instanceKey]);
+
+  useEffect(() => {
+    if (dialogSubmitNonce === undefined || dialogSubmitNonce < 1) return;
+    if (lifecycle !== 'ready') return;
+    postToPluginIframe(frameRef.current, {
+      type: 'plugin-ui.dialog-request-submit',
+      contributionId: view.id,
+      instanceId: view.pluginInstanceId,
+    });
+  }, [dialogSubmitNonce, lifecycle, view]);
 
   // Announce mount once the document loaded, unless the plugin already
   // confirmed ready (then the mount is announced immediately).
@@ -267,7 +296,7 @@ export function PluginIframeViewHost({
         return;
       }
       if (message.type === 'plugin-ui.ready') {
-        if (message.contributionId !== view.id || message.instanceId !== view.pluginInstanceId) {
+        if (!pluginUiIframeReadyMatches(view, message)) {
           console.warn('plugin-ui.ready-mismatch', {
             expectedContributionId: view.id,
             expectedInstanceId: view.pluginInstanceId,
@@ -276,13 +305,33 @@ export function PluginIframeViewHost({
           });
           return;
         }
-        if (message.viewType !== undefined && message.viewType !== view.viewType) return;
-        if (message.scope !== undefined && message.scope !== view.scope) return;
         readyRef.current = true;
         transition({ type: 'plugin-ready' });
         announceMounted();
         postPluginThemeToIframe(frame, { view, resolvedTheme: resolved, revision: themeRevision });
+        if (view.viewType === 'dialog') {
+          postToPluginIframe(frame, {
+            type: 'plugin-ui.dialog-payload',
+            contributionId: view.id,
+            instanceId: view.pluginInstanceId,
+            payload: initialPayload ?? null,
+          });
+        }
         return;
+      }
+      if (view.viewType === 'dialog' && message.type === 'plugin-ui.dialog-content-size') {
+        onDialogContentSize?.(message);
+        return;
+      }
+      if (view.viewType === 'dialog' && onDialogComplete !== undefined) {
+        if (message.type === 'plugin-ui.dialog-complete') {
+          onDialogComplete(message.result ?? null);
+          return;
+        }
+        if (message.type === 'plugin-ui.dialog-cancelled') {
+          onDialogComplete(null);
+          return;
+        }
       }
       if (!readyRef.current || pluginApi === undefined || libraryId === undefined) return;
       if (message.type === 'plugin-ui.invoke-command') {
@@ -360,7 +409,7 @@ export function PluginIframeViewHost({
       mountedRef.current = false;
       transition({ type: 'dispose' });
     };
-  }, [announceMounted, libraryId, pluginApi, resolved, themeRevision, view]);
+  }, [announceMounted, initialPayload, libraryId, onDialogComplete, onDialogContentSize, pluginApi, resolved, themeRevision, view]);
 
   const showPlaceholder = lifecycle === 'loading' || lifecycle === 'reloading';
   const crashed = lifecycle === 'crashed';
@@ -372,6 +421,13 @@ export function PluginIframeViewHost({
         key={instanceKey}
         onError={() => transition({ type: 'frame-error' })}
         onLoad={() => {
+          loadCountRef.current += 1;
+          if (shouldIgnoreInitialFrameLoad({
+            ready: readyRef.current,
+            loadCount: loadCountRef.current,
+          })) {
+            return;
+          }
           transition({ type: 'frame-load' });
           // A fresh document (initial load or user reload) needs its own mount
           // announcement; the guard only suppresses re-announcing the same

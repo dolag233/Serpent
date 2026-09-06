@@ -20,27 +20,15 @@ import { z } from 'zod';
 
 /** Fixed capture width; height derived from the page after layout. */
 export const DOCUMENT_THUMBNAIL_WIDTH = 1024;
-/** Per-job render timeout inside Main (window creation excluded). */
-export const DOCUMENT_THUMBNAIL_RENDER_TIMEOUT_MS = 15_000;
-/**
- * Worker-side timeout for a render round trip. Covers Main's 15s per-job
- * timeout plus window/page bootstrapping.
- */
-export const DOCUMENT_THUMBNAIL_WORKER_REQUEST_TIMEOUT_MS = 30_000;
 /** generator_version tag for document thumbnail artifacts. */
 export const DOCUMENT_THUMBNAIL_GENERATOR_VERSION = 'offscreen-web-1';
-/** PNG byte ceiling accepted from the renderer. */
-export const DOCUMENT_THUMBNAIL_MAX_PNG_BYTES = 8 * 1024 * 1024;
-
 /** Typed render failure codes (benign suppression in thumbnail-support.ts). */
 export const documentThumbnailErrorCodeSchema = z.enum([
-  'DOCUMENT_RENDER_TIMEOUT', // no frame within the per-job deadline
   'DOCUMENT_LOAD_FAILED', // page failed to load (404, malformed file, …)
   'DOCUMENT_BLANK_FRAME', // captured frame is empty
   'DOCUMENT_FRAME_INVALID', // frame bytes failed validation
   'DOCUMENT_WINDOW_FAILED', // offscreen window creation/load/crash
   'DOCUMENT_RENDER_ABORTED', // renderer disposed or window torn down
-  'DOCUMENT_TOO_LARGE', // captured PNG exceeds the byte ceiling
 ]);
 export type DocumentThumbnailErrorCode = z.infer<typeof documentThumbnailErrorCodeSchema>;
 

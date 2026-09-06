@@ -5,6 +5,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -342,6 +343,122 @@ describe('PluginPackageManager installation and integrity', () => {
       ref: 'v2.0.0',
       commitSha: 'e'.repeat(40),
     });
+  });
+
+  it('installs a community pin from the exact Release ZIP and refuses a hash mismatch without zipball', async () => {
+    const source = temporaryRoot('serpent-plugin-community-source-');
+    const userData = temporaryRoot('serpent-plugin-community-user-');
+    writePlugin(source, { version: '1.2.0' });
+    const archive = new AdmZip();
+    archive.addLocalFolder(source, 'palette-tools-1.2.0');
+    const bytes = archive.toBuffer();
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const manager = createManager(userData);
+    const assetName = 'com.example.palette-tools-1.2.0-any.zip';
+    let zipballCalled = false;
+
+    const installed = await manager.installFromCommunity({
+      pluginId: 'com.example.palette-tools',
+      repository: 'https://github.com/example/serpent-palette-tools',
+      releaseTag: 'v1.2.0',
+      version: '1.2.0',
+      assetFileName: assetName,
+      sha256,
+      scope: 'user',
+      client: {
+        async listTags() { return []; },
+        async defaultBranch() { return { name: 'main', commitSha: 'd'.repeat(40) }; },
+        async downloadArchive() {
+          zipballCalled = true;
+          throw new Error('community installs must not use zipball');
+        },
+        async listReleases() {
+          return [{
+            tagName: 'v1.2.0',
+            draft: false,
+            prerelease: false,
+            assets: [{
+              name: assetName,
+              browserDownloadUrl: `https://github.com/example/serpent-palette-tools/releases/download/v1.2.0/${assetName}`,
+              size: bytes.byteLength,
+            }],
+          }];
+        },
+        async downloadReleaseAsset() {
+          return bytes;
+        },
+        async commitShaForRef() {
+          return 'f'.repeat(40);
+        },
+      },
+    });
+
+    expect(zipballCalled).toBe(false);
+    expect(installed.package.lock.source).toMatchObject({
+      kind: 'github',
+      channel: 'community',
+      ref: 'v1.2.0',
+      fingerprint: 'community:com.example.palette-tools',
+    });
+    expect(await manager.findGitHubAvailableUpdate({
+      package: installed.package,
+      client: {
+        async listTags() { return []; },
+        async defaultBranch() { return { name: 'main', commitSha: 'd'.repeat(40) }; },
+        async downloadArchive() { throw new Error('unused'); },
+        async listReleases() {
+          return [{
+            tagName: 'v9.9.9',
+            draft: false,
+            prerelease: false,
+            assets: [{
+              name: 'com.example.palette-tools-9.9.9-any.zip',
+              browserDownloadUrl: 'https://example.invalid/9.9.9.zip',
+              size: 1,
+            }],
+          }];
+        },
+        async downloadReleaseAsset() { throw new Error('unused'); },
+        async commitShaForRef() { return 'a'.repeat(40); },
+      },
+    })).toBeUndefined();
+
+    await expect(manager.installFromCommunity({
+      pluginId: 'com.example.palette-tools',
+      repository: 'https://github.com/example/serpent-palette-tools',
+      releaseTag: 'v1.2.0',
+      version: '1.2.0',
+      assetFileName: assetName,
+      sha256: '0'.repeat(64),
+      scope: 'user',
+      client: {
+        async listTags() { return []; },
+        async defaultBranch() { return { name: 'main', commitSha: 'd'.repeat(40) }; },
+        async downloadArchive() {
+          zipballCalled = true;
+          throw new Error('community installs must not use zipball');
+        },
+        async listReleases() {
+          return [{
+            tagName: 'v1.2.0',
+            draft: false,
+            prerelease: false,
+            assets: [{
+              name: assetName,
+              browserDownloadUrl: `https://github.com/example/serpent-palette-tools/releases/download/v1.2.0/${assetName}`,
+              size: bytes.byteLength,
+            }],
+          }];
+        },
+        async downloadReleaseAsset() {
+          return bytes;
+        },
+        async commitShaForRef() {
+          return 'f'.repeat(40);
+        },
+      },
+    })).rejects.toMatchObject({ code: 'PLUGIN_PACKAGE_HASH_MISMATCH' });
+    expect(zipballCalled).toBe(false);
   });
 
   it('reports available GitHub updates and honors auto-update preferences', async () => {

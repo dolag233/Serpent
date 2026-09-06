@@ -768,6 +768,23 @@ describe('renderer request protocol', () => {
     });
   });
 
+  it('accepts a complete file name when changing the asset extension', () => {
+    expect(parseWorkerRequest({
+      requestId: 'rename-ext',
+      command: {
+        type: 'asset.rename-file',
+        libraryId: 'library-01',
+        assetId: 'asset-01',
+        newFileName: 'clip.webm',
+      },
+    }).command).toEqual({
+      type: 'asset.rename-file',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+      newFileName: 'clip.webm',
+    });
+  });
+
   it('rejects path-shaped and malformed asset rename base names at the schema layer', () => {
     const rejectedBaseNames = [
       '../escape',
@@ -2226,10 +2243,6 @@ describe('public errors', () => {
       code: 'INVALID_LIBRARY_PATH',
       reason: 'LIBRARY_PARENT_MISSING',
     });
-    expect(createPublicError('INTERNAL_ERROR', 'LIBRARY_TRANSFER_TIMEOUT')).toMatchObject({
-      code: 'INTERNAL_ERROR',
-      reason: 'LIBRARY_TRANSFER_TIMEOUT',
-    });
   });
 
   it('exposes a specific safe error for invalid asset metadata', () => {
@@ -2363,6 +2376,33 @@ describe('external import progress events', () => {
       filesProcessed: 32,
       totalFiles: 385,
     });
+  });
+
+  it('accepts bulk delete progress updates', () => {
+    expect(parseProgressEvent({
+      type: 'delete.progress',
+      operationId: 'delete-01',
+      libraryId: 'library-01',
+      kind: 'disk',
+      phase: 'run',
+      cancelable: true,
+      filesProcessed: 12,
+      totalFiles: 80,
+    })).toMatchObject({
+      kind: 'disk',
+      cancelable: true,
+      filesProcessed: 12,
+      totalFiles: 80,
+    });
+    expect(parseProgressEvent({
+      type: 'delete.progress',
+      operationId: 'delete-01',
+      libraryId: 'library-01',
+      kind: 'disk',
+      phase: 'cancelled',
+      filesProcessed: 5,
+      totalFiles: 80,
+    }).phase).toBe('cancelled');
   });
 });
 

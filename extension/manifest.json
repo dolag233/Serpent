@@ -3,7 +3,7 @@
   "name": "Serpent",
   "version": "0.1.0",
   "description": "Save images and videos from the web to Serpent digital asset manager.",
-  "permissions": ["contextMenus", "notifications", "storage", "alarms"],
+  "permissions": ["contextMenus", "notifications", "storage", "alarms", "declarativeNetRequest"],
   "host_permissions": [
     "http://127.0.0.1:19876/*",
     "http://127.0.0.1:19877/*",

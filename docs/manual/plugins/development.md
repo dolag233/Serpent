@@ -39,7 +39,8 @@ SQL 或宿主 DOM。
 my-plugin/
   serpent-plugin.json       # 必需，Manifest v1
   entry/main.js             # 必需，runtime.entry 指向它
-  README.md                 # 建议，发布包应提供
+  README.md                 # 建议；社区详情英文/回退
+  README.zh-CN.md           # 建议；社区详情中文优先
   LICENSE                   # 建议，发布包应提供
   entry/ui/index.html       # 可选，沙箱 UI 页面
 ```
@@ -99,8 +100,9 @@ Manifest 是 strict schema：未知字段、重复权限、重复 Contribution I
 | `manifestVersion` | 是 | 只能是 `1` |
 | `id` | 是 | 3–64 字符，稳定的反向域名式 ID；发布后不要更改 |
 | `version` | 是 | SemVer |
-| `name` | 是 | 1–160 字符 |
+| `name` | 是 | 1–160 字符；英文或默认展示名 |
 | `description` | 是 | 1–2000 字符 |
+| `locales` | 否 | `zh-CN` / `en` 的 `name`、`description`。社区目录文案优先；未进目录时 Host 用清单 locales |
 | `author` | 是 | 1–160 字符 |
 | `license` | 是 | 1–160 字符 |
 | `repository` | 否 | HTTPS GitHub 仓库 URL，必须正好是 `owner/repository` |
@@ -152,8 +154,13 @@ Provider 和 Job。
 同一 ID 同时有用户级和库级包时，Host 不设隐式优先级，由用户选择 `use-global`、`use-library` 或禁用。资源库中的非受限插件安装后
 默认不启用，需在设置中手动信任并打开；全局受限插件可按解析结果自动启用。Safe Mode 只停用非受限插件，受限插件仍可运行。
 
-当前仅实现本地文件夹、本地 ZIP 和 GitHub 安装；发布时优先上传 GitHub Release 平台 ZIP。包升级应先 staging、校验、健康检查
-再切换；权限、运行模式或来源改变时要重新信任。
+当前安装通道：
+
+- **插件社区**（默认）：设置 → 插件 → 打开插件社区。Host 只安装 [Serpent-Plugin-Pool](https://github.com/dolag233/Serpent-Plugin-Pool) 钉死的 GitHub Release ZIP。要出现在目录里，按 [分发规范](distribution-and-updates.md) 发布 Release，并在目录仓登记条目。
+- **高级安装**：本地文件夹、本地 ZIP，或粘贴 GitHub URL（仅此通道可 zipball 回退）。
+
+发布时优先上传 GitHub Release 平台 ZIP。包升级应先 staging、校验、健康检查
+再切换；权限、运行模式或来源改变时要重新信任。社区插件的新版本必须先改目录仓条目并合并，不会跟随 GitHub 最新 Release 自动更新。
 
 ## 5. 声明 Contribution
 
@@ -188,9 +195,10 @@ Provider 和 Job。
 `first` 与 `last` 不能同时为 true。子菜单最多三级。`group`、`before`、`after` 用稳定 ID，不要按文案或 DOM 定位。
 缺失锚点只降级到目标 group 末尾；循环约束只拒绝相关边，不应让整张菜单消失。
 
-`when` 为 false 时不渲染，`enablement` 为 false 时保留但置灰，`checked` 控制 toggle/radio 的选中状态。三者都只能读取
-Context Key，不能执行 JavaScript、I/O 或 API 调用。表达式支持 `&&`、`||`、`!`、`==`、`!=`、`in`、`intersects`、`matches`、
-括号和数组字面量；单个表达式最多 4096 字符。
+`when` 为 false 时不渲染，`enablement` 为 false 时保留但置灰，`checked` 控制 toggle/radio 的选中状态。显示与置灰策略由插件
+根据自己的能力实现，Host 不提供 `accepts` 过滤，也不替插件过滤混合选中。三者都只能读取 Context Key，不能执行 JavaScript、
+I/O 或 API 调用。表达式支持 `&&`、`||`、`!`、`==`、`!=`、`in`、`intersects`、`matches`、括号和数组字面量；单个表达式最多
+4096 字符。
 
 快捷键 Contribution 只是默认 accelerator；菜单展示中央 Keybinding Registry 当前有效快捷键。插件设置的 `boolean`、`select`、
 `number` 和 `slider` 均由 Host 使用统一的原生样式、ARIA、加载和错误状态渲染；插件不需要自己实现 toggle、dropdown 或 slider。
@@ -255,11 +263,15 @@ Contribution Context 是 Host 发布的有界 UI 快照，只用于菜单/命令
 - `app.platform`、`app.locale`、`app.theme`、`app.busy`
 - `surface.id`、`surface.kind`、`window.windowId`
 - `library.id`、`library.open`、`library.writable`、`library.offline`
-- `selection.ref`、`count`、`primaryId`、`assetCount`、`folderCount`、`mixed`、扩展名/MIME/媒体类型、删除/不可用摘要
+- `selection.ref`、`count`、`primaryId`、`assetCount`、`folderCount`、`mixed`、`extensions`、`mediaKinds`、MIME 类型、删除/不可用摘要
 - `browse.folderId`、`collectionId`、`tagId`、`search`、`filter`
 - `viewer.active`、`assetId`、`extension`、`mimeType`、`mediaKind`、`fullscreen`
 
 Context 带 `contextId` 和单调递增 `revision`。它只含摘要；要读取完整资产，使用 Domain API。
+
+插件通过 `selection.mediaKinds`、`selection.extensions`、`selection.mixed` 和 `library.writable` 自己表达菜单策略。例如，
+只支持图片的命令可以用 `when` 隐藏，仍可出现在菜单但暂不可执行时用 `enablement` 置灰。图片与视频混合选中的处理规则属于
+插件能力与产品策略，不属于 Host 的统一过滤规则。
 
 Invocation Context 是命令触发时冻结的目标快照，包含 `contextId`、`revision`、目标 `libraryId`、selection refs/assetIds/folderIds/collectionIds、
 浏览范围和 viewer 目标。异步等待后不能重新猜测当前焦点或选择；在 `commands.register` 的 handler 中从 `context.invocation` 读取这份快照，
@@ -322,7 +334,10 @@ default 必须在 minimum/maximum 内，slider 的 step 必须大于 0。静态�
 自定义页面是 sandboxed iframe，声明在 `contributes.views`，location 为 `sidebar`、`workspace`、`inspector`、`viewer` 或 `settings`，
 可选 `entry` 指向包内 HTML。`ui.entry` 是包级 UI 入口；页面通过 typed bridge 使用 Host/后端能力，不能注入 React、访问宿主 DOM 或 Node。
 插件设置字段已经使用 Host 内部 UI library 的统一 primitives；插件仍不能把宿主 CSS class 当作 API。更复杂的 Host-rendered
-结构化 UI descriptor 使用 `contributes.ui`，设计与字段限制见 [`0029 UI 标准化执行方案与插件原生 UI 契约`](../../internal/implementation/0029-ui-standardization-execution-and-plugin-ui-contract.md)。
+结构化 UI descriptor 使用 `contributes.ui`，设计与字段限制见 [`0029 UI 标准化执行方案与插件原生 UI 契约`](https://github.com/dolag233/Serpent/blob/dev/docs/internal/implementation/0029-ui-standardization-execution-and-plugin-ui-contract.md)。
+标准表单默认使用 `serpent.ui.openDialog({ title, render })` 的 widget kit。复杂界面或交互、WebGL、第三方页面仍使用受支持的
+HTML/iframe 对话框 `openDialog({ dialogId, payload })`；这是正式的一等路径，不是准备删除的临时逃生口。Manifest JSON 仍不是
+对话框 UI 语言。
 
 ### 8.1 Plugin UI Contract v1
 
@@ -464,7 +479,7 @@ quarantine。`dispose` 应可重复调用且不依赖当前 UI。
 1. `serpent-plugin.json` 通过当前 schema，权限最小化，所有 Contribution ID 唯一。
 2. 包内入口、UI、README、LICENSE 和依赖均已编译并可脱机运行；没有 install/build/postinstall 依赖。
 3. restricted/unrestricted 风险、需要的文件/网络/原生能力在 README 和发布说明中清楚披露。
-4. 本地文件夹、ZIP、GitHub Release ZIP 均安装、信任、激活、停用、升级、卸载过。
+4. 插件社区、本地文件夹、ZIP、GitHub Release ZIP 均安装、信任、激活、停用、升级、卸载过。
 5. 已测试升级 staging、失败恢复、Job 中断后的显式重试、完整重启以及 user/library 两种安装范围。
 6. 发布版本保持稳定 `id`，并记录支持的 Serpent SemVer 与 Plugin API 版本。
 7. ZIP 条目名、平台 asset 文件名和原生二进制执行位按 [最佳实践](best-practices.md) 核对。

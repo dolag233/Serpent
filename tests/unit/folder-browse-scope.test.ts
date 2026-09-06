@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { folderBrowseScope } from '../../src/renderer/folder-browse-scope';
+import {
+  folderBrowseScope,
+  folderSearchScope,
+} from '../../src/renderer/folder-browse-scope';
 
 describe('folderBrowseScope (REQ-FOLDER-009)', () => {
   it('leaves all-assets without a folder scope', () => {
@@ -23,6 +26,28 @@ describe('folderBrowseScope (REQ-FOLDER-009)', () => {
       recursive: false,
     });
     expect(folderBrowseScope('folder-a', true)).toEqual({
+      kind: 'folder',
+      folderId: 'folder-a',
+      recursive: true,
+    });
+  });
+});
+
+describe('folderSearchScope', () => {
+  it('leaves all-assets unscoped', () => {
+    expect(folderSearchScope('all')).toBeUndefined();
+  });
+
+  it('searches every managed folder from the library root', () => {
+    expect(folderSearchScope('root')).toEqual({
+      kind: 'folder',
+      folderId: null,
+      recursive: true,
+    });
+  });
+
+  it('always searches descendants of a selected folder', () => {
+    expect(folderSearchScope('folder-a')).toEqual({
       kind: 'folder',
       folderId: 'folder-a',
       recursive: true,

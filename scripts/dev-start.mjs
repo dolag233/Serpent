@@ -18,6 +18,8 @@ import { killStaleSerpentDevProcesses } from "./kill-stale-dev.mjs";
 
 const projectRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
+process.env.VcpkgEnabled = 'false';
+
 // Orphan Electron after Ctrl+C is the most common black-screen restart path.
 killStaleSerpentDevProcesses(projectRoot);
 await new Promise((resolve) => setTimeout(resolve, 400));

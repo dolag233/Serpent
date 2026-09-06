@@ -8,6 +8,7 @@ export type IconName =
   | "chevron-left"
   | "chevron-right"
   | "clipboard"
+  | "check"
   | "clock"
   | "close"
   | "collection"
@@ -21,6 +22,7 @@ export type IconName =
   | "edit"
   | "eye"
   | "eye-off"
+  | "external-link"
   | "file"
   | "broken-file"
   | "fit-window"
@@ -59,7 +61,8 @@ export type IconName =
   | "copy"
   | "trash"
   | "upload"
-  | "warning";
+  | "warning"
+  | "equal-approximately";
 
 const iconPaths: Record<IconName, ReactNode> = {
   activity: <path d="M22 12h-4l-3 9L9 3l-3 9H2" />,
@@ -76,6 +79,7 @@ const iconPaths: Record<IconName, ReactNode> = {
       <path d="M12 22V12" />
     </>
   ),
+  check: <path d="M20 6 9 17l-5-5" />,
   clipboard: (
     <>
       <rect x="8" y="2" width="8" height="4" rx="1" />
@@ -274,6 +278,13 @@ const iconPaths: Record<IconName, ReactNode> = {
       <path d="M12 8v5m0 3h.01" />
     </>
   ),
+  "external-link": (
+    <>
+      <path d="M15 3h6v6" />
+      <path d="M10 14 21 3" />
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+    </>
+  ),
   link: (
     <>
       <path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.2 1.2" />
@@ -421,6 +432,13 @@ const iconPaths: Record<IconName, ReactNode> = {
     <>
       <path d="M12 3 2.8 20h18.4z" />
       <path d="M12 9v5m0 3h.01" />
+    </>
+  ),
+  // Lucide `equal-approximately` (https://lucide.dev/icons/equal-approximately).
+  "equal-approximately": (
+    <>
+      <path d="M5 15a6.5 6.5 0 0 1 7 0 6.5 6.5 0 0 0 7 0" />
+      <path d="M5 9a6.5 6.5 0 0 1 7 0 6.5 6.5 0 0 0 7 0" />
     </>
   ),
 };

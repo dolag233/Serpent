@@ -128,6 +128,19 @@ import {
 } from '../shared/app-update';
 import { shellNotifyPayloadSchema, type ShellNotifyPayload } from '../shared/shell-notify';
 import {
+  PLUGIN_UI_DIALOG_PATCH_CHANNEL,
+  PLUGIN_UI_DIALOG_REQUEST_CHANNEL,
+  PLUGIN_UI_DIALOG_RESULT_CHANNEL,
+  PLUGIN_UI_WIDGET_EVENT_CHANNEL,
+  pluginUiDialogPatchPayloadSchema,
+  pluginUiDialogRequestPayloadSchema,
+  pluginUiDialogResultPayloadSchema,
+  pluginUiWidgetEventPayloadSchema,
+  type PluginUiDialogPatchPayload,
+  type PluginUiDialogRequestPayload,
+  type PluginUiWidgetEventPayload,
+} from '../shared/plugin-ui-dialog-bridge';
+import {
   commandCompletedPayloadSchema,
   type CommandCompletedPayload,
 } from '../shared/command-completed';
@@ -173,6 +186,8 @@ import {
   parseImportProgressEvent,
   type SyncProgressEvent,
   parseSyncProgressEvent,
+  type DeleteProgressEvent,
+  parseDeleteProgressEvent,
   type TagOperationSkip,
 } from '../shared/protocol/responses';
 import type {
@@ -596,6 +611,21 @@ const library: SerpentLibraryApi = Object.freeze({
     if (!result.ok) return failure(result);
     if (result.type !== 'folder.browse-entries') {
       throw new Error('Unexpected list-folder-browse-entries response.');
+    }
+    return { ok: true, value: result.entries };
+  },
+
+  async listFolderEntriesByRefs(input: {
+    libraryId: string;
+    refs: Array<{ locationKind: 'managed' | 'linked'; folderId: string }>;
+  }): Promise<LibraryApiResult<FolderBrowseEntry[]>> {
+    const result = await request({
+      type: 'folder.entries-request',
+      ...input,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.entries') {
+      throw new Error('Unexpected folder-entries response.');
     }
     return { ok: true, value: result.entries };
   },
@@ -1532,6 +1562,13 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { deletedCount: result.deletedCount } };
   },
 
+  async cancelDiskDelete({ operationId }: { operationId: string }) {
+    const result = await request({ type: 'asset.delete-cancel.request', operationId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.closed') throw new Error('Unexpected delete-cancel response.');
+    return { ok: true as const, value: { operationId } };
+  },
+
   async listTrash({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<AssetSummary[]>> {
     const result = await request({ type: 'trash.list.request', libraryId });
     if (!result.ok) return failure(result);
@@ -1748,7 +1785,7 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true as const, value: result };
   },
 
-  onProgress(listener: (event: ExportProgressEvent | ImportProgressEvent | SyncProgressEvent) => void) {
+  onProgress(listener: (event: ExportProgressEvent | ImportProgressEvent | SyncProgressEvent | DeleteProgressEvent) => void) {
     const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
       try {
         listener(parseExportProgressEvent(input));
@@ -1764,6 +1801,12 @@ const library: SerpentLibraryApi = Object.freeze({
       }
       try {
         listener(parseSyncProgressEvent(input));
+        return;
+      } catch {
+        // Try delete progress.
+      }
+      try {
+        listener(parseDeleteProgressEvent(input));
       } catch {
         // Not a progress event.
       }
@@ -2810,6 +2853,38 @@ const plugins: SerpentPluginManagerApi = Object.freeze({
     };
     ipcRenderer.on(PLUGIN_INSTALL_PROGRESS_CHANNEL, handler);
     return () => ipcRenderer.removeListener(PLUGIN_INSTALL_PROGRESS_CHANNEL, handler);
+  },
+  onPluginUiDialogRequest(listener: (input: PluginUiDialogRequestPayload) => void) {
+    const handler = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      const parsed = pluginUiDialogRequestPayloadSchema.safeParse(input);
+      if (!parsed.success) return;
+      listener(parsed.data);
+    };
+    ipcRenderer.on(PLUGIN_UI_DIALOG_REQUEST_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(PLUGIN_UI_DIALOG_REQUEST_CHANNEL, handler);
+    };
+  },
+  onPluginUiDialogPatch(listener: (input: PluginUiDialogPatchPayload) => void) {
+    const handler = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      const parsed = pluginUiDialogPatchPayloadSchema.safeParse(input);
+      if (!parsed.success) return;
+      listener(parsed.data);
+    };
+    ipcRenderer.on(PLUGIN_UI_DIALOG_PATCH_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(PLUGIN_UI_DIALOG_PATCH_CHANNEL, handler);
+    };
+  },
+  resolvePluginUiDialog(input: { requestId: string; result: unknown | null }): void {
+    const parsed = pluginUiDialogResultPayloadSchema.safeParse(input);
+    if (!parsed.success) return;
+    ipcRenderer.send(PLUGIN_UI_DIALOG_RESULT_CHANNEL, parsed.data);
+  },
+  sendPluginUiWidgetEvent(input: PluginUiWidgetEventPayload): void {
+    const parsed = pluginUiWidgetEventPayloadSchema.safeParse(input);
+    if (!parsed.success) return;
+    ipcRenderer.send(PLUGIN_UI_WIDGET_EVENT_CHANNEL, parsed.data);
   },
   async listPluginContributions(input: {
     libraryId?: string;

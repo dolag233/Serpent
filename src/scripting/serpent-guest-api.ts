@@ -1,18 +1,25 @@
 import type {
-  AutomationScriptCommandId,
+  PluginHostCommandId,
 } from '../shared/automation-script-api';
+import { portableRelativePathSchema } from '../shared/asset-types';
 import { pluginTargetLibraryIdSchema } from '../plugins/plugin-commands';
+import {
+  isPluginWidgetDialogInput,
+  runPluginWidgetDialog,
+  type PluginWidgetDialogAdapters,
+} from '../plugins/plugin-widget-toolkit';
+import type { PluginWidgetEvent } from '../shared/plugin-widget-ir';
 
 export type SerpentGuestCommandDefinition = {
   readonly path: `${string}.${string}`;
-  readonly commandId: AutomationScriptCommandId;
+  readonly commandId: PluginHostCommandId;
   readonly buildInput: (...args: unknown[]) => unknown;
   readonly projectResult?: (value: unknown) => unknown;
 };
 
 export type SerpentGuestApiAdapters = {
   executeCommand: (
-    commandId: AutomationScriptCommandId,
+    commandId: PluginHostCommandId,
     input: unknown,
     options?: {
       causeChain?: readonly string[];
@@ -20,6 +27,11 @@ export type SerpentGuestApiAdapters = {
       targetLibraryId?: string;
     },
   ) => Promise<unknown>;
+  widgetDialog?: {
+    createSessionId?(): string;
+    nextEvent(sessionId: string): Promise<PluginWidgetEvent | null>;
+    close(sessionId: string): void;
+  };
 };
 
 export type SerpentGuestCommandNamespace = Record<string, (...args: unknown[]) => Promise<unknown>>;
@@ -28,6 +40,11 @@ export type SerpentGuestApi = SerpentGuestCommandApi & {
   /** Create an immutable command API scoped to one already-open library. */
   forLibrary(libraryId: string): SerpentGuestCommandApi;
 };
+
+function projectGuestRelativeFilePath(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return portableRelativePathSchema.safeParse(value).success ? value : '';
+}
 
 export function projectSerpentGuestAssetPageResult(value: unknown): unknown {
   if (!value || typeof value !== 'object' || !Array.isArray((value as { items?: unknown }).items)) {
@@ -53,6 +70,11 @@ export function projectSerpentGuestAssetPageResult(value: unknown): unknown {
         favorite: asset.favorite === true,
         locationKind: asset.locationKind === 'linked' ? 'linked' : 'managed',
         folderId: typeof asset.managedFolderId === 'string' ? asset.managedFolderId : null,
+        currentRevisionId: typeof asset.currentRevisionId === 'string' ? asset.currentRevisionId : '',
+        mimeType: typeof asset.mimeType === 'string' ? asset.mimeType : null,
+        mediaType: typeof asset.mediaType === 'string' ? asset.mediaType : null,
+        byteSize: typeof asset.byteSize === 'number' && Number.isFinite(asset.byteSize) ? asset.byteSize : 0,
+        relativeFilePath: projectGuestRelativeFilePath(asset.relativeFilePath),
       };
     }),
     total: typeof page.total === 'number' ? page.total : page.items.length,
@@ -255,7 +277,7 @@ export function projectSerpentGuestLinkedFolderPageResult(value: unknown): unkno
   };
 }
 
-const guestCommandDefinitions: readonly SerpentGuestCommandDefinition[] = [
+const scriptGuestCommandDefinitions: readonly SerpentGuestCommandDefinition[] = [
   {
     path: 'assets.search',
     commandId: 'asset.search',
@@ -346,7 +368,16 @@ const guestCommandDefinitions: readonly SerpentGuestCommandDefinition[] = [
   {
     path: 'assets.renameFile',
     commandId: 'asset.rename-file',
-    buildInput: (assetId, newBaseName) => ({ assetId, newBaseName }),
+    buildInput: (assetId, newBaseName, options = {}) => {
+      const fileName = options && typeof options === 'object'
+        && typeof (options as { fileName?: unknown }).fileName === 'string'
+        ? (options as { fileName: string }).fileName
+        : undefined;
+      if (typeof fileName === 'string' && fileName.trim().length > 0) {
+        return { assetId, newFileName: fileName };
+      }
+      return { assetId, newBaseName };
+    },
   },
   {
     path: 'assets.renameFiles',
@@ -477,7 +508,37 @@ const guestCommandDefinitions: readonly SerpentGuestCommandDefinition[] = [
   },
 ];
 
+const pluginOnlyGuestCommandDefinitions: readonly SerpentGuestCommandDefinition[] = [
+  {
+    path: 'ui.openDialog',
+    commandId: 'ui.dialog',
+    buildInput: (input = {}) => input,
+    projectResult: (value) => {
+      if (value && typeof value === 'object' && 'result' in value) {
+        return (value as { result: unknown }).result;
+      }
+      return value;
+    },
+  },
+  {
+    path: 'ui.__patchWidget',
+    commandId: 'ui.widget-patch',
+    buildInput: (input = {}) => input,
+  },
+  {
+    path: 'media.getBinaryPaths',
+    commandId: 'media.binaries.get',
+    buildInput: () => ({}),
+  },
+];
+
+const guestCommandDefinitions: readonly SerpentGuestCommandDefinition[] = [
+  ...scriptGuestCommandDefinitions,
+  ...pluginOnlyGuestCommandDefinitions,
+];
+
 export const SERPENT_GUEST_COMMANDS = guestCommandDefinitions;
+export const SERPENT_SCRIPT_GUEST_COMMANDS = scriptGuestCommandDefinitions;
 
 function guestMethodsForPrefix(prefix: string): string[] {
   return guestCommandDefinitions
@@ -495,6 +556,7 @@ export const SERPENT_GUEST_LINKED_FOLDER_METHODS = guestMethodsForPrefix('linked
 export const SERPENT_GUEST_FILE_METHODS = guestMethodsForPrefix('files');
 export const SERPENT_GUEST_TRASH_METHODS = guestMethodsForPrefix('trash');
 export const SERPENT_GUEST_PALETTE_METHODS = guestMethodsForPrefix('palettes');
+export const SERPENT_GUEST_MEDIA_METHODS = guestMethodsForPrefix('media');
 
 export const SERPENT_GUEST_NAMESPACES = [
   'assets',
@@ -508,7 +570,39 @@ export const SERPENT_GUEST_NAMESPACES = [
   'trash',
   'palettes',
   'ui',
+  'media',
 ] as const;
+
+function wrapUiOpenDialog(
+  api: SerpentGuestCommandApi,
+  adapters: SerpentGuestApiAdapters,
+  targetLibraryId?: string,
+): void {
+  const namespace = api.ui;
+  const original = namespace?.openDialog;
+  if (namespace === undefined || original === undefined) return;
+  namespace.openDialog = async (...args: unknown[]) => {
+    const input = args[0];
+    if (!isPluginWidgetDialogInput(input)) {
+      return original(...args);
+    }
+    if (adapters.widgetDialog === undefined) {
+      throw new Error('Widget dialogs are unavailable in this runtime.');
+    }
+    const commandOptions = targetLibraryId === undefined ? undefined : { targetLibraryId };
+    const widgetAdapters: PluginWidgetDialogAdapters = {
+      createSessionId: adapters.widgetDialog.createSessionId
+        ?? (() => globalThis.crypto.randomUUID()),
+      open: (payload) => adapters.executeCommand('ui.dialog', payload, commandOptions),
+      patch: async (payload) => {
+        await adapters.executeCommand('ui.widget-patch', payload, commandOptions);
+      },
+      nextEvent: (sessionId) => adapters.widgetDialog!.nextEvent(sessionId),
+      close: (sessionId) => adapters.widgetDialog!.close(sessionId),
+    };
+    return runPluginWidgetDialog(widgetAdapters, input);
+  };
+}
 
 function setNestedMethod(
   root: SerpentGuestCommandApi,
@@ -545,6 +639,7 @@ export function createSerpentGuestApi(
       return definition.projectResult?.(result) ?? result;
     });
   }
+  wrapUiOpenDialog(api, adapters, targetLibraryId);
   if (targetLibraryId !== undefined) return api;
   return Object.assign(api, {
     forLibrary(libraryId: string): SerpentGuestCommandApi {

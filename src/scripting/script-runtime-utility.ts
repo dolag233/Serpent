@@ -7,7 +7,10 @@ import {
   type ScriptRuntimeChildMessage,
   type ScriptRuntimeParentMessage,
 } from '../shared/script-runtime-utility-protocol';
-import type { AutomationScriptCommandId } from '../shared/automation-script-api';
+import {
+  automationScriptCommandIdSchema,
+  type AutomationScriptCommandId,
+} from '../shared/automation-script-api';
 import { AutomationScriptHostCommandError } from '../shared/automation-host-command-error';
 import { PUBLIC_ERROR_MESSAGES } from '../shared/protocol/errors';
 
@@ -79,7 +82,13 @@ export function createScriptRuntimeUtilityHandler(options: {
 
     try {
       const result = await runQuickJsSandboxPrototype(request.source, {
-        executeAutomationCommand: callHost,
+        executeAutomationCommand: async (commandId, input) => {
+          const parsed = automationScriptCommandIdSchema.safeParse(commandId);
+          if (!parsed.success) {
+            throw new Error('This command is not available to scripts.');
+          }
+          return callHost(parsed.data, input);
+        },
       }, {
         ...request.limits,
         signal: abortController.signal,

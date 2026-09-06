@@ -80,6 +80,7 @@ type MoreFilterState = {
   durationRange: RangeState;
 };
 
+const HOVER_OPEN_DELAY_MS = 500;
 const HOVER_CLOSE_DELAY_MS = 150;
 const EMPTY_RANGE: RangeState = { min: "", max: "", exclude: false };
 
@@ -269,7 +270,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
 
   // REQ-FILTER-020: remembers tag names recently applied through this
   // picker so its default (empty-query) view can surface a "recent" section
-  // alongside the most-used tags. See tag-filter-recency.ts.
+  // alongside the complete tag set. See tag-filter-recency.ts.
   const [tagRecency, setTagRecency] = useState<TagFilterRecency>(() =>
     loadTagFilterRecency(),
   );
@@ -306,7 +307,9 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
   }, [openDimension]);
 
   // REQ-FILTER-021: hovering (or keyboard-focusing) a dimension opens its
-  // settings popover, independently of the click toggle below. Listening at
+  // settings popover, independently of the click toggle below. Pointer hover
+  // waits briefly before opening so moving across the toolbar does not create
+  // a popover on every dimension. Listening at
   // the bar root and matching `[data-dimension]` ancestors (rather than
   // binding per-dimension React handlers that would read a ref during
   // render) keeps this entirely inside an effect, mirroring the existing
@@ -324,7 +327,14 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     }
 
     const composition = attachCompositionLock();
+    let openTimer: ReturnType<typeof setTimeout> | null = null;
     let closeTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearOpenTimer = () => {
+      if (openTimer !== null) {
+        clearTimeout(openTimer);
+        openTimer = null;
+      }
+    };
     const clearCloseTimer = () => {
       if (closeTimer !== null) {
         clearTimeout(closeTimer);
@@ -336,8 +346,21 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
       const dim = target.closest<HTMLElement>("[data-dimension]");
       const id = dim?.dataset.dimension as DimensionId | undefined;
       if (!id) return;
+      clearOpenTimer();
       clearCloseTimer();
       setOpenDimension(id);
+    };
+    const scheduleOpenForDimensionOf = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) return;
+      const dim = target.closest<HTMLElement>("[data-dimension]");
+      const id = dim?.dataset.dimension as DimensionId | undefined;
+      if (!id) return;
+      clearOpenTimer();
+      clearCloseTimer();
+      openTimer = setTimeout(() => {
+        openTimer = null;
+        setOpenDimension(id);
+      }, HOVER_OPEN_DELAY_MS);
     };
     const isFilterChrome = (target: EventTarget | null) => {
       if (!(target instanceof Element)) return false;
@@ -353,12 +376,22 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
 
     const onPointerOver = (event: PointerEvent) => {
       if (!isFilterChrome(event.target)) return;
-      openForDimensionOf(event.target);
+      if (event.target instanceof Element && event.target.closest("[data-dimension-filter-popover]")) {
+        clearOpenTimer();
+        clearCloseTimer();
+        return;
+      }
+      scheduleOpenForDimensionOf(event.target);
       clearCloseTimer();
     };
     const onPointerOut = (event: PointerEvent) => {
       if (!isFilterChrome(event.target)) return;
       if (isFilterChrome(event.relatedTarget)) return;
+      // Leaving the filter chrome invalidates any delayed open, including
+      // pointer transitions whose relatedTarget is outside the document.
+      // Otherwise the close timer can run first and the stale open timer can
+      // reopen the popover a moment later.
+      clearOpenTimer();
       // IME candidate HWND is not in-document; relatedTarget is null.
       if (composition.isActive() || event.relatedTarget === null) return;
       scheduleClose();
@@ -390,6 +423,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     document.addEventListener("focusout", onFocusOut, true);
     return () => {
       composition.dispose();
+      clearOpenTimer();
       clearCloseTimer();
       document.removeEventListener("pointerover", onPointerOver, true);
       document.removeEventListener("pointerout", onPointerOut, true);
@@ -688,7 +722,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
           {openDimension === "tags" && (
             <PortaledPopover
               anchorRef={tagsDimRef}
-              className="dimension-filter-popover"
+              className="dimension-filter-popover is-tag-filter"
               data-dimension="tags"
               role="dialog"
             >

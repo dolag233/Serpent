@@ -49,18 +49,16 @@ describe("viewer-chrome-contrast", () => {
     const dark = solidImageData(40, 40, [10, 10, 10, 255]);
     const light = solidImageData(40, 40, [245, 245, 245, 255]);
     expect(contrastForImageDataRegion(dark, "prev")).toBe("on-dark");
-    expect(contrastForImageDataRegion(light, "close")).toBe("on-light");
+    expect(contrastForImageDataRegion(light, "next")).toBe("on-light");
     expect(sampleImageDataRegion(dark, "next").length).toBe(16);
 
     expect(resolveViewerChromeContrasts(light)).toEqual({
       prev: "on-light",
       next: "on-light",
-      close: "on-light",
     });
     expect(resolveViewerChromeContrasts(null)).toEqual({
       prev: "on-dark",
       next: "on-dark",
-      close: "on-dark",
     });
   });
 });

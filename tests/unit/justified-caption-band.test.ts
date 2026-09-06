@@ -74,4 +74,13 @@ describe("resolveJustifiedCaptionBandPx (Serpent-omn)", () => {
     expect(withName).toBeGreaterThan(dimsOnly);
     expect(full).toBeGreaterThan(withName);
   });
+
+  it("scales the reserved band for the larger typography tier", () => {
+    const lines = { dimensions: true, name: true, secondary: true };
+    const base = resolveJustifiedCaptionBandPx(lines);
+    const large = resolveJustifiedCaptionBandPx(lines, 1.12);
+
+    expect(large).toBeGreaterThan(base);
+    expect(large).toBe(67);
+  });
 });

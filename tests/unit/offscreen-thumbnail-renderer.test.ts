@@ -126,7 +126,6 @@ function makeHarness(overrides: Partial<OffscreenThumbnailRendererDeps> = {}): H
     logger,
     pageUrl: 'offscreen-thumbnail.html',
     preloadPath: 'offscreen.js',
-    timeoutMs: 200,
     ...overrides,
   };
   return {
@@ -153,7 +152,6 @@ function makeJob(overrides: Partial<ModelThumbnailRenderRequest> = {}): ModelThu
     hdriPresetId: 'studio-small-09',
     width: 512,
     height: 512,
-    timeoutMs: 200,
     ...overrides,
   };
 }
@@ -221,13 +219,21 @@ describe('offscreen thumbnail renderer (slice E, main side)', () => {
     renderer.dispose();
   });
 
-  it('times out with MODEL_RENDER_TIMEOUT when no frame arrives', async () => {
-    const harness = makeHarness({ timeoutMs: 50 });
+  it('keeps waiting for a slow local render until it completes or is disposed', async () => {
+    const harness = makeHarness();
     const renderer = createOffscreenThumbnailRenderer(harness.deps);
 
-    const result = await renderer.renderModelThumbnail(makeJob({ timeoutMs: 50 }));
-    expect(result).toMatchObject({ status: 'failed', errorCode: 'MODEL_RENDER_TIMEOUT' });
+    let settled = false;
+    const resultPromise = renderer.renderModelThumbnail(makeJob());
+    void resultPromise.then(() => { settled = true; });
+    await vi.waitFor(() => expect(harness.windows).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(settled).toBe(false);
     renderer.dispose();
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'failed',
+      errorCode: 'MODEL_RENDER_ABORTED',
+    });
   });
 
   it('rescues an invalid frame with the composited paint image', async () => {

@@ -11,8 +11,6 @@ import {
 import {
   CONTENT_REPLACE_BATCH_INLINE_MAX_BASE64_LENGTH,
   CONTENT_REPLACE_BATCH_MAX_ITEMS,
-  CONTENT_REPLACE_MAX_BYTES,
-  CONTENT_REPLACE_MAX_BASE64_LENGTH,
   CONTENT_REPLACE_STAGE_CHUNK_MAX_BASE64_LENGTH,
 } from '../content-replace';
 import { performanceRequestEnvelopeSchema } from '../performance-contract';
@@ -296,6 +294,22 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     parentFolderId: z.string().min(1).max(4096).nullable(),
     showIgnored: z.boolean().optional(),
+  }),
+  // Serpent-f74e48: real FolderBrowseEntry (covers + counts) for concrete
+  // folder refs matched by text search, so search results reuse the exact
+  // asset-browser folder cards.
+  z.strictObject({
+    type: z.literal('folder.entries-request'),
+    libraryId: identifierSchema,
+    refs: z
+      .array(
+        z.strictObject({
+          locationKind: z.enum(['managed', 'linked']),
+          folderId: z.string().min(1).max(4096),
+        }),
+      )
+      .min(1)
+      .max(16),
   }),
   // Clarification #7 / Serpent-ekj: managed folder trash / permanent disk delete.
   z.strictObject({
@@ -884,6 +898,10 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     ),
   }),
   z.strictObject({
+    type: z.literal('asset.delete-cancel.request'),
+    operationId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('trash.list.request'),
     libraryId: identifierSchema,
   }),
@@ -1427,6 +1445,19 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     showIgnored: z.boolean().optional(),
   }),
   z.strictObject({
+    type: z.literal('folder.entries'),
+    libraryId: identifierSchema,
+    refs: z
+      .array(
+        z.strictObject({
+          locationKind: z.enum(['managed', 'linked']),
+          folderId: z.string().min(1).max(4096),
+        }),
+      )
+      .min(1)
+      .max(16),
+  }),
+  z.strictObject({
     type: z.literal('folder.list-trashed'),
     libraryId: identifierSchema,
   }),
@@ -1490,6 +1521,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     folderId: folderScopeIdSchema.optional(),
     recursive: z.boolean(),
     showIgnored: z.boolean().optional(),
+    assetIds: z.array(identifierSchema).min(1).max(200).optional(),
   }),
   z.strictObject({
     type: z.literal('asset.sequence.create'),
@@ -1885,7 +1917,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.content.replace'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
-    dataBase64: z.string().min(1).max(CONTENT_REPLACE_MAX_BASE64_LENGTH),
+    dataBase64: z.string().min(1),
     expectedRevisionId: identifierSchema.optional(),
     automationPlan: automationFilePlanProofSchema.optional(),
   }),
@@ -1925,7 +1957,8 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.content.read'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
-    maxBytes: z.number().int().positive().max(CONTENT_REPLACE_MAX_BYTES),
+    maxBytes: z.number().int().positive().optional(),
+    offsetBytes: z.number().int().nonnegative().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.restore'),
@@ -2031,6 +2064,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
       { message: 'assetIds must not contain duplicates.' },
     ),
     newBaseName: assetFileBaseNameSchema.optional(),
+    newFileName: assetFileBaseNameSchema.optional(),
     renameItems: z.array(z.strictObject({
       assetId: identifierSchema,
       newBaseName: assetFileBaseNameSchema,
@@ -2088,6 +2122,10 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
       (assetIds) => new Set(assetIds).size === assetIds.length,
       { message: 'assetIds must not contain duplicates.' },
     ),
+  }),
+  z.strictObject({
+    type: z.literal('asset.delete-cancel'),
+    operationId: identifierSchema,
   }),
   z.strictObject({
     type: z.literal('asset.delete-linked'),

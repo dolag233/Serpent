@@ -249,6 +249,44 @@ describe('theme profile contract v3', () => {
     expect(composed.tokens['--ui-action-accent']).toBe('#00ffaa');
   });
 
+  it('composes a quick theme color without overriding an advanced accent', () => {
+    const quick = resolveEffectiveThemeTokens({
+      themeProfile: {
+        version: THEME_PROFILE_VERSION,
+        preset: 'vscode',
+        overrides: {},
+      },
+      customTheme: DEFAULT_CUSTOM_THEME,
+      resolved: 'dark',
+      themeAccentHex: '#8b5cf6',
+    });
+    expect(quick.accentHex).toBe('#8b5cf6');
+    expect(quick.tokens['--ui-action-accent']).toBe('#8b5cf6');
+    expect(quick.tokens['--ui-action-accent-soft']).toBe(
+      'color-mix(in srgb, var(--ui-action-accent) 14%, transparent)',
+    );
+    expect(quick.tokens['--ui-content-accent']).toBe(
+      'color-mix(in srgb, var(--ui-action-accent) 55%, white)',
+    );
+    expect(quick.tokens['--ui-border-focus']).toBe(
+      'color-mix(in srgb, var(--ui-action-accent) 72%, transparent)',
+    );
+    expect(quick.tokens['--ui-surface-selected']).toBe(
+      'color-mix(in srgb, var(--ui-action-accent) 14%, transparent)',
+    );
+
+    const advanced = resolveEffectiveThemeTokens({
+      themeProfile: DEFAULT_THEME_PROFILE,
+      customTheme: {
+        ...DEFAULT_CUSTOM_THEME,
+        dark: { '--ui-action-accent': '#00ffaa' },
+      },
+      resolved: 'dark',
+      themeAccentHex: '#8b5cf6',
+    });
+    expect(advanced.accentHex).toBe('#00ffaa');
+  });
+
   it('recomputes derived accent and danger tokens from custom base colors', () => {
     const composed = resolveEffectiveThemeTokens({
       themeProfile: DEFAULT_THEME_PROFILE,

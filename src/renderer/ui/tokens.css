@@ -141,22 +141,26 @@
   --ui-border-width-focus: 2px;
 
   /* Typography */
+  /* App font scale is independent from OS/Chromium display scaling. */
+  --ui-font-scale: 1;
   --ui-font-family: -apple-system, "Segoe UI", "Helvetica Neue", Arial,
     "Noto Sans SC Variable", "PingFang SC", "Microsoft YaHei", sans-serif;
   --ui-font-family-mono: "IBM Plex Mono", "SFMono-Regular", Consolas,
     "Liberation Mono", monospace;
-  --ui-font-size-micro: 11px;
-  --ui-font-size-caption: 12px;
-  --ui-font-size-body: 13px;
-  --ui-font-size-label: 12px;
-  --ui-font-size-title: 16px;
-  --ui-font-size-heading: 18px;
+  --ui-font-size-micro: calc(11px * var(--ui-font-scale));
+  --ui-font-size-caption: calc(12px * var(--ui-font-scale));
+  --ui-font-size-body: calc(13px * var(--ui-font-scale));
+  --ui-font-size-label: calc(12px * var(--ui-font-scale));
+  --ui-font-size-title: calc(16px * var(--ui-font-scale));
+  --ui-font-size-heading: calc(18px * var(--ui-font-scale));
   --ui-line-height-tight: 1.2;
   --ui-line-height-normal: 1.4;
   --ui-line-height-relaxed: 1.55;
   --ui-font-weight-regular: 400;
   --ui-font-weight-medium: 500;
   --ui-font-weight-semibold: 600;
+  --ui-font-weight-strong: 650;
+  --ui-font-weight-bold: 700;
 
   /* Elevation: use semantic level names, never page-local shadow values. */
   --ui-shadow-none: none;

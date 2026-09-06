@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { RendererLibrarySummary, SyncProgressEvent } from "../shared/protocol/responses";
 import type { SyncCapabilities, SyncReport } from "../shared/library-api";
+import type { IgnoredPath } from "../shared/asset-types";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
@@ -8,6 +9,7 @@ import { DialogShell } from "./ui/patterns";
 import { Switch } from "./ui/primitives";
 import { formatBytes } from "./format-file-meta";
 import type { SyncServerSummary } from "./sync-settings-types";
+import { IgnoredPathsDialog } from "./IgnoredPathsDialog";
 
 type LibrarySettingsCategory = "general" | "ignore" | "sync";
 
@@ -336,6 +338,8 @@ export function LibrarySettingsDialog({
   focusNameOnOpen = false,
   onSaveName,
   onSaveGitignore,
+  ignoredPaths,
+  onUnignorePath,
   syncCallbacks,
   syncProgress,
 }: {
@@ -346,6 +350,8 @@ export function LibrarySettingsDialog({
   focusNameOnOpen?: boolean;
   onSaveName: (name: string) => Promise<void>;
   onSaveGitignore: (content: string) => Promise<void>;
+  ignoredPaths: IgnoredPath[];
+  onUnignorePath: (path: IgnoredPath) => void;
   syncCallbacks: SyncSettingsCallbacks;
   syncProgress: SyncProgressEvent | null;
 }): ReactNode {
@@ -356,6 +362,7 @@ export function LibrarySettingsDialog({
   const [savingName, setSavingName] = useState(false);
   const [savingIgnore, setSavingIgnore] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [ignoredPathsOpen, setIgnoredPathsOpen] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -471,6 +478,9 @@ export function LibrarySettingsDialog({
                 <div className="app-settings-page-heading">
                   <h3>{t("settings.libraryIgnore")}</h3>
                   <p>{t("settings.libraryIgnoreHint")}</p>
+                  <button className="secondary-button" onClick={() => setIgnoredPathsOpen(true)} type="button">
+                    {t("settings.manageIgnoredPaths")}
+                  </button>
                 </div>
                 <section className="app-settings-card library-settings-gitignore-card">
                   <div className="library-settings-gitignore-heading">
@@ -511,6 +521,12 @@ export function LibrarySettingsDialog({
           </main>
         </div>
       </DialogShell>
+      <IgnoredPathsDialog
+        onClose={() => setIgnoredPathsOpen(false)}
+        onUnignore={onUnignorePath}
+        open={ignoredPathsOpen}
+        paths={ignoredPaths}
+      />
     </div>
   );
 }

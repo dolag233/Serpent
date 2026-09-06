@@ -201,6 +201,8 @@ export const pluginPermissionSchema = z.enum([
   'ui.viewer',
   'ui.settings',
   'ui.notify',
+  'ui.dialogs',
+  'media.binaries',
   'input.shortcut',
   'input.capture.viewer',
   'input.capture.application',
@@ -366,6 +368,8 @@ const contributionViewSchema = z.strictObject({
   /** Relative HTML entry for a sandboxed custom UI view. */
   entry: pluginPackagePathSchema.optional(),
 });
+export type PluginContributionView = z.infer<typeof contributionViewSchema>;
+
 export const pluginSettingTypeSchema = z.enum(['boolean', 'number', 'slider', 'string', 'select']);
 export const pluginSettingValueSchema = z.union([
   z.boolean(),
@@ -473,6 +477,21 @@ const contributionSettingSchema = z.discriminatedUnion('type', [
 ]);
 
 export type PluginSettingDefinition = z.infer<typeof contributionSettingSchema>;
+
+/**
+ * Modal iframe dialog opened through `serpent.ui.openDialog({ dialogId })`.
+ * Prefer `openDialog({ title, render })` (Host widget kit). `entry` is the
+ * Custom View escape hatch for WebGL/third-party pages.
+ * Requires the `ui.dialogs` permission.
+ */
+export const contributionDialogSchema = z.strictObject({
+  id: pluginLocalIdSchema,
+  title: z.string().min(1).max(160),
+  entry: pluginPackagePathSchema,
+  width: z.number().int().min(280).max(1_200).optional(),
+  height: z.number().int().min(200).max(1_200).optional(),
+});
+export type PluginContributionDialog = z.infer<typeof contributionDialogSchema>;
 
 export function getPluginSettingDefault(setting: PluginSettingDefinition): PluginSettingValue {
   if (setting.default !== undefined) return setting.default;
@@ -738,6 +757,8 @@ export const pluginContributesSchema = z.strictObject({
   viewerActions: z.array(contributionViewerActionSchema).max(64).default([]),
   shortcuts: z.array(contributionShortcutSchema).max(64).default([]),
   views: z.array(contributionViewSchema).max(128).default([]),
+  /** Modal settings dialogs (Serpent-a3de58); opened via `serpent.ui.openDialog`. */
+  dialogs: z.array(contributionDialogSchema).max(32).optional(),
   settings: z.array(contributionSettingSchema).max(128).default([]),
   hooks: z.array(contributionHookSchema).max(128).default([]),
   jobs: z.array(contributionJobSchema).max(128).default([]),
@@ -754,12 +775,24 @@ const repositorySchema = z.url().refine((value) => {
   return url.protocol === 'https:' && url.hostname === 'github.com' && repositoryPath.length === 2;
 }, 'Repository must be an HTTPS GitHub repository URL.');
 
+export const pluginManifestLocaleCopySchema = z.strictObject({
+  name: z.string().min(1).max(160).optional(),
+  description: z.string().min(1).max(2_000).optional(),
+});
+
+export const pluginManifestLocalesSchema = z.strictObject({
+  'zh-CN': pluginManifestLocaleCopySchema.optional(),
+  en: pluginManifestLocaleCopySchema.optional(),
+});
+export type PluginManifestLocales = z.infer<typeof pluginManifestLocalesSchema>;
+
 const pluginManifestObjectSchema = z.strictObject({
   manifestVersion: z.literal(PLUGIN_MANIFEST_VERSION),
   id: pluginIdSchema,
   version: semverSchema,
   name: z.string().min(1).max(160),
   description: z.string().min(1).max(2_000),
+  locales: pluginManifestLocalesSchema.optional(),
   author: z.string().min(1).max(160),
   license: z.string().min(1).max(160),
   repository: repositorySchema.optional(),
@@ -790,6 +823,7 @@ export const pluginManifestSchema = pluginManifestObjectSchema.superRefine((mani
     ...manifest.contributes.viewerActions.map((contribution) => contribution.id),
     ...manifest.contributes.shortcuts.map((contribution) => contribution.id),
     ...manifest.contributes.views.map((contribution) => contribution.id),
+    ...(manifest.contributes.dialogs ?? []).map((contribution) => contribution.id),
     ...manifest.contributes.settings.map((contribution) => contribution.id),
     ...manifest.contributes.hooks.map((contribution) => contribution.id),
     ...manifest.contributes.jobs.map((contribution) => contribution.id),

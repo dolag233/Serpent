@@ -5,7 +5,7 @@
  * rendered in (research §4.5/§4.7: Chromium caps live WebGL contexts at ~16,
  * so per-asset windows are not an option; the window is created lazily on the
  * first model job and reused). Jobs run strictly serially — one frame at a
- * time — with a per-job deadline; the page renders exactly one frame per job
+ * time — the page renders exactly one frame per job
  * (no rAF dependency, research §4.7 `backgroundThrottling` does not help
  * hidden windows).
  *
@@ -25,7 +25,7 @@
  * 3D icon (spec 3D-16).
  *
  * This module has NO runtime electron imports (types only) so the queue,
- * timeout and capture logic are unit-testable in vitest with structural
+ * capture logic is unit-testable in vitest with structural
  * fakes; `src/main/index.ts` supplies the real window/ipc wiring.
  */
 
@@ -35,7 +35,6 @@ import type { BrowserWindowConstructorOptions } from 'electron';
 
 import {
   MODEL_THUMBNAIL_DEFAULT_EDGE,
-  MODEL_THUMBNAIL_RENDER_TIMEOUT_MS,
   type ModelThumbnailErrorCode,
   type ModelThumbnailRenderRequest,
   type ModelThumbnailRenderResult,
@@ -90,8 +89,6 @@ export interface OffscreenThumbnailRendererDeps {
   pageUrl: string;
   /** Preload bundle path (`path.join(__dirname, 'offscreen.js')`). */
   preloadPath: string;
-  /** Per-job deadline; defaults to MODEL_THUMBNAIL_RENDER_TIMEOUT_MS. */
-  timeoutMs?: number;
 }
 
 export interface OffscreenThumbnailRenderer {
@@ -238,7 +235,6 @@ interface QueuedJob {
 }
 
 interface ActiveJob extends QueuedJob {
-  timer: ReturnType<typeof setTimeout> | undefined;
   /** Latest composited paint for the active job (fallback capture source). */
   paint: PaintImageLike | null;
   settled: boolean;
@@ -247,7 +243,6 @@ interface ActiveJob extends QueuedJob {
 export function createOffscreenThumbnailRenderer(
   deps: OffscreenThumbnailRendererDeps,
 ): OffscreenThumbnailRenderer {
-  const timeoutMs = deps.timeoutMs ?? MODEL_THUMBNAIL_RENDER_TIMEOUT_MS;
   const queue: QueuedJob[] = [];
   let active: ActiveJob | null = null;
   let draining = false;
@@ -260,7 +255,6 @@ export function createOffscreenThumbnailRenderer(
     const current = active;
     if (!current || current.settled) return;
     current.settled = true;
-    if (current.timer !== undefined) clearTimeout(current.timer);
     active = null;
     current.resolve(result);
     void drain();
@@ -438,16 +432,8 @@ export function createOffscreenThumbnailRenderer(
   };
 
   const runJob = async (entry: QueuedJob): Promise<void> => {
-    const current: ActiveJob = { ...entry, timer: undefined, paint: null, settled: false };
+    const current: ActiveJob = { ...entry, paint: null, settled: false };
     active = current;
-    const timer = setTimeout(() => {
-      settleActive({
-        status: 'failed',
-        errorCode: 'MODEL_RENDER_TIMEOUT',
-        reason: `no frame within ${timeoutMs}ms`,
-      });
-    }, timeoutMs);
-    current.timer = timer;
 
     try {
       const target = await ensureWindow();
@@ -537,7 +523,6 @@ function asErrorCode(code: string): ModelThumbnailErrorCode {
   // The page is ours, but keep the queue contract typed: unknown codes
   // degrade to MODEL_LOAD_FAILED instead of poisoning the artifact table.
   switch (code) {
-    case 'MODEL_RENDER_TIMEOUT':
     case 'MODEL_LOAD_FAILED':
     case 'MODEL_WEBGL_UNAVAILABLE':
     case 'MODEL_CONTEXT_LOST':
@@ -546,7 +531,6 @@ function asErrorCode(code: string): ModelThumbnailErrorCode {
     case 'MODEL_FRAME_INVALID':
     case 'MODEL_WINDOW_FAILED':
     case 'MODEL_RENDER_ABORTED':
-    case 'MODEL_TOO_LARGE':
       return code;
     default:
       return 'MODEL_LOAD_FAILED';

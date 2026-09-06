@@ -138,7 +138,18 @@ import {
 import {
   createAutomationCommandGateway,
   type AutomationCommandGateway,
+  type AutomationMediaBinariesHandler,
+  type AutomationUiDialogHandler,
 } from '../automation/command-gateway';
+import {
+  PLUGIN_UI_DIALOG_PATCH_CHANNEL,
+  PLUGIN_UI_DIALOG_REQUEST_CHANNEL,
+  PLUGIN_UI_DIALOG_RESULT_CHANNEL,
+  PLUGIN_UI_WIDGET_EVENT_CHANNEL,
+  pluginUiDialogResultPayloadSchema,
+  pluginUiWidgetEventPayloadSchema,
+} from '../shared/plugin-ui-dialog-bridge';
+import { resolveHostMediaBinaries } from './media-binary-env';
 import { PluginHostCommandError } from '../shared/plugin-host-command-error';
 import {
   APP_ASSET_HOST,
@@ -188,6 +199,11 @@ import { PluginActivationCoordinator } from './plugin-activation-coordinator';
 import { PluginJobScheduler } from './plugin-job-scheduler';
 import { PluginProviderScheduler } from './plugin-provider-scheduler';
 import { pluginTargetLibraryIdSchema } from '../plugins/plugin-commands';
+import {
+  PLUGIN_GLOBAL_RUNTIME_LIBRARY_ID,
+  pluginHostCommandRequiresBoundLibrary,
+  resolvePluginHostCommandLibraryId,
+} from '../plugins/plugin-host-command-target';
 import { PluginStorageStore, PluginStorageStoreError } from './plugin-storage-store';
 import { PluginSettingsStore } from './plugin-settings-store';
 import { PluginMcpExposureStore } from './plugin-mcp-exposure-store';
@@ -199,6 +215,7 @@ import { pluginJobOwnerCanRetry, pluginJobOwnerMatches } from '../plugins/plugin
 import { loadOrCreatePluginDeviceId } from './plugin-device-identity';
 import { createPluginPackageRequestHandler } from './plugin-package-ipc';
 import { PluginPackageManager } from './plugin-package-manager';
+import { PluginCommunityCatalogStore } from './plugin-community-catalog-store';
 import { PLUGIN_API_VERSION } from '../plugins/plugin-manifest';
 import {
   createPluginDomainEvent,
@@ -358,6 +375,7 @@ import {
   classifyDroppedSourcePaths,
   cleanupClipboardImage,
   cleanupStaleClipboardImages,
+  readClipboardImage,
   stageClipboardImage,
 } from "./desktop-ingestion";
 import {
@@ -1593,6 +1611,42 @@ async function handleListFolders(): Promise<ListFoldersDisposition> {
     if (match?.displayName) libraryDisplayName = match.displayName;
   }
 
+  // 链接文件夹与 managed 文件夹并列作为扩展保存目标：worker 的 folder.list
+  // 只列 managed，这里额外取 linked-folder.list 并按链接根 displayName 做
+  // 命名空间前缀，避免与 managed 的 relativePath 撞树（Serpent-f6f779）。
+  let linkedExtensionFolders: Array<{
+    folderId: string;
+    name: string;
+    relativePath: string;
+    assetCount: number;
+  }> = [];
+  const linkedResult = await workerClient.request({
+    type: "linked-folder.list",
+    libraryId: saveContext.libraryId,
+  });
+  if (linkedResult.ok && linkedResult.type === "linked-folder.list") {
+    const rootNames = new Map(
+      linkedResult.folders
+        .filter((folder) => (folder.relativePath ?? "") === "")
+        .map((folder) => [folder.folderId, folder.displayName]),
+    );
+    linkedExtensionFolders = linkedResult.folders.map((folder) => {
+      const rootName =
+        (folder.linkedFolderId
+          ? rootNames.get(folder.linkedFolderId)
+          : undefined) ?? folder.displayName;
+      return {
+        folderId: folder.folderId,
+        name: folder.displayName,
+        relativePath:
+          (folder.relativePath ?? "") === ""
+            ? rootName
+            : `${rootName}/${folder.relativePath}`,
+        assetCount: folder.assetCount,
+      };
+    });
+  }
+
   return {
     ok: true,
     libraryDisplayName,
@@ -1611,12 +1665,15 @@ async function handleListFolders(): Promise<ListFoldersDisposition> {
       }
       return ids;
     })(),
-    folders: result.folders.map((folder) => ({
-      folderId: folder.folderId,
-      name: folder.name,
-      relativePath: folder.relativePath,
-      assetCount: folder.directAssetCount,
-    })),
+    folders: [
+      ...result.folders.map((folder) => ({
+        folderId: folder.folderId,
+        name: folder.name,
+        relativePath: folder.relativePath,
+        assetCount: folder.directAssetCount,
+      })),
+      ...linkedExtensionFolders,
+    ],
   };
 }
 
@@ -2524,6 +2581,12 @@ async function commandFor(
         parentFolderId: request.parentFolderId,
         showIgnored: request.showIgnored,
       };
+    case "folder.entries-request":
+      return {
+        type: "folder.entries",
+        libraryId: request.libraryId,
+        refs: request.refs,
+      };
     case "folder.trash.request":
       return {
         type: "folder.trash",
@@ -3347,6 +3410,8 @@ async function commandFor(
     }
     case "library.import.cancel.request":
       return { type: "library.import-cancel", importId: request.importId };
+    case "asset.delete-cancel.request":
+      return { type: "asset.delete-cancel", operationId: request.operationId };
     case "library.import.copy.request": {
       const importId = request.importId;
       const sourcePath = pendingImportSources.get(importId);
@@ -4576,14 +4641,33 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     } else if (request.type === "asset.import-clipboard.request") {
       let image;
       try {
-        image =
+        if (
           !app.isPackaged &&
           process.env.SERPENT_E2E === "1" &&
           process.env.SERPENT_E2E_CLIPBOARD_IMAGE_PATH
-            ? nativeImage.createFromBuffer(
-                readFileSync(process.env.SERPENT_E2E_CLIPBOARD_IMAGE_PATH),
-              )
-            : clipboard.readImage();
+        ) {
+          image = nativeImage.createFromBuffer(
+            readFileSync(process.env.SERPENT_E2E_CLIPBOARD_IMAGE_PATH),
+          );
+        } else {
+          // Windows clipboard images arrive in several layouts; walk them all
+          // (Chromium bitmap, registered PNG, bare DIB, HTML references).
+          const extracted = readClipboardImage({
+            readImage: () => clipboard.readImage(),
+            readBuffer: (format) => clipboard.readBuffer(format),
+            readHTML: () => clipboard.readHTML(),
+            createFromBuffer: (buffer) => nativeImage.createFromBuffer(buffer),
+          });
+          if (!extracted) {
+            logger?.info(
+              "desktop-ingestion.clipboard-formats",
+              "no importable image on the clipboard",
+              { formats: clipboard.availableFormats() },
+            );
+            throw new Error("CLIPBOARD_IMAGE_NOT_FOUND");
+          }
+          image = extracted.image;
+        }
         const injectedNow =
           !app.isPackaged &&
           process.env.SERPENT_E2E === "1" &&
@@ -5676,10 +5760,10 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
     const publicError = error instanceof ExternalLibraryArchiveError
       ? createPublicError(error.publicCode, error.reason)
-      : error instanceof LibraryParentError
-        ? createPublicError(error.code, error.reason)
+        : error instanceof LibraryParentError
+          ? createPublicError(error.code, error.reason)
         : error instanceof WorkerRequestTimeoutError
-          ? createPublicError("INTERNAL_ERROR", "LIBRARY_TRANSFER_TIMEOUT")
+          ? createPublicError("INTERNAL_ERROR")
           : toPublicError(error);
     if (operation) {
       publishLifecycle({
@@ -6277,6 +6361,47 @@ async function startApplication(): Promise<void> {
     selectSaveScript: selectAutomationScriptToSave,
     recentScripts: automationRecentScripts,
   });
+  const pendingPluginUiDialogs = new Map<string, {
+    resolve: (result: unknown | null) => void;
+    reject: (error: Error) => void;
+    cleanup: () => void;
+    pluginInstanceId: string;
+    sessionId?: string;
+  }>();
+  const pendingPluginUiDialogsBySession = new Map<string, string>();
+  let pluginUiDialogRequestSeq = 0;
+  // Preload uses ipcRenderer.send (same as widget events). handle() only
+  // receives invoke(), so submit/cancel never resolved the plugin command.
+  ipcMain.on(PLUGIN_UI_DIALOG_RESULT_CHANNEL, (_event, input: unknown) => {
+    const parsed = pluginUiDialogResultPayloadSchema.safeParse(input);
+    if (!parsed.success) return;
+    const pending = pendingPluginUiDialogs.get(parsed.data.requestId);
+    if (pending === undefined) return;
+    pending.resolve(parsed.data.result);
+  });
+  ipcMain.on(PLUGIN_UI_WIDGET_EVENT_CHANNEL, (_event, input: unknown) => {
+    const parsed = pluginUiWidgetEventPayloadSchema.safeParse(input);
+    if (!parsed.success) return;
+    const requestId = pendingPluginUiDialogsBySession.get(parsed.data.sessionId);
+    if (requestId === undefined) return;
+    const pending = pendingPluginUiDialogs.get(requestId);
+    if (pending === undefined) return;
+    const event = {
+      type: parsed.data.type,
+      nodeId: parsed.data.nodeId,
+      value: parsed.data.value,
+    };
+    pluginRuntimeSupervisor?.deliverWidgetEvent(
+      pending.pluginInstanceId,
+      parsed.data.sessionId,
+      event,
+    );
+    pluginTrustedRuntimeSupervisor?.deliverWidgetEvent(
+      pending.pluginInstanceId,
+      parsed.data.sessionId,
+      event,
+    );
+  });
   automationCommandGateway = createAutomationCommandGateway(
     automationWorkerAdapter,
     {
@@ -6303,6 +6428,92 @@ async function startApplication(): Promise<void> {
           clipboard.writeText(workerResult.absolutePaths.join('\n'));
         },
       },
+      mediaBinariesHandler: {
+        get: () => {
+          const binaries = resolveHostMediaBinaries();
+          if (binaries === undefined) {
+            throw new Error('MEDIA_BINARIES_NOT_FOUND');
+          }
+          return binaries;
+        },
+      },
+      uiDialogHandler: {
+        open: (input, context) => new Promise((resolve, reject) => {
+          const window = mainWindow;
+          if (!window || window.isDestroyed()) {
+            reject(new Error('DIALOG_WINDOW_UNAVAILABLE'));
+            return;
+          }
+          pluginUiDialogRequestSeq += 1;
+          const requestId = `plugin-ui-dialog-${pluginUiDialogRequestSeq}`;
+          const pluginInstanceId = context.pluginInstanceId ?? '';
+          const sessionId = 'sessionId' in input ? input.sessionId : undefined;
+          const onWindowClosed = () => {
+            const pending = pendingPluginUiDialogs.get(requestId);
+            if (pending !== undefined) {
+              pendingPluginUiDialogs.delete(requestId);
+              if (pending.sessionId !== undefined) {
+                pendingPluginUiDialogsBySession.delete(pending.sessionId);
+              }
+              pending.reject(new Error('DIALOG_WINDOW_UNAVAILABLE'));
+            }
+          };
+          pendingPluginUiDialogs.set(requestId, {
+            resolve: (result) => {
+              pendingPluginUiDialogs.delete(requestId);
+              if (sessionId !== undefined) pendingPluginUiDialogsBySession.delete(sessionId);
+              window.removeListener('closed', onWindowClosed);
+              resolve(result);
+            },
+            reject: (error) => {
+              pendingPluginUiDialogs.delete(requestId);
+              if (sessionId !== undefined) pendingPluginUiDialogsBySession.delete(sessionId);
+              window.removeListener('closed', onWindowClosed);
+              reject(error);
+            },
+            cleanup: () => window.removeListener('closed', onWindowClosed),
+            pluginInstanceId,
+            ...(sessionId === undefined ? {} : { sessionId }),
+          });
+          if (sessionId !== undefined) pendingPluginUiDialogsBySession.set(sessionId, requestId);
+          window.once('closed', onWindowClosed);
+          if ('tree' in input) {
+            window.webContents.send(PLUGIN_UI_DIALOG_REQUEST_CHANNEL, {
+              requestId,
+              pluginId: context.pluginId ?? '',
+              pluginInstanceId,
+              libraryId: context.libraryId ?? PLUGIN_GLOBAL_RUNTIME_LIBRARY_ID,
+              sessionId: input.sessionId,
+              title: input.title,
+              ...(input.submitLabel === undefined ? {} : { submitLabel: input.submitLabel }),
+              tree: input.tree,
+            });
+            return;
+          }
+          window.webContents.send(PLUGIN_UI_DIALOG_REQUEST_CHANNEL, {
+            requestId,
+            pluginId: context.pluginId ?? '',
+            pluginInstanceId,
+            dialogId: input.dialogId,
+            libraryId: context.libraryId ?? PLUGIN_GLOBAL_RUNTIME_LIBRARY_ID,
+            payload: input.payload ?? null,
+          });
+        }),
+        patch: (input) => {
+          const requestId = pendingPluginUiDialogsBySession.get(input.sessionId);
+          if (requestId === undefined) {
+            throw new Error('DIALOG_SESSION_NOT_FOUND');
+          }
+          const window = mainWindow;
+          if (!window || window.isDestroyed()) {
+            throw new Error('DIALOG_WINDOW_UNAVAILABLE');
+          }
+          window.webContents.send(PLUGIN_UI_DIALOG_PATCH_CHANNEL, {
+            requestId,
+            tree: input.tree,
+          });
+        },
+      },
       uiNotifyHandler: {
         notify: (input) => {
           if (!mainWindow || mainWindow.isDestroyed()) {
@@ -6314,6 +6525,9 @@ async function startApplication(): Promise<void> {
             severity: input.severity,
             mode: 'toast',
             message: input.message.trim().slice(0, 500),
+            ...(typeof input.title === 'string' && input.title.trim().length > 0
+              ? { title: input.title.trim().slice(0, 120) }
+              : {}),
           });
         },
       },
@@ -6561,35 +6775,45 @@ async function startApplication(): Promise<void> {
     if (!cause.ok) {
       throw new Error(cause.message);
     }
-    const targetLibraryId = context.targetLibraryId ?? context.libraryId;
-    if (targetLibraryId === '__serpent_global_runtime__') {
-      throw new Error('A global plugin must choose an open library with serpent.forLibrary().');
-    }
-    const parsedTarget = pluginTargetLibraryIdSchema.safeParse(targetLibraryId);
-    if (!parsedTarget.success) {
-      throw new Error('The plugin command target library is invalid.');
+    const resolvedTarget = resolvePluginHostCommandLibraryId({
+      commandId,
+      libraryId: context.libraryId,
+      ...(context.targetLibraryId === undefined ? {} : { targetLibraryId: context.targetLibraryId }),
+    });
+    if (!resolvedTarget.ok) {
+      throw new Error(resolvedTarget.message);
     }
     const activeInstance = pluginActivationCoordinator?.findActiveInstance(context.instanceId);
     if (activeInstance === undefined) {
       throw new Error('The plugin instance is no longer active.');
     }
-    if (activeInstance.instanceScope === 'library'
-      && activeInstance.activationLibraryId !== parsedTarget.data) {
-      throw new Error('A library-scoped plugin cannot target another library.');
+    let boundLibraryId = resolvedTarget.libraryId;
+    if (boundLibraryId !== null) {
+      if (activeInstance.instanceScope === 'library'
+        && activeInstance.activationLibraryId !== boundLibraryId) {
+        throw new Error('A library-scoped plugin cannot target another library.');
+      }
+      const libraries = await workerClient?.request({ type: 'library.list' });
+      const libraryIsOpen = libraries?.ok === true
+        && libraries.type === 'library.list'
+        && libraries.libraries.some((library) => library.libraryId === boundLibraryId);
+      if (!libraryIsOpen) {
+        if (pluginHostCommandRequiresBoundLibrary(commandId)) {
+          throw new Error('The plugin command target library is not open.');
+        }
+        boundLibraryId = null;
+      }
     }
-    const libraries = await workerClient?.request({ type: 'library.list' });
-    if (!libraries?.ok || libraries.type !== 'library.list'
-      || !libraries.libraries.some((library) => library.libraryId === parsedTarget.data)) {
-      throw new Error('The plugin command target library is not open.');
-    }
-    const executionId = context.targetLibraryId === undefined
+    const executionId = context.targetLibraryId === undefined || boundLibraryId === null
       ? context.instanceId
-      : `${context.instanceId}:${parsedTarget.data}`;
+      : `${context.instanceId}:${boundLibraryId}`;
     pluginAutomationContexts.set(executionId, {
       executionId,
       source: 'plugin',
-      libraryId: parsedTarget.data,
+      libraryId: boundLibraryId,
       grantedCapabilities: automationCapabilitiesFromPluginPermissions(context.permissions),
+      pluginId: context.pluginId,
+      pluginInstanceId: context.instanceId,
     });
     const commandInput = commandId === 'asset.search'
       ? normalizeAutomationAssetSearchInput(input)
@@ -7220,10 +7444,10 @@ async function startApplication(): Promise<void> {
   });
   syncAutoScheduler.start();
 
-  // Production startup intentionally leaves the library closed. A missing,
-  // disconnected, or incompatible active library must not hold the app before
-  // the user can choose another one from the always-available switcher. The
-  // explicit opt-in is reserved for isolated full-restart E2E coverage.
+  // Serpent-85a9b0：生产启动自动打开上次使用的资源库（记住上次打开的库与
+  // 文件夹——库打开后 renderer 的 browser-session 会恢复上次浏览的文件夹）。
+  // 打开失败（丢失/断开/不兼容）只记日志、回退 idle，不阻塞用户从切换器
+  // 另选库；E2E 隔离重启测试由 recentLibraryAutoOpenEnabled 显式门控。
   const recentPath = recentLibraryAutoOpenEnabled()
     ? readActiveLibraryPath(recentLibraryPath(), (error) => {
         logger?.error("recent-library.read", error);
@@ -7711,6 +7935,9 @@ async function startApplication(): Promise<void> {
     ? undefined
     : createPluginPackageRequestHandler({
       manager: pluginPackageManager,
+      communityCatalog: new PluginCommunityCatalogStore({
+        userDataDirectory: app.getPath('userData'),
+      }),
       activationCoordinator: pluginActivationCoordinator,
       settingsStore: pluginSettingsStore,
       storageStore: pluginStorageStore,
@@ -7775,6 +8002,7 @@ async function startApplication(): Promise<void> {
             || requestType === 'plugin-manager.safe-mode'
             || requestType === 'plugin-manager.install-local'
             || requestType === 'plugin-manager.install-github'
+            || requestType === 'plugin-manager.install-community'
             || requestType === 'plugin-manager.uninstall'
             || requestType === 'plugin-manager.trust'
             || requestType === 'plugin-manager.reload') {

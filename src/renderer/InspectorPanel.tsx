@@ -1256,6 +1256,11 @@ export function InspectorPanel(props: InspectorPanelProps) {
             pluginApi={pluginApi}
             refreshKey={pluginContributionRefreshKey}
             selectedAssetIds={inspectorSelectedAssetIds}
+            selectedAssets={
+              selectedAssets.length > 0
+                ? selectedAssets
+                : selectedAsset === undefined ? [] : [selectedAsset]
+            }
             context={pluginContributionContext}
           />
 

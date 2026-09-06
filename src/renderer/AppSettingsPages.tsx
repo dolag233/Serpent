@@ -18,6 +18,10 @@ import {
   loadTaskCompletionSoundPreferences,
   saveTaskCompletionSoundPreferences,
 } from "./task-completion-sound-preferences";
+import {
+  loadFeatureHintPreferences,
+  saveFeatureHintPreferences,
+} from "./feature-hint-preferences";
 import type {
   ImportConflictPreferences,
   RememberedDuplicateDecision,
@@ -26,6 +30,15 @@ import type {
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useLocale, useT } from "./i18n";
+import {
+  FONT_SIZE_INDEX_MAX,
+  FONT_SIZE_INDEX_MIN,
+  FONT_SIZE_OPTIONS,
+  fontSizePreferenceFromIndex,
+  fontSizePreferenceToIndex,
+  type FontSizePreference,
+} from "./font-size-preferences";
+import { useFontSize } from "./FontSizeProvider";
 import {
   SHADOW_LEVEL_MAX,
   SHADOW_LEVEL_MIN,
@@ -41,6 +54,7 @@ import { SettingsCard, SettingsDisclosure } from "./ui/patterns";
 import { Slider, Switch } from "./ui/primitives";
 import {
   BackgroundSettings,
+  ThemeAccentPicker,
   ThemeModePicker,
   ThemeProfilePicker,
 } from "./theme/ThemeAppearanceControls";
@@ -48,6 +62,12 @@ import { ThemeColorSettings } from "./theme/ThemeColorSettings";
 
 const SHADOW_LEVEL_TICKS = [0, 1, 2, 3] as const;
 const MENU_ACRYLIC_LEVEL_TICKS = [0, 1, 2, 3] as const;
+const FONT_SIZE_LABEL_KEYS: Record<FontSizePreference, string> = {
+  compact: "settings.fontSizeCompact",
+  default: "settings.fontSizeDefault",
+  comfortable: "settings.fontSizeComfortable",
+  large: "settings.fontSizeLarge",
+};
 
 type SettingsToggleRowProps = {
   checked: boolean;
@@ -88,11 +108,21 @@ export function GeneralSettingsPage({
   const [taskCompletionSoundEnabled, setTaskCompletionSoundEnabled] = useState(
     () => loadTaskCompletionSoundPreferences().enabled,
   );
+  const [featureHintsEnabled, setFeatureHintsEnabled] = useState(
+    () => loadFeatureHintPreferences().enabled,
+  );
 
   function toggleTaskCompletionSound(): void {
     const enabled = !taskCompletionSoundEnabled;
     saveTaskCompletionSoundPreferences({ version: 1, enabled });
     setTaskCompletionSoundEnabled(enabled);
+  }
+
+  function toggleFeatureHints(): void {
+    const enabled = !featureHintsEnabled;
+    const current = loadFeatureHintPreferences();
+    saveFeatureHintPreferences({ version: 2, enabled, seen: current.seen });
+    setFeatureHintsEnabled(enabled);
   }
 
   return (
@@ -129,6 +159,14 @@ export function GeneralSettingsPage({
           hint={t("settings.taskCompletionSoundHint")}
           label={t("settings.taskCompletionSound")}
           onChange={toggleTaskCompletionSound}
+        />
+      </SettingsCard>
+      <SettingsCard>
+        <SettingsToggleRow
+          checked={featureHintsEnabled}
+          hint={t("settings.featureHintsHint")}
+          label={t("settings.featureHints")}
+          onChange={toggleFeatureHints}
         />
       </SettingsCard>
       {onOpenAppLog ? (
@@ -291,11 +329,14 @@ export function AssetsSettingsPage({
 
 export function AppearanceSettingsPage(): ReactNode {
   const t = useT();
+  const { preferences: fontSizePrefs, setPreference: setFontSizePreference } = useFontSize();
   const { preferences: shadowPrefs, setLevel: setShadowLevel } = useElevation();
   const { preferences: menuAcrylicPrefs, setLevel: setMenuAcrylicLevel } =
     useMenuAcrylic();
   const { enabled: inspectorCardFeelEnabled, toggle: toggleInspectorCardFeel } =
     useInspectorCardFeel();
+  const fontSizeIndex = fontSizePreferenceToIndex(fontSizePrefs.preference);
+  const fontSizeLabelKey = FONT_SIZE_LABEL_KEYS[fontSizePrefs.preference];
 
   return (
     <SettingsCard className="app-settings-appearance-card">
@@ -308,9 +349,53 @@ export function AppearanceSettingsPage(): ReactNode {
           <ThemeModePicker />
         </div>
         <ThemeProfilePicker />
+        <ThemeAccentPicker />
       </div>
       <div className="app-settings-card-divider" />
       <ThemeColorSettings />
+      <div className="app-settings-card-divider" />
+      <div className="app-settings-row app-settings-row-stack">
+        <div className="app-settings-row-copy">
+          <strong>{t("settings.fontSize")}</strong>
+          <span>{t("settings.fontSizeHint")}</span>
+        </div>
+        <div className="app-settings-elevation-scale app-settings-font-size-scale">
+          <div className="app-settings-elevation-rail">
+            <Slider
+              aria-label={t("settings.fontSize")}
+              className="app-settings-elevation-slider app-settings-font-size-slider"
+              max={FONT_SIZE_INDEX_MAX}
+              min={FONT_SIZE_INDEX_MIN}
+              onValueChange={(value) =>
+                setFontSizePreference(fontSizePreferenceFromIndex(value))
+              }
+              step={1}
+              value={fontSizeIndex}
+              valueText={t(fontSizeLabelKey)}
+            />
+            <div aria-hidden="true" className="app-settings-elevation-ticks">
+              {FONT_SIZE_OPTIONS.map((option, index) => (
+                <span
+                  className={
+                    fontSizeIndex === index
+                      ? "app-settings-elevation-tick is-active"
+                      : "app-settings-elevation-tick"
+                  }
+                  key={option}
+                >
+                  <span className="app-settings-elevation-tick-mark" />
+                  <span className="app-settings-elevation-tick-label">
+                    {index}
+                  </span>
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="app-settings-font-size-label">
+            {t(fontSizeLabelKey)}
+          </div>
+        </div>
+      </div>
       <div className="app-settings-card-divider" />
       <SettingsDisclosure
         hint={t("settings.backgroundSectionHint")}

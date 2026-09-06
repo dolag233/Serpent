@@ -49,6 +49,7 @@ export function FolderCard({
   trashed = false,
 }: FolderCardProps) {
   const t = useT();
+  const isCollage = entry.directAssetCount === 0 && entry.coverArtifactIds.length > 0;
   const coverArtifactId = entry.coverArtifactIds[0] ?? null;
 
   return (
@@ -101,9 +102,27 @@ export function FolderCard({
             />
           </svg>
           <div className="folder-card-pocket">
-            {coverArtifactId === null ? (
+            {entry.coverArtifactIds.length === 0 ? (
               <div className="folder-card-cover-empty">
                 <Icon name="folder" size={28} />
+              </div>
+            ) : isCollage ? (
+              <div className="folder-card-collage" aria-hidden="true">
+                {Array.from({ length: 4 }).map((_, index) => {
+                  const artifactId = entry.coverArtifactIds[index];
+                  return (
+                    <div key={index} className="folder-card-collage-cell">
+                      {artifactId ? (
+                        <img
+                          alt=""
+                          className="folder-card-collage-image"
+                          loading="eager"
+                          src={coverSrc(libraryId, artifactId)}
+                        />
+                      ) : null}
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <div className="folder-card-cover-photo">
@@ -114,7 +133,7 @@ export function FolderCard({
                   // horizontal strip (unlike the virtualized vertical asset
                   // grid) — eager so covers paint as soon as they are ready.
                   loading="eager"
-                  src={coverSrc(libraryId, coverArtifactId)}
+                  src={coverSrc(libraryId, coverArtifactId!)}
                 />
               </div>
             )}

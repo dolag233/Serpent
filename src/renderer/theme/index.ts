@@ -19,6 +19,14 @@ export {
   loadAccentPreferences,
 } from './accent-preferences';
 export {
+  THEME_ACCENT_PREF_KEY,
+  THEME_ACCENT_PRESETS,
+  loadThemeAccent,
+  saveThemeAccent,
+  themeAccentPresetByHex,
+  type ThemeAccentPresetId,
+} from './theme-accent-preferences';
+export {
   ThemeProvider,
   useTheme,
   type ThemeProviderProps,

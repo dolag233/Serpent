@@ -772,6 +772,55 @@ describe('FTS5 trigram query builder', () => {
 // ── Search Filters ──────────────────────────────────────────────────
 
 describe('search filters', () => {
+  it('recurses from the library root across managed folders without including linked assets', () => {
+    const { service, libraryId, libraryPath, assetId: nestedManagedAssetId } =
+      createLibraryWithAssetAndTags();
+    const rootAssetId = randomUUID();
+    const rootRevisionId = randomUUID();
+    const rootFileName = 'root-direct.png';
+    const now = new Date().toISOString();
+    writeFileSync(path.join(libraryPath, 'Assets', rootFileName), 'root asset');
+
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    try {
+      db.prepare(
+        `INSERT INTO assets (asset_id, location_kind, managed_folder_id, linked_folder_id,
+          relative_file_path, current_revision_id, availability, path_identity, created_at, updated_at)
+         VALUES (?, 'managed', NULL, NULL, ?, NULL, 'available', ?, ?, ?)`,
+      ).run(rootAssetId, rootFileName, rootFileName, now, now);
+      db.prepare(
+        `INSERT INTO revisions (revision_id, asset_id, parent_revision_id, byte_size,
+          modified_at, original_filename, origin, accepted_at)
+         VALUES (?, ?, NULL, 10, ?, ?, 'import', ?)`,
+      ).run(rootRevisionId, rootAssetId, now, rootFileName, now);
+      db.prepare('UPDATE assets SET current_revision_id = ? WHERE asset_id = ?')
+        .run(rootRevisionId, rootAssetId);
+    } finally {
+      db.close();
+    }
+
+    const linkedRoot = path.join(path.dirname(libraryPath), 'linked-root-scope');
+    mkdirSync(linkedRoot);
+    writeFileSync(path.join(linkedRoot, 'linked.png'), 'linked asset');
+    service.importFolderAsLinked({ libraryId, sourceRootPath: linkedRoot });
+
+    const direct = service.searchAssets({
+      libraryId,
+      scope: { kind: 'folder', folderId: null, recursive: false },
+    });
+    const recursive = service.searchAssets({
+      libraryId,
+      scope: { kind: 'folder', folderId: null, recursive: true },
+    });
+
+    expect(direct.items.map((asset) => asset.assetId)).toEqual([rootAssetId]);
+    expect(recursive.items.map((asset) => asset.assetId).sort()).toEqual(
+      [rootAssetId, nestedManagedAssetId].sort(),
+    );
+    expect(recursive.items.every((asset) => asset.locationKind === 'managed')).toBe(true);
+    service.closeAll();
+  });
+
   it('scopes ordinary browsing to managed folders with optional descendants', () => {
     const { service, libraryId, libraryPath, assetId } = createLibraryWithAssetAndTags();
     const parent = service.listManagedFolders(libraryId)[0]!;

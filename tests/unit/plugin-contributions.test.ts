@@ -15,6 +15,7 @@ import {
   listViewerOverlayContributions,
   listWorkspaceViewContributions,
   listShortcutContributions,
+  listPluginUiFrameContributions,
   registerManifestContributions,
 } from '../../src/plugins/plugin-contributions';
 import { pluginManifestSchema } from '../../src/plugins/plugin-manifest';
@@ -672,6 +673,46 @@ describe('plugin Contributions', () => {
       title: 'Settings page probe',
       entryPath: 'entry/ui/settings-page.html',
     }]);
+  });
+
+  it('includes dialog HTML entries in the plugin UI frame allowlist', () => {
+    const registry = createContributionRegistry();
+
+    registerManifestContributions(registry, {
+      pluginInstanceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      libraryId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      pluginId: 'com.example.dialog',
+      contributes: {
+        commands: [],
+        menus: {},
+        toolbar: [],
+        inspector: [],
+        viewerActions: [],
+        shortcuts: [],
+        views: [],
+        settings: [],
+        hooks: [],
+        jobs: [],
+        providers: [],
+        themes: [],
+        dialogs: [{
+          id: 'compress',
+          title: 'Compress',
+          entry: 'entry/ui/panel.html',
+          width: 520,
+          height: 680,
+        }],
+      },
+    });
+
+    expect(listPluginUiFrameContributions(registry)).toEqual([
+      expect.objectContaining({
+        id: 'com.example.dialog.aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.compress',
+        pluginId: 'com.example.dialog',
+        pluginInstanceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        entryPath: 'entry/ui/panel.html',
+      }),
+    ]);
   });
 
   it('registers shortcut contributions and skips reserved accelerators', () => {

@@ -9,7 +9,7 @@ import {
 const RESERVATION_UNIT = 8 * 1024 * 1024;
 
 describe("media native memory budget", () => {
-  it("estimates known raster inputs from pixels and bounded source staging", () => {
+  it("estimates decoded rasters without imposing a source-size gate", () => {
     const unknown = estimateMediaNativeMemoryBytes({ decoder: "sharp" });
     const small = estimateMediaNativeMemoryBytes({
       decoder: "sharp",
@@ -19,7 +19,12 @@ describe("media native memory budget", () => {
     });
     const larger = estimateMediaNativeMemoryBytes({
       decoder: "sharp",
-      sourceByteSize: 40 * 1024 * 1024,
+      sourceByteSize: Number.MAX_SAFE_INTEGER,
+      width: 4_096,
+      height: 4_096,
+    });
+    const sameRasterWithoutSourceBytes = estimateMediaNativeMemoryBytes({
+      decoder: "sharp",
       width: 4_096,
       height: 4_096,
     });
@@ -33,6 +38,7 @@ describe("media native memory budget", () => {
 
     expect(small).toBeLessThan(unknown);
     expect(larger).toBeGreaterThan(small);
+    expect(larger).toBe(sameRasterWithoutSourceBytes);
     expect(twoRasterCopies).toBeGreaterThan(larger);
     expect(larger).toBeLessThanOrEqual(MEDIA_NATIVE_MEMORY_BUDGET_BYTES);
     expect(estimateMediaNativeMemoryBytes({ decoder: "oiio" })).toBeGreaterThan(unknown);

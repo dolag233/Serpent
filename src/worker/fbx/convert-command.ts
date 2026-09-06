@@ -1,17 +1,12 @@
 import {
-  FBX_CONVERT_TIMEOUT_MS,
   FBX_GLB_ARTIFACT_KIND,
   FBX_GLB_GENERATOR_VERSION,
-  FBX_MAX_TRIANGLES,
   type FbxConversionStats,
   type FbxConvertErrorCode,
 } from '../../shared/fbx-conversion';
 import { LibraryServiceError } from '../library-service';
 import type { LibraryService } from '../library-service';
 import { convertFbxToGlb, resolveConvertedGlb } from './converter';
-
-/** Hard cap for the GLB artifact (matches the bridge output cap). */
-export const FBX_GLB_MAX_BYTES = 1024 * 1024 * 1024;
 
 /** Result payload returned to the Renderer for the `model.convert-fbx` command. */
 export type FbxConvertCommandResult =
@@ -83,23 +78,9 @@ async function runConversion(
     throw error;
   }
 
-  // The WASM bridge is synchronous once started; the timeout guards the whole
-  // pipeline (including the module load and the fs reads). A timed-out task
-  // keeps occupying its module-queue slot until it finishes, which is the
-  // documented cost of single-flight serialization.
-  const conversion = convertFbxToGlb({
-    sourcePath,
-    maxTriangles: FBX_MAX_TRIANGLES,
-  });
-  let result: Awaited<typeof conversion>;
-  try {
-    result = await withTimeout(conversion, FBX_CONVERT_TIMEOUT_MS);
-  } catch (error) {
-    if (isTimeoutError(error)) {
-      return { status: 'failed', errorCode: 'FBX_CONVERSION_TIMEOUT' };
-    }
-    throw error;
-  }
+  // The WASM bridge and its serialized module queue are local, disk-bound
+  // work. Do not turn an arbitrary wall-clock guess into a conversion failure.
+  const result = await convertFbxToGlb({ sourcePath });
 
   if (!result.ok) {
     return { status: 'failed', errorCode: result.failure.errorCode, reason: result.failure.reason };
@@ -114,7 +95,6 @@ async function runConversion(
       mimeType: 'model/gltf-binary',
       bytes: result.output.glb,
       generatorVersion: FBX_GLB_GENERATOR_VERSION,
-      maxBytes: FBX_GLB_MAX_BYTES,
     });
   } catch (error) {
     libraryService.reportDiagnostic('fbx-convert.artifact-write', error, {
@@ -136,32 +116,4 @@ async function runConversion(
     missingTextures: result.output.missingTextures,
     warnings: result.output.warnings,
   };
-}
-
-const TIMEOUT_SYMBOL = Symbol('fbx-convert-timeout');
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('timeout', { cause: TIMEOUT_SYMBOL })), ms);
-    timer.unref?.();
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error: unknown) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
-}
-
-function isTimeoutError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'cause' in error &&
-    (error as { cause: unknown }).cause === TIMEOUT_SYMBOL
-  );
 }

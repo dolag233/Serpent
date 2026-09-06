@@ -455,8 +455,7 @@ const AssetPreviewModalContent = forwardRef<
         // also means the normal "direct playback is approved" polling gate
         // may stop before the proxy-ready event arrives. An explicit fallback
         // owns its refresh loop until the ready proxy is observable.
-        const deadline = Date.now() + 60_000;
-        while (Date.now() < deadline) {
+        while (isCurrentRun()) {
           if (!isCurrentRun()) return;
           const preview = await resolvePreview(
             true,
@@ -478,11 +477,13 @@ const AssetPreviewModalContent = forwardRef<
             setProxyFallbackState("loading");
             return;
           }
+          if (preview?.ok && preview.value.status === "failed") {
+            setProxyFallbackState("failed");
+            setError(previewFailureMessage(preview.value, t));
+            return;
+          }
           await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
         }
-        if (!isCurrentRun()) return;
-        setProxyFallbackState("failed");
-        setError(t("preview.proxyFailed"));
       }
     },
     [
@@ -626,8 +627,9 @@ const AssetPreviewModalContent = forwardRef<
             (asset.mediaType === "video"
               ? "webm_proxy"
               : asset.mediaType === "audio"
-                ? "audio_proxy"
-                : "thumbnail"),
+              ? "audio_proxy"
+              : "thumbnail"),
+          signal: viewerSessionController.current(viewerIdentity)?.signal,
         });
         await resolvePreview(
           false,
@@ -640,7 +642,8 @@ const AssetPreviewModalContent = forwardRef<
           setError(retainedPlaybackError);
         }
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       setError(t("preview.retryFailedNoResponse"));
     } finally {
       setRetrying(false);
@@ -708,6 +711,28 @@ const AssetPreviewModalContent = forwardRef<
 
   function handlePlaybackError(event: SyntheticEvent<HTMLMediaElement>) {
     const mediaError = event.currentTarget.error;
+    // Serpent-68d5fd: 视频播放失败的诊断——记录 resolution 快照与媒体错误，
+    // 用于定位间歇性「预览不可用」（已适配 mp4 偶发，需日志证据）。
+    try {
+      console.error(
+        "viewer.playback-error",
+        JSON.stringify({
+          assetId: asset.assetId,
+          mediaType: asset.mediaType,
+          mediaErrorCode: mediaError?.code ?? null,
+          mediaErrorMessage: mediaError?.message ?? null,
+          resolutionStatus: resolution?.status ?? null,
+          resolutionHasUrl: resolution?.url != null,
+          resolutionPlaybackMode: resolution?.playbackMode ?? null,
+          resolutionToken: resolution?.playbackToken ?? null,
+          resolutionErrorCode: resolution?.errorCode ?? null,
+          resolutionCodecs: resolution?.sourceCodecs ?? null,
+          proxyFallbackState,
+        }),
+      );
+    } catch {
+      // Diagnostics must never break playback error handling.
+    }
     // Seek/scrub cancels in-flight Range fetches; Chromium reports ABORTED.
     // Do not paint a fatal overlay or kick proxy generation for that race.
     if (isTransientMediaPlaybackError(mediaError)) {
@@ -1007,30 +1032,21 @@ const AssetPreviewModalContent = forwardRef<
                 }
               }}
               onPlaying={(video) => {
-                // An unsupported custom source can emit `play` immediately
-                // and only publish MEDIA_ERR_4 later. Poll briefly so an
-                // early play event cannot remove the retry surface before the
-                // media element settles.
-                const startedAt = Date.now();
-                const confirmPlayable = () => {
-                  if (
-                    video.error ||
-                    !video.isConnected ||
-                    video.readyState < HTMLMediaElement.HAVE_METADATA ||
-                    video.videoWidth <= 0 ||
-                    video.videoHeight <= 0
-                  ) {
-                    return;
-                  }
-                  if (Date.now() - startedAt < 5_000) {
-                    window.setTimeout(confirmPlayable, 100);
-                    return;
-                  }
-                  playbackErrorRef.current = null;
-                  setManualRetryError(null);
-                  setError(null);
-                };
-                confirmPlayable();
+                // `playing` is the media element's own readiness signal. Do
+                // not add a wall-clock confirmation window here: a slow local
+                // file or a large proxy is valid for as long as the element
+                // needs to decode it. If the source later emits a real error,
+                // handlePlaybackError restores the retry surface.
+                if (
+                  video.error ||
+                  !video.isConnected ||
+                  video.readyState < HTMLMediaElement.HAVE_METADATA ||
+                  video.videoWidth <= 0 ||
+                  video.videoHeight <= 0
+                ) return;
+                playbackErrorRef.current = null;
+                setManualRetryError(null);
+                setError(null);
               }}
               onRotate={rotateViewer}
               onSwipeNext={onNext}
@@ -1238,6 +1254,7 @@ const AssetPreviewModalContent = forwardRef<
           ) : null}
           <PluginViewerActionButtons
             assetId={asset.assetId}
+            asset={asset}
             context={pluginContributionContext}
             libraryId={libraryId}
             pluginApi={pluginApi}
@@ -1269,15 +1286,6 @@ const AssetPreviewModalContent = forwardRef<
                 type="button"
               >
                 <Icon name="chevron-right" size={28} />
-              </button>
-              <button
-                aria-label={t("preview.closeViewer")}
-                className={`preview-close-chip preview-chrome-fade is-${chromeContrast.close}`}
-                onClick={() => void requestClose()}
-                tabIndex={VIEWER_CHROME_TAB_INDEX}
-                type="button"
-              >
-                <Icon name="close" size={18} />
               </button>
             </>
           ) : null}

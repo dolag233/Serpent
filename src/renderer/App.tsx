@@ -71,6 +71,11 @@ import { LibrarySwitcher, buildRecentLibraryMenuEntries, type RecentLibraryMenuE
 import {
   LibraryLoadingOverlay,
 } from "./LibraryLoadingOverlay";
+import { ImportProgressOverlay } from "./ImportProgressOverlay";
+import { DeleteProgressOverlay } from "./DeleteProgressOverlay";
+import { BlockingProgressOverlay } from "./BlockingProgressOverlay";
+import { isBlockingImportOverlayVisible } from "./import-progress-copy";
+import { isActiveDeleteProgress, isDeleteProgressCancelable } from "./delete-progress-copy";
 import { activeLibrarySwitchActivity } from "./library-switch-safety";
 import { createLibraryTransitionLock } from "./library-transition-lock";
 import {
@@ -98,7 +103,7 @@ import {
   buildLinkedFolderBreadcrumbTrail,
   buildManagedFolderBreadcrumbTrail,
 } from "./folder-breadcrumb-trail";
-import { folderBrowseScope } from "./folder-browse-scope";
+import { folderBrowseScope, folderSearchScope } from "./folder-browse-scope";
 import {
   linkedDirectoryName,
   linkedRevealFolderId,
@@ -121,6 +126,22 @@ import {
   saveFolderRecursivePreferences,
   withFolderRecursiveEnabled,
 } from "./folder-recursive-preferences";
+import {
+  hasFeatureHintBeenShown,
+  isFeatureHintEnabled,
+  loadFeatureHintPreferences,
+  saveFeatureHintPreferences,
+  withFeatureHintShown,
+} from "./feature-hint-preferences";
+import {
+  recursiveSubfoldersHintKey,
+  shouldFlashRecursiveSubfoldersHint,
+} from "./recursive-subfolders-hint";
+import {
+  LINKED_FOLDER_ADD_HINT_KEY,
+  shouldShowLinkedFolderAddHint,
+} from "./linked-folder-add-hint";
+import { resolveSearchFolderResults } from "./search-folder-results";
 import { useT, useLocale, translateForLocale, type AppLocale } from "./i18n";
 import type { AiApiFormat } from "../shared/ai-endpoints";
 import type { ApplicationMenuCommand } from "../shared/application-menu";
@@ -225,6 +246,7 @@ import { AiConnectionFailureDialog } from "./AiConnectionFailureDialog";
 import { FatalAlertDialog } from "./FatalAlertDialog";
 import { useAiConnectionFailure } from "./use-ai-connection-failure";
 import {
+  countOtherLivePluginJobs,
   hasActivePluginJobs,
   selectPluginJobActivity,
 } from "./plugin-job-activity";
@@ -285,6 +307,7 @@ import {
   PluginSidebarViewPanel,
   usePluginSidebarViews,
 } from "./plugin-sidebar-views";
+import { PluginUiDialogHost } from "./plugin-ui-dialog-host";
 import { PluginWorkspaceViews } from "./plugin-workspace-views";
 import { useExternalImportHandlers } from "./use-external-import-handlers";
 import { useFolderDragDropHandlers } from "./use-folder-drag-drop-handlers";
@@ -350,6 +373,7 @@ import type {
   CollectionSummary,
   FilterClause,
   FolderBrowseEntry,
+  IgnoredPath,
   LinkedFolderRule,
   LinkedFolderSummary,
   ManagedFolderSummary,
@@ -382,6 +406,7 @@ import type {
   ExportProgressEvent,
   ImportProgressEvent,
   SyncProgressEvent,
+  DeleteProgressEvent,
 } from "../shared/protocol/responses";
 import { AssetPreviewModal, type AssetPreviewModalHandle } from "./AssetPreviewModal";
 import { TextAssetPreviewTile } from "./TextAssetPreviewTile";
@@ -423,8 +448,6 @@ import {
 } from "./browse/virtual-browse-layout";
 import { formatBytes, formatShortDate } from "./format-file-meta";
 import {
-  isLibraryOpenTransferKind,
-  libraryTransferHeadlineKey,
   libraryTransferKindFromOperation,
   type LibraryTransferKind,
 } from "./library-transfer-progress";
@@ -918,6 +941,73 @@ function AppInner() {
   const [folderRecursivePrefs, setFolderRecursivePrefs] = useState(() =>
     loadFolderRecursivePreferences(),
   );
+  // Serpent-b8a853: one-time feature hints for hidden UI affordances share a
+  // global switch (Settings → Feature hints) and per-key "seen" marks.
+  const [featureHintPrefs, setFeatureHintPrefs] = useState(() =>
+    loadFeatureHintPreferences(),
+  );
+  // Linked-folder "new user" hint: after adding a normal folder, briefly pulse
+  // the sidebar 导入链接文件夹 entry. Dismissed permanently by hovering it
+  // >0.5s or by actually importing a linked folder.
+  const [linkedFolderHintActive, setLinkedFolderHintActive] = useState(false);
+  const linkedFolderHintStopTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
+  const linkedFolderHintHoverTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
+  const includeSubfoldersHoverTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
+  const linkedFolderAddHintEligible =
+    shouldShowLinkedFolderAddHint({
+      hintsEnabled: isFeatureHintEnabled(featureHintPrefs),
+      alreadyDismissed: hasFeatureHintBeenShown(
+        featureHintPrefs,
+        LINKED_FOLDER_ADD_HINT_KEY,
+      ),
+      hasLinkedFolders: linkedFolders.length > 0,
+    });
+  useEffect(
+    () => () => {
+      if (linkedFolderHintStopTimerRef.current) {
+        clearTimeout(linkedFolderHintStopTimerRef.current);
+      }
+      if (linkedFolderHintHoverTimerRef.current) {
+        clearTimeout(linkedFolderHintHoverTimerRef.current);
+      }
+      if (includeSubfoldersHoverTimerRef.current) {
+        clearTimeout(includeSubfoldersHoverTimerRef.current);
+      }
+    },
+    [],
+  );
+  // Hovering a highlighted affordance for >0.5s dismisses that hint
+  // permanently (shared "all highlights" rule, Serpent-b8a853).
+  const linkedFolderHintShow =
+    linkedFolderHintActive && linkedFolderAddHintEligible;
+  const beginLinkedFolderHintHover = (): void => {
+    linkedFolderHintHoverTimerRef.current = setTimeout(() => {
+      linkedFolderHintHoverTimerRef.current = null;
+      setLinkedFolderHintActive(false);
+      if (linkedFolderHintStopTimerRef.current) {
+        clearTimeout(linkedFolderHintStopTimerRef.current);
+        linkedFolderHintStopTimerRef.current = null;
+      }
+      const next = withFeatureHintShown(
+        featureHintPrefs,
+        LINKED_FOLDER_ADD_HINT_KEY,
+      );
+      setFeatureHintPrefs(next);
+      saveFeatureHintPreferences(next);
+    }, 500);
+  };
+  const endLinkedFolderHintHover = (): void => {
+    if (linkedFolderHintHoverTimerRef.current) {
+      clearTimeout(linkedFolderHintHoverTimerRef.current);
+      linkedFolderHintHoverTimerRef.current = null;
+    }
+  };
   const [collectionEditor, setCollectionEditor] = useState<{
     collectionId: string;
     description: string;
@@ -1003,6 +1093,69 @@ function AppInner() {
   const [searchSnippets, setSearchSnippets] = useState<Map<string, string>>(
     new Map(),
   );
+  // Serpent-f74e48: while a text term is present, surface matching folders
+  // (name or relative path) as a "Folders" section above the asset grid.
+  const searchFolderResults = useMemo(() => {
+    if (searchValue.trim() === "") return [];
+    return resolveSearchFolderResults({
+      query: parseSearchExpression(searchValue),
+      folders,
+      linkedFolders,
+    });
+  }, [searchValue, folders, linkedFolders]);
+  // Serpent-f74e48: fetch the real FolderBrowseEntry (cover previews + counts)
+  // for search-matched folders so the reused asset-browser folder cards show
+  // the same previews as normal browsing. Enrichment is keyed by the matched
+  // ref set so a slow older response never overwrites a newer search.
+  const searchFolderMatchKey = searchFolderResults.length
+    ? searchFolderResults
+        .map((result) => `${result.locationKind}:${result.folderId}`)
+        .join("|")
+    : null;
+  const [searchFolderRealKey, setSearchFolderRealKey] = useState<string | null>(
+    null,
+  );
+  const [searchFolderRealEntries, setSearchFolderRealEntries] = useState<
+    FolderBrowseEntry[]
+  >([]);
+  const searchFolderEntriesKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!api || !library || searchFolderMatchKey === null) return;
+    searchFolderEntriesKeyRef.current = searchFolderMatchKey;
+    let cancelled = false;
+    void api
+      .listFolderEntriesByRefs({
+        libraryId: library.libraryId,
+        refs: searchFolderResults.map((result) => ({
+          locationKind: result.locationKind,
+          folderId: result.folderId,
+        })),
+      })
+      .then((result) => {
+        if (
+          !cancelled &&
+          result.ok &&
+          searchFolderEntriesKeyRef.current === searchFolderMatchKey
+        ) {
+          setSearchFolderRealKey(searchFolderMatchKey);
+          setSearchFolderRealEntries(result.value);
+        }
+      })
+      .catch(() => {
+        // Enrichment is best-effort: fall back to the lightweight entries.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [searchFolderMatchKey, searchFolderResults, library, api]);
+  // Serpent-b8a853: one-time hint for the include-subfolders icon. The hint
+  // key is per (library, folder scope); the actual flash decision needs the
+  // browse canvas mode (folders-only = child-folder cards but zero direct
+  // assets) which is computed below with browseCanvasBodyLayout.
+  const recursiveHintKey =
+    library && assetScope !== "all" && assetScope !== "root"
+      ? recursiveSubfoldersHintKey(library.libraryId, assetScope)
+      : null;
   const { open: openContextMenu, close: closeContextMenu } =
     useContextMenu();
   const hadDiscoveryInput = useRef(false);
@@ -1272,6 +1425,8 @@ function AppInner() {
     useState<ImportProgressEvent | null>(null);
   const importProgressRef = useRef(importProgress);
   importProgressRef.current = importProgress;
+  const [deleteProgress, setDeleteProgress] =
+    useState<DeleteProgressEvent | null>(null);
   const [libraryTransferKind, setLibraryTransferKind] = useState<LibraryTransferKind>("import");
   const [libraryTransferName, setLibraryTransferName] = useState("");
 
@@ -1289,6 +1444,7 @@ function AppInner() {
       setPluginContributionEpoch((current) => current + 1);
     });
   }, []);
+  const pluginManagerApi = (window as RendererWindow).serpent?.plugins;
   const pluginSidebarViews = usePluginSidebarViews(
     (window as RendererWindow).serpent?.plugins,
     library?.libraryId,
@@ -1316,6 +1472,7 @@ function AppInner() {
   const [librarySettingsOpen, setLibrarySettingsOpen] = useState(false);
   const [openSyncLibraryOpen, setOpenSyncLibraryOpen] = useState(false);
   const [gitignoreContent, setGitignoreContent] = useState("");
+  const [ignoredPaths, setIgnoredPaths] = useState<IgnoredPath[]>([]);
   /** 同步传输进度（手动/自动），供资源库设置同步页显示进度条与速度。 */
   const [syncProgress, setSyncProgress] = useState<SyncProgressEvent | null>(null);
   const syncProgressRef = useRef(syncProgress);
@@ -1874,6 +2031,7 @@ function AppInner() {
     window.addEventListener("keydown", handleDragCancel);
     return () => window.removeEventListener("keydown", handleDragCancel);
   }, [draggedMemberId]);
+  const [pluginUiDialogOpen, setPluginUiDialogOpen] = useState(false);
   const [thumbnailFailures, setThumbnailFailures] = useState<
     Map<string, string>
   >(new Map());
@@ -1889,6 +2047,10 @@ function AppInner() {
     pluginJobActivityCandidate?.jobId === hiddenPluginJobActivityId
       ? null
       : pluginJobActivityCandidate;
+  const pluginJobQueuedMore = countOtherLivePluginJobs(
+    pluginJobs,
+    pluginJobActivity?.jobId,
+  );
   const backgroundJobsActive = useMemo(() => {
     if (aiAnalyzing) return true;
     const mediaActive =
@@ -2251,6 +2413,10 @@ function AppInner() {
     browse: pluginBrowseScope,
     viewer: pluginViewerState,
   }), [busy, library?.libraryId, locale, pluginBrowseScope, pluginViewerState, selectedAssetIds, visibleAssets]);
+  const selectedVisibleAssets = useMemo(
+    () => visibleAssets.filter((asset) => selectedAssetIds.includes(asset.assetId)),
+    [selectedAssetIds, visibleAssets],
+  );
 
   // Serpent-6pcd: assets at the current trash hop only (no source-folder grouping).
   const assetRenderSections = useMemo(
@@ -2361,6 +2527,34 @@ function AppInner() {
     visibleAssets.length,
     canvasFolderBrowseEntries.length,
   );
+
+  // Serpent-b8a853: the include-subfolders hint pulses only for the folder-scope
+  // button (not the collection variant), in a folder browsing mode that shows
+  // child-folder cards but zero direct assets, while the recursive toggle is
+  // off, the global feature-hint switch is on, and the hint is not yet
+  // dismissed (the user has never expanded this folder's subfolders). The
+  // pulse is a pure derived state, so it keeps breathing while the condition
+  // holds and stops the moment the user enables recursive for the folder.
+  const recursiveHintActive =
+    recursiveHintKey !== null &&
+    assetScope !== "all" &&
+    assetScope !== "root" &&
+    !showTrash &&
+    !showTagManagement &&
+    !showPluginSidebarView &&
+    !activeTagId &&
+    !activeCollectionId &&
+    !activeSmartCollectionId &&
+    shouldFlashRecursiveSubfoldersHint({
+      recursiveEnabled: folderRecursive,
+      hintsEnabled: isFeatureHintEnabled(featureHintPrefs),
+      alreadyDismissed: hasFeatureHintBeenShown(
+        featureHintPrefs,
+        recursiveHintKey,
+      ),
+      hasChildFoldersWithoutDirectAssets:
+        browseCanvasBodyLayout.mode === "folders-only",
+    });
 
   const visibleAssetById = useMemo(() => {
     const map = new Map<string, (typeof visibleAssets)[number]>();
@@ -3008,7 +3202,24 @@ function AppInner() {
     setSelectedAssetId(asset.assetId);
     selectionAnchorRef.current = asset.assetId;
     setPreviewAsset(asset);
-  }, [selectionAnchorRef, wakeViewerChrome]);
+    // Serpent-b7e173：打开查看器注册一个历史状态。已是 preview（重复打开）则
+    // 原地替换，避免叠层 preview；applyWorkspaceLocation 回放时 suppress 不重复记。
+    if (!suppressNavHistoryRef.current) {
+      const previewLocation: WorkspaceNavLocation = {
+        kind: "preview",
+        assetId: asset.assetId,
+      };
+      if (navHistoryRef.current.current.kind === "preview") {
+        navHistoryRef.current.replaceCurrent(previewLocation);
+      } else {
+        navHistoryRef.current.push(previewLocation);
+      }
+      setNavHistoryUi({
+        canBack: navHistoryRef.current.canBack,
+        canForward: navHistoryRef.current.canForward,
+      });
+    }
+  }, [navHistoryRef, selectionAnchorRef, setNavHistoryUi, suppressNavHistoryRef, wakeViewerChrome]);
 
   const persistAssetColorSpace = useCallback(async (assetId: string, colorSpace: string | null) => {
     if (!api || !library) return;
@@ -3030,7 +3241,18 @@ function AppInner() {
     selectionAnchorRef.current = asset.assetId;
     previewFocusReturnRef.current = asset.assetId;
     setPreviewAsset(asset);
-  }, [selectionAnchorRef]);
+    // Serpent-b7e173：查看器内切资产只更新当前 preview 条目的 assetId，不新增历史。
+    if (!suppressNavHistoryRef.current) {
+      navHistoryRef.current.replaceCurrent({
+        kind: "preview",
+        assetId: asset.assetId,
+      });
+      setNavHistoryUi({
+        canBack: navHistoryRef.current.canBack,
+        canForward: navHistoryRef.current.canForward,
+      });
+    }
+  }, [navHistoryRef, selectionAnchorRef, setNavHistoryUi, suppressNavHistoryRef]);
 
   const closeAssetPreview = useCallback(async (restoreBrowsePosition = true) => {
     // A scope transition can arrive after React has already cleared
@@ -3044,6 +3266,17 @@ function AppInner() {
     const closingAsset = previewAsset;
     if (!closingAsset) return;
     if (closingPreviewRef.current === closingAsset.assetId) return;
+    // Serpent-b7e173：查看器被关闭时（无论 X/Esc 显式关还是导航触发），若当前
+    // 历史条目仍是 preview 则硬移除——否则「从预览导航到别处」会残留一个已关闭
+    // 的 preview，导致 back 回到它。back()/forward() 已移 index（当前非 preview）
+    // 或导航 push 会截断，不在此重复处理。
+    if (navHistoryRef.current.current.kind === "preview") {
+      navHistoryRef.current.dismissCurrent();
+      setNavHistoryUi({
+        canBack: navHistoryRef.current.canBack,
+        canForward: navHistoryRef.current.canForward,
+      });
+    }
     const closeGeneration = ++previewCloseGenerationRef.current;
     closingPreviewRef.current = closingAsset.assetId;
     previewRestoringRef.current = restoreBrowsePosition;
@@ -3169,7 +3402,7 @@ function AppInner() {
         closingPreviewRef.current = null;
       }
     }
-  }, [api, library, previewAsset]);
+  }, [api, library, navHistoryRef, previewAsset, setNavHistoryUi]);
 
   // Collection tree helper
   const collectionTree = useMemo(() => {
@@ -4003,17 +4236,39 @@ function AppInner() {
       case "trash":
         await enterTrashAt(location.tombstoneId);
         return;
+      case "preview": {
+        // 回放查看器状态：preview 条目总是在某浏览 scope 之后打开，其资产应在
+        // 当前视图（assets/visibleAssets）中；找不到（已删除/被过滤）则把这条
+        // 失效 preview 从历史移除（dismissCurrent，当前正是栈顶 preview），
+        // 让 current 落回下层浏览 scope，避免留下幽灵 preview。
+        const target = [...visibleAssets, ...assets].find(
+          (candidate) => candidate.assetId === location.assetId,
+        );
+        if (target) {
+          openAssetPreview(target);
+        } else {
+          navHistoryRef.current.dismissCurrent();
+          syncNavHistoryUi();
+        }
+        return;
+      }
+      case "tag-management":
+        await enterTagManagement();
+        return;
     }
   }
 
   async function goWorkspaceBack() {
-    if (previewAsset) {
-      await closeAssetPreview();
-      return;
-    }
     const location = navHistoryRef.current.back();
     if (!location) return;
     syncNavHistoryUi();
+    if (previewAsset) {
+      // Serpent-b7e173：查看器是从当前浏览 scope 打开的，back() 已把 index 移出
+      // preview。浏览界面本就显示在查看器下层，直接关查看器恢复滚动位置即可，
+      // 不要走 applyWorkspaceLocation → chooseFolder 的全量重载（会把滚动归零）。
+      await closeAssetPreview();
+      return;
+    }
     suppressNavHistoryRef.current = true;
     try {
       await applyWorkspaceLocation(location);
@@ -4023,10 +4278,9 @@ function AppInner() {
   }
 
   async function goWorkspaceForward() {
-    if (previewAsset) {
-      await closeAssetPreview();
-      return;
-    }
+    // 前进只走历史（Serpent-b7e173）。查看器开着时 preview 必在栈顶，
+    // forward() 返回 null；能前进时查看器必然已关（back 或导航已离开），
+    // 故前进无需任何 preview 特判；前进到 preview 由 applyWorkspaceLocation 重开查看器。
     const location = navHistoryRef.current.forward();
     if (!location) return;
     syncNavHistoryUi();
@@ -4606,6 +4860,8 @@ function AppInner() {
       if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
       if (!isCurrentLibraryView(viewSession)) return;
       setTags(tagResult.value);
+      // Serpent-b7e173：进入标签管理注册历史状态（apply 回放时被 suppress）。
+      recordNavigation({ kind: "tag-management" });
     } catch (caught) {
       if (isCurrentLibraryView(viewSession)) {
         setError(toMessage(caught, t("toast.readTagAssetsFailed"), locale));
@@ -5676,23 +5932,18 @@ function AppInner() {
     );
   }
 
-  function currentSearchScope(): SearchScope | undefined {
+  function currentSearchScope(
+    recursivelySearchFolders = false,
+  ): SearchScope | undefined {
     if (activeCollectionId)
       return {
         kind: "collection",
         collectionId: activeCollectionId,
         recursive: collectionRecursive,
       };
-    if (assetScope === "root")
-      return { kind: "folder", folderId: null, recursive: false };
-    if (assetScope !== "all")
-      // REQ-FOLDER-009 / REQ-FILTER-012: folder search follows the same switch.
-      return {
-        kind: "folder",
-        folderId: assetScope,
-        recursive: folderRecursive,
-      };
-    return undefined;
+    return recursivelySearchFolders
+      ? folderSearchScope(assetScope)
+      : folderBrowseScope(assetScope, folderRecursive);
   }
 
   async function reloadCurrentContent(options?: {
@@ -5719,7 +5970,7 @@ function AppInner() {
       : currentQueryDefinition();
     await loadContent(library, assetScope, {
       discovery,
-      searchScope: currentSearchScope(),
+      searchScope: currentSearchScope(discovery.search !== undefined),
       blockingLibraryLoad: options?.blockingNavigation,
     });
   }
@@ -6202,6 +6453,20 @@ function AppInner() {
       handleAssetsDroppedOnFolder(folderId, assetIds, mode),
   });
 
+  // Paste-into-folder entry shared by the keyboard shortcut, Edit menu, and
+  // context menus: the clipboard may hold a bitmap image (invisible to the
+  // paste event on Windows) or OS file paths — try the image first and fall
+  // back to OS file paste. Serpent-a3de58.
+  const dispatchClipboardPaste = useCallback(
+    (destination: string | null) => {
+      void pasteClipboardImage({
+        targetFolderId: destination ?? undefined,
+        onNoClipboardImage: () => pasteOsClipboardFiles(destination),
+      });
+    },
+    [pasteClipboardImage, pasteOsClipboardFiles],
+  );
+
   const {
     assetRenameDialog,
     openAssetRename,
@@ -6371,7 +6636,9 @@ function AppInner() {
   async function executeSearchDefinition(definition: SearchDefinition) {
     if (!api || !library) return;
     const requestGeneration = ++searchRequestGenerationRef.current;
-    const searchScope = currentSearchScope();
+    // Resolve once so the first page and every subsequent page use exactly
+    // the same scope even if sidebar state changes while the request is live.
+    const searchScope = currentSearchScope(definition.search !== undefined);
     const result = await api.openBrowseSession({
       libraryId: library.libraryId,
       query: definition.search ?? null,
@@ -6704,7 +6971,10 @@ function AppInner() {
               autoDetectImageSequences: imageSequencePrefs.autoDetectOnImport,
             });
       if (!result.ok) {
-        if (result.error.code === "CANCELLED") return;
+        if (result.error.code === "CANCELLED") {
+          setNotice(t("toast.importCancelled"));
+          return;
+        }
         throw new LibraryOperationError(result.error);
       }
       if (isImportConflictPlan(result.value)) {
@@ -6725,6 +6995,7 @@ function AppInner() {
         toMessage(caught, t("toast.importFailed"), locale),
       );
     } finally {
+      setImportProgress(null);
       setUiState("ready");
     }
   }
@@ -6733,22 +7004,15 @@ function AppInner() {
     if (!api || !library || importProgress) return;
     const startedAt = Date.now();
     setLibraryTransferKind("import");
-    setImportProgress({
-      type: "import.progress",
-      importId: "",
-      phase: "validate",
-      cancelable: true,
-      filesProcessed: 0,
-      totalFiles: 0,
-      bytesProcessed: 0,
-      totalBytes: 0,
-    });
     setError(null);
     setNotice(null);
     try {
       const result = await api.importEagleLibrary({ libraryId: library.libraryId });
       if (!result.ok) {
-        if (result.error.code === "CANCELLED") return;
+        if (result.error.code === "CANCELLED") {
+          setNotice(t("toast.importCancelled"));
+          return;
+        }
         throw new LibraryOperationError(result.error);
       }
       setNotice(importSummaryMessage(result.value, locale));
@@ -6770,22 +7034,15 @@ function AppInner() {
     if (!api || !library || importProgress) return;
     const startedAt = Date.now();
     setLibraryTransferKind("import");
-    setImportProgress({
-      type: "import.progress",
-      importId: "",
-      phase: "validate",
-      cancelable: true,
-      filesProcessed: 0,
-      totalFiles: 0,
-      bytesProcessed: 0,
-      totalBytes: 0,
-    });
     setError(null);
     setNotice(null);
     try {
       const result = await api.importBillfishLibrary({ libraryId: library.libraryId });
       if (!result.ok) {
-        if (result.error.code === "CANCELLED") return;
+        if (result.error.code === "CANCELLED") {
+          setNotice(t("toast.importCancelled"));
+          return;
+        }
         throw new LibraryOperationError(result.error);
       }
       setNotice(importSummaryMessage(result.value, locale));
@@ -6967,6 +7224,14 @@ function AppInner() {
         throw new LibraryOperationError(result.error);
       }
       setNotice(t("toast.linkedFolderCreated", { name: result.value.displayName }));
+      // Using the linked-folder feature once dismisses this hint permanently.
+      const dismissedHint = withFeatureHintShown(
+        featureHintPrefs,
+        LINKED_FOLDER_ADD_HINT_KEY,
+      );
+      setFeatureHintPrefs(dismissedHint);
+      saveFeatureHintPreferences(dismissedHint);
+      setLinkedFolderHintActive(false);
       // The new linked-folder row is part of the navigation snapshot, not the
       // primary asset page. Wait for that snapshot here so the completed
       // operation never reports success while the sidebar still looks stale.
@@ -7602,6 +7867,7 @@ function AppInner() {
         ignored: input.ignored,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      await refreshIgnoredPaths(library.libraryId);
       await reloadCurrentContent();
       if (input.ignored && input.pathKind === "extension") {
         setNotice(t("toast.ignoreExtensionUpdated", { extension: input.relativePath }));
@@ -7682,7 +7948,14 @@ function AppInner() {
           libraryId: library.libraryId,
           assetIds,
         });
-        if (!result.ok) throw new LibraryOperationError(result.error);
+        if (!result.ok) {
+          if (result.error.code === "CANCELLED") {
+            setNotice(t("toast.diskDeleteCancelled"));
+            await reloadCurrentContent({ blockingNavigation: false });
+            return;
+          }
+          throw new LibraryOperationError(result.error);
+        }
         deletedAssets = result.value.deletedCount;
         const collectionResult = await api.listCollections({
           libraryId: library.libraryId,
@@ -7709,6 +7982,11 @@ function AppInner() {
       playTaskCompletionSound(startedAt);
     } catch (caught) {
       playTaskCompletionSound(startedAt);
+      if (caught instanceof LibraryOperationError && caught.code === "CANCELLED") {
+        setNotice(t("toast.diskDeleteCancelled"));
+        await reloadCurrentContent({ blockingNavigation: false });
+        return;
+      }
       setError(toMessage(caught, t("toast.folderDeleteFromDiskFailed"), locale));
     } finally {
       setUiState("ready");
@@ -8059,6 +8337,19 @@ function AppInner() {
     }
   }
 
+  async function cancelDiskDelete() {
+    if (!api || !deleteProgress?.operationId) return;
+    try {
+      const result = await api.cancelDiskDelete({
+        operationId: deleteProgress.operationId,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setNotice(t("toast.cancellingDiskDelete"));
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.cancelDiskDeleteFailed"), locale));
+    }
+  }
+
   async function cancelImport() {
     if (!api) return;
     if (!importProgress?.importId) {
@@ -8080,15 +8371,6 @@ function AppInner() {
 
   async function startImport() {
     if (!api) return;
-    setImportProgress({
-      type: "import.progress",
-      importId: "",
-      phase: "validate",
-      filesProcessed: 0,
-      totalFiles: 0,
-      bytesProcessed: 0,
-      totalBytes: 0,
-    });
     try {
       const result = await api.importLibrary();
       if (!result.ok) {
@@ -8112,15 +8394,6 @@ function AppInner() {
   async function startImportZip() {
     if (!api) return;
     const startedAt = Date.now();
-    setImportProgress({
-      type: "import.progress",
-      importId: "",
-      phase: "validate",
-      filesProcessed: 0,
-      totalFiles: 0,
-      bytesProcessed: 0,
-      totalBytes: 0,
-    });
     try {
       const result = await api.importLibraryZip();
       if (!result.ok) {
@@ -8224,8 +8497,7 @@ function AppInner() {
   async function completeImportCopy() {
     if (!api || !importValidated) return;
     // Serpent-1tio: the validated dialog must disappear the moment the import
-    // starts; the persistent activity strip (正在导入资源库) is the only
-    // indicator from here until completion.
+    // starts; the blocking import overlay is the only indicator from here until completion.
     const validated = importValidated;
     const startedAt = Date.now();
     setImportValidated(null);
@@ -8517,9 +8789,25 @@ function AppInner() {
             setNotice(t("settings.sync.statusSyncing"));
           }
         }
+      } else if (event.type === "delete.progress") {
+        if (event.phase === "complete" || event.phase === "failed" || event.phase === "cancelled") {
+          setDeleteProgress(null);
+        } else {
+          setDeleteProgress(event);
+        }
       }
     });
   }, [api, setNotice, t]);
+
+  const blockingImportOverlayVisible = isBlockingImportOverlayVisible(
+    uiState,
+    importProgress,
+  );
+  const blockingDeleteOverlayVisible =
+    isActiveDeleteProgress(deleteProgress) && deleteProgress.totalFiles >= 2;
+  const blockingDeleteCancelable = isDeleteProgressCancelable(deleteProgress);
+  const blockingImportCancelable =
+    Boolean(importProgress?.importId) && importProgress?.cancelable !== false;
 
   const dialogEscapeSnapshot = useMemo((): DialogEscapeSnapshot => {
     return {
@@ -8547,6 +8835,10 @@ function AppInner() {
       fatalAlertOpen: Boolean(fatalAlertMessage),
       aiConnectionFailureOpen: aiConnectionFailureGate.open,
       conflictsImportId: conflictPhase ? (conflicts?.importId ?? null) : null,
+      blockingImportOpen: blockingImportOverlayVisible,
+      blockingImportCancelable,
+      blockingDeleteOpen: blockingDeleteOverlayVisible,
+      blockingDeleteCancelable,
     };
   }, [
     assetRenameDialog,
@@ -8574,6 +8866,10 @@ function AppInner() {
     aiConnectionFailureGate.open,
     conflicts?.importId,
     conflictPhase,
+    blockingImportOverlayVisible,
+    blockingImportCancelable,
+    blockingDeleteOverlayVisible,
+    blockingDeleteCancelable,
   ]);
 
   useDialogEscapeDismiss({
@@ -8620,6 +8916,12 @@ function AppInner() {
     setError,
     onDismissFatalAlert: dismissFatalAlert,
     onAbortAiConnectionFailure: onAiConnectionFailureAbort,
+    onCancelBlockingImport: () => {
+      void cancelImport();
+    },
+    onCancelBlockingDelete: () => {
+      void cancelDiskDelete();
+    },
   });
 
   const dialogFocusTrapActive = Boolean(
@@ -8647,7 +8949,14 @@ function AppInner() {
       (mediaJobsOpen && library !== null) ||
       linkedRulesEditor ||
       convertLinkedDialog.folderId ||
-      libraryLoadingVisible,
+      libraryLoadingVisible ||
+      pluginUiDialogOpen ||
+      blockingImportOverlayVisible ||
+      blockingDeleteOverlayVisible ||
+      Boolean(
+        exportProgress &&
+          !["complete", "cancelled", "failed"].includes(exportProgress.phase),
+      ),
   );
   useDialogFocusTrap(
     dialogFocusTrapActive,
@@ -8701,7 +9010,7 @@ function AppInner() {
     onCopyFilePath: (assetId) => {
       void handleCopyFilePath(assetId);
     },
-    onPasteIntoFolder: pasteOsClipboardFiles,
+    onPasteIntoFolder: dispatchClipboardPaste,
     onRevealInFolder: (assetId) => {
       void handleRevealInFolder(assetId);
     },
@@ -8729,6 +9038,7 @@ function AppInner() {
     refreshKey: pluginSidebarRefreshKey,
     previewOpen: Boolean(previewAsset),
     selectedAssetIds,
+    selectedAssets: selectedVisibleAssets,
     context: pluginSurfaceContext,
   });
 
@@ -8849,20 +9159,21 @@ function AppInner() {
       }
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
 
-      const hasImage =
-        event.clipboardData &&
-        Array.from(event.clipboardData.items).some((item) =>
-          item.type.startsWith("image/"),
-        );
-      if (hasImage) {
-        event.preventDefault();
-        void pasteClipboardImage();
-        return;
-      }
-
-      if (browsePasteDestination === undefined) return;
+      // Windows clipboard images are frequently bitmap-only (CF_DIB) that the
+      // renderer's clipboardData never reports as an image item. Delegate
+      // classification to Main's clipboard.readImage(): image first, then OS
+      // file paths, and stay silent when the clipboard holds neither.
       event.preventDefault();
-      pasteOsClipboardFiles(browsePasteDestination);
+      void pasteClipboardImage({
+        targetFolderId:
+          browsePasteDestination === undefined
+            ? managedImportTargetFolderIdRef.current
+            : (browsePasteDestination ?? undefined),
+        onNoClipboardImage: () => {
+          if (browsePasteDestination === undefined) return;
+          pasteOsClipboardFiles(browsePasteDestination);
+        },
+      });
     };
     document.addEventListener("paste", onPaste);
     return () => document.removeEventListener("paste", onPaste);
@@ -8871,6 +9182,7 @@ function AppInner() {
     busy,
     showTrash,
     browsePasteDestination,
+    managedImportTargetFolderIdRef,
     pasteClipboardImage,
     pasteOsClipboardFiles,
   ]);
@@ -9278,10 +9590,24 @@ function AppInner() {
 
   useEffect(() => {
     if (!librarySettingsOpen || !api || !library) return;
-    void api.getGitignore({ libraryId: library.libraryId }).then((gitignoreResult) => {
+    const libraryId = library.libraryId;
+    void Promise.all([
+      api.getGitignore({ libraryId }),
+      api.listIgnoredPaths({ libraryId }),
+    ]).then(([gitignoreResult, ignoredResult]) => {
+      if (libraryRef.current?.libraryId !== libraryId) return;
       if (gitignoreResult.ok) setGitignoreContent(gitignoreResult.value.content);
+      if (ignoredResult.ok) setIgnoredPaths(ignoredResult.value);
     });
   }, [librarySettingsOpen, api, library]);
+
+  const refreshIgnoredPaths = useCallback(async (libraryId: string) => {
+    if (!api) return;
+    const result = await api.listIgnoredPaths({ libraryId });
+    if (result.ok && libraryRef.current?.libraryId === libraryId) {
+      setIgnoredPaths(result.value);
+    }
+  }, [api]);
 
   const probeStoredAiConnection = useCallback(async () => {
     if (!api) return;
@@ -9674,10 +10000,18 @@ function AppInner() {
       }
     };
     void poll();
-    const timer = window.setInterval(() => void poll(), 2_000);
+    const timer = window.setInterval(() => void poll(), 1_000);
+    const onPluginCommandCompleted = (event: Event) => {
+      const detail = (event as CustomEvent<{ libraryId?: string }>).detail;
+      if (!detail?.libraryId || detail.libraryId === library.libraryId) {
+        void poll();
+      }
+    };
+    window.addEventListener("serpent:plugin-command-completed", onPluginCommandCompleted);
     return () => {
       active = false;
       window.clearInterval(timer);
+      window.removeEventListener("serpent:plugin-command-completed", onPluginCommandCompleted);
     };
   }, [api, library]);
 
@@ -9802,6 +10136,7 @@ function AppInner() {
       importFiles: () => void importAssets("files"),
       importFolder: () => void importAssets("folder"),
       importLinkedFolder: () => void importFolderAsLinked(),
+      pasteImage: () => void pasteClipboardImage(),
       importLibrary: () => {
         setOpenLibraryChooserOpen(false);
         setImportLibraryChooserOpen(true);
@@ -9821,7 +10156,7 @@ function AppInner() {
       },
       paste: () => {
         if (browsePasteDestination !== undefined) {
-          pasteOsClipboardFiles(browsePasteDestination);
+          dispatchClipboardPaste(browsePasteDestination);
         }
       },
       selectAll: () => void selectAllBrowseScope(),
@@ -9939,11 +10274,149 @@ function AppInner() {
     return () => document.removeEventListener("keydown", onUndoRedoKeyDown);
   }, [busy, editableTextFocused, operationHistory, undoLastFileOp, redoLastOperation]);
 
+  // Serpent-f74e48: during a text search the ordinary folder-card-row is
+  // reused directly (matching folders appear as the same cards as browsing)
+  // instead of a bespoke "search results" section. The row is hoisted so it
+  // also renders when the asset grid resolves to the empty state (search can
+  // match folders while zero assets match). Folder results are FolderBrowseEntry
+  // and therefore render through the exact same FolderCard as the browser.
+  const searchActive = searchValue.trim() !== "";
+  const folderRowEntries =
+    !showTrash && searchActive && searchFolderResults.length > 0
+      ? searchFolderRealKey === searchFolderMatchKey &&
+        searchFolderRealEntries.length > 0
+        ? searchFolderRealEntries
+        : searchFolderResults
+      : canvasFolderBrowseEntries;
+  const folderCardRowVisible =
+    library !== null && folderRowEntries.length > 0;
+  const folderCardRowElement = folderCardRowVisible ? (
+    <div
+      className={
+        browseCanvasBodyLayout.mode === "folders-only"
+          ? "folder-card-row is-folders-only"
+          : "folder-card-row"
+      }
+      style={
+        {
+          "--folder-card-size": `${folderCardWidthPx}px`,
+          ...(panelResizing && panelReflowFrozenWidthRef.current
+            ? {
+                width: `${panelReflowFrozenWidthRef.current}px`,
+              }
+            : {}),
+        } as CSSProperties
+      }
+    >
+      {folderRowEntries.map((entry) => (
+        <FolderCard
+          draggable={!showTrash}
+          entry={entry}
+          key={entry.folderId}
+          libraryId={library.libraryId}
+          trashed={showTrash}
+          {...(showTrash
+            ? {}
+            : createFolderCardDropHandlers(entry.folderId))}
+          onDragStart={(event) => {
+            const folderIds = resolveDraggedFolderIds(
+              entry.folderId,
+              selectedFolderIds,
+            );
+            event.dataTransfer.setData(
+              MANAGED_FOLDERS_DRAG_TYPE,
+              JSON.stringify(folderIds),
+            );
+            event.dataTransfer.effectAllowed = "move";
+          }}
+          onClick={(folderId, event) => {
+            // During a search a folder-result click enters the folder (the
+            // browse-only selection semantics do not apply in search).
+            if (searchActive) {
+              void chooseFolder(folderId);
+              return;
+            }
+            handleFolderCardClick(folderId, event);
+          }}
+          onContextMenu={(clickedEntry, event) => {
+            event.preventDefault();
+            if (showTrash) {
+              openContextMenu(
+                {
+                  type: "trashed-folder",
+                  tombstoneId: clickedEntry.folderId,
+                  name: clickedEntry.name,
+                  relativePath: clickedEntry.relativePath,
+                },
+                { x: event.clientX, y: event.clientY },
+              );
+              return;
+            }
+            const intent = resolveBrowseContextMenuIntent(
+              { kind: "folder", id: clickedEntry.folderId },
+              {
+                assetIds: selectedAssetIds,
+                folderIds: selectedFolderIds,
+              },
+            );
+            if (intent.type === "single-folder") {
+              setSelectedFolderIds([intent.folderId]);
+              setSelectedAssetIds([]);
+              openContextMenu(
+                {
+                  type: "folder",
+                  folderId:
+                    clickedEntry.linkedFolderId ?? intent.folderId,
+                  name: clickedEntry.name,
+                  locationKind: clickedEntry.locationKind,
+                  linkedRelativePath:
+                    clickedEntry.locationKind === "linked" &&
+                    clickedEntry.relativePath
+                      ? clickedEntry.relativePath
+                      : undefined,
+                },
+                { x: event.clientX, y: event.clientY },
+              );
+              return;
+            }
+            if (intent.type !== "multi") return;
+            openContextMenu(
+              {
+                type: "multi-asset",
+                assetIds: [...intent.assetIds],
+                folderIds: [...intent.folderIds],
+                count:
+                  intent.assetIds.length + intent.folderIds.length,
+              },
+              { x: event.clientX, y: event.clientY },
+            );
+          }}
+          onDoubleClick={(folderId) => {
+            if (showTrash) {
+              const entry = folderRowEntries.find(
+                (item) => item.folderId === folderId,
+              );
+              if (!entry) return;
+              void enterTrashAt(entry.folderId);
+              return;
+            }
+            void chooseFolder(folderId);
+          }}
+          onMouseDown={(event) => {
+            cardMouseDownRef.current = event.button;
+          }}
+          selected={selectedFolderIdSet.has(entry.folderId)}
+        />
+      ))}
+    </div>
+  ) : null;
+
   return (
     <>
     <HoverTipHost />
+    <PluginUiDialogHost onOpenChange={setPluginUiDialogOpen} pluginApi={pluginManagerApi} />
     <EditTextContextMenuHost />
-    {libraryLoading && libraryLoadingVisible ? (
+    {libraryLoading && libraryLoadingVisible && !blockingImportOverlayVisible && !blockingDeleteOverlayVisible ? (
       <LibraryLoadingOverlay
         name={libraryLoading.name}
         operation={libraryLoading.operation}
@@ -9956,6 +10429,52 @@ function AppInner() {
                 setOpenLibraryChooserOpen(true);
               }
         }
+      />
+    ) : null}
+    {blockingImportOverlayVisible ? (
+      <ImportProgressOverlay
+        onCancel={() => {
+          void cancelImport();
+        }}
+        progress={importProgress}
+        transferKind={libraryTransferKind}
+        transferName={libraryTransferName}
+      />
+    ) : null}
+    {blockingDeleteOverlayVisible && !blockingImportOverlayVisible ? (
+      <DeleteProgressOverlay
+        onCancel={() => {
+          void cancelDiskDelete();
+        }}
+        progress={deleteProgress}
+      />
+    ) : null}
+    {exportProgress &&
+    !["complete", "cancelled", "failed"].includes(exportProgress.phase) &&
+    !blockingImportOverlayVisible &&
+    !blockingDeleteOverlayVisible ? (
+      <BlockingProgressOverlay
+        cancelLabel={t("progress.cancelExport")}
+        detail={
+          exportProgress.phase === "snapshot-db"
+            ? t("progress.snapshotDb")
+            : exportProgress.phase === "enumerate"
+              ? t("progress.enumerateFiles")
+              : exportProgress.phase === "compress"
+                ? t("progress.compressing")
+                : t("progress.copyingFiles", {
+                    processed: exportProgress.filesProcessed,
+                    total: exportProgress.totalFiles,
+                    bytesProcessed: formatBytes(exportProgress.bytesProcessed),
+                    bytesTotal: formatBytes(exportProgress.totalBytes),
+                  })
+        }
+        indeterminate={exportProgress.totalFiles <= 0}
+        kind="export"
+        max={exportProgress.totalFiles > 0 ? exportProgress.totalFiles : undefined}
+        onCancel={exportProgress.exportId ? () => void cancelExport() : undefined}
+        title={t("progress.exportingLibrary")}
+        value={exportProgress.totalFiles > 0 ? exportProgress.filesProcessed : undefined}
       />
     ) : null}
     <main
@@ -9974,6 +10493,8 @@ function AppInner() {
         <div className="toolbar-cluster toolbar-workspace-cluster">
           <div className="toolbar-workspace-main">
             <ScopeHistoryButtons
+              // Serpent-b7e173：预览已是历史条目（打开查看器必压在某浏览 scope 上），
+              // 所以后退/前进由纯历史驱动即可，无需对预览做任何特判。
               canBack={navHistoryUi.canBack}
               canForward={navHistoryUi.canForward}
               onBack={() => void goWorkspaceBack()}
@@ -10200,6 +10721,9 @@ function AppInner() {
           setAssetDragPreviewCopyMode(dragPreviewRef.current, copyMode);
         }}
         onImportFolderAsLinked={() => void importFolderAsLinked()}
+        linkedFolderHintActive={linkedFolderHintShow}
+        onLinkedFolderHintHover={beginLinkedFolderHintHover}
+        onLinkedFolderHintHoverEnd={endLinkedFolderHintHover}
         onRelinkFolder={(folderId) => void relinkFolder(folderId)}
         onConvertLinkedDialog={setConvertLinkedDialog}
         onAddCollection={(parentId) => {
@@ -10220,6 +10744,18 @@ function AppInner() {
         onInlineCollectionRenameCancel={cancelInlineCollectionRename}
         onAddFolder={() => {
           cancelInlineSmartCollectionEdit();
+          // Serpent-b8a853: while the user has never used linked folders,
+          // adding an ordinary folder pulses the 导入链接文件夹 entry.
+          if (linkedFolderAddHintEligible) {
+            setLinkedFolderHintActive(true);
+            if (linkedFolderHintStopTimerRef.current) {
+              clearTimeout(linkedFolderHintStopTimerRef.current);
+            }
+            linkedFolderHintStopTimerRef.current = setTimeout(() => {
+              linkedFolderHintStopTimerRef.current = null;
+              setLinkedFolderHintActive(false);
+            }, 8000);
+          }
           openInlineFolderCreate(selectedFolderId ?? null);
         }}
         onAddSmartCollection={() => {
@@ -10267,7 +10803,30 @@ function AppInner() {
               assetScope !== "root" && (
                 <button
                   aria-pressed={folderRecursive}
-                  className="workspace-include-subfolders"
+                  className={`workspace-include-subfolders${
+                    recursiveHintActive ? " is-feature-hinting" : ""
+                  }`}
+                  onMouseEnter={() => {
+                    // Hovering the highlighted affordance >0.5s dismisses the
+                    // hint permanently (shared all-highlights rule).
+                    includeSubfoldersHoverTimerRef.current = setTimeout(() => {
+                      includeSubfoldersHoverTimerRef.current = null;
+                      if (recursiveHintKey) {
+                        const hinted = withFeatureHintShown(
+                          featureHintPrefs,
+                          recursiveHintKey,
+                        );
+                        setFeatureHintPrefs(hinted);
+                        saveFeatureHintPreferences(hinted);
+                      }
+                    }, 500);
+                  }}
+                  onMouseLeave={() => {
+                    if (includeSubfoldersHoverTimerRef.current) {
+                      clearTimeout(includeSubfoldersHoverTimerRef.current);
+                      includeSubfoldersHoverTimerRef.current = null;
+                    }
+                  }}
                   onClick={() => {
                     // Include-subfolders changes the browse result set (REQ-VIEW-004).
                     void closeAssetPreview(false);
@@ -10282,13 +10841,29 @@ function AppInner() {
                     );
                     setFolderRecursivePrefs(nextPrefs);
                     saveFolderRecursivePreferences(nextPrefs);
+                    // Once the user has expanded this folder's children, the
+                    // hint is moot and must never pulse again (Serpent-b8a853).
+                    if (next && recursiveHintKey) {
+                      const hintedPrefs = withFeatureHintShown(
+                        featureHintPrefs,
+                        recursiveHintKey,
+                      );
+                      setFeatureHintPrefs(hintedPrefs);
+                      saveFeatureHintPreferences(hintedPrefs);
+                    }
+                    const searchActive = currentQueryDefinition().search !== undefined;
                     void loadContent(library, assetScope, {
                       discovery: currentQueryDefinition(),
-                      searchScope: {
-                        kind: "folder",
-                        folderId: assetScope,
-                        recursive: next,
-                      },
+                      // Text search is recursive by definition (REQ-FILTER-012),
+                      // so changing the browse-only switch must not narrow a
+                      // live search result set.
+                      searchScope: searchActive
+                        ? folderSearchScope(assetScope)
+                        : {
+                            kind: "folder",
+                            folderId: assetScope,
+                            recursive: next,
+                          },
                     }).catch((caught) => {
                       setError(
                         toMessage(caught, t("toast.readAssetsFailed"), locale),
@@ -10410,6 +10985,7 @@ function AppInner() {
               pluginApi={(window as RendererWindow).serpent?.plugins}
               refreshKey={pluginContributionRefreshKey}
               selectedAssetIds={selectedAssetIds}
+              selectedAssets={selectedVisibleAssets}
               context={pluginSurfaceContext}
             />
             <WorkspaceToolsOverflow
@@ -10595,6 +11171,7 @@ function AppInner() {
             job={pluginJobActivity}
             onDismiss={() => hidePluginJobActivity(pluginJobActivity.jobId)}
             onRunInBackground={() => hidePluginJobActivity(pluginJobActivity.jobId)}
+            queuedMoreCount={pluginJobQueuedMore}
           />
         )}
         <div
@@ -10640,119 +11217,6 @@ function AppInner() {
                 document.body,
               )
             : null}
-          {uiState === "importing" && !importProgress && (
-            <div className="activity-strip" role="status">
-              <span className="activity-pulse" />
-              <span className="activity-strip-message">
-                {t("toolbar.importingProgress")}
-              </span>
-            </div>
-          )}
-          {exportProgress &&
-            !["complete", "cancelled", "failed"].includes(
-              exportProgress.phase,
-            ) && (
-              <div className="activity-strip" role="status">
-                <span className="activity-pulse" />
-                <span className="activity-strip-message">
-                  {t("progress.exportingLibrary")}
-                  {exportProgress.phase === "snapshot-db"
-                    ? t("progress.snapshotDb")
-                    : exportProgress.phase === "enumerate"
-                      ? t("progress.enumerateFiles")
-                      : exportProgress.phase === "compress"
-                        ? t("progress.compressing")
-                        : t("progress.copyingFiles", {
-                            processed: exportProgress.filesProcessed,
-                            total: exportProgress.totalFiles,
-                            bytesProcessed: formatBytes(
-                              exportProgress.bytesProcessed,
-                            ),
-                            bytesTotal: formatBytes(exportProgress.totalBytes),
-                          })}
-                </span>
-                <button
-                  className="secondary-button"
-                  disabled={!exportProgress.exportId}
-                  onClick={() => void cancelExport()}
-                  type="button"
-                >
-                  {t("progress.cancelExport")}
-                </button>
-              </div>
-            )}
-          {importProgress &&
-            !["complete", "cancelled", "failed"].includes(
-              importProgress.phase,
-            ) && (
-              <div className="activity-strip import-progress-strip" role="status">
-                <span className="activity-pulse" />
-                <div className="import-progress-body">
-                  <span className="activity-strip-message">
-                    {(() => {
-                      const headline = libraryTransferHeadlineKey(libraryTransferKind);
-                      return headline.name
-                        ? t(headline.key, { name: libraryTransferName })
-                        : t(headline.key);
-                    })()}
-                    {importProgress.phase === "validate"
-                      ? importProgress.totalFiles > 0
-                        ? t("progress.readingSourceItems", {
-                            processed: importProgress.filesProcessed,
-                            total: importProgress.totalFiles,
-                          })
-                        : t("progress.validating")
-                      : importProgress.phase === "copy"
-                        ? importProgress.totalFiles > 0
-                          ? t("progress.copyingFiles", {
-                              processed: importProgress.filesProcessed,
-                              total: importProgress.totalFiles,
-                              bytesProcessed: formatBytes(importProgress.bytesProcessed),
-                              bytesTotal: formatBytes(importProgress.totalBytes),
-                            })
-                          : t("progress.copying")
-                        : t("progress.opening")}
-                  </span>
-                  {importProgress.totalFiles > 0 && (
-                    <div
-                      aria-valuemax={importProgress.totalFiles}
-                      aria-valuemin={0}
-                      aria-valuenow={Math.min(
-                        importProgress.filesProcessed,
-                        importProgress.totalFiles,
-                      )}
-                      className="task-progress-track import-progress-bar"
-                      role="progressbar"
-                    >
-                      <div
-                        className="task-progress-fill"
-                        style={{
-                          width: `${Math.round(
-                            (Math.min(
-                              importProgress.filesProcessed,
-                              importProgress.totalFiles,
-                            ) /
-                              importProgress.totalFiles) *
-                              100,
-                          )}%`,
-                        }}
-                      />
-                    </div>
-                  )}
-                </div>
-                {importProgress.cancelable !== false && (
-                  <button
-                    className="secondary-button"
-                    onClick={() => void cancelImport()}
-                    type="button"
-                  >
-                    {isLibraryOpenTransferKind(libraryTransferKind)
-                      ? t("progress.cancelOpen")
-                      : t("progress.cancelImport")}
-                  </button>
-                )}
-              </div>
-            )}
         <div
           className={`workspace-canvas${previewAsset ? " is-viewing" : previewRestoring ? " is-restoring" : ""}${externalDropActive ? " is-external-drop" : ""}`}
           onDragEnter={handleExternalDragEnter}
@@ -10813,121 +11277,7 @@ function AppInner() {
           ) : library ? (
             browseCanvasBodyLayout.mode !== "empty" ? (
               <>
-                {browseCanvasBodyLayout.showFolders && (
-                  <div
-                    className={
-                      browseCanvasBodyLayout.mode === "folders-only"
-                        ? "folder-card-row is-folders-only"
-                        : "folder-card-row"
-                    }
-                    style={
-                      {
-                        "--folder-card-size": `${folderCardWidthPx}px`,
-                        ...(panelResizing && panelReflowFrozenWidthRef.current
-                          ? {
-                              width: `${panelReflowFrozenWidthRef.current}px`,
-                            }
-                          : {}),
-                      } as CSSProperties
-                    }
-                  >
-                    {canvasFolderBrowseEntries.map((entry) => (
-                      <FolderCard
-                        draggable={!showTrash}
-                        entry={entry}
-                        key={entry.folderId}
-                        libraryId={library.libraryId}
-                        trashed={showTrash}
-                        {...(showTrash
-                          ? {}
-                          : createFolderCardDropHandlers(entry.folderId))}
-                        onDragStart={(event) => {
-                          const folderIds = resolveDraggedFolderIds(
-                            entry.folderId,
-                            selectedFolderIds,
-                          );
-                          event.dataTransfer.setData(
-                            MANAGED_FOLDERS_DRAG_TYPE,
-                            JSON.stringify(folderIds),
-                          );
-                          event.dataTransfer.effectAllowed = "move";
-                        }}
-                        onClick={(folderId, event) => {
-                          handleFolderCardClick(folderId, event);
-                        }}
-                        onContextMenu={(clickedEntry, event) => {
-                          event.preventDefault();
-                          if (showTrash) {
-                            openContextMenu(
-                              {
-                                type: "trashed-folder",
-                                tombstoneId: clickedEntry.folderId,
-                                name: clickedEntry.name,
-                                relativePath: clickedEntry.relativePath,
-                              },
-                              { x: event.clientX, y: event.clientY },
-                            );
-                            return;
-                          }
-                          const intent = resolveBrowseContextMenuIntent(
-                            { kind: "folder", id: clickedEntry.folderId },
-                            {
-                              assetIds: selectedAssetIds,
-                              folderIds: selectedFolderIds,
-                            },
-                          );
-                          if (intent.type === "single-folder") {
-                            setSelectedFolderIds([intent.folderId]);
-                            setSelectedAssetIds([]);
-                            openContextMenu(
-                              {
-                                type: "folder",
-                                folderId:
-                                  clickedEntry.linkedFolderId ??
-                                  intent.folderId,
-                                name: clickedEntry.name,
-                                locationKind: clickedEntry.locationKind,
-                                linkedRelativePath:
-                                  clickedEntry.locationKind === "linked" &&
-                                  clickedEntry.relativePath
-                                    ? clickedEntry.relativePath
-                                    : undefined,
-                              },
-                              { x: event.clientX, y: event.clientY },
-                            );
-                            return;
-                          }
-                          if (intent.type !== "multi") return;
-                          openContextMenu(
-                            {
-                              type: "multi-asset",
-                              assetIds: [...intent.assetIds],
-                              folderIds: [...intent.folderIds],
-                              count:
-                                intent.assetIds.length + intent.folderIds.length,
-                            },
-                            { x: event.clientX, y: event.clientY },
-                          );
-                        }}
-                        onDoubleClick={(folderId) => {
-                          if (showTrash) {
-                            const entry = canvasFolderBrowseEntries.find(
-                              (item) => item.folderId === folderId,
-                            );
-                            if (!entry) return;
-                            void enterTrashAt(entry.folderId);
-                            return;
-                          }
-                          void chooseFolder(folderId);
-                        }}
-                        onMouseDown={(event) => {
-                          cardMouseDownRef.current = event.button;
-                        }}
-                        selected={selectedFolderIdSet.has(entry.folderId)}
-                      />
-                    ))}
-                  </div>
-                )}
+                {folderCardRowElement}
                 {browseCanvasBodyLayout.showAssetGrid && (
                   <div
                     className={`asset-grid is-${assetViewMode}`}
@@ -11623,7 +11973,9 @@ function AppInner() {
                 )}
               </>
             ) : (
-              <div className="empty-library">
+              <>
+                {folderCardRowElement}
+                <div className="empty-library">
                 <div className="empty-orbit">
                   <Icon name={browseEmptyState.icon} size={24} />
                 </div>
@@ -11645,9 +11997,17 @@ function AppInner() {
                     >
                       {t("toolbar.importFolder")}
                     </button>
+                    <button
+                      className="secondary-button"
+                      onClick={() => void pasteClipboardImage()}
+                      type="button"
+                    >
+                      {t("toolbar.pasteImage")}
+                    </button>
                   </div>
                 ) : null}
               </div>
+              </>
             )
           ) : null}
         </div>
@@ -11668,6 +12028,7 @@ function AppInner() {
         )}
         </div>
         {previewAsset && library && api && (
+          <>
           <AssetPreviewModal
             ref={previewModalRef}
             api={api}
@@ -11693,6 +12054,7 @@ function AppInner() {
             pluginApi={(window as RendererWindow).serpent?.plugins}
             pluginContributionRefreshKey={pluginContributionRefreshKey}
           />
+          </>
         )}
       </section>
       <InspectorPanel
@@ -11836,6 +12198,32 @@ function AppInner() {
           assetIds={moveDialog.assetIds}
           folderIds={moveDialog.folderIds}
           folders={folders}
+          linkedFolders={
+            moveDialog.assetIds.length > 0 && moveDialog.folderIds.length === 0
+              ? (() => {
+                  const rootNames = new Map(
+                    linkedFolders
+                      .filter((folder) => (folder.relativePath ?? "") === "")
+                      .map((folder) => [folder.folderId, folder.displayName]),
+                  );
+                  return linkedFolders.map((folder) => {
+                    const rootName =
+                      (folder.linkedFolderId
+                        ? rootNames.get(folder.linkedFolderId)
+                        : undefined) ?? folder.displayName;
+                    return {
+                      folderId: folder.folderId,
+                      name: folder.displayName,
+                      relativePath:
+                        (folder.relativePath ?? "") === ""
+                          ? rootName
+                          : `${rootName}/${folder.relativePath}`,
+                      assetCount: folder.assetCount,
+                    };
+                  });
+                })()
+              : undefined
+          }
           targetFolderId={moveDialog.targetFolderId}
           conflictStrategy={moveDialog.conflictStrategy}
           folderOnly={
@@ -12026,6 +12414,7 @@ function AppInner() {
         library={library}
         open={librarySettingsOpen}
         gitignoreContent={gitignoreContent}
+        ignoredPaths={ignoredPaths}
         onClose={() => {
           setLibrarySettingsOpen(false);
         }}
@@ -12048,7 +12437,18 @@ function AppInner() {
           }
           setGitignoreContent(result.value.content);
           setNotice(t("toast.librarySettingsSaved"));
+          await refreshIgnoredPaths(library.libraryId);
           await reloadCurrentContent();
+        }}
+        onUnignorePath={(path) => {
+          void setIgnoreState({
+            locationKind: path.locationKind,
+            linkedFolderId: path.linkedFolderId,
+            relativePath: path.relativePath,
+            pathKind: path.pathKind,
+            ignored: false,
+            name: path.displayName,
+          });
         }}
         syncCallbacks={{
           async syncListServers() {
@@ -12477,7 +12877,7 @@ function AppInner() {
           void handleCopyFolder(folderId);
         }}
         onPasteIntoFolder={(folderId) => {
-          void pasteIntoFolder(folderId);
+          dispatchClipboardPaste(folderId);
         }}
         onCloneFolder={(folderId) => {
           void cloneFolder(folderId);

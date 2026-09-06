@@ -7,6 +7,7 @@ import {
 } from 'react';
 
 import type {
+  PluginCommunityCatalogSnapshot,
   PluginManagerPackageSummary,
   PluginManagerRequest,
   PluginManagerResolutionCandidate,
@@ -17,13 +18,15 @@ import type { PluginInstallProgress } from '../shared/plugin-install-progress';
 import { parseGitHubRepositoryUrl } from '../shared/plugin-github-url';
 import { Icon } from './Icons';
 import { iconActionAttrs } from './icon-action-attrs';
-import { useT } from './i18n';
 import { pluginRequiresTrustedCssDisclosure } from '../plugins/plugin-themes';
+import { resolvePluginDisplayCopy } from '../plugins/plugin-localized-copy';
 import { DialogShell } from './ui/patterns';
+import { useLocale, useT } from './i18n';
 
 type PluginSettingsPageProps = {
   readonly api: SerpentPluginManagerApi | undefined;
   readonly libraryId: string | undefined;
+  readonly onOpenCommunity?: () => void;
   readonly onOpenPluginSettings?: (pluginId: string) => void;
   readonly refreshKey: string | null;
 };
@@ -135,11 +138,14 @@ function formatInstallBytes(value: number): string {
 export function PluginSettingsPage({
   api,
   libraryId,
+  onOpenCommunity,
   onOpenPluginSettings,
   refreshKey,
 }: PluginSettingsPageProps): ReactNode {
   const t = useT();
+  const { locale } = useLocale();
   const [snapshot, setSnapshot] = useState<PluginSnapshot | undefined>();
+  const [catalog, setCatalog] = useState<PluginCommunityCatalogSnapshot | undefined>();
   const [installOpen, setInstallOpen] = useState(false);
   const [installScope, setInstallScope] = useState<InstallScope>('user');
   const [githubRepository, setGithubRepository] = useState('');
@@ -179,6 +185,17 @@ export function PluginSettingsPage({
       }
       setSnapshot(response);
       setError(undefined);
+      try {
+        const catalogResponse = await api.request({
+          type: 'plugin-manager.community-catalog',
+          refresh: true,
+        });
+        if (catalogResponse.ok && 'catalog' in catalogResponse) {
+          setCatalog(catalogResponse.catalog);
+        }
+      } catch {
+        // Directory overlay is optional; the installed list remains usable.
+      }
     } catch {
       setError(t('settings.pluginOperationFailed', { code: 'bridge-unavailable' }));
     } finally {
@@ -431,10 +448,14 @@ export function PluginSettingsPage({
     return (
       <section className="app-settings-card plugin-settings-scope-card" key={scope}>
         <div className="app-settings-row-copy">
-          <strong>{scope === 'user' ? t('settings.pluginScopeUser') : t('settings.pluginScopeLibrary')}</strong>
-          {scope === 'library' && grouped.length > 0 ? (
-            <span>{t('settings.pluginScopeLibraryHint')}</span>
-          ) : null}
+          <strong
+            className="plugin-settings-scope-title"
+            {...(scope === 'library'
+              ? { 'data-hover-tip': t('settings.pluginScopeLibraryHint') }
+              : {})}
+          >
+            {scope === 'user' ? t('settings.pluginScopeUser') : t('settings.pluginScopeLibrary')}
+          </strong>
         </div>
         {scopeDisabled ? <p className="app-settings-hint">{t('settings.pluginLibraryClosedHint')}</p> : null}
 
@@ -455,6 +476,15 @@ export function PluginSettingsPage({
           const showSettingsAction = newest.status === 'valid'
             && newest.hasSettingsUi
             && onOpenPluginSettings !== undefined;
+          const catalogEntry = catalog?.plugins.find((item) => item.pluginId === pluginId);
+          const copy = resolvePluginDisplayCopy({
+            locale,
+            fallbackName: newest.name,
+            fallbackDescription: newest.description ?? pluginId,
+            manifestLocales: newest.locales,
+            catalog: catalogEntry,
+          });
+          const removed = catalog?.removed.some((item) => item.pluginId === pluginId) === true;
           const githubRepository = newest.source.kind === 'github' ? newest.source.repository : undefined;
           const permissionsTip = newest.permissions.length > 0
             ? t('settings.pluginPermissionsTip', {
@@ -470,10 +500,33 @@ export function PluginSettingsPage({
               <div className="plugin-settings-package-header">
                 <div className="plugin-settings-package-title-row">
                   <div className="plugin-settings-package-title">
-                    <span className="plugin-settings-package-name">
-                      {newest.name}
+                    <span
+                      className="plugin-settings-package-name"
+                      {...(copy.description.trim() !== ''
+                        ? { 'data-hover-tip': copy.description }
+                        : {})}
+                    >
+                      {copy.name}
                       <span className="plugin-settings-package-version-inline">{` - v${newest.version}`}</span>
                     </span>
+                    {catalogEntry?.tier === 'first-party' ? (
+                      <span className="plugin-community-badge plugin-community-badge--first-party">
+                        {t('settings.pluginCommunityOfficial')}
+                      </span>
+                    ) : null}
+                    {catalogEntry?.tier === 'certified' ? (
+                      <span className="plugin-community-badge plugin-community-badge--certified">
+                        {t('settings.pluginCommunityCertified')}
+                      </span>
+                    ) : null}
+                    {removed ? (
+                      <span
+                        className="plugin-community-badge plugin-community-badge--removed"
+                        data-hover-tip={t('settings.pluginCommunityRemovedHint')}
+                      >
+                        {t('settings.pluginCommunityRemoved')}
+                      </span>
+                    ) : null}
                     <div className="plugin-settings-package-source-actions">
                       {githubRepository !== undefined ? (
                         <button
@@ -570,7 +623,6 @@ export function PluginSettingsPage({
                     </label>
                   </div>
                 </div>
-                <p className="plugin-settings-package-description">{newest.description ?? pluginId}</p>
                 {newest.source.kind === 'github' && newest.availableUpdate !== undefined ? (
                   <div className="plugin-settings-update-row">
                     <span className="plugin-settings-update-available">
@@ -735,19 +787,30 @@ export function PluginSettingsPage({
   return (
     <div className="plugin-settings-page">
       <section className="app-settings-card plugin-settings-overview">
-        <div className="app-settings-action-row plugin-settings-overview-header">
+        <div className="app-settings-row app-settings-row-stack plugin-settings-overview-header">
           <div className="app-settings-row-copy">
             <strong>{t('settings.pluginsTitle')}</strong>
             <span>{t('settings.pluginsHint')}</span>
           </div>
-          <button
-            className="secondary-button"
-            disabled={busy || api === undefined}
-            onClick={openInstallDialog}
-            type="button"
-          >
-            {t('settings.pluginInstall')}
-          </button>
+          <div className="plugin-settings-overview-actions">
+            <button
+              className="primary-button"
+              disabled={busy || api === undefined || onOpenCommunity === undefined}
+              onClick={onOpenCommunity}
+              type="button"
+            >
+              {t('settings.pluginCommunityOpen')}
+              <Icon name="external-link" size={13} />
+            </button>
+            <button
+              className="secondary-button"
+              disabled={busy || api === undefined}
+              onClick={openInstallDialog}
+              type="button"
+            >
+              {t('settings.pluginCommunityAdvanced')}
+            </button>
+          </div>
         </div>
         <label className="app-settings-toggle-row plugin-settings-safe-mode">
           <span className="app-settings-row-copy">

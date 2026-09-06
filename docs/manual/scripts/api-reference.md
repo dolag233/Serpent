@@ -153,10 +153,13 @@ serpent.assets.search({
 serpent.assets.list({
   folderId?: string,
   recursive?: boolean, // 默认 false
+  assetIds?: readonly string[], // 最多 200，按 ID 查询，跳过 folder/recursive 范围
   limit?: number,
   offset?: number,
 }): Promise<Page<Asset>>
 ```
+
+省略 `recursive` 时只返回库根资产。已知 ID 时用 `assetIds`，不要为找几个资产去递归扫全库。摘要含库内 `relativeFilePath`（POSIX 相对路径），不含绝对路径。
 
 ### `assets.getMetadata(assetId)`
 
@@ -262,9 +265,9 @@ serpent.assets.moveToFolder(assetIds, targetFolderId, {
 
 需要计划确认。`targetFolderId` 可为 `null` 表示资源库根范围。移动保留资产 ID 与元数据；应检查跳过项和 `operationId`。
 
-### `assets.renameFile(assetId, newBaseName)`
+### `assets.renameFile(assetId, newBaseName, options?)`
 
-重命名单项，返回当前资产摘要；`newBaseName` 非空、最长 255。需要计划确认。扩展名由当前文件处理规则保留，不要把绝对路径传入。
+重命名单项，返回当前资产摘要；`newBaseName` 非空、最长 255。需要计划确认。默认保留当前扩展名。传入 `options.fileName`（完整文件名，例如 `clip.webm`）时可改变扩展名，用于转码后仍保留同一资产及其标签。不要把绝对路径传入。
 
 ### `assets.renameFiles(items)`
 

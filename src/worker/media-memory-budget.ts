@@ -15,16 +15,10 @@ const MIN_RESERVATION_BYTES = 8 * 1024 * 1024;
 const UNKNOWN_SHARP_BYTES = 64 * 1024 * 1024;
 const UNKNOWN_FFMPEG_BYTES = 128 * 1024 * 1024;
 const UNKNOWN_OIIO_BYTES = 192 * 1024 * 1024;
-const SOURCE_STAGING_BYTES_CAP = 32 * 1024 * 1024;
 const DECODER_OVERHEAD_BYTES = 16 * 1024 * 1024;
 
 /** Shared native-decode admission budget for one Library Worker process. */
 export const MEDIA_NATIVE_MEMORY_BUDGET_BYTES = 384 * 1024 * 1024;
-/** Common maximum raster size for generated previews, including OIIO output. */
-export const MEDIA_MAX_INPUT_PIXELS = 64_000_000;
-/** Unknown-dimension OIIO cards above this size are rejected before decoding. */
-export const MEDIA_MAX_UNKNOWN_OIIO_SOURCE_BYTES = 512 * 1024 * 1024;
-export const MEDIA_INPUT_TOO_LARGE_ERROR_CODE = 'MEDIA_INPUT_TOO_LARGE';
 
 export type MediaNativeDecoder = 'sharp' | 'oiio' | 'ffmpeg';
 
@@ -35,16 +29,6 @@ export interface MediaNativeMemoryEstimate {
   height?: number | null;
   /** Number of simultaneously retained RGBA-sized raster copies. */
   decodedRasterCopies?: number | null;
-}
-
-/** A decoder input was rejected before native allocation could begin. */
-export class MediaInputTooLargeError extends Error {
-  readonly code = MEDIA_INPUT_TOO_LARGE_ERROR_CODE;
-
-  constructor(message: string) {
-    super(message);
-    this.name = 'MediaInputTooLargeError';
-  }
 }
 
 function positiveSafeInteger(value: number | null | undefined): number | undefined {
@@ -63,14 +47,14 @@ function unknownReservation(decoder: MediaNativeDecoder): number {
 }
 
 /**
- * Estimate the native footprint before starting a decoder. The source file is
- * capped in the estimate because compressed bytes are streamed by the native
- * libraries; decoded RGBA pixels are the dominant predictable allocation.
+ * Estimate the native footprint before starting a decoder. Source byte size is
+ * deliberately not part of the admission decision: local resources have no
+ * product size limit, and the native decoders stream their inputs. The
+ * estimate only coordinates concurrent decoded rasters and decoder overhead.
  */
 export function estimateMediaNativeMemoryBytes(input: MediaNativeMemoryEstimate): number {
   const width = positiveSafeInteger(input.width);
   const height = positiveSafeInteger(input.height);
-  const sourceBytes = positiveSafeInteger(input.sourceByteSize);
   if (width === undefined || height === undefined || width > Number.MAX_SAFE_INTEGER / height) {
     return Math.min(MEDIA_NATIVE_MEMORY_BUDGET_BYTES, unknownReservation(input.decoder));
   }
@@ -80,8 +64,7 @@ export function estimateMediaNativeMemoryBytes(input: MediaNativeMemoryEstimate)
   const rasterBytes = pixelBytes > Number.MAX_SAFE_INTEGER / rasterCopies
     ? Number.POSITIVE_INFINITY
     : pixelBytes * rasterCopies;
-  const stagedSourceBytes = Math.min(sourceBytes ?? 0, SOURCE_STAGING_BYTES_CAP);
-  const estimate = rasterBytes + stagedSourceBytes + DECODER_OVERHEAD_BYTES;
+  const estimate = rasterBytes + DECODER_OVERHEAD_BYTES;
   return Math.min(
     MEDIA_NATIVE_MEMORY_BUDGET_BYTES,
     Math.max(MIN_RESERVATION_BYTES, estimate),

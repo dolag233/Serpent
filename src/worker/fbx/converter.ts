@@ -4,8 +4,6 @@ import path from 'node:path';
 import {
   FBX_GLB_ARTIFACT_KIND,
   FBX_GLB_GENERATOR_VERSION,
-  FBX_MAX_SOURCE_BYTES,
-  FBX_MAX_TRIANGLES,
   type FbxConversionStats,
 } from '../../shared/fbx-conversion';
 import type {
@@ -14,9 +12,6 @@ import type {
 } from './descriptor';
 import { buildGlb, type ResolvedTexture } from './glb-builder';
 import { parseFbxBytes } from './wasm-loader';
-
-/** Per-texture size cap for externally resolved images. */
-export const FBX_MAX_TEXTURE_BYTES = 64 * 1024 * 1024;
 
 export interface ConvertFbxInput {
   /** Absolute path of the source FBX file. */
@@ -45,26 +40,16 @@ export interface ConvertFbxFailure {
 export async function convertFbxToGlb(
   input: ConvertFbxInput,
 ): Promise<{ ok: true; output: ConvertFbxOutput } | { ok: false; failure: ConvertFbxFailure }> {
-  const maxTriangles = input.maxTriangles ?? FBX_MAX_TRIANGLES;
   try {
     const stat = statSync(input.sourcePath);
     if (!stat.isFile()) {
       return { ok: false, failure: { errorCode: 'FBX_SOURCE_NOT_FOUND' } };
     }
-    if (stat.size > FBX_MAX_SOURCE_BYTES) {
-      return {
-        ok: false,
-        failure: {
-          errorCode: 'FBX_LIMIT_EXCEEDED',
-          reason: `source exceeds ${FBX_MAX_SOURCE_BYTES} bytes`,
-        },
-      };
-    }
     const sourceBytes = readFileSync(input.sourcePath);
     return await convertFbxBuffer(sourceBytes, {
       sourcePath: input.sourcePath,
       sourceBytes: sourceBytes.length,
-      maxTriangles,
+      ...(input.maxTriangles === undefined ? {} : { maxTriangles: input.maxTriangles }),
     });
   } catch (error) {
     if (isMissingFileError(error)) {
@@ -85,21 +70,11 @@ export async function convertFbxBuffer(
   fbxBytes: Buffer,
   input: { sourcePath: string; sourceBytes?: number; maxTriangles?: number },
 ): Promise<{ ok: true; output: ConvertFbxOutput } | { ok: false; failure: ConvertFbxFailure }> {
-  const maxTriangles = input.maxTriangles ?? FBX_MAX_TRIANGLES;
-  if (fbxBytes.length > FBX_MAX_SOURCE_BYTES) {
-    return {
-      ok: false,
-      failure: {
-        errorCode: 'FBX_LIMIT_EXCEEDED',
-        reason: `source exceeds ${FBX_MAX_SOURCE_BYTES} bytes`,
-      },
-    };
-  }
   let packed: Buffer;
   try {
     packed = await parseFbxBytes(fbxBytes, {
       filename: input.sourcePath,
-      maxTriangles,
+      ...(input.maxTriangles === undefined ? {} : { maxTriangles: input.maxTriangles }),
     });
   } catch (error) {
     return mapBridgeFailure(error);
@@ -216,7 +191,7 @@ function resolveExternalTextures(
     const candidate = path.join(modelDir, ...relativePath.split('/'));
     try {
       const stat = statSync(candidate);
-      if (!stat.isFile() || stat.size === 0 || stat.size > FBX_MAX_TEXTURE_BYTES) continue;
+      if (!stat.isFile() || stat.size === 0) continue;
       const bytes = readFileSync(candidate);
       const mime = detectMime(bytes);
       if (mime) {

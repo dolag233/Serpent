@@ -5,7 +5,7 @@ import {
   type PluginRuntimeParentMessage,
   type PluginRuntimeJobProgressInput,
 } from '../shared/plugin-runtime-utility-protocol';
-import type { AutomationScriptCommandId } from '../shared/automation-script-api';
+import type { PluginHostCommandId } from '../shared/automation-script-api';
 import { toPluginHostCommandFailure } from '../shared/plugin-host-command-error';
 import type { PluginPermission } from '../plugins/plugin-manifest';
 import type { PluginDomainEvent } from '../plugins/plugin-domain-events';
@@ -17,13 +17,22 @@ import type {
   PluginSearchComplete,
   PluginSearchRequest,
 } from '../plugins/plugin-search';
-import type { PluginCommandComplete, PluginCommandContext } from '../plugins/plugin-commands';
+import {
+  type PluginCommandComplete,
+  type PluginCommandContext,
+  type PluginCommandTimeoutHandle,
+  clearPluginCommandTimeout,
+  pausePluginCommandTimeoutsForInstance,
+  resumePluginCommandTimeoutsForInstance,
+  startPluginCommandTimeout,
+} from '../plugins/plugin-commands';
 import type {
   PluginInputCaptureEndReason,
   PluginInputCaptureEvent,
   PluginInputCaptureOptions,
   PluginInputCaptureStartResult,
 } from '../shared/plugin-input-capture';
+import type { PluginWidgetEvent } from '../shared/plugin-widget-ir';
 
 const READY_TIMEOUT_MS = 5_000;
 const DEFAULT_HEARTBEAT_TIMEOUT_MS = 15_000;
@@ -77,7 +86,7 @@ export interface PluginRuntimeActivateInput {
 }
 
 export type PluginRuntimeHostCommandHandler = (
-  commandId: AutomationScriptCommandId,
+  commandId: PluginHostCommandId,
   input: unknown,
   context: {
     instanceId: string;
@@ -198,9 +207,8 @@ export class PluginRuntimeSupervisor {
     timer: ReturnType<typeof setTimeout>;
     signalCleanup?: () => void;
   }>();
-  #pendingCommandCompletions = new Map<string, {
+  #pendingCommandCompletions = new Map<string, PluginCommandTimeoutHandle & {
     resolve(complete: PluginCommandComplete): void;
-    timer: ReturnType<typeof setTimeout>;
   }>();
 
   constructor(
@@ -309,6 +317,15 @@ export class PluginRuntimeSupervisor {
   ): void {
     if (!this.#instances.has(instanceId)) return;
     this.#post({ type: 'plugin-runtime.input-capture.event', instanceId, sessionId, event });
+  }
+
+  deliverWidgetEvent(
+    instanceId: string,
+    sessionId: string,
+    event: PluginWidgetEvent,
+  ): void {
+    if (!this.#instances.has(instanceId)) return;
+    this.#post({ type: 'plugin-runtime.widget-event', instanceId, sessionId, event });
   }
 
   endInputCapture(
@@ -612,22 +629,27 @@ export class PluginRuntimeSupervisor {
     }
     const invokeId = globalThis.crypto.randomUUID();
     return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        this.#pendingCommandCompletions.delete(invokeId);
-        resolve({
-          complete: {
-            invokeId,
-            status: 'failed',
-            errorCode: 'PLUGIN_COMMAND_TIMEOUT',
-            errorDetail: 'The plugin command handler timed out.',
-          },
-          timedOut: true,
-        });
-      }, input.timeoutMs);
-      this.#pendingCommandCompletions.set(invokeId, {
+      const pending: PluginCommandTimeoutHandle & { resolve(complete: PluginCommandComplete): void } = {
+        instanceId: input.instanceId,
+        timeoutMs: input.timeoutMs,
+        timer: undefined,
+        hostCommandPauseDepth: 0,
+        fire: () => {
+          this.#pendingCommandCompletions.delete(invokeId);
+          resolve({
+            complete: {
+              invokeId,
+              status: 'failed',
+              errorCode: 'PLUGIN_COMMAND_TIMEOUT',
+              errorDetail: 'The plugin command handler timed out.',
+            },
+            timedOut: true,
+          });
+        },
         resolve: (complete) => resolve({ complete, timedOut: false }),
-        timer,
-      });
+      };
+      this.#pendingCommandCompletions.set(invokeId, pending);
+      startPluginCommandTimeout(pending);
       this.#post({
         type: 'plugin-runtime.command-invoke',
         instanceId: input.instanceId,
@@ -1042,7 +1064,7 @@ export class PluginRuntimeSupervisor {
         this.#handleProtocolFault(message.instanceId, `Unknown command correlation ${message.invokeId}.`);
         return;
       }
-      clearTimeout(pending.timer);
+      clearPluginCommandTimeout(pending);
       this.#pendingCommandCompletions.delete(message.invokeId);
       pending.resolve(message);
     }
@@ -1124,6 +1146,7 @@ export class PluginRuntimeSupervisor {
       });
       return;
     }
+    pausePluginCommandTimeoutsForInstance(this.#pendingCommandCompletions.values(), message.instanceId);
     try {
       const result = await this.options.executeHostCommand(message.commandId, message.input, {
         instanceId: message.instanceId,
@@ -1153,6 +1176,8 @@ export class PluginRuntimeSupervisor {
         ok: false,
         error: failure,
       });
+    } finally {
+      resumePluginCommandTimeoutsForInstance(this.#pendingCommandCompletions.values(), message.instanceId);
     }
   }
 

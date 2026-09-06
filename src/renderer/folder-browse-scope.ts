@@ -17,3 +17,18 @@ export function folderBrowseScope(
   }
   return { kind: "folder", folderId: scope, recursive };
 }
+
+/**
+ * Text search always includes descendants of the selected folder. Keeping
+ * this separate from folderBrowseScope means filters and sorting without a
+ * search term continue to honour the ordinary browse switch.
+ */
+export function folderSearchScope(
+  scope: AssetScopeId,
+): SearchScope | undefined {
+  if (scope === "all") return undefined;
+  if (scope === "root") {
+    return { kind: "folder", folderId: null, recursive: true };
+  }
+  return { kind: "folder", folderId: scope, recursive: true };
+}

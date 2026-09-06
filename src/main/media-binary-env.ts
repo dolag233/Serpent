@@ -79,3 +79,22 @@ export function mediaBinaryWorkerEnv(
   }
   return env;
 }
+
+/**
+ * Resolves the host's FFmpeg/ffprobe pair for plugin consumption
+ * (Serpent-c32ce6). Same resolution chain as the Library Worker: env override
+ * first, then bundled resources, then PATH. `undefined` when neither exists.
+ */
+export function resolveHostMediaBinaries(): {
+  ffmpegPath: string;
+  ffprobePath: string;
+} | undefined {
+  let ffmpeg = process.env.SERPENT_FFMPEG_PATH;
+  if (!ffmpeg || !isRunnable(ffmpeg)) {
+    ffmpeg = firstRunnable(resourceCandidates("ffmpeg", "ffmpeg"));
+  }
+  if (!ffmpeg) return undefined;
+  const ffprobe = path.join(path.dirname(ffmpeg), platformBinaryName("ffprobe"));
+  if (!isRunnable(ffprobe)) return undefined;
+  return { ffmpegPath: ffmpeg, ffprobePath: ffprobe };
+}

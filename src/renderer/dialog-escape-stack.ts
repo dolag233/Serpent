@@ -34,6 +34,12 @@ export type DialogEscapeSnapshot = {
   aiConnectionFailureOpen: boolean;
   /** When set, Escape abandons this pending import conflict plan. */
   conflictsImportId: string | null;
+  /** Full-window import overlay: Escape cancels when the Worker importId exists. */
+  blockingImportOpen?: boolean;
+  blockingImportCancelable?: boolean;
+  /** Full-window delete overlay is not cancelable; Escape must not dismiss layers underneath. */
+  blockingDeleteOpen?: boolean;
+  blockingDeleteCancelable?: boolean;
 };
 
 export type DialogEscapeAction =
@@ -61,7 +67,11 @@ export type DialogEscapeAction =
   | { kind: "dismiss-plugin-trust-prompt" }
   | { kind: "dismiss-fatal-alert" }
   | { kind: "abort-ai-connection-failure" }
-  | { kind: "abandon-import"; importId: string };
+  | { kind: "abandon-import"; importId: string }
+  | { kind: "cancel-blocking-import" }
+  | { kind: "hold-blocking-import" }
+  | { kind: "hold-blocking-delete" }
+  | { kind: "cancel-blocking-delete" };
 
 export function isDialogEscapeLayerActive(
   snapshot: DialogEscapeSnapshot,
@@ -79,6 +89,16 @@ export function resolveDialogEscapeAction(
   // Fatal AI connection dialog sits above remaining layers (Serpent-kdnm).
   if (snapshot.aiConnectionFailureOpen) {
     return { kind: "abort-ai-connection-failure" };
+  }
+  if (snapshot.blockingImportOpen) {
+    return snapshot.blockingImportCancelable
+      ? { kind: "cancel-blocking-import" }
+      : { kind: "hold-blocking-import" };
+  }
+  if (snapshot.blockingDeleteOpen) {
+    return snapshot.blockingDeleteCancelable
+      ? { kind: "cancel-blocking-delete" }
+      : { kind: "hold-blocking-delete" };
   }
   if (snapshot.assetRenameOpen) return { kind: "cancel-asset-rename" };
   // Sequence import is rendered above the regular sequence settings dialog;

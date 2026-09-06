@@ -78,6 +78,7 @@ const MUTATION_COMMANDS = new Set([
   'library.import-folder',
   'library.import-zip',
   'library.import-cancel',
+  'asset.delete-cancel',
   'library.import-validate',
   'asset.sequence.create',
   'asset.sequence.dissolve',

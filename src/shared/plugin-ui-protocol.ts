@@ -44,6 +44,7 @@ export const PLUGIN_UI_VIEW_TYPES = [
   'viewer-overlay',
   'settings-page',
   'settings-detail',
+  'dialog',
 ] as const;
 export type PluginUiViewType = (typeof PLUGIN_UI_VIEW_TYPES)[number];
 
@@ -85,6 +86,24 @@ export const pluginUiIframeMessageSchema = z.discriminatedUnion('type', [
     requestId: requestIdSchema,
     key: storageKeySchema,
     value: pluginUiStorageValueSchema,
+  }),
+  /**
+   * Dialog-only: the plugin dialog completed and hands its JSON result back to
+   * the Host (which resolves the pending `serpent.ui.openDialog` call).
+   */
+  z.strictObject({
+    type: z.literal('plugin-ui.dialog-complete'),
+    result: z.unknown().optional(),
+  }),
+  /** Dialog-only: the plugin dialog was dismissed without a result. */
+  z.strictObject({
+    type: z.literal('plugin-ui.dialog-cancelled'),
+  }),
+  /** Dialog-only: the iframe reports content size so the host can avoid a fixed height. */
+  z.strictObject({
+    type: z.literal('plugin-ui.dialog-content-size'),
+    width: z.number().int().nonnegative().max(4_000),
+    height: z.number().int().positive().max(4_000),
   }),
 ]);
 export type PluginUiIframeMessage = z.infer<typeof pluginUiIframeMessageSchema>;
@@ -135,6 +154,22 @@ export const pluginUiHostMessageSchema = z.discriminatedUnion('type', [
   /** The Host unmounted the view (surface closed, scope changed, app quit). */
   z.strictObject({
     type: z.literal('plugin-ui.view-unmounted'),
+    contributionId: contributionIdSchema,
+    instanceId: instanceIdSchema,
+  }),
+  /**
+   * Dialog-only: the Host hands the `serpent.ui.openDialog` payload to the
+   * freshly-ready dialog frame.
+   */
+  z.strictObject({
+    type: z.literal('plugin-ui.dialog-payload'),
+    contributionId: contributionIdSchema,
+    instanceId: instanceIdSchema,
+    payload: pluginUiViewStateSchema,
+  }),
+  /** Dialog-only: the host footer asked the iframe to submit its current form. */
+  z.strictObject({
+    type: z.literal('plugin-ui.dialog-request-submit'),
     contributionId: contributionIdSchema,
     instanceId: instanceIdSchema,
   }),

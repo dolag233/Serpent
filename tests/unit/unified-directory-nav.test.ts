@@ -4,6 +4,7 @@ import {
   buildUnifiedDirectoryNavEntries,
   filterCollapsedDirectoryEntries,
   managedFolderIdsWithChildren,
+  sortManagedTreeEntries,
 } from "../../src/renderer/unified-directory-nav";
 import type { LinkedFolderSummary, ManagedFolderSummary } from "../../src/shared/asset-types";
 
@@ -204,5 +205,122 @@ describe("filterCollapsedDirectoryEntries", () => {
     expect(managedFolderIdsWithChildren(entries).has("l1")).toBe(true);
     const visible = filterCollapsedDirectoryEntries(entries, new Set(["p", "l1"]));
     expect(visible.map((entry) => entry.folderId)).toEqual(["p", "l1"]);
+  });
+});
+
+describe("sortManagedTreeEntries", () => {
+  const treeFolders: ManagedFolderSummary[] = [
+    managed({ folderId: "banana", name: "banana", relativePath: "banana", directAssetCount: 1, createdAt: "2020-01-01T00:00:00.000Z" }),
+    managed({ folderId: "apple", name: "apple", relativePath: "apple", directAssetCount: 9, createdAt: "2023-06-01T00:00:00.000Z" }),
+    managed({ folderId: "cherry", name: "cherry", relativePath: "cherry", directAssetCount: 4, createdAt: "2021-03-01T00:00:00.000Z" }),
+    managed({ folderId: "apple/kiwi", name: "kiwi", relativePath: "apple/kiwi", parentFolderId: "apple", directAssetCount: 20, createdAt: "2022-05-01T00:00:00.000Z" }),
+    managed({ folderId: "apple/grape", name: "grape", relativePath: "apple/grape", parentFolderId: "apple", directAssetCount: 2, createdAt: "2024-01-01T00:00:00.000Z" }),
+    managed({ folderId: "banana/fig", name: "fig", relativePath: "banana/fig", parentFolderId: "banana", directAssetCount: 7, createdAt: "2019-12-01T00:00:00.000Z" }),
+  ];
+  const linkedRoot = linked({
+    folderId: "l1",
+    displayName: "Linked",
+    assetCount: 3,
+    linkedFolderId: "l1",
+    relativePath: "",
+    parentFolderId: null,
+  });
+
+  const ids = (entries: ReturnType<typeof buildUnifiedDirectoryNavEntries>) =>
+    entries.map((entry) => entry.folderId);
+
+  it("sorts managed siblings by name ascending at every depth, keeping linked appended", () => {
+    const entries = buildUnifiedDirectoryNavEntries(treeFolders, [linkedRoot]);
+    expect(ids(sortManagedTreeEntries(entries, "name", "asc"))).toEqual([
+      "apple",
+      "apple/grape",
+      "apple/kiwi",
+      "banana",
+      "banana/fig",
+      "cherry",
+      "l1",
+    ]);
+  });
+
+  it("reverses name order when descending", () => {
+    const entries = buildUnifiedDirectoryNavEntries(treeFolders, [linkedRoot]);
+    expect(ids(sortManagedTreeEntries(entries, "name", "desc"))).toEqual([
+      "cherry",
+      "banana",
+      "banana/fig",
+      "apple",
+      "apple/kiwi",
+      "apple/grape",
+      "l1",
+    ]);
+  });
+
+  it("sorts managed siblings by creation time newest-first (desc)", () => {
+    const entries = buildUnifiedDirectoryNavEntries(treeFolders, [linkedRoot]);
+    expect(ids(sortManagedTreeEntries(entries, "created", "desc"))).toEqual([
+      "apple",
+      "apple/grape",
+      "apple/kiwi",
+      "cherry",
+      "banana",
+      "banana/fig",
+      "l1",
+    ]);
+  });
+
+  it("sorts managed siblings by creation time oldest-first (asc)", () => {
+    const entries = buildUnifiedDirectoryNavEntries(treeFolders, [linkedRoot]);
+    expect(ids(sortManagedTreeEntries(entries, "created", "asc"))).toEqual([
+      "banana",
+      "banana/fig",
+      "cherry",
+      "apple",
+      "apple/kiwi",
+      "apple/grape",
+      "l1",
+    ]);
+  });
+
+  it("sorts by descendant badge count most-first (desc) at every depth", () => {
+    const entries = buildUnifiedDirectoryNavEntries(treeFolders, [linkedRoot]);
+    expect(ids(sortManagedTreeEntries(entries, "count", "desc"))).toEqual([
+      "apple",
+      "apple/kiwi",
+      "apple/grape",
+      "cherry",
+      "banana",
+      "banana/fig",
+      "l1",
+    ]);
+  });
+
+  it("sorts by descendant badge count fewest-first (asc)", () => {
+    const entries = buildUnifiedDirectoryNavEntries(treeFolders, [linkedRoot]);
+    expect(ids(sortManagedTreeEntries(entries, "count", "asc"))).toEqual([
+      "banana",
+      "banana/fig",
+      "cherry",
+      "apple",
+      "apple/grape",
+      "apple/kiwi",
+      "l1",
+    ]);
+  });
+
+  it("falls back to name order when creation time is missing or tied", () => {
+    const folders = [
+      managed({ folderId: "z", name: "zulu", relativePath: "zulu", directAssetCount: 3 }),
+      managed({ folderId: "a", name: "alpha", relativePath: "alpha", directAssetCount: 3 }),
+      managed({ folderId: "m", name: "mike", relativePath: "mike", directAssetCount: 1, createdAt: "2020-01-01T00:00:00.000Z" }),
+    ];
+    const entries = buildUnifiedDirectoryNavEntries(folders, []);
+    // "mike" has a timestamp and sorts first (newest desc); the two without
+    // timestamps fall back to name order so the result is deterministic.
+    expect(ids(sortManagedTreeEntries(entries, "created", "desc"))).toEqual([
+      "m",
+      "a",
+      "z",
+    ]);
+    expect(ids(sortManagedTreeEntries(entries, "count", "desc"))).toEqual(["a", "z", "m"]);
   });
 });

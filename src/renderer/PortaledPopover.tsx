@@ -13,7 +13,10 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
+import { layerCssVar, type UiLayerName } from "./ui/foundation";
 import { PopoverSurface, type PopoverSurfaceProps } from "./ui/patterns";
+
+type PortaledPopoverLayer = Extract<UiLayerName, "popover" | "modal" | "tooltip">;
 
 type AnchorRect = {
   top: number;
@@ -36,11 +39,18 @@ export type PortaledPopoverProps = PopoverSurfaceProps & {
   readonly anchorRef: RefObject<HTMLElement | null>;
   /** Prefer right-align when the panel would overflow the viewport. */
   readonly preferRight?: boolean;
+  /**
+   * Named stacking layer. Defaults to popover (filters/toolbars).
+   * Callers inside a modal must pass `tooltip` so the menu paints above
+   * `--ui-layer-modal` instead of disappearing under the dialog.
+   */
+  readonly layer?: PortaledPopoverLayer;
 };
 
 export function PortaledPopover({
   anchorRef,
   preferRight = false,
+  layer = "popover",
   className,
   style,
   children,
@@ -89,7 +99,7 @@ export function PortaledPopover({
         top: coords.top,
         left: coords.left,
         right: "auto",
-        zIndex: "var(--ui-layer-popover)",
+        zIndex: layerCssVar(layer),
       }}
     >
       {children}

@@ -35,8 +35,24 @@ export function hasActivePluginJobs(
   );
 }
 
+function createdAtMs(job: PluginJobRecord): number {
+  const parsed = Date.parse(job.createdAt);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function earliestJob(
+  jobs: readonly PluginJobRecord[],
+  status: PluginJobRecord["status"],
+): PluginJobRecord | undefined {
+  return jobs
+    .filter((candidate) => candidate.status === status)
+    .sort((left, right) => createdAtMs(left) - createdAtMs(right))[0];
+}
+
 /**
  * Pick the single job surfaced by the unobtrusive workspace activity banner.
+ * A running job always wins over a later queued job so enqueueing another
+ * task cannot hide the work that is actually in progress.
  * Terminal or paused jobs remain discoverable briefly after a state change so
  * the result is not replaced by nothing before the user can open the full task panel.
  */
@@ -45,10 +61,10 @@ export function selectPluginJobActivity(
   now = Date.now(),
 ): PluginJobRecord | null {
   if (pluginJobs === null) return null;
-  const activityJob = pluginJobs.jobs.find((candidate) =>
-    isActivityStatus(candidate.status),
-  );
-  if (activityJob !== undefined) return activityJob;
+  const runningJob = earliestJob(pluginJobs.jobs, "running");
+  if (runningJob !== undefined) return runningJob;
+  const queuedJob = earliestJob(pluginJobs.jobs, "queued");
+  if (queuedJob !== undefined) return queuedJob;
 
   const attentionJob = pluginJobs.jobs
     .filter((candidate) => isAttentionStatus(candidate.status))
@@ -62,4 +78,16 @@ export function selectPluginJobActivity(
     return null;
   }
   return attentionJob;
+}
+
+/** Live jobs other than the one currently shown on the activity banner. */
+export function countOtherLivePluginJobs(
+  pluginJobs: PluginJobStatus | null,
+  selectedJobId: string | undefined,
+): number {
+  if (pluginJobs === null || selectedJobId === undefined) return 0;
+  return pluginJobs.jobs.filter(
+    (candidate) =>
+      isActivityStatus(candidate.status) && candidate.jobId !== selectedJobId,
+  ).length;
 }

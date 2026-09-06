@@ -64,6 +64,7 @@ import type {
   ExportProgressEvent,
   ImportProgressEvent,
   SyncProgressEvent,
+  DeleteProgressEvent,
   MediaJob,
   AiJob,
   TagOperationSkip,
@@ -295,6 +296,10 @@ export interface SerpentLibraryApi {
     parentFolderId: string | null;
     showIgnored?: boolean;
   }): Promise<LibraryApiResult<FolderBrowseEntry[]>>;
+  listFolderEntriesByRefs(input: {
+    libraryId: string;
+    refs: Array<{ locationKind: 'managed' | 'linked'; folderId: string }>;
+  }): Promise<LibraryApiResult<FolderBrowseEntry[]>>;
   trashFolder(input: {
     libraryId: string;
     folderId: string;
@@ -524,6 +529,7 @@ export interface SerpentLibraryApi {
   }>>;
   deleteAssetsPermanent(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ deletedCount: number; skippedCount: number; skippedReasons: Array<{ assetId: string; reason: PublicErrorReason }> }>>;
   deleteAssetsFromDisk(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ deletedCount: number }>>;
+  cancelDiskDelete(input: { operationId: string }): Promise<LibraryApiResult<{ operationId: string }>>;
   listTrash(input: { libraryId: string }): Promise<LibraryApiResult<AssetSummary[]>>;
   listTrashedFolders(input: { libraryId: string }): Promise<LibraryApiResult<TrashedFolderSummary[]>>;
   restoreTrashedManagedFolder(input: {
@@ -558,7 +564,7 @@ export interface SerpentLibraryApi {
   cancelLibraryImport(input: { importId: string }): Promise<LibraryApiResult<{ importId: string }>>;
   importLibraryCopy(input: { importId: string }): Promise<LibraryApiResult<ImportCompletedResult>>;
   importLibraryOpenInPlace(input: { importId: string }): Promise<LibraryApiResult<ImportCompletedResult>>;
-  onProgress(listener: (event: ExportProgressEvent | ImportProgressEvent | SyncProgressEvent) => void): () => void;
+  onProgress(listener: (event: ExportProgressEvent | ImportProgressEvent | SyncProgressEvent | DeleteProgressEvent) => void): () => void;
   // AI
   getAiConfig(): Promise<LibraryApiResult<{
     apiFormat: AiApiFormat | null;

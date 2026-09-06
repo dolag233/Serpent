@@ -12,6 +12,7 @@ import {
   type SaveMenuTreeFolder,
 } from './folder-menu';
 import { saveMenuTitle } from './connection-ui';
+import { installHotlinkRules } from './hotlink-sites';
 import { isFileUrl } from './media-target';
 import { readExtensionSaveBehavior } from './preferences';
 import {
@@ -288,6 +289,13 @@ function scheduleConnectionChecks(): void {
   void refreshConnectionState();
 }
 
+/** 启动/安装路径统一入口：先建菜单，再注册防盗链 Referer 规则，最后开始连接检查。 */
+async function bootstrapExtension(): Promise<void> {
+  await installMenus();
+  await installHotlinkRules();
+  scheduleConnectionChecks();
+}
+
 function showNotification(notification: UserNotification): void {
   void readExtensionSaveBehavior().then((behavior) => {
     if (!behavior.notificationsEnabled) return;
@@ -484,11 +492,11 @@ async function handleContextMenuClick(
 }
 
 chrome.runtime.onInstalled.addListener(() => {
-  void installMenus().then(() => scheduleConnectionChecks());
+  void bootstrapExtension();
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  void installMenus().then(() => scheduleConnectionChecks());
+  void bootstrapExtension();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -654,4 +662,4 @@ chrome.contextMenus.onClicked.addListener((info) => {
   void handleContextMenuClick(info);
 });
 
-void installMenus().then(() => scheduleConnectionChecks());
+void bootstrapExtension();

@@ -857,14 +857,26 @@ export function ContextMenuSubmenu({
 
 export function ContextMenuSection({
   label,
+  labelCase = "uppercase",
   children,
 }: {
   label?: string;
+  labelCase?: "uppercase" | "preserve";
   children: ReactNode;
 }) {
   return (
     <div className="context-menu-section" role="group" aria-label={label}>
-      {label && <div className="context-menu-section-label">{label}</div>}
+      {label && (
+        <div
+          className={
+            labelCase === "preserve"
+              ? "context-menu-section-label is-preserve"
+              : "context-menu-section-label"
+          }
+        >
+          {label}
+        </div>
+      )}
       {children}
     </div>
   );

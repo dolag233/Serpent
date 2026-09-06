@@ -705,7 +705,6 @@ describe('enqueueAiAnalysisJobs', () => {
       mimeType: 'image/jpeg',
       bytes: Buffer.from('contact-sheet'),
       generatorVersion: 'test',
-      maxBytes: 1024,
     });
 
     const result = service.enqueueAiAnalysisJobs({ libraryId });
@@ -746,7 +745,6 @@ describe('enqueueAiAnalysisJobs', () => {
         mimeType: 'image/jpeg',
         bytes: Buffer.from(`contact-sheet-${name}`),
         generatorVersion: 'test',
-        maxBytes: 1024,
       });
     }
 

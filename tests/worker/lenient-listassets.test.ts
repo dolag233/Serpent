@@ -158,4 +158,17 @@ describe('listAssets lenient read (Serpent-verg.2)', () => {
     expect(assets[0]!.rating).toBe(0);
     service.closeAll();
   });
+
+  it('lists specific assets by id without requiring recursive folder scope', () => {
+    const root = temporaryRoot();
+    const { service, libraryId, assetId } = libraryWithOneAsset(root, 'ById');
+    const listed = service.listAssets({
+      libraryId,
+      recursive: false,
+      assetIds: [assetId, 'missing-asset'],
+    });
+    expect(listed.map((asset) => asset.assetId)).toEqual([assetId]);
+    expect(service.listAssets({ libraryId, recursive: false, assetIds: ['missing-asset'] })).toEqual([]);
+    service.closeAll();
+  });
 });

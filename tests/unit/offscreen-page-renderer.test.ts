@@ -23,7 +23,6 @@ function makeJob(overrides: Partial<ModelThumbnailRenderRequest> = {}): ModelThu
     hdriPresetId: 'ferndale-studio-03',
     width: 512,
     height: 512,
-    timeoutMs: 30_000,
     ...overrides,
   };
 }
@@ -115,16 +114,6 @@ describe('offscreen thumbnail frame pipeline (slice E, page side)', () => {
     });
     const outcome = await renderModelThumbnailFrame(makeJob(), deps);
     expect(outcome.status).toBe('ok');
-  });
-
-  it('degrades to the key light when the HDRI request hangs', async () => {
-    const deps = makeDeps({
-      hdriLoadTimeoutMs: 1,
-      loadHdrData: vi.fn(() => new Promise<never>(() => {})),
-    });
-    const outcome = await renderModelThumbnailFrame(makeJob(), deps);
-    expect(outcome.status).toBe('ok');
-    expect(deps.loadModel).toHaveBeenCalled();
   });
 
   it('reports MODEL_LOAD_FAILED when the model cannot be parsed', async () => {

@@ -696,4 +696,49 @@ describe('plugin menu contribution descriptors', () => {
       }),
     }));
   });
+
+  it('attaches selected asset snapshots to the invocation', async () => {
+    const runPluginCommand = vi.fn().mockResolvedValue({
+      ok: true,
+      executed: true,
+    });
+    const pluginApi = { runPluginCommand } as never;
+    const context = createContext();
+
+    await runPluginMenuCommand(pluginApi, 'library-a', {
+      id: 'com.example.menu.menu.asset.run',
+      contributionId: 'com.example.menu.library-a.menu.asset.run',
+    }, {
+      assetIds: ['asset-1'],
+      assets: [{
+        assetId: 'asset-1',
+        displayName: 'clip.mp4',
+        relativeFilePath: '项目/clip.mp4',
+        mediaType: 'video',
+        byteSize: 4096,
+        currentRevisionId: 'rev-9',
+        managedFolderId: 'folder-1',
+        locationKind: 'managed',
+      }],
+      contributionContext: context,
+    });
+
+    expect(runPluginCommand).toHaveBeenCalledWith(expect.objectContaining({
+      invocation: expect.objectContaining({
+        selection: expect.objectContaining({
+          assetIds: ['asset-1'],
+          assets: [{
+            id: 'asset-1',
+            name: 'clip.mp4',
+            relativeFilePath: '项目/clip.mp4',
+            mediaType: 'video',
+            byteSize: 4096,
+            currentRevisionId: 'rev-9',
+            folderId: 'folder-1',
+            locationKind: 'managed',
+          }],
+        }),
+      }),
+    }));
+  });
 });

@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
  */
 
 export const DEFAULT_LIBRARY_WRITE_LEASE_DURATION_MS = 15_000;
+/** Legacy fallback for callers that explicitly pass an invalid timeout. */
 export const DEFAULT_LIBRARY_WRITE_LEASE_TIMEOUT_MS = 5_000;
 export const DEFAULT_LIBRARY_WRITE_LEASE_RETRY_INTERVAL_MS = 50;
 
@@ -84,7 +85,8 @@ export interface AcquireLibraryWriteLeaseOptions {
   leaseDurationMs?: number;
   retryIntervalMs?: number;
   signal?: AbortSignal;
-  timeoutMs?: number;
+  /** null/omitted waits until the lease is released or the signal aborts. */
+  timeoutMs?: number | null;
 }
 
 export interface LibraryWriteCoordinatorOptions {
@@ -340,16 +342,17 @@ export class LibraryWriteCoordinator {
       options.leaseDurationMs ?? DEFAULT_LIBRARY_WRITE_LEASE_DURATION_MS,
       DEFAULT_LIBRARY_WRITE_LEASE_DURATION_MS,
     );
-    const timeoutMs = options.timeoutMs !== undefined &&
-      Number.isSafeInteger(options.timeoutMs) && options.timeoutMs >= 0
-      ? options.timeoutMs
-      : DEFAULT_LIBRARY_WRITE_LEASE_TIMEOUT_MS;
+    const timeoutMs = options.timeoutMs === null || options.timeoutMs === undefined
+      ? null
+      : Number.isSafeInteger(options.timeoutMs) && options.timeoutMs >= 0
+        ? options.timeoutMs
+        : DEFAULT_LIBRARY_WRITE_LEASE_TIMEOUT_MS;
     const retryIntervalMs = positiveInteger(
       options.retryIntervalMs ?? DEFAULT_LIBRARY_WRITE_LEASE_RETRY_INTERVAL_MS,
       DEFAULT_LIBRARY_WRITE_LEASE_RETRY_INTERVAL_MS,
     );
     const ownerId = this.newOwnerId();
-    const deadline = this.now() + timeoutMs;
+    const deadline = timeoutMs === null ? undefined : this.now() + timeoutMs;
 
     for (;;) {
       if (options.signal?.aborted) {
@@ -360,10 +363,15 @@ export class LibraryWriteCoordinator {
       if (this.tryAcquire(ownerId, acquiredAt, expiresAt)) {
         return new DatabaseLibraryWriteLease(this, ownerId, expiresAt);
       }
-      if (this.now() >= deadline) {
+      if (deadline !== undefined && this.now() >= deadline) {
         throw new LibraryWriteCoordinatorError('Another Serpent session is updating this library.', 'timed-out');
       }
-      await this.sleep(Math.min(retryIntervalMs, Math.max(1, deadline - this.now())), options.signal);
+      await this.sleep(
+        deadline === undefined
+          ? retryIntervalMs
+          : Math.min(retryIntervalMs, Math.max(1, deadline - this.now())),
+        options.signal,
+      );
     }
   }
 
@@ -376,16 +384,17 @@ export class LibraryWriteCoordinator {
       options.leaseDurationMs ?? DEFAULT_LIBRARY_WRITE_LEASE_DURATION_MS,
       DEFAULT_LIBRARY_WRITE_LEASE_DURATION_MS,
     );
-    const timeoutMs = options.timeoutMs !== undefined &&
-      Number.isSafeInteger(options.timeoutMs) && options.timeoutMs >= 0
-      ? options.timeoutMs
-      : DEFAULT_LIBRARY_WRITE_LEASE_TIMEOUT_MS;
+    const timeoutMs = options.timeoutMs === null || options.timeoutMs === undefined
+      ? null
+      : Number.isSafeInteger(options.timeoutMs) && options.timeoutMs >= 0
+        ? options.timeoutMs
+        : DEFAULT_LIBRARY_WRITE_LEASE_TIMEOUT_MS;
     const retryIntervalMs = positiveInteger(
       options.retryIntervalMs ?? DEFAULT_LIBRARY_WRITE_LEASE_RETRY_INTERVAL_MS,
       DEFAULT_LIBRARY_WRITE_LEASE_RETRY_INTERVAL_MS,
     );
     const ownerId = this.newOwnerId();
-    const deadline = this.now() + timeoutMs;
+    const deadline = timeoutMs === null ? undefined : this.now() + timeoutMs;
 
     for (;;) {
       if (options.signal?.aborted) {
@@ -397,10 +406,15 @@ export class LibraryWriteCoordinator {
       if (fencingToken !== undefined) {
         return new DatabaseLibraryJobLease(this, jobId, ownerId, fencingToken, expiresAt);
       }
-      if (this.now() >= deadline) {
+      if (deadline !== undefined && this.now() >= deadline) {
         throw new LibraryWriteCoordinatorError('Another worker owns this Job.', 'timed-out');
       }
-      await this.sleep(Math.min(retryIntervalMs, Math.max(1, deadline - this.now())), options.signal);
+      await this.sleep(
+        deadline === undefined
+          ? retryIntervalMs
+          : Math.min(retryIntervalMs, Math.max(1, deadline - this.now())),
+        options.signal,
+      );
     }
   }
 

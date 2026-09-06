@@ -45,9 +45,9 @@ describe('error-messages (Serpent-qvc6 / 3D-15)', () => {
     expect(toModelViewerErrorCode({})).toBe('MODEL_LOAD_FAILED');
   });
 
-  it('preserves FBX codes through the router', () => {
-    expect(toModelViewerErrorCode({ errorCode: 'FBX_CONVERSION_TIMEOUT' })).toBe(
-      'FBX_CONVERSION_TIMEOUT',
-    );
+  it('maps retired size and timeout codes to the generic load failure', () => {
+    expect(toModelViewerErrorCode({ errorCode: 'FBX_FILE_TOO_LARGE' })).toBe('MODEL_LOAD_FAILED');
+    expect(toModelViewerErrorCode({ errorCode: 'FBX_CONVERSION_TIMEOUT' })).toBe('MODEL_LOAD_FAILED');
+    expect(toModelViewerErrorCode({ errorCode: 'MODEL_TOO_LARGE' })).toBe('MODEL_LOAD_FAILED');
   });
 });

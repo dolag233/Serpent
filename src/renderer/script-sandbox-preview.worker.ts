@@ -3,7 +3,10 @@
 import {
   isScriptSandboxPreviewWorkerRequest,
 } from './script-sandbox-preview-protocol';
-import type { AutomationScriptCommandId } from '../shared/automation-script-api';
+import {
+  automationScriptCommandIdSchema,
+  type PluginHostCommandId,
+} from '../shared/automation-script-api';
 import { runScriptSandboxPreview } from './script-sandbox-preview-runtime';
 
 declare const self: DedicatedWorkerGlobalScope;
@@ -26,13 +29,19 @@ self.addEventListener('message', (event: MessageEvent<unknown>) => {
 
   const { runId } = event.data;
   const executeAutomationCommand = (
-    commandId: AutomationScriptCommandId,
+    commandId: PluginHostCommandId,
     input: unknown,
-  ): Promise<unknown> => new Promise((resolve, reject) => {
-    const requestId = crypto.randomUUID();
-    pendingCommands.set(requestId, { resolve, reject });
-    self.postMessage({ type: 'automation-command', runId, requestId, commandId, input });
-  });
+  ): Promise<unknown> => {
+    const parsed = automationScriptCommandIdSchema.safeParse(commandId);
+    if (!parsed.success) {
+      return Promise.reject(new Error('This command is not available to scripts.'));
+    }
+    return new Promise((resolve, reject) => {
+      const requestId = crypto.randomUUID();
+      pendingCommands.set(requestId, { resolve, reject });
+      self.postMessage({ type: 'automation-command', runId, requestId, commandId: parsed.data, input });
+    });
+  };
   void runScriptSandboxPreview(event.data, { executeAutomationCommand })
     .then((message) => self.postMessage(message));
 });

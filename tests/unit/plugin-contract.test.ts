@@ -506,6 +506,9 @@ describe('Plugin contribution registry and generated SDK', () => {
       'readonly smartCollections:',
       'readonly linkedFolders:',
       'readonly ui:',
+      'openDialog(input: {',
+      'heading(text: string): unknown;',
+      'getBinaryPaths(): Promise<{ readonly ffmpegPath: string; readonly ffprobePath: string }>;',
     ]) {
       expect(declaration).toContain(method);
     }

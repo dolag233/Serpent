@@ -66,6 +66,22 @@ describe('Plugin package IPC bridge', () => {
       operationId: 'install-1',
     });
     expect(pluginManagerRequestSchema.parse({
+      type: 'plugin-manager.community-catalog',
+      refresh: true,
+    })).toEqual({
+      type: 'plugin-manager.community-catalog',
+      refresh: true,
+    });
+    expect(pluginManagerRequestSchema.parse({
+      type: 'plugin-manager.install-community',
+      scope: 'user',
+      pluginId: 'com.example.palette-tools',
+      operationId: 'install-2',
+    })).toMatchObject({
+      type: 'plugin-manager.install-community',
+      pluginId: 'com.example.palette-tools',
+    });
+    expect(pluginManagerRequestSchema.parse({
       type: 'plugin-manager.install-control',
       operationId: 'install-1',
       action: 'pause',
@@ -354,6 +370,140 @@ describe('Plugin package IPC bridge', () => {
     expect(selectorCalled).toBe(false);
   });
 
+  it('returns a community catalog snapshot from Main without exposing asset hashes', async () => {
+    const userData = temporaryRoot('serpent-plugin-ipc-catalog-');
+    const catalogJson = `${JSON.stringify({
+      schemaVersion: 1,
+      generatedAt: '2026-09-06T00:00:00.000Z',
+      plugins: [{
+        id: 'com.example.palette-tools',
+        tier: 'first-party',
+        repo: 'example/serpent-palette-tools',
+        releaseTag: 'v1.2.0',
+        version: '1.2.0',
+        runtimeMode: 'restricted',
+        name: { 'zh-CN': '色板工具', en: 'Palette Tools' },
+        description: { 'zh-CN': '提取色板。', en: 'Extract palettes.' },
+        assets: [{
+          platform: 'any',
+          fileName: 'com.example.palette-tools-1.2.0-any.zip',
+          sha256: 'a'.repeat(64),
+        }],
+      }],
+      removed: [],
+    })}\n`;
+    const { PluginCommunityCatalogStore } = await import('../../src/main/plugin-community-catalog-store');
+    const { createHash } = await import('node:crypto');
+    const digest = createHash('sha256').update(catalogJson).digest('hex');
+    const store = new PluginCommunityCatalogStore({
+      userDataDirectory: userData,
+      catalogUrl: 'https://example.test/catalog.v1.json',
+      fetchImpl: async (input) => {
+        const url = String(input);
+        if (url.endsWith('.sha256')) return new Response(`${digest}\n`, { status: 200 });
+        return new Response(catalogJson, { status: 200 });
+      },
+    });
+    const handler = createPluginPackageRequestHandler({
+      manager: createManager(userData),
+      communityCatalog: store,
+      resolveLibraryDirectory: async () => undefined,
+      chooseLocalPackage: async () => undefined,
+    });
+    await expect(handler({ type: 'plugin-manager.community-catalog', refresh: true })).resolves.toMatchObject({
+      ok: true,
+      catalog: {
+        stale: false,
+        plugins: [{
+          pluginId: 'com.example.palette-tools',
+          tier: 'first-party',
+          author: 'example',
+          compatible: true,
+        }],
+      },
+    });
+  });
+
+  it('returns a locale README and prefers the catalog author field', async () => {
+    const userData = temporaryRoot('serpent-plugin-ipc-readme-');
+    const catalogJson = `${JSON.stringify({
+      schemaVersion: 1,
+      generatedAt: '2026-09-06T00:00:00.000Z',
+      plugins: [{
+        id: 'com.example.palette-tools',
+        tier: 'first-party',
+        repo: 'example/serpent-palette-tools',
+        releaseTag: 'v1.2.0',
+        version: '1.2.0',
+        runtimeMode: 'restricted',
+        author: 'Ada',
+        name: { 'zh-CN': '色板工具', en: 'Palette Tools' },
+        description: { 'zh-CN': '提取色板。', en: 'Extract palettes.' },
+        assets: [{
+          platform: 'any',
+          fileName: 'com.example.palette-tools-1.2.0-any.zip',
+          sha256: 'a'.repeat(64),
+        }],
+      }],
+      removed: [],
+    })}\n`;
+    const { PluginCommunityCatalogStore } = await import('../../src/main/plugin-community-catalog-store');
+    const { createHash } = await import('node:crypto');
+    const digest = createHash('sha256').update(catalogJson).digest('hex');
+    const store = new PluginCommunityCatalogStore({
+      userDataDirectory: userData,
+      catalogUrl: 'https://example.test/catalog.v1.json',
+      fetchImpl: async (input) => {
+        const url = String(input);
+        if (url.includes('zipball')) throw new Error('community channel must not use zipball');
+        if (url.endsWith('.sha256')) return new Response(`${digest}\n`, { status: 200 });
+        if (url.endsWith('catalog.v1.json')) return new Response(catalogJson, { status: 200 });
+        if (url.endsWith('README.en.md')) return new Response('# Palette Tools\n', { status: 200 });
+        return new Response('missing', { status: 404 });
+      },
+    });
+    const handler = createPluginPackageRequestHandler({
+      manager: createManager(userData),
+      communityCatalog: store,
+      resolveLibraryDirectory: async () => undefined,
+      chooseLocalPackage: async () => undefined,
+    });
+    await expect(handler({ type: 'plugin-manager.community-catalog', refresh: true })).resolves.toMatchObject({
+      ok: true,
+      catalog: { plugins: [{ author: 'Ada' }] },
+    });
+    expect(pluginManagerRequestSchema.parse({
+      type: 'plugin-manager.community-readme',
+      pluginId: 'com.example.palette-tools',
+      locale: 'en',
+    })).toEqual({
+      type: 'plugin-manager.community-readme',
+      pluginId: 'com.example.palette-tools',
+      locale: 'en',
+    });
+    await expect(handler({
+      type: 'plugin-manager.community-readme',
+      pluginId: 'com.example.palette-tools',
+      locale: 'en',
+    })).resolves.toMatchObject({
+      ok: true,
+      readme: {
+        pluginId: 'com.example.palette-tools',
+        fileName: 'README.en.md',
+        locale: 'en',
+        markdown: '# Palette Tools\n',
+      },
+    });
+    await expect(handler({
+      type: 'plugin-manager.community-readme',
+      pluginId: 'com.missing.plugin',
+      locale: 'en',
+    })).resolves.toMatchObject({
+      ok: false,
+      failureCode: 'PLUGIN_COMMUNITY_ENTRY_INVALID',
+    });
+  });
+
   it('checks eligible updates when enabling the global auto-update policy', async () => {
     const userData = temporaryRoot('serpent-plugin-ipc-global-auto-update-');
     const manager = createManager(userData);
@@ -435,6 +585,49 @@ describe('Plugin package IPC bridge', () => {
       failureCode: 'PLUGIN_COMMAND_HANDLER_FAILED',
       message: 'The compression plan could not be confirmed.',
     });
+  });
+
+  it('forwards invocation context to the activation coordinator', async () => {
+    const userData = temporaryRoot('serpent-plugin-ipc-invocation-user-');
+    const runCommand = vi.fn(async () => ({
+      complete: {
+        invokeId: '59847245-d394-4012-ad75-35f837393a8f',
+        status: 'succeeded' as const,
+      },
+      timedOut: false,
+    }));
+    const handler = createPluginPackageRequestHandler({
+      manager: createManager(userData),
+      resolveLibraryDirectory: async () => userData,
+      chooseLocalPackage: async () => undefined,
+      activationCoordinator: { runCommand } as never,
+    });
+    const invocation = {
+      contextId: 'context-1',
+      revision: 1,
+      libraryId: 'library-a',
+      selection: {
+        refs: ['asset-1'],
+        assetIds: ['asset-1'],
+        folderIds: [],
+        collectionIds: [],
+        assets: [],
+      },
+      browse: {},
+      viewer: { active: false },
+    };
+
+    await expect(handler({
+      type: 'plugin-manager.run-command',
+      libraryId: 'library-a',
+      contributionId: 'com.example.probe.command',
+      invocation,
+    })).resolves.toEqual({ ok: true, executed: true });
+    expect(runCommand).toHaveBeenCalledWith(expect.objectContaining({
+      libraryId: 'library-a',
+      contributionId: 'com.example.probe.command',
+      invocation,
+    }));
   });
 
   it('returns both exact conflict candidates, then requires library trust before it resolves', async () => {

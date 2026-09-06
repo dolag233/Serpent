@@ -40,22 +40,11 @@ export function modelThumbnailFormatForFileName(fileName: string): ModelThumbnai
 
 /** Fixed render size (square, long edge); DPR is forced to 1 by the page. */
 export const MODEL_THUMBNAIL_DEFAULT_EDGE = 512;
-/** Per-job render timeout inside Main (window creation excluded; covers the single frame). */
-export const MODEL_THUMBNAIL_RENDER_TIMEOUT_MS = 30_000;
-/**
- * Worker-side timeout for a render round trip. The worker gate keeps at most
- * one render request in flight, so this only needs to cover Main's 30s
- * per-job timeout plus window/page bootstrapping.
- */
-export const MODEL_THUMBNAIL_WORKER_REQUEST_TIMEOUT_MS = 45_000;
 /** generator_version tag for model thumbnail artifacts (cache/invalidation key). */
 export const MODEL_THUMBNAIL_GENERATOR_VERSION = 'offscreen-webgl-1';
-/** PNG byte ceiling accepted from the renderer (512×512 PNG is ≪ 1 MB). */
-export const MODEL_THUMBNAIL_MAX_PNG_BYTES = 4 * 1024 * 1024;
 
 /** Typed render failure codes (see also benign suppression in thumbnail-support.ts). */
 export const modelThumbnailErrorCodeSchema = z.enum([
-  'MODEL_RENDER_TIMEOUT', // no frame within the per-job deadline
   'MODEL_LOAD_FAILED', // model parse/load error inside the offscreen page
   'MODEL_WEBGL_UNAVAILABLE', // WebGLRenderer creation failed
   'MODEL_CONTEXT_LOST', // GPU context lost mid-render
@@ -64,7 +53,6 @@ export const modelThumbnailErrorCodeSchema = z.enum([
   'MODEL_FRAME_INVALID', // frame bytes failed validation
   'MODEL_WINDOW_FAILED', // offscreen window creation/load/crash
   'MODEL_RENDER_ABORTED', // renderer disposed or window torn down
-  'MODEL_TOO_LARGE', // source exceeds the model size cap (spec 3D-14)
 ]);
 export type ModelThumbnailErrorCode = z.infer<typeof modelThumbnailErrorCodeSchema>;
 
@@ -104,7 +92,6 @@ export const modelThumbnailRenderRequestSchema = z.object({
   hdriPresetId: z.string().min(1).max(128),
   width: z.number().int().min(64).max(2048),
   height: z.number().int().min(64).max(2048),
-  timeoutMs: z.number().int().min(1000).max(120_000),
   /** Optional camera directions for multi-view renders (e.g. AI four views). */
   views: z.array(z.tuple([z.number(), z.number(), z.number()])).min(1).max(8).optional(),
 });

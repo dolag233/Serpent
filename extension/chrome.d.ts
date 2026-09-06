@@ -111,6 +111,28 @@ interface SerpentChromeApi {
       ): void;
     };
   };
+  declarativeNetRequest: {
+    updateDynamicRules(options: {
+      removeRuleIds?: number[];
+      addRules?: Array<{
+        id: number;
+        priority?: number;
+        action: {
+          type: 'modifyHeaders';
+          requestHeaders: Array<{
+            header: string;
+            operation: 'set' | 'append' | 'remove';
+            value?: string;
+          }>;
+        };
+        condition?: {
+          urlFilter?: string;
+          resourceTypes?: string[];
+        };
+      }>;
+    }): Promise<void>;
+    getDynamicRules(): Promise<Array<{ id: number }>>;
+  };
 }
 
 declare const chrome: SerpentChromeApi;

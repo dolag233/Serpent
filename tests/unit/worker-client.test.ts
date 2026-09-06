@@ -26,13 +26,18 @@ describe('requestTimeoutForCommand', () => {
     expect(requestTimeoutForCommand('extension.save-from-url')).toBe(5 * 60_000);
   });
 
-  it('keeps ordinary requests on the short timeout', () => {
-    expect(requestTimeoutForCommand('asset.list')).toBe(15_000);
+  it('does not impose a wall-clock timeout on local library commands', () => {
+    expect(requestTimeoutForCommand('asset.list')).toBeNull();
+    expect(requestTimeoutForCommand('folder.browse-entries')).toBeNull();
+    expect(requestTimeoutForCommand('linked-folder.relink')).toBeNull();
+    expect(requestTimeoutForCommand('media.get-preview-artifact')).toBeNull();
+    expect(requestTimeoutForCommand('model.convert-fbx')).toBeNull();
   });
 
-  it('gives large-library reads room to finish after queued work', () => {
-    expect(requestTimeoutForCommand('asset.search')).toBe(60_000);
-    expect(requestTimeoutForCommand('media.get-asset-drag-infos')).toBe(60_000);
+  it('does not impose a wall-clock timeout on local reads', () => {
+    expect(requestTimeoutForCommand('asset.search')).toBeNull();
+    expect(requestTimeoutForCommand('media.get-asset-drag-infos')).toBeNull();
+    expect(requestTimeoutForCommand('smart-collection.execute')).toBeNull();
   });
 
   it('does not impose a wall-clock timeout on disk-bound library transfers (Serpent-4s8b)', () => {
@@ -57,6 +62,11 @@ describe('requestTimeoutForCommand', () => {
       libraryId: 'library-1',
       sourceKind: 'files',
       sourcePaths: ['/tmp/a.png'],
+    })).toBeNull();
+    expect(requestTimeoutForCommand({
+      type: 'asset.import-linked',
+      libraryId: 'library-1',
+      sourceRootPath: '/tmp/linked-assets',
     })).toBeNull();
     expect(requestTimeoutForCommand({
       type: 'automation.file-import-plan',
@@ -147,12 +157,17 @@ describe('requestTimeoutForCommand', () => {
       child.emit('message', { type: 'worker.ready' });
       await start;
 
-      const pending = client.request({ type: 'library.close', libraryId: 'library-1' });
+      const pending = client.request({
+        type: 'ai.test-connection',
+        apiFormat: 'openai_chat',
+        apiKey: 'ephemeral-key',
+        model: 'model',
+      });
       // 先 attach rejection 处理器再推进时间，避免 timer 触发时 unhandled。
       const pendingRejection = expect(pending).rejects.toMatchObject({
         name: 'WorkerRequestTimeoutError',
         code: 'WORKER_REQUEST_TIMEOUT',
-        commandType: 'library.close',
+        commandType: 'ai.test-connection',
       });
       await vi.advanceTimersByTimeAsync(15_000);
       await pendingRejection;

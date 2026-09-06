@@ -2,14 +2,20 @@ import { describe, expect, it } from 'vitest';
 
 import { automationCapabilitiesFromPluginPermissions } from '../../src/plugins/plugin-permission-capabilities';
 import {
+  automationScriptCommandIdSchema,
+  pluginHostOnlyCommandIdSchema,
+} from '../../src/shared/automation-script-api';
+import {
   parsePluginRuntimeChildMessage,
   pluginRuntimeChildMessageSchema,
   pluginRuntimeParentMessageSchema,
 } from '../../src/shared/plugin-runtime-utility-protocol';
 import {
+  parsePluginTrustedChildMessage,
   pluginTrustedChildMessageSchema,
   pluginTrustedParentMessageSchema,
 } from '../../src/shared/plugin-trusted-runtime-protocol';
+import { scriptRuntimeChildMessageSchema } from '../../src/shared/script-runtime-utility-protocol';
 
 describe('plugin permission → automation capability mapping', () => {
   it('keeps overlapping Gateway capabilities and drops plugin-only permissions', () => {
@@ -30,6 +36,13 @@ describe('plugin permission → automation capability mapping', () => {
       'library.read',
       'tag.write',
     ]);
+  });
+});
+
+describe('plugin host command ids', () => {
+  it('keeps plugin-only command ids disjoint from automation script ids', () => {
+    const scriptCommandIds = new Set(automationScriptCommandIdSchema.options);
+    expect(pluginHostOnlyCommandIdSchema.options.some((id) => scriptCommandIds.has(id))).toBe(false);
   });
 });
 
@@ -225,6 +238,45 @@ describe('plugin-runtime utility protocol', () => {
       status: 'succeeded',
       ...full,
     })).toMatchObject(full);
+  });
+
+  it('accepts plugin-only host commands without treating them as protocol faults', () => {
+    const instanceId = '11111111-1111-4111-8111-111111111111';
+    const requestId = '22222222-2222-4222-8222-222222222222';
+    for (const commandId of ['ui.dialog', 'ui.widget-patch', 'media.binaries.get'] as const) {
+      const envelope = {
+        instanceId,
+        requestId,
+        commandId,
+        input: commandId === 'ui.dialog'
+          ? { dialogId: 'compress' }
+          : commandId === 'ui.widget-patch'
+            ? {
+              sessionId: '33333333-3333-4333-8333-333333333333',
+              tree: { type: 'note', text: 'Hello' },
+            }
+            : {},
+      };
+      expect(pluginRuntimeChildMessageSchema.parse({
+        type: 'plugin-runtime.host-command',
+        ...envelope,
+      })).toMatchObject({ commandId });
+      expect(pluginTrustedChildMessageSchema.parse({
+        type: 'plugin-trusted.host-command',
+        ...envelope,
+      })).toMatchObject({ commandId });
+      expect(parsePluginTrustedChildMessage({
+        type: 'plugin-trusted.host-command',
+        ...envelope,
+      })).toMatchObject({ kind: 'message' });
+      expect(scriptRuntimeChildMessageSchema.safeParse({
+        type: 'script-runtime.host-command',
+        executionId: instanceId,
+        requestId,
+        commandId,
+        input: envelope.input,
+      }).success).toBe(false);
+    }
   });
 
   it('classifies extensible events separately from control-plane faults', () => {

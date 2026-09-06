@@ -14,7 +14,6 @@
 import { BrowserWindow } from 'electron';
 
 import {
-  DOCUMENT_THUMBNAIL_RENDER_TIMEOUT_MS,
   DOCUMENT_THUMBNAIL_WIDTH,
   type DocumentThumbnailRenderRequest,
   type DocumentThumbnailRenderResponse,
@@ -39,13 +38,6 @@ export async function renderDocumentThumbnail(
   logger: AppLogger,
 ): Promise<DocumentThumbnailRenderResponse['result']> {
   let window: BrowserWindow | null = null;
-  const timeout = setTimeout(() => {
-    try {
-      window?.destroy();
-    } catch {
-      // Already gone.
-    }
-  }, DOCUMENT_THUMBNAIL_RENDER_TIMEOUT_MS);
   try {
     window = new BrowserWindow({
       width: request.width,
@@ -65,8 +57,18 @@ export async function renderDocumentThumbnail(
       if (url !== request.url) event.preventDefault();
     });
     await window.loadURL(request.url);
-    // Let layout/fonts settle before capturing.
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    // Wait for the page's own layout/font readiness instead of guessing that
+    // every document settles within a fixed wall-clock window. `loadURL`
+    // already waits for the document load event; `document.fonts.ready` and
+    // two animation frames cover late font/layout commits without imposing a
+    // deadline on a large or slow local HTML asset.
+    await window.webContents.executeJavaScript(`
+      (async () => {
+        if (document.fonts?.ready) await document.fonts.ready;
+        await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+        await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+      })()
+    `, true);
     if (window.isDestroyed()) {
       return {
         status: 'failed',
@@ -106,7 +108,6 @@ export async function renderDocumentThumbnail(
       reason: error instanceof Error ? error.message : 'document load failed',
     };
   } finally {
-    clearTimeout(timeout);
     try {
       window?.destroy();
     } catch {

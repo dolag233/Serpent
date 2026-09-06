@@ -192,51 +192,68 @@ export function useExternalImportHandlers({
     ],
   );
 
-  const pasteClipboardImage = useCallback(async () => {
-    if (!api || !library || busy) return;
-    setUiState("importing");
-    setError(null);
-    setNotice(null);
-    try {
-      const result = await api.pasteClipboardImage({
-        libraryId: library.libraryId,
-        targetFolderId: managedImportTargetFolderIdRef.current,
-        targetCollectionId: activeCollectionId ?? undefined,
-      });
-      if (!result.ok) {
-        if (result.error.code === "IMPORT_COLLECTION_ASSIGN_FAILED") {
-          await reloadCurrentContentRef.current();
+  const pasteClipboardImage = useCallback(
+    async (options?: {
+      targetFolderId?: string;
+      /** Windows clipboard images are often bitmap-only (CF_DIB) that never
+          surface as an image item in the renderer's clipboardData. When Main
+          reports no image it can read, this runs instead of a failure toast. */
+      onNoClipboardImage?: () => void | Promise<void>;
+    }) => {
+      if (!api || !library || busy) return;
+      setUiState("importing");
+      setError(null);
+      setNotice(null);
+      try {
+        const result = await api.pasteClipboardImage({
+          libraryId: library.libraryId,
+          targetFolderId:
+            options?.targetFolderId ?? managedImportTargetFolderIdRef.current,
+          targetCollectionId: activeCollectionId ?? undefined,
+        });
+        if (!result.ok) {
+          if (result.error.code === "CLIPBOARD_IMAGE_NOT_FOUND") {
+            if (options?.onNoClipboardImage) {
+              await options.onNoClipboardImage();
+              return;
+            }
+            throw new LibraryOperationError(result.error);
+          }
+          if (result.error.code === "IMPORT_COLLECTION_ASSIGN_FAILED") {
+            await reloadCurrentContentRef.current();
+          }
+          throw new LibraryOperationError(result.error);
         }
-        throw new LibraryOperationError(result.error);
+        if ("importId" in result.value) {
+          setConflicts(result.value);
+        } else {
+          setNotice(importSummaryMessage(result.value, locale));
+          await onImportCompleted(result.value);
+        }
+      } catch (caught) {
+        if (!shouldSuppressClipboardPasteFeedback(caught)) {
+          setError(toMessage(caught, t("toast.clipboardImportFailed"), locale));
+        }
+      } finally {
+        setUiState("ready");
       }
-      if ("importId" in result.value) {
-        setConflicts(result.value);
-      } else {
-        setNotice(importSummaryMessage(result.value, locale));
-        await onImportCompleted(result.value);
-      }
-    } catch (caught) {
-      if (!shouldSuppressClipboardPasteFeedback(caught)) {
-        setError(toMessage(caught, t("toast.clipboardImportFailed"), locale));
-      }
-    } finally {
-      setUiState("ready");
-    }
-  }, [
-    activeCollectionId,
-    api,
-    busy,
-    library,
-    locale,
-    managedImportTargetFolderIdRef,
-    onImportCompleted,
-    reloadCurrentContentRef,
-    setConflicts,
-    setError,
-    setNotice,
-    setUiState,
-    t,
-  ]);
+    },
+    [
+      activeCollectionId,
+      api,
+      busy,
+      library,
+      locale,
+      managedImportTargetFolderIdRef,
+      onImportCompleted,
+      reloadCurrentContentRef,
+      setConflicts,
+      setError,
+      setNotice,
+      setUiState,
+      t,
+    ],
+  );
 
   const handleExternalDragEnter = useCallback(
     (event: DragEvent<HTMLElement>) => {

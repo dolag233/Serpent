@@ -365,7 +365,16 @@ describe('browser extension save client', () => {
       }),
     ).toEqual({
       title: '浏览器无法下载该媒体',
-      message: '下载失败：HTTP 403',
+      message: '下载失败：HTTP 403（该站点可能启用了防盗链，请反馈给扩展开发者加入支持列表）',
+    });
+    expect(
+      notificationForOutcome({
+        kind: 'fetch_failed',
+        reason: 'HTTP 500',
+      }),
+    ).toEqual({
+      title: '浏览器无法下载该媒体',
+      message: '下载失败：HTTP 500',
     });
   });
 });

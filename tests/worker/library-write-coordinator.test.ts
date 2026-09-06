@@ -101,6 +101,35 @@ describe('LibraryWriteCoordinator', () => {
     secondDatabase.close();
   });
 
+  it('waits for the default unbounded acquisition until the current owner releases', async () => {
+    const filename = databasePath();
+    const firstDatabase = createDatabase(filename);
+    const secondDatabase = new Database(filename);
+    const first = new LibraryWriteCoordinator(firstDatabase, 'library-1', {
+      newOwnerId: () => 'first-owner',
+    });
+    let wakeRetry: (() => void) | undefined;
+    const sleep = vi.fn(() => new Promise<void>((resolve) => {
+      wakeRetry = resolve;
+    }));
+    const second = new LibraryWriteCoordinator(secondDatabase, 'library-1', {
+      newOwnerId: () => 'second-owner',
+      sleep,
+    });
+
+    const firstLease = await first.acquire({ timeoutMs: 0 });
+    const secondLeasePromise = second.acquire({ retryIntervalMs: 1 });
+    expect(sleep).toHaveBeenCalledOnce();
+
+    firstLease.release();
+    wakeRetry?.();
+    const secondLease = await secondLeasePromise;
+    expect(secondLease.ownerId).toBe('second-owner');
+    secondLease.release();
+    firstDatabase.close();
+    secondDatabase.close();
+  });
+
   it('recovers a lease after its persisted deadline and refuses a stale owner renewal', async () => {
     const filename = databasePath();
     const firstDatabase = createDatabase(filename);

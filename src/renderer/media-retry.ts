@@ -25,21 +25,23 @@ export async function waitForMediaArtifactRetry({
   libraryId,
   assetId,
   artifactKind,
-  timeoutMs = 30_000,
   pollIntervalMs = 200,
+  signal,
 }: {
   api: Pick<SerpentLibraryApi, "listMediaJobs">;
   libraryId: string;
   assetId: string;
   artifactKind: "thumbnail" | "webm_proxy" | "audio_proxy";
-  timeoutMs?: number;
   pollIntervalMs?: number;
+  signal?: AbortSignal;
 }): Promise<MediaJob | null> {
   const jobKind = mediaJobKindForArtifact(artifactKind);
-  const deadline = Date.now() + timeoutMs;
   let latestJobId: string | null = null;
 
-  while (Date.now() <= deadline) {
+  for (;;) {
+    if (signal?.aborted) {
+      throw new DOMException("Media artifact retry was cancelled.", "AbortError");
+    }
     const result = await api.listMediaJobs({ libraryId });
     if (!result.ok) return null;
 
@@ -54,12 +56,18 @@ export async function waitForMediaArtifactRetry({
       if (TERMINAL_MEDIA_JOB_STATUSES.has(job.status)) return job;
     }
 
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) break;
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, Math.min(pollIntervalMs, remainingMs));
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        reject(new DOMException("Media artifact retry was cancelled.", "AbortError"));
+      };
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, Math.max(0, pollIntervalMs));
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) onAbort();
     });
   }
-
-  return null;
 }

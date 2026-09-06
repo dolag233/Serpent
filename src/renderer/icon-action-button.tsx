@@ -11,6 +11,8 @@ export function IconActionButton({
   className = 'tiny-action',
   omitClassName = false,
   onClick,
+  onMouseEnter,
+  onMouseLeave,
   disabled,
 }: {
   readonly label: string;
@@ -20,6 +22,8 @@ export function IconActionButton({
   /** When true, no className is set (parent CSS targets `button` directly). */
   readonly omitClassName?: boolean;
   readonly onClick?: () => void;
+  readonly onMouseEnter?: () => void;
+  readonly onMouseLeave?: () => void;
   readonly disabled?: boolean;
 }) {
   return (
@@ -27,6 +31,8 @@ export function IconActionButton({
       {...(omitClassName ? {} : { className })}
       disabled={disabled}
       onClick={onClick}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
       type="button"
       {...iconActionAttrs(label)}
     >

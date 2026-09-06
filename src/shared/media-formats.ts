@@ -132,12 +132,10 @@ export function imageDecoderForExtension(
 
 /**
  * Non-native image viewers need a decoded derivative because Chromium cannot
- * render the source container itself.  Keep this separate from the thumbnail
- * decoder: TIFF can still use Sharp for ordinary cards, but large/metadata-
- * heavy TIFFs are deliberately routed through OIIO for both safety and the
- * full-resolution viewer path. TIFF is intentionally routed through OIIO for
- * viewer decoding. The card path may still choose bounded Sharp for ordinary
- * TIFFs; other formats retain their existing card decoder while the viewer
+ * render the source container itself. Keep this separate from the thumbnail
+ * decoder: TIFF is intentionally routed through OIIO for both card and viewer
+ * decoding, so ordinary and metadata-heavy files use the same format-owned
+ * path. Other formats retain their existing card decoder while the viewer
  * selects the appropriate full-resolution path.
  */
 export function imageViewerDecoderForExtension(

@@ -200,8 +200,31 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       const settingsDialog = window.getByRole("dialog");
       await expect(settingsDialog).toBeVisible();
       await settingsDialog.getByRole("tab", { name: "外观", exact: true }).click();
+      const themeAccentSwatches = settingsDialog.locator(
+        ".app-settings-theme-accent-swatch",
+      );
+      await expect(themeAccentSwatches).toHaveCount(8);
+      await settingsDialog.getByRole("radio", { name: "VS Code" }).click();
+      await settingsDialog
+        .locator('[data-theme-accent="purple"]')
+        .click();
+      await expect(
+        settingsDialog.locator('[data-theme-accent="purple"]'),
+      ).toHaveAttribute("aria-checked", "true");
+      await expect
+        .poll(() =>
+          window.evaluate(() => ({
+            accent: getComputedStyle(document.documentElement)
+              .getPropertyValue("--accent")
+              .trim(),
+            actionAccent: getComputedStyle(document.documentElement)
+              .getPropertyValue("--ui-action-accent")
+              .trim(),
+          })),
+        )
+        .toEqual({ accent: "#8b5cf6", actionAccent: "#8b5cf6" });
       const themeColorDisclosure = settingsDialog.getByRole("button", {
-        name: "主题色设置",
+        name: "高级颜色配置",
         exact: true,
       });
       await expect(themeColorDisclosure).toHaveAttribute(
@@ -222,6 +245,54 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       await window.keyboard.press("Escape");
       await expect(settingsDialog).toHaveCount(0);
     }
+
+    // Typography is an app preference, not Chromium page zoom. Exercise all
+    // four tiers through the real Appearance settings and verify that the
+    // shared root scale and a visible control both change.
+    if (process.platform === "win32") {
+      await settingsButton.click();
+      await window.getByRole("menuitem", { name: "设置", exact: true }).click();
+    } else {
+      await settingsButton.click();
+    }
+    const fontSettingsDialog = window.getByRole("dialog");
+    await expect(fontSettingsDialog).toBeVisible();
+    await fontSettingsDialog.getByRole("tab", { name: "外观", exact: true }).click();
+    const fontSizeScale = fontSettingsDialog.locator(".app-settings-font-size-scale");
+    const fontSizeSlider = fontSizeScale.getByRole("slider", { name: "字体大小" });
+    await expect(fontSizeSlider).toHaveAttribute("min", "0");
+    await expect(fontSizeSlider).toHaveAttribute("max", "3");
+    await expect(fontSizeScale.locator(".app-settings-elevation-tick-label")).toHaveCount(4);
+    const readFontScale = () => window.evaluate(() => ({
+      scale: getComputedStyle(document.documentElement)
+        .getPropertyValue("--ui-font-scale")
+        .trim(),
+      size: getComputedStyle(document.querySelector(".dimension-filter-btn")!)
+        .fontSize,
+      zoom: getComputedStyle(document.documentElement).zoom,
+    }));
+    const setFontSizeIndex = async (index: number) => {
+      await fontSizeSlider.focus();
+      await fontSizeSlider.press("Home");
+      for (let step = 0; step < index; step += 1) {
+        await fontSizeSlider.press("ArrowRight");
+      }
+    };
+    await setFontSizeIndex(0);
+    await expect(fontSizeSlider).toHaveAttribute("aria-valuetext", "紧凑");
+    await expect.poll(readFontScale).toEqual({ scale: "0.94", size: "11.28px", zoom: "1" });
+    await setFontSizeIndex(1);
+    await expect(fontSizeSlider).toHaveAttribute("aria-valuetext", "默认");
+    await expect.poll(readFontScale).toEqual({ scale: "1", size: "12px", zoom: "1" });
+    await setFontSizeIndex(2);
+    await expect(fontSizeSlider).toHaveAttribute("aria-valuetext", "舒适");
+    await expect.poll(readFontScale).toEqual({ scale: "1.06", size: "12.72px", zoom: "1" });
+    await setFontSizeIndex(3);
+    await expect(fontSizeSlider).toHaveAttribute("aria-valuetext", "更大");
+    await expect.poll(readFontScale).toEqual({ scale: "1.12", size: "13.44px", zoom: "1" });
+    await window.keyboard.press("Escape");
+    await expect(fontSettingsDialog).toHaveCount(0);
+
     await expect(
       window.locator(".toolbar-workspace-cluster .scope-history"),
     ).toBeVisible();
@@ -316,6 +387,26 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       window.locator(".asset-card").filter({ hasText: "nav-a.png" }),
     ).toBeVisible({ timeout: 15_000 });
 
+    // Larger text must keep the caption's bottom breathing room instead of
+    // leaving the 8px default padding visually compressed or clipped.
+    const importedCard = window.locator('.asset-card[title="nav-a.png"]');
+    const captionMetrics = await importedCard.locator(".asset-caption").evaluate(
+      (element) => {
+        const style = getComputedStyle(element);
+        return {
+          fontScale: getComputedStyle(document.documentElement)
+            .getPropertyValue("--ui-font-scale")
+            .trim(),
+          paddingBottom: Number.parseFloat(style.paddingBottom),
+          clientHeight: element.clientHeight,
+          scrollHeight: element.scrollHeight,
+        };
+      },
+    );
+    expect(captionMetrics.fontScale).toBe("1.12");
+    expect(captionMetrics.paddingBottom).toBeGreaterThan(8);
+    expect(captionMetrics.scrollHeight).toBeLessThanOrEqual(captionMetrics.clientHeight);
+
     await window.getByRole("button", { name: "添加文件夹" }).click();
     await window.getByLabel("新文件夹名称").fill("场景");
     await window.keyboard.press("Enter");
@@ -369,6 +460,26 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
     await expect(importLinkedButton).toHaveAttribute(
       "data-hover-tip",
       "导入链接文件夹",
+    );
+
+    // Native Electron windows do not expose a restorable Playwright viewport
+    // value, so keep the narrow-window check last before closing the app.
+    await settingsButton.click();
+    const narrowFontSettingsDialog = window.getByRole("dialog");
+    await narrowFontSettingsDialog
+      .getByRole("tab", { name: "外观", exact: true })
+      .click();
+    await window.setViewportSize({ width: 900, height: 720 });
+    const narrowFontScale = narrowFontSettingsDialog.locator(
+      ".app-settings-font-size-scale",
+    );
+    await expect(narrowFontScale).toBeVisible();
+    const narrowFontScaleBox = await narrowFontScale.boundingBox();
+    const narrowViewport = window.viewportSize();
+    expect(narrowFontScaleBox).not.toBeNull();
+    expect(narrowViewport).not.toBeNull();
+    expect(narrowFontScaleBox!.x + narrowFontScaleBox!.width).toBeLessThanOrEqual(
+      narrowViewport!.width,
     );
   } finally {
     await application.close();

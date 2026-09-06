@@ -489,14 +489,14 @@ describe('fbx converter — typed failures', () => {
     expect(result.failure.errorCode).toBe('FBX_NOT_FBX');
   });
 
-  it('rejects oversized sources with FBX_LIMIT_EXCEEDED', async () => {
+  it('does not reject a large source before parsing it', async () => {
     const oversized = Buffer.alloc(300 * 1024 * 1024 + 1);
     const result = await convertFbxBuffer(oversized, {
       sourcePath: path.join(temporaryRoot(), 'huge.fbx'),
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.failure.errorCode).toBe('FBX_LIMIT_EXCEEDED');
+    expect(result.failure.errorCode).toBe('FBX_NOT_FBX');
   });
 
   it('rejects scenes over the triangle cap with FBX_LIMIT_EXCEEDED', async () => {

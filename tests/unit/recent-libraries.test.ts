@@ -188,8 +188,9 @@ describe('recent libraries store (main)', () => {
     expect(readActiveLibraryPath(storePath)).toBe('/libraries/a');
   });
 
-  it('keeps automatic recent-library opening opt-in to isolated restart tests', () => {
-    expect(recentLibraryAutoOpenEnabled()).toBe(false);
+  it('auto-opens the recent library in production and opt-in isolated restart tests', () => {
+    // Serpent-85a9b0：生产默认自动打开上次的资源库。
+    expect(recentLibraryAutoOpenEnabled()).toBe(true);
 
     process.env.SERPENT_E2E = '1';
     expect(recentLibraryAutoOpenEnabled()).toBe(false);

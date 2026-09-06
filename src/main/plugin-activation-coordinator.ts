@@ -11,6 +11,7 @@ import {
   listCommandContributions,
   listMcpCommandContributions,
   listMenuContributions,
+  listDialogContributions,
   listInspectorSectionContributions,
   listInspectorViewContributions,
   listSettingsContributions,
@@ -22,6 +23,7 @@ import {
   listViewerOverlayContributions,
   listWorkspaceViewContributions,
   listUiDescriptorContributions,
+  listPluginUiFrameContributions,
   registerManifestContributions,
   type PluginContributionRegistry,
 } from '../plugins/plugin-contributions';
@@ -321,28 +323,6 @@ export class PluginActivationCoordinator {
           libraryId: input.libraryId,
           mode: candidate.mode,
         });
-        try {
-          const { appendFileSync } = await import('node:fs');
-          const { join } = await import('node:path');
-          appendFileSync(
-            join(
-              process.env.SERPENT_E2E_USER_DATA_PATH
-                ?? join(process.env.HOME ?? '/tmp', 'Library/Application Support/Serpent'),
-              'plugin-activation-failures.jsonl',
-            ),
-            `${JSON.stringify({
-              at: new Date().toISOString(),
-              pluginId,
-              libraryId: input.libraryId,
-              mode: candidate.mode,
-              error: error instanceof Error ? error.message : String(error),
-              stack: error instanceof Error ? error.stack : undefined,
-            })}\n`,
-            'utf8',
-          );
-        } catch {
-          // diagnostic only
-        }
       }
     }
 
@@ -866,16 +846,11 @@ export class PluginActivationCoordinator {
     const record = [...active.values()].find((candidate) =>
       candidate.instanceId === input.instanceId && candidate.pluginId === input.pluginId);
     if (record === undefined || this.options.contributions === undefined) return undefined;
-    // Settings / sidebar / inspector / viewer iframes share serpent-plugin:// with workspace views.
-    const contribution = [
-      ...listWorkspaceViewContributions(this.options.contributions),
-      ...listSidebarViewContributions(this.options.contributions),
-      ...listInspectorViewContributions(this.options.contributions),
-      ...listViewerOverlayContributions(this.options.contributions),
-      ...listSettingsPageContributions(this.options.contributions),
-    ].find((candidate) => candidate.id === input.contributionId
-      && candidate.pluginInstanceId === input.instanceId
-      && candidate.pluginId === input.pluginId);
+    // Settings / sidebar / inspector / viewer / dialog iframes share serpent-plugin://.
+    const contribution = listPluginUiFrameContributions(this.options.contributions)
+      .find((candidate) => candidate.id === input.contributionId
+        && candidate.pluginInstanceId === input.instanceId
+        && candidate.pluginId === input.pluginId);
     if (contribution?.entryPath === undefined) return undefined;
     const uiRoot = path.posix.dirname(contribution.entryPath);
     if (input.relativePath !== contribution.entryPath
@@ -1040,6 +1015,22 @@ export class PluginActivationCoordinator {
           pluginInstanceId: contribution.pluginInstanceId,
           title: contribution.title,
           target: 'workspace.views' as const,
+          ...this.#viewContributionAttachment(contribution, input.libraryId),
+        }));
+    }
+    if (input.target === 'dialogs') {
+      return listDialogContributions(this.options.contributions)
+        .filter((contribution) => activeInstanceIds.has(contribution.pluginInstanceId))
+        .map((contribution) => ({
+          kind: 'dialog' as const,
+          id: contribution.id,
+          pluginId: contribution.pluginId,
+          pluginInstanceId: contribution.pluginInstanceId,
+          title: contribution.title,
+          target: 'dialogs' as const,
+          entryPath: contribution.entryPath,
+          ...(contribution.width === undefined ? {} : { width: contribution.width }),
+          ...(contribution.height === undefined ? {} : { height: contribution.height }),
           ...this.#viewContributionAttachment(contribution, input.libraryId),
         }));
     }

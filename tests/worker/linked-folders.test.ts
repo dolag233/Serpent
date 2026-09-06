@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -945,6 +945,197 @@ describe('Linked folder import', () => {
       assets.find((asset) => asset.relativeFilePath === 'new-art.png')
         ?.locationKind,
     ).toBe('linked');
+    service.closeAll();
+  });
+});
+
+describe('Moving managed assets into linked folders', () => {
+  function libraryWithManagedAsset(
+    service: LibraryService,
+    root: string,
+    name = 'managed.png',
+    content = 'managed bytes',
+  ): { library: ReturnType<LibraryService['createLibrary']>; assetId: string; linked: ReturnType<LibraryService['importFolderAsLinked']> } {
+    const linkedRoot = path.join(root, 'linked');
+    const importRoot = path.join(root, 'incoming');
+    mkdirSync(linkedRoot);
+    mkdirSync(importRoot);
+    const source = path.join(importRoot, name);
+    writeFileSync(source, content);
+    const library = service.createLibrary({ displayName: 'MoveToLinked', selectedParentPath: root });
+    const imported = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [source],
+    });
+    if ('importId' in imported) throw new Error('Unexpected import conflict.');
+    const linked = service.importFolderAsLinked({ libraryId: library.libraryId, sourceRootPath: linkedRoot });
+    return { library, assetId: imported.assets[0]!.assetId, linked };
+  }
+
+  it('moves a managed asset into the linked root and removes the managed source', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const { library, assetId, linked } = libraryWithManagedAsset(service, root);
+
+    const result = service.moveAssets({
+      libraryId: library.libraryId,
+      assetIds: [assetId],
+      targetFolderId: linked.folderId,
+      conflictStrategy: 'keep-both',
+    });
+
+    expect(result.movedCount).toBe(1);
+    expect(result.skippedCount).toBe(0);
+    expect(result.assets[0]!.locationKind).toBe('linked');
+    expect(result.assets[0]!.relativeFilePath).toBe('managed.png');
+    // 文件已物理移入链接根目录
+    expect(readFileSync(path.join(linked.absoluteRootPath, 'managed.png'), 'utf8')).toBe('managed bytes');
+    // managed 源已从库目录删除
+    expect(existsSync(path.join(library.libraryPath, 'Assets', 'managed.png'))).toBe(false);
+    const remainingManaged = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    }).filter((asset) => asset.locationKind === 'managed');
+    expect(remainingManaged).toHaveLength(0);
+    service.closeAll();
+  });
+
+  it('moves a managed asset into a linked subdirectory via its virtual folder id', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const { library, assetId, linked } = libraryWithManagedAsset(service, root, 'photo.png');
+    const nested = service.createLinkedFolderDirectory({
+      libraryId: library.libraryId,
+      linkedFolderId: linked.folderId,
+      relativePath: '',
+      name: 'nested',
+    });
+
+    const result = service.moveAssets({
+      libraryId: library.libraryId,
+      assetIds: [assetId],
+      targetFolderId: nested.folderId,
+      conflictStrategy: 'keep-both',
+    });
+
+    expect(result.movedCount).toBe(1);
+    expect(readFileSync(path.join(linked.absoluteRootPath, 'nested', 'photo.png'), 'utf8')).toBe('managed bytes');
+    expect(existsSync(path.join(library.libraryPath, 'Assets', 'photo.png'))).toBe(false);
+    service.closeAll();
+  });
+
+  it('keeps the managed source when a same-name move is skipped', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const { library, assetId, linked } = libraryWithManagedAsset(service, root, 'managed.png');
+    // 链接根已有同名文件：skip 策略应跳过，源保留原位
+    writeFileSync(path.join(linked.absoluteRootPath, 'managed.png'), 'existing bytes');
+
+    const result = service.moveAssets({
+      libraryId: library.libraryId,
+      assetIds: [assetId],
+      targetFolderId: linked.folderId,
+      conflictStrategy: 'skip',
+    });
+
+    expect(result.movedCount).toBe(0);
+    expect(result.skippedCount).toBe(1);
+    expect(readFileSync(path.join(linked.absoluteRootPath, 'managed.png'), 'utf8')).toBe('existing bytes');
+    // managed 源未被删除
+    expect(existsSync(path.join(library.libraryPath, 'Assets', 'managed.png'))).toBe(true);
+    service.closeAll();
+  });
+
+  it('copies managed assets into a linked folder via copyAssets (linked-target delegation)', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const { library, assetId, linked } = libraryWithManagedAsset(service, root);
+
+    const result = service.copyAssets({
+      libraryId: library.libraryId,
+      assetIds: [assetId],
+      targetFolderId: linked.folderId,
+      conflictStrategy: 'keep-both',
+    });
+
+    expect(result.copiedCount).toBe(1);
+    expect(result.skippedCount).toBe(0);
+    expect(readFileSync(path.join(linked.absoluteRootPath, 'managed.png'), 'utf8')).toBe('managed bytes');
+    // 复制语义：managed 源保留原位
+    expect(existsSync(path.join(library.libraryPath, 'Assets', 'managed.png'))).toBe(true);
+    expect(result.assets[0]!.locationKind).toBe('linked');
+    service.closeAll();
+  });
+});
+
+describe('Linked folder sync diagnostics', () => {
+  function diagService(): {
+    service: LibraryService;
+    diagnostics: Array<{ scope: string; error: unknown; context?: Record<string, unknown> }>;
+  } {
+    const diagnostics: Array<{ scope: string; error: unknown; context?: Record<string, unknown> }> = [];
+    const service = new LibraryService({ onDiagnostic: (d) => diagnostics.push(d) });
+    services.push(service);
+    return { service, diagnostics };
+  }
+
+  it('logs when an external file disappears from a linked folder', () => {
+    const root = temporaryRoot();
+    const linkedRoot = path.join(root, 'linked');
+    mkdirSync(linkedRoot);
+    writeFileSync(path.join(linkedRoot, 'gone.png'), 'gone bytes');
+    const { service, diagnostics } = diagService();
+    const library = service.createLibrary({ displayName: 'Diag', selectedParentPath: root });
+    service.importFolderAsLinked({ libraryId: library.libraryId, sourceRootPath: linkedRoot });
+
+    // 模拟外部删除文件，随后对账
+    rmSync(path.join(linkedRoot, 'gone.png'));
+    service.refreshManagedAssets(library.libraryId);
+
+    const missing = diagnostics.find((d) => d.scope === 'linked-folder.sync.asset-missing');
+    expect(missing).toBeDefined();
+    expect(missing?.context?.relativeFilePath).toBe('gone.png');
+    // 变更摘要（中性 scope）同时触发
+    expect(diagnostics.some((d) => d.scope === 'assets.sync.reconciled')).toBe(true);
+    service.closeAll();
+  });
+
+  it('logs when a file is moved within the linked root', () => {
+    const root = temporaryRoot();
+    const linkedRoot = path.join(root, 'linked');
+    mkdirSync(linkedRoot);
+    writeFileSync(path.join(linkedRoot, 'a.png'), 'aaa');
+    const { service, diagnostics } = diagService();
+    const library = service.createLibrary({ displayName: 'DiagMove', selectedParentPath: root });
+    service.importFolderAsLinked({ libraryId: library.libraryId, sourceRootPath: linkedRoot });
+
+    // 模拟根内移动：rename a.png → b.png
+    renameSync(path.join(linkedRoot, 'a.png'), path.join(linkedRoot, 'b.png'));
+    service.refreshManagedAssets(library.libraryId);
+
+    const moved = diagnostics.find((d) => d.scope === 'linked-folder.sync.asset-moved');
+    expect(moved).toBeDefined();
+    expect(moved?.context?.newRelativePath).toBe('b.png');
+    service.closeAll();
+  });
+
+  it('logs when a linked folder root becomes unavailable', () => {
+    const root = temporaryRoot();
+    const linkedRoot = path.join(root, 'linked');
+    mkdirSync(linkedRoot);
+    writeFileSync(path.join(linkedRoot, 'a.png'), 'aaa');
+    const { service, diagnostics } = diagService();
+    const library = service.createLibrary({ displayName: 'Diag2', selectedParentPath: root });
+    service.importFolderAsLinked({ libraryId: library.libraryId, sourceRootPath: linkedRoot });
+
+    // 模拟链接根目录消失，对账后文件夹转 offline
+    rmSync(linkedRoot, { recursive: true, force: true });
+    service.refreshManagedAssets(library.libraryId);
+
+    const status = diagnostics.find((d) => d.scope === 'linked-folder.sync.status-changed');
+    expect(status).toBeDefined();
+    expect(status?.context?.newStatus).toBe('offline');
     service.closeAll();
   });
 });

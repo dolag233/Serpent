@@ -104,7 +104,7 @@ function buildLibraryAtVersion(root: string, targetVersion: number): string {
 afterEach(() => {
   for (const service of services.splice(0)) service.closeAll();
   for (const root of temporaryRoots.splice(0)) {
-    rmSync(root, { force: true, recursive: true });
+    rmSync(root, { force: true, recursive: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 

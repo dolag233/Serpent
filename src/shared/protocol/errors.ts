@@ -23,6 +23,7 @@ export const PUBLIC_ERROR_MESSAGES = {
     'Copy files or folders in Finder/Explorer, then paste again.',
   IMPORT_COLLECTION_ASSIGN_FAILED: 'The assets were imported, but Serpent could not add them to the selected collection.',
   INVALID_IMPORT_DECISION: 'Choose a valid import conflict decision.',
+  AUTOMATION_FILE_PLAN_INVALID: 'The file operation plan is not valid for this request.',
   IMPORT_NOT_FOUND: 'The pending import no longer exists.',
   IMPORT_APPLY_FAILED:
     'Import stopped before every file was copied and registered. Nothing was silently overwritten. Check disk space and that the source files are still readable, then retry; already-imported items do not need to be selected again.',
@@ -137,7 +138,6 @@ export const publicErrorReasonSchema = z.enum([
   'LIBRARY_PARENT_IS_ROOT',
   'LIBRARY_PARENT_NOT_DIRECTORY',
   'LIBRARY_PARENT_INSIDE_SOURCE',
-  'LIBRARY_TRANSFER_TIMEOUT',
   'SYNC_AUTH_FAILED',
   'SYNC_INVALID_URL',
   'SYNC_PERMISSION_DENIED',

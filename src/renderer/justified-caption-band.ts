@@ -29,25 +29,51 @@ export type JustifiedCaptionLines = {
   secondary: boolean;
 };
 
+function normalizedFontScale(fontScale: number): number {
+  return Number.isFinite(fontScale) && fontScale > 0 ? fontScale : 1;
+}
+
+/**
+ * Scale a reserved caption band with the application typography tier. The
+ * canvas geometry is calculated in TypeScript while the caption spacing is
+ * applied in CSS, so both sides must use the same scale to keep the bottom
+ * padding visible in windowed cards.
+ */
+export function scaleCaptionBandPx(
+  captionBandPx: number,
+  fontScale = 1,
+): number {
+  const base = Number.isFinite(captionBandPx) && captionBandPx > 0
+    ? captionBandPx
+    : 0;
+  return Math.ceil(base * normalizedFontScale(fontScale));
+}
+
 /**
  * Estimated caption band height for the given visible lines.
  * Not used to drive preview geometry after Serpent-5p45.
  */
 export function resolveJustifiedCaptionBandPx(
   lines: JustifiedCaptionLines,
+  fontScale = 1,
 ): number {
+  const scale = normalizedFontScale(fontScale);
   const heights: number[] = [];
-  if (lines.dimensions) heights.push(JUSTIFIED_CAPTION_DIMENSIONS_LINE_PX);
-  if (lines.name) heights.push(JUSTIFIED_CAPTION_NAME_LINE_PX);
-  if (lines.secondary) heights.push(JUSTIFIED_CAPTION_SECONDARY_LINE_PX);
+  if (lines.dimensions) {
+    heights.push(Math.ceil(JUSTIFIED_CAPTION_DIMENSIONS_LINE_PX * scale));
+  }
+  if (lines.name) heights.push(Math.ceil(JUSTIFIED_CAPTION_NAME_LINE_PX * scale));
+  if (lines.secondary) {
+    heights.push(Math.ceil(JUSTIFIED_CAPTION_SECONDARY_LINE_PX * scale));
+  }
   if (heights.length === 0) return 0;
 
   const content = heights.reduce((sum, h) => sum + h, 0);
-  const gaps = (heights.length - 1) * JUSTIFIED_CAPTION_GAP_PX;
+  const gaps = Math.ceil((heights.length - 1) * JUSTIFIED_CAPTION_GAP_PX * scale);
   return (
-    JUSTIFIED_CAPTION_PAD_TOP_PX +
+    Math.ceil(JUSTIFIED_CAPTION_PAD_TOP_PX * scale) +
     content +
     gaps +
-    JUSTIFIED_CAPTION_PAD_BOTTOM_PX
+    Math.ceil(JUSTIFIED_CAPTION_PAD_BOTTOM_PX * scale)
   );
 }

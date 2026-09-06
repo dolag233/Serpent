@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   lstat,
   mkdir,
@@ -23,6 +23,7 @@ import {
 import {
   currentPluginPlatformToken,
   isPluginPlatformToken,
+  parsePluginReleaseAssetFileName,
   selectPluginReleaseAsset,
   stripSemverTagPrefix,
   type PluginPlatformToken,
@@ -55,6 +56,7 @@ import {
   type PluginGitHubAvailableUpdate,
   type PluginGitHubClient,
   type PluginInstallFromArchiveInput,
+  type PluginInstallFromCommunityInput,
   type PluginInstallFromDirectoryInput,
   type PluginInstallFromGitHubInput,
   type PluginInstallResult,
@@ -80,6 +82,7 @@ export {
   type PluginGitHubClient,
   type PluginGitHubRelease,
   type PluginInstallFromArchiveInput,
+  type PluginInstallFromCommunityInput,
   type PluginInstallFromDirectoryInput,
   type PluginInstallFromGitHubInput,
   type PluginInstallResult,
@@ -337,6 +340,82 @@ export class PluginPackageManager {
   }
 
   /**
+   * Install a catalog-pinned GitHub Release ZIP. Hash mismatch refuses the
+   * bytes; zipball fallback is never used on this path.
+   */
+  async installFromCommunity(input: PluginInstallFromCommunityInput): Promise<PluginInstallResult> {
+    let parsed;
+    try {
+      parsed = parseGitHubRepositoryUrl(input.repository);
+    } catch (error) {
+      throw new PluginPackageManagerError(
+        'PLUGIN_COMMUNITY_ENTRY_INVALID',
+        error instanceof Error ? error.message : 'Community install requires a valid GitHub repository URL.',
+      );
+    }
+    const expectedName = parsePluginReleaseAssetFileName(input.assetFileName);
+    if (
+      expectedName === undefined
+      || expectedName.pluginId !== input.pluginId
+      || expectedName.version !== input.version
+    ) {
+      throw new PluginPackageManagerError(
+        'PLUGIN_COMMUNITY_ENTRY_INVALID',
+        'The catalog asset name does not match the plugin id and version.',
+      );
+    }
+    input.downloadOptions?.onPhase?.('resolving');
+    const releases = await input.client.listReleases(parsed.repository);
+    const release = releases.find((candidate) => !candidate.draft && candidate.tagName === input.releaseTag);
+    if (release === undefined) {
+      throw new PluginPackageManagerError(
+        'PLUGIN_COMMUNITY_ENTRY_INVALID',
+        'The catalog Release tag was not found.',
+      );
+    }
+    const asset = release.assets.find((item) => item.name === input.assetFileName);
+    if (asset === undefined) {
+      throw new PluginPackageManagerError(
+        'PLUGIN_PLATFORM_ASSET_MISSING',
+        'The catalog Release ZIP was not published on that tag.',
+      );
+    }
+    const [archive, commitSha] = await Promise.all([
+      input.client.downloadReleaseAsset(asset.browserDownloadUrl, input.downloadOptions),
+      input.client.commitShaForRef(parsed.repository, input.releaseTag),
+    ]);
+    const actualHash = createHash('sha256').update(archive).digest('hex');
+    if (actualHash !== input.sha256) {
+      throw new PluginPackageManagerError(
+        'PLUGIN_PACKAGE_HASH_MISMATCH',
+        'The downloaded plugin ZIP did not match the catalog SHA-256.',
+      );
+    }
+    input.downloadOptions?.onPhase?.('installing');
+    const installed = await this.installFromArchive({
+      archive,
+      scope: input.scope,
+      libraryDirectory: input.libraryDirectory,
+      source: {
+        kind: 'github',
+        repository: parsed.repository,
+        ref: input.releaseTag,
+        commitSha,
+        fingerprint: `community:${input.pluginId}`,
+        channel: 'community',
+      },
+      signal: input.signal,
+    });
+    if (installed.package.lock.pluginId !== input.pluginId || installed.package.lock.version !== input.version) {
+      throw new PluginPackageManagerError(
+        'PLUGIN_COMMUNITY_ENTRY_INVALID',
+        'The installed plugin identity does not match the catalog entry.',
+      );
+    }
+    return installed;
+  }
+
+  /**
    * Looks for a newer stable Release with a matching platform (or `any`) asset.
    */
   async findGitHubAvailableUpdate(input: {
@@ -345,7 +424,7 @@ export class PluginPackageManager {
     platformToken?: string;
   }): Promise<PluginGitHubAvailableUpdate | undefined> {
     const source = input.package.lock.source;
-    if (source.kind !== 'github') return undefined;
+    if (source.kind !== 'github' || source.channel === 'community') return undefined;
     const platformToken = this.#resolvePlatformToken(input.platformToken);
     const currentVersion = parseSemver(input.package.lock.version);
     if (currentVersion === undefined) return undefined;
@@ -391,7 +470,7 @@ export class PluginPackageManager {
       throw new PluginPackageManagerError('PLUGIN_RESOLUTION_INVALID', 'Cannot update a package that is not installed and verified.');
     }
     const source = match.package.lock.source;
-    if (source.kind !== 'github') {
+    if (source.kind !== 'github' || source.channel === 'community') {
       throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', 'Only GitHub-installed plugins can check for updates.');
     }
     const available = await this.findGitHubAvailableUpdate({

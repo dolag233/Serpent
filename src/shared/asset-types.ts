@@ -32,6 +32,11 @@ export const managedFolderSummarySchema = z.strictObject({
   directAssetCount: z.number().int().nonnegative(),
   /** Immediate child managed folders. */
   childFolderCount: z.number().int().nonnegative(),
+  /**
+   * Row creation time (ISO-8601), for sidebar folder sorting (Serpent-db1835).
+   * Optional so rows summarized off non-navigation queries stay forward-compatible.
+   */
+  createdAt: z.string().min(1).optional(),
 });
 
 export type ManagedFolderSummary = z.infer<typeof managedFolderSummarySchema>;
@@ -52,15 +57,15 @@ export const folderBrowseEntrySchema = z.strictObject({
   /** All descendant assets (REQ-FOLDER-003 / Serpent-toh). */
   recursiveAssetCount: z.number().int().nonnegative(),
   childFolderCount: z.number().int().nonnegative(),
-  /** Up to 3 ready thumbnail/poster artifact ids for the folder cover deck. */
-  coverArtifactIds: z.array(nonBlankString).max(3),
+  /** Up to 4 ready thumbnail/poster artifact ids for the folder cover deck / collage (Serpent-9021d1). */
+  coverArtifactIds: z.array(nonBlankString).max(4),
   /**
-   * Up to 3 cover candidate asset ids (Serpent-d0nv). The Worker schedules
-   * these at the `cover` thumbnail scene so folder-card covers generate
+   * Up to 4 cover candidate asset ids (Serpent-d0nv / Serpent-9021d1). The Worker
+   * schedules these at the `cover` thumbnail scene so folder-card covers generate
    * before the rest of the library; the Renderer refreshes browse entries
    * when a thumbnail.ready event hits one of these assets.
    */
-  coverAssetIds: z.array(nonBlankString).max(3),
+  coverAssetIds: z.array(nonBlankString).max(4),
   /** Linked root id when this card is a virtual linked subdirectory. */
   linkedFolderId: nonBlankString.nullable().optional(),
 });
@@ -76,8 +81,8 @@ export const trashedFolderSummarySchema = z.strictObject({
   parentRelativePath: portableRelativePathSchema.nullable(),
   trashedAt: nonBlankString,
   assetCount: z.number().int().nonnegative(),
-  /** Up to three ready thumbnail/poster artifact ids for folder cards. */
-  coverArtifactIds: z.array(nonBlankString).max(3),
+  /** Up to four ready thumbnail/poster artifact ids for folder cards. */
+  coverArtifactIds: z.array(nonBlankString).max(4),
 });
 
 export type TrashedFolderSummary = z.infer<typeof trashedFolderSummarySchema>;

@@ -4,6 +4,59 @@ import { pluginLocalIdSchema } from './plugin-manifest';
 import { pluginInvocationContextSchema, type PluginInvocationContext } from './plugin-context';
 
 export const PLUGIN_COMMAND_DEFAULT_TIMEOUT_MS = 5_000;
+/** Sentinel used as a global plugin instance's ambient library id. Not a real library. */
+export const PLUGIN_GLOBAL_RUNTIME_LIBRARY_ID = '__serpent_global_runtime__';
+
+/**
+ * Host commands such as `ui.dialog` block the plugin on the user. The command
+ * invoke timer must pause for that wait, otherwise a 5s default kills the
+ * handler before the panel can even be used.
+ */
+export type PluginCommandTimeoutHandle = {
+  instanceId: string;
+  timeoutMs: number;
+  timer: ReturnType<typeof setTimeout> | undefined;
+  hostCommandPauseDepth: number;
+  fire(): void;
+};
+
+export function startPluginCommandTimeout(handle: PluginCommandTimeoutHandle): void {
+  if (handle.hostCommandPauseDepth > 0) return;
+  if (handle.timer !== undefined) clearTimeout(handle.timer);
+  handle.timer = setTimeout(() => {
+    handle.timer = undefined;
+    handle.fire();
+  }, handle.timeoutMs);
+}
+
+export function clearPluginCommandTimeout(handle: PluginCommandTimeoutHandle): void {
+  if (handle.timer === undefined) return;
+  clearTimeout(handle.timer);
+  handle.timer = undefined;
+}
+
+export function pausePluginCommandTimeoutsForInstance(
+  handles: Iterable<PluginCommandTimeoutHandle>,
+  instanceId: string,
+): void {
+  for (const handle of handles) {
+    if (handle.instanceId !== instanceId) continue;
+    handle.hostCommandPauseDepth += 1;
+    clearPluginCommandTimeout(handle);
+  }
+}
+
+export function resumePluginCommandTimeoutsForInstance(
+  handles: Iterable<PluginCommandTimeoutHandle>,
+  instanceId: string,
+): void {
+  for (const handle of handles) {
+    if (handle.instanceId !== instanceId) continue;
+    if (handle.hostCommandPauseDepth > 0) handle.hostCommandPauseDepth -= 1;
+    if (handle.hostCommandPauseDepth === 0) startPluginCommandTimeout(handle);
+  }
+}
+
 const NUL = String.fromCharCode(0);
 
 /** Library ids are opaque identifiers, never filesystem paths. */
@@ -40,6 +93,9 @@ export function freezePluginCommandContext(context: PluginCommandContext): Plugi
     Object.freeze(context.invocation.selection.assetIds);
     Object.freeze(context.invocation.selection.folderIds);
     Object.freeze(context.invocation.selection.collectionIds);
+    if (context.invocation.selection.assets !== undefined) {
+      Object.freeze(context.invocation.selection.assets);
+    }
     Object.freeze(context.invocation.selection);
     Object.freeze(context.invocation.browse);
     Object.freeze(context.invocation.viewer);

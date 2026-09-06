@@ -5,7 +5,6 @@ import { libraryNavigationSummarySchema } from '../library-navigation';
 import { pluginJobRecordSchema } from '../../plugins/plugin-jobs';
 import { recentLibraryListSchema } from '../recent-libraries';
 import { publicErrorReasonSchema, publicErrorSchema } from './errors';
-import { CONTENT_REPLACE_MAX_BASE64_LENGTH } from '../content-replace';
 import { fbxConvertErrorCodeSchema, fbxConversionStatsSchema } from '../fbx-conversion';
 import {
   WORKER_READY_MESSAGE_TYPE,
@@ -332,10 +331,29 @@ export function parseSyncProgressEvent(input: unknown): SyncProgressEvent {
   return syncProgressEventSchema.parse(input);
 }
 
+export const deleteProgressEventSchema = z.strictObject({
+  type: z.literal('delete.progress'),
+  operationId: nonBlankString,
+  libraryId: nonBlankString,
+  kind: z.enum(['trash', 'disk', 'permanent']),
+  phase: z.enum(['run', 'complete', 'failed', 'cancelled']),
+  /** True when disk delete can be cancelled between files. */
+  cancelable: z.boolean().optional(),
+  filesProcessed: z.number().int().nonnegative(),
+  totalFiles: z.number().int().nonnegative(),
+});
+
+export type DeleteProgressEvent = z.infer<typeof deleteProgressEventSchema>;
+
+export function parseDeleteProgressEvent(input: unknown): DeleteProgressEvent {
+  return deleteProgressEventSchema.parse(input);
+}
+
 export const progressEventSchema = z.union([
   exportProgressEventSchema,
   importProgressEventSchema,
   syncProgressEventSchema,
+  deleteProgressEventSchema,
 ]);
 
 export type ProgressEvent = z.infer<typeof progressEventSchema>;
@@ -706,6 +724,11 @@ const assetOperationSuccessSchemas = [
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('folder.browse-entries'),
+    entries: z.array(folderBrowseEntrySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('folder.entries'),
     entries: z.array(folderBrowseEntrySchema),
   }),
   z.strictObject({
@@ -1184,7 +1207,7 @@ const assetOperationSuccessSchemas = [
     assetId: nonBlankString,
     revisionId: nonBlankString,
     byteSize: z.number().int().nonnegative(),
-    dataBase64: z.string().max(CONTENT_REPLACE_MAX_BASE64_LENGTH),
+    dataBase64: z.string(),
     truncated: z.boolean(),
     mimeType: z.string().nullable(),
   }),

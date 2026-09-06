@@ -4,13 +4,24 @@ Plugins add tools, menus, or workflows to Serpent. They are not ordinary library
 
 ## Install a plugin
 
-1. Open **Settings → Plugins** and choose Install.
-2. Choose a local folder, a local ZIP, or a GitHub address.
-3. For a GitHub plugin, paste the project address directly. For example:
+Install official and certified third-party plugins from the plugin community:
+
+1. Open **Settings → Plugins** and choose **Browse community**.
+2. Browse or search. Click a card to see the author, version, repository, and readme; click **Install** and choose **User-wide** or **This library**.
+3. After installation, return to the plugin list. Non-restricted plugins still need an explicit trust decision before they run.
+
+A user-wide plugin is available in every library; a library plugin is used only in the current library.
+
+![Plugin community](../assets/ui/serpent-plugin-community.png)
+
+Local folders, local ZIP archives, and GitHub URLs you paste yourself use **Advanced install** on the same page:
+
+1. In **Settings → Plugins**, choose **Advanced install**.
+2. Pick a built plugin folder or ZIP, or paste a GitHub repository / Release URL. For example:
 
    `https://github.com/dolag233/Serpent-Plugin-ImageUpscaler`
 
-4. Choose **User-wide** or **This library**. A user-wide plugin is available in every library; a library plugin is used only in the current library.
+3. Choose **User-wide** or **This library** in the same way.
 
 The plugin appears in the plugin list after installation. Follow the plugin author’s own instructions if it needs additional setup.
 
@@ -27,13 +38,9 @@ If the same plugin is installed both user-wide and in the library, the plugin li
 
 ## Update and uninstall
 
-GitHub plugins can check for updates from plugin settings. Automatic updates are off by default; confirm the source before enabling them.
+GitHub plugins can check for updates from plugin settings. Automatic updates are off by default; confirm the source before enabling them. Plugins installed from the community do not follow the latest GitHub Release by themselves; update them from the community page after the directory lists a new version.
 
 Uninstalling a plugin does not remove personal settings it may have saved. Reinstall it later if you want to keep those settings; if the plugin provides its own cleanup action, prefer that action.
-
-## Browser extension
-
-For the browser extension (Chrome / Edge / Firefox), see [Browser extension](browser-extension.en.md).
 
 ## If a plugin does not work
 

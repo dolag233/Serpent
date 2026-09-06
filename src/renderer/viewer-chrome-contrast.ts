@@ -1,9 +1,9 @@
 /**
- * Serpent-noz: classify local image luminance so viewer chrome (<>/close)
+ * Serpent-noz: classify local image luminance so viewer chrome (<prev/next>)
  * can flip to light-on-dark or dark-on-light for readability.
  *
- * Sampling prefers edge strips where those controls sit (left / right /
- * top-right). Relative luminance uses sRGB → linear → Rec. 709 weights.
+ * Sampling prefers edge strips where those controls sit (left / right).
+ * Relative luminance uses sRGB → linear → Rec. 709 weights.
  */
 
 export type ViewerChromeContrast = "on-dark" | "on-light";
@@ -58,7 +58,7 @@ export function contrastFromLuminance(
   return luminance < 0.45 ? "on-dark" : "on-light";
 }
 
-export type ViewerChromeSampleRegion = "prev" | "next" | "close";
+export type ViewerChromeSampleRegion = "prev" | "next";
 
 /**
  * Sample grid points inside a region of an ImageData buffer.
@@ -88,12 +88,6 @@ export function sampleImageDataRegion(
       x1 = width;
       y0 = Math.floor(height * 0.35);
       y1 = Math.floor(height * 0.65);
-      break;
-    case "close":
-      x0 = Math.floor(width * 0.88);
-      x1 = width;
-      y0 = 0;
-      y1 = Math.max(1, Math.floor(height * 0.12));
       break;
   }
 
@@ -178,7 +172,6 @@ export function readMediaImageData(
 export type ViewerChromeContrastMap = {
   readonly prev: ViewerChromeContrast;
   readonly next: ViewerChromeContrast;
-  readonly close: ViewerChromeContrast;
 };
 
 export function resolveViewerChromeContrasts(
@@ -186,11 +179,10 @@ export function resolveViewerChromeContrasts(
   fallback: ViewerChromeContrast = "on-dark",
 ): ViewerChromeContrastMap {
   if (!image) {
-    return { prev: fallback, next: fallback, close: fallback };
+    return { prev: fallback, next: fallback };
   }
   return {
     prev: contrastForImageDataRegion(image, "prev", fallback),
     next: contrastForImageDataRegion(image, "next", fallback),
-    close: contrastForImageDataRegion(image, "close", fallback),
   };
 }

@@ -70,7 +70,7 @@ collection.write  ai.enqueue  job.manage  file.import  file.move
 file.rename  trash.write  clipboard.read  clipboard.write  content.read
 content.write  net.fetch  storage.read  storage.write  data.files
 secrets.read  secrets.write  ui.workspace  ui.inspector  ui.viewer
-ui.settings  ui.notify  input.shortcut  input.capture.viewer
+ui.settings  ui.notify  ui.dialogs  media.binaries  input.shortcut  input.capture.viewer
 input.capture.application  hook.blocking  preview.provider
 thumbnail.provider  metadata.extractor  import.provider export.provider
 ai.provider  derived-field.provider  search.provider  theme.trusted-css
@@ -245,7 +245,14 @@ interface PluginContributionContext {
 ```ts
 interface PluginInvocationContext {
   contextId: string; revision: number; libraryId: string;
-  selection: { ref?: string; refs: string[]; assetIds: string[]; folderIds: string[]; collectionIds: string[] };
+  selection: {
+    ref?: string; refs: string[]; assetIds: string[]; folderIds: string[]; collectionIds: string[];
+    assets?: Array<{
+      id: string; name: string; relativeFilePath: string; mediaType: string; byteSize: number;
+      durationMs?: number | null; currentRevisionId?: string; folderId?: string | null;
+      locationKind: 'managed' | 'linked'; linkedFolderId?: string | null;
+    }>;
+  };
   browse: { folderId?: string; collectionId?: string; tagId?: string; search?: string; filter?: string };
   viewer: { active: boolean; assetId?: string };
 }
@@ -253,6 +260,25 @@ interface PluginInvocationContext {
 
 异步命令必须使用这份快照，不要在等待之后读取新的 UI 选择。命令 handler 的 `context.invocation` 提供这份快照；顶层
 `targetLibraryId` 与 ID 数组仍保留为便捷字段。`collectionIds` 只表示触发时的合集目标，合集浏览范围仍在 `invocation.browse.collectionId`。
+菜单、工具栏、Inspector、查看页会带上当前选中资产的有界快照（`selection.assets`，最多 256 项，只有库内相对路径，没有绝对路径）。
+快照包含 `currentRevisionId` 和 `folderId`，替换原资产和导入到同一文件夹时不要再 `assets.list` 去补。插件要用这份快照识别「选中了谁」和媒体类型，不要为当前选择再调用 `assets.list`。只有 MCP/脚本等只给了 ID、没有快照时才按 `assetIds` 回查。
+
+#### 写回所需的最小选中快照
+
+Host 必须为 `invocation.selection.assets` 填充以下字段。插件应直接使用这份触发时快照，不要调用
+`assets.list` 重新发现当前选择：
+
+| 字段 | 约束与用途 |
+| --- | --- |
+| `id` | 稳定资产 ID |
+| `name` | 当前文件名/资产名称 |
+| `relativeFilePath` | 资源库内相对 POSIX 路径，绝不能是绝对路径 |
+| `mediaType` | `image`、`video`、`audio` 等媒体类型 |
+| `byteSize` | 当前内容字节数 |
+| `currentRevisionId` | 当前内容修订 ID；写回时作为 `replaceContent` 的 `expectedRevisionId` |
+| `locationKind` | `managed` 或 `linked` |
+
+如果 Host 仍因兼容旧版本而省略 `currentRevisionId`，插件不得猜测或回退到另一项资产；应刷新快照后再执行写回。
 
 ## 5. Guest API
 
@@ -280,6 +306,7 @@ serpent.assets.replaceContentBatch(items): Promise<{ operationId: string; items:
 
 通过 Automation Gateway 暴露的公共分页列表 API（包括 `folder.list`、`asset.list` 和资产搜索）的 `limit` 都是正整数，默认值由 API
 决定，最大值为 **200**（包含 200）；传入 201 或更大值会得到 `AUTOMATION_INVALID_REQUEST`。插件应按页读取结果，不要把 256 当作合法页大小。
+`assets.list({ recursive: true })` 才会包含文件夹内的资产；省略 `recursive` 时只返回库根下的资产。已知一组资产 ID 且 **invocation 没有快照** 时，用 `assets.list({ assetIds, limit })` 按 ID 查询（每页最多 200 个）。当前选中项必须读 `invocation.selection.assets` / `assetIds`，不要为找几个选中 ID 去递归扫全库。Guest 页投影提供 `id`、`name`、`mediaType`、`mimeType`、`byteSize`、`currentRevisionId`、库内 `relativeFilePath`（POSIX 相对路径）；绝对路径、盘符路径和 `..` 段会被清空，不含库绝对路径。
 
 权限是独立的门槛：例如读取 extracted metadata 需要 `metadata.read`，不能因为已经拥有 `asset.read` 或 `content.read` 就假定
 `asset.extracted-metadata.get` 一定可用。权限不足应作为结构化失败处理；插件可以在有权限时读取 metadata，否则用已声明的 content 能力自行解析。
@@ -322,6 +349,57 @@ storage 的公开返回值是裸值，不带 IPC 包装层：
 
 只有 `data.getDirectory` 保留 `{ path, scope }` 结构。不要读取 `{ value }`、`{ ok }`、`{ deleted }` 或 `{ keys }`；这些是 Host
 内部传输结果，不属于插件 API 契约。
+
+### `serpent.ui` 与 `serpent.media`
+
+```ts
+await serpent.ui.notify({ severity: 'info', message: '…', title?: string });
+
+const result = await serpent.ui.openDialog({
+  title: '媒体压缩',
+  submitLabel: '开始处理',
+  render(ui) {
+    const mode = ui.state('percent');
+    return ui.column(
+      ui.heading('图像设置'),
+      ui.note('将压缩选中的图片。'),
+      ui.select({
+        id: 'imageTargetMode',
+        label: '压缩目标',
+        value: mode.get(),
+        onChange: mode.set,
+        options: [
+          { value: 'percent', label: '按原体积百分比' },
+          { value: 'size', label: '目标文件大小' },
+        ],
+      }),
+      mode.get() === 'percent'
+        ? ui.number({ id: 'imagePercent', label: '目标体积（%）', value: 50, min: 5, max: 95 })
+        : null,
+    );
+  },
+});
+// result 是各控件 id 对应的当前值；取消或关闭时为 null。
+
+const { ffmpegPath, ffprobePath } = await serpent.media.getBinaryPaths();
+```
+
+`openDialog({ title, render })` 需要 `ui.dialogs`，widget kit 是标准表单的默认路径。`render` 在插件进程里执行，产出有界
+widget 树；Host 用已有 primitive（`DialogShell` / `Field` / `Select` / `Switch` / `Slider` / `TextField`）绘制，页脚负责取消与提交。
+这个路径不使用 HTML/CSS，也不把 Manifest JSON 当作对话框 UI 语言。对于复杂界面或交互、WebGL、第三方页面，HTML/iframe
+对话框 `openDialog({ dialogId, payload })` 是受支持的一等路径，并引用 `contributes.dialogs` 的 local id；它是复杂 UI 的正式能力，
+不是待删除的临时方案。`getBinaryPaths` 需要 `media.binaries`，返回宿主内置（或 `SERPENT_FFMPEG_PATH` 覆盖）的 FFmpeg/ffprobe 绝对路径；
+插件不要再让用户填写路径，也不要捆绑第二套 FFmpeg。这两条命令不读写资源库，**全局插件可以直接调用，不必先
+`serpent.forLibrary()`**。
+
+#### 宿主媒体二进制与 FFmpeg 方言
+
+- 使用 `serpent.media.getBinaryPaths()` 获取宿主的 `ffmpegPath` 和 `ffprobePath`；不要捆绑第二套 FFmpeg，也不要让用户填写路径。
+- 当前捆绑二进制锁定为 FFmpeg 8.x，来源锁见 `resources/media-binaries/bundle-lock.json`，媒体包版本为 `media-v0.1.2`。
+- ffprobe JSON 输出使用 `-output_format json` 或 `-of json`；不要使用 `-print-format`，FFmpeg 8 会拒绝该写法。
+- 编码前始终在运行时执行 `ffmpeg -encoders` 探测，不要假设存在 `libx264` 或 `libx265`。非 GPL 构建会禁用这些编码器，Windows 常见可用的是 `libopenh264`；GPL 与非 GPL 构建差异见 `tests/unit/media-binaries.test.ts`。
+- 只有实际支持 CRF 的编码器才传 CRF 参数；不要把 CRF 当作所有编码器的通用选项。
+- 当前不提供 `getCapabilities()` API。
 
 ### `serpent.events` 与 `serpent.hooks`
 
@@ -416,7 +494,7 @@ iframe view 的 Host target 为 `sidebar.entries`、`workspace.views`、`inspect
 Host-rendered Plugin UI Contract v1 通过 `contributes.ui` 提供 settings group、menu/submenu、notice、activity 和 job descriptor。
 设置组引用同一 manifest 的 `contributes.settings`，菜单复用现有 command/condition/placement 语义；descriptor 只接受版本化 JSON 数据，不接受函数、HTML、CSS 或宿主 DOM 引用。
 字段级诊断会跳过非法条目而保留其他合法 UI。完整示例与限制见插件开发手册的 [Plugin UI Contract v1](development.md#81-plugin-ui-contract-v1)，设计决策见
-[`0029 UI 标准化执行方案与插件原生 UI 契约`](../../internal/implementation/0029-ui-standardization-execution-and-plugin-ui-contract.md)。
+[`0029 UI 标准化执行方案与插件原生 UI 契约`](https://github.com/dolag233/Serpent/blob/dev/docs/internal/implementation/0029-ui-standardization-execution-and-plugin-ui-contract.md)。
 在实现发布前，不要从宿主 CSS class、React 结构或 DOM 层级推导插件行为。
 
 ## 8. 错误与测试契约

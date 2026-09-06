@@ -557,4 +557,29 @@ describe('MCP plan auto-approval (Serpent-8b5b.8 regression: asset_trash/file_im
     expect(confirmCalls).toBe(1);
     expect(secondProof).toBeTruthy();
   });
+
+  it('forwards newFileName when asset.rename-file targets a complete filename', async () => {
+    const worker = new RecordingWorker(plannedResult);
+    const handler = createDesktopAutomationFilePlanApprovalHandler({
+      workerClient: worker,
+      confirm: async () => true,
+    });
+
+    const proof = await handler.prepareAndApprove({
+      commandId: 'asset.rename-file',
+      executionId: 'execution-fn-1',
+      libraryId: 'library-1',
+      commandInput: { assetId: 'asset-1', newFileName: 'video.webm' },
+      source: 'plugin',
+    });
+
+    expect(proof).toBeTruthy();
+    expect(worker.commands[0]).toMatchObject({
+      type: 'automation.file-operation-plan',
+      libraryId: 'library-1',
+      operation: 'rename-file',
+      assetIds: ['asset-1'],
+      newFileName: 'video.webm',
+    });
+  });
 });
