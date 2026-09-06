@@ -6,7 +6,8 @@
 
 - 仓库：[Serpent-Plugin-ImageUpscaler](https://github.com/dolag233/Serpent-Plugin-ImageUpscaler)
 - 插件 ID：`com.dolag.serpent.image-upscaler`
-- 安装方式：GitHub Release 平台 ZIP，不要对源码目录执行 `npm install`
+- 用户安装：设置 → 插件 → 打开插件社区（目录仓 [Serpent-Plugin-Pool](https://github.com/dolag233/Serpent-Plugin-Pool)）
+- 开发安装：GitHub Release 平台 ZIP 或高级安装里的本地成品目录，不要对源码目录执行 `npm install`
 
 下文用「Image Upscaler」指这份参考实现。它不是 SDK 模板，也不是唯一正确结构；适合对照「成品包长什么样、Job 怎么报进度、Windows ZIP 怎么打」。
 

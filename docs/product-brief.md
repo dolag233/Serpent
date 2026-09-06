@@ -209,7 +209,7 @@ EXR、TIFF 和 TGA 在 MVP 中显示常规预览，并支持基本色彩管理�
 同步。同一插件同时存在用户级和资源库级版本时，由用户选择当前资源库使用哪个版本，
 Serpent 不设置隐藏优先级。
 
-第一阶段支持本地包、本地目录和符合规范的 GitHub 仓库 URL，不建设插件社区，也不执行
+第一阶段支持官方插件社区（[Serpent-Plugin-Pool](https://github.com/dolag233/Serpent-Plugin-Pool) 钉死的 Release ZIP）、本地包、本地目录和符合规范的 GitHub 仓库 URL，并且不会执行
 远程仓库中的依赖安装、构建或生命周期脚本。完整边界见
 [`0024-script-plugin-platform.md`](internal/implementation/0024-script-plugin-platform.md)。
 
@@ -224,7 +224,7 @@ MVP 明确推迟：
 - 资产版本管理
 - 3D 预览
 - 创作软件集成
-- 对外插件机制与插件市场
+- 开放投稿的第三方插件市场（当前为官方认证目录，不是任意上传）
 - PureRef 式白板
 
 移动端不属于长期产品计划。MVP 以已定义的工作流和性能指标验收，不设置用户量、留存率等商业指标，也不依赖遥测判断是否完成。
