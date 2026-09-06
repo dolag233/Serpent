@@ -2,9 +2,9 @@
 
 ## 新增功能 / New features
 
-- **官方插件社区**：设置 → 插件即可浏览并安装官方与已认证插件。安装钉死 GitHub Release ZIP 与 sha256，不走 zipball；点卡片可看作者、版本、仓库与中英文 README。
+- **插件社区**：支持插件社区，可在插件社区安装官方认证通过的插件。
 
-  **Official plugin community**: Browse and install official and certified plugins from Settings → Plugins. Installs pin a GitHub Release ZIP plus sha256 (no zipball). Opening a card shows author, version, repository, and localized README.
+  **Plugin community**: Install officially certified plugins from the plugin community.
 
 - **插件平台**：宿主标准对话框、FFmpeg 路径接口、写回计划错误码与改扩展名转码，方便无限制插件批量处理媒体。首发一方插件「媒体转换器」支持视频转码与图片/视频压缩（体积与分辨率可并列约束）。
 
