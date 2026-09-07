@@ -411,6 +411,7 @@ export const en = {
     missing: "Missing file",
     excludeAvailability: "Exclude this availability",
     exclude: "Exclude",
+    ai: "AI",
     shiftMultiSelectHint: "Hold Shift to multi-select",
     widthPx: "Width",
     heightPx: "Height",

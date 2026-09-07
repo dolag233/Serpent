@@ -399,6 +399,7 @@ export const zhCN = {
     missing: "文件丢失",
     excludeAvailability: "排除该可用性",
     exclude: "排除",
+    ai: "AI",
     shiftMultiSelectHint: "按住 Shift 可多选",
     widthPx: "宽度",
     heightPx: "高度",

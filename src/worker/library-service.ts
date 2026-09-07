@@ -29526,6 +29526,10 @@ export class LibraryService {
 
   private buildFilterWhere(
     filters: FilterClause[],
+    options: { hasAiContent: boolean; hasAiAssetTags: boolean } = {
+      hasAiContent: true,
+      hasAiAssetTags: true,
+    },
   ): { sql: string; params: unknown[] } {
     const conditions: string[] = [];
     const params: unknown[] = [];
@@ -29602,12 +29606,16 @@ export class LibraryService {
           break;
         }
         case 'tag': {
-          // Match listTags: human + AI tags both count (Serpent-5cvr).
+          // Human + AI tags both count by default. The explicit switch is
+          // filter-only; sorting and display keep the combined result.
+          const includeAi = filter.includeAi !== false && options.hasAiAssetTags;
           const taggedAssetsSubquery = (nameParamCount: number) => {
             const phs = Array.from({ length: nameParamCount }, () => '?').join(',');
-            return `SELECT hat.asset_id FROM human_asset_tags hat
+            const human = `SELECT hat.asset_id FROM human_asset_tags hat
                       JOIN tags t ON t.tag_id = hat.tag_id
-                      WHERE t.name COLLATE NOCASE IN (${phs})
+                      WHERE t.name COLLATE NOCASE IN (${phs})`;
+            if (!includeAi) return human;
+            return `${human}
                     UNION
                     SELECT aat.asset_id FROM ai_asset_tags aat
                       JOIN tags t ON t.tag_id = aat.tag_id
@@ -29619,26 +29627,37 @@ export class LibraryService {
             );
             conditions.push(`(${notClauses.join(' AND ')})`);
             for (const value of filter.values) {
-              params.push(value, value);
+              params.push(value);
+              if (includeAi) params.push(value);
             }
           } else if (filter.exclude) {
             conditions.push(
               `(a.asset_id NOT IN (${taggedAssetsSubquery(1)}))`,
             );
-            params.push(filter.values[0]!, filter.values[0]!);
+            params.push(filter.values[0]!);
+            if (includeAi) params.push(filter.values[0]!);
           } else {
             conditions.push(
               `(a.asset_id IN (${taggedAssetsSubquery(filter.values.length)}))`,
             );
-            params.push(...filter.values, ...filter.values);
+            params.push(...filter.values);
+            if (includeAi) params.push(...filter.values);
           }
           break;
         }
         case 'rating': {
           const phs = filter.values.map(() => '?').join(',');
+          const aiRating = options.hasAiContent
+            ? `(SELECT CAST(ac.value AS INTEGER) FROM ai_content ac
+                 WHERE ac.asset_id = a.asset_id AND ac.field_name = 'rating'
+                 ORDER BY ac.generated_at DESC, ac.ai_content_id DESC LIMIT 1)`
+            : 'NULL';
+          const effectiveRating = filter.includeAi === false
+            ? 'COALESCE(m.rating, 0)'
+            : `COALESCE(NULLIF(m.rating, 0), ${aiRating}, 0)`;
           const clause = filter.exclude
-            ? `COALESCE(m.rating, 0) NOT IN (${phs})`
-            : `COALESCE(m.rating, 0) IN (${phs})`;
+            ? `${effectiveRating} NOT IN (${phs})`
+            : `${effectiveRating} IN (${phs})`;
           conditions.push(`(${clause})`);
           for (const v of filter.values) {
             params.push(Number(v));
@@ -29925,6 +29944,8 @@ export class LibraryService {
     const metadataColumns = columnsFor(connection, 'asset_metadata');
     const artifactColumns = columnsFor(connection, 'revision_artifacts');
     const hasIgnoreTable = hasTable(connection, 'linked_ignored_assets');
+    const hasAiContent = hasTable(connection, 'ai_content');
+    const hasAiAssetTags = hasTable(connection, 'ai_asset_tags');
     const hasSequenceFrames = hasTable(connection, 'asset_sequence_frames');
     const hasSearchIndex = hasTable(connection, 'asset_search_index');
     const hasSearchFts = hasTable(connection, 'asset_search');
@@ -29973,6 +29994,7 @@ export class LibraryService {
       : { sql: '', params: [] };
     const { sql: filterWhere, params: filterParams } = this.buildFilterWhere(
       input.filters ?? [],
+      { hasAiContent, hasAiAssetTags },
     );
 
     // A collection browse is a relational scope, not an asset-id list. Build
@@ -30116,7 +30138,9 @@ export class LibraryService {
           break;
         case 'rating':
           orderBy = sortableByStructure.rating
-            ? `COALESCE(m.rating, 0) ${dir}, a.asset_id ASC`
+            ? `${hasAiContent
+              ? `COALESCE(NULLIF(m.rating, 0), (SELECT CAST(ac.value AS INTEGER) FROM ai_content ac WHERE ac.asset_id = a.asset_id AND ac.field_name = 'rating' ORDER BY ac.generated_at DESC, ac.ai_content_id DESC LIMIT 1), 0)`
+              : 'COALESCE(m.rating, 0)'} ${dir}, a.asset_id ASC`
             : defaultNameSort;
           break;
         case 'author':

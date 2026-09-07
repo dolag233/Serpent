@@ -565,9 +565,11 @@ type QueryFilterSnapshot = {
   excludeFormatFilter: boolean;
   tagFilter: string;
   excludeTagFilter: boolean;
+  includeAiTagFilter: boolean;
   tagFilterMatch: "any" | "all";
   ratingFilter: string;
   excludeRatingFilter: boolean;
+  includeAiRatingFilter: boolean;
   favoriteFilter: "any" | "yes" | "no";
   sourceUrlFilter: "any" | "yes" | "no";
   availabilityFilter: "any" | "available" | "missing";
@@ -1033,12 +1035,14 @@ function AppInner() {
   const [excludeColorFilter, setExcludeColorFilter] = useState(false);
   const [tagFilter, setTagFilter] = useState("");
   const [excludeTagFilter, setExcludeTagFilter] = useState(false);
+  const [includeAiTagFilter, setIncludeAiTagFilter] = useState(true);
   // Serpent-eaxs: tag-management AND search ("包含 N 个标签") splits the tag
   // names into separate clauses (clauses are ANDed; values within one clause
   // are ORed). Any explicit filter-bar edit resets this to "any".
   const [tagFilterMatch, setTagFilterMatch] = useState<"any" | "all">("any");
   const [ratingFilter, setRatingFilter] = useState("");
   const [excludeRatingFilter, setExcludeRatingFilter] = useState(false);
+  const [includeAiRatingFilter, setIncludeAiRatingFilter] = useState(true);
   const [favoriteFilter, setFavoriteFilter] = useState<"any" | "yes" | "no">(
     "any",
   );
@@ -2457,8 +2461,10 @@ function AppInner() {
       excludeFormatFilter,
       tagFilter,
       excludeTagFilter,
+      includeAiTagFilter,
       ratingFilter,
       excludeRatingFilter,
+      includeAiRatingFilter,
       favoriteFilter,
       sourceUrlFilter,
       availabilityFilter,
@@ -2490,8 +2496,10 @@ function AppInner() {
     excludeFormatFilter,
     tagFilter,
     excludeTagFilter,
+    includeAiTagFilter,
     ratingFilter,
     excludeRatingFilter,
+    includeAiRatingFilter,
     favoriteFilter,
     sourceUrlFilter,
     availabilityFilter,
@@ -4604,8 +4612,10 @@ function AppInner() {
     setExcludeColorFilter(false);
     setTagFilter("");
     setExcludeTagFilter(false);
+    setIncludeAiTagFilter(true);
     setRatingFilter("");
     setExcludeRatingFilter(false);
+    setIncludeAiRatingFilter(true);
     setFavoriteFilter("any");
     setSourceUrlFilter("any");
     setAvailabilityFilter("any");
@@ -4626,8 +4636,10 @@ function AppInner() {
     setExcludeColorFilter(false);
     setTagFilter("");
     setExcludeTagFilter(false);
+    setIncludeAiTagFilter(true);
     setRatingFilter("");
     setExcludeRatingFilter(false);
+    setIncludeAiRatingFilter(true);
     setFavoriteFilter("any");
     setSourceUrlFilter("any");
     setAvailabilityFilter("any");
@@ -5754,9 +5766,11 @@ function AppInner() {
       excludeFormatFilter,
       tagFilter,
       excludeTagFilter,
+      includeAiTagFilter,
       tagFilterMatch,
       ratingFilter,
       excludeRatingFilter,
+      includeAiRatingFilter,
       favoriteFilter,
       sourceUrlFilter,
       availabilityFilter,
@@ -5813,6 +5827,7 @@ function AppInner() {
             field: "tag",
             values: [tag],
             exclude: filtersState.excludeTagFilter,
+            includeAi: filtersState.includeAiTagFilter,
           });
         }
       } else {
@@ -5820,6 +5835,7 @@ function AppInner() {
           field: "tag",
           values: selectedTags,
           exclude: filtersState.excludeTagFilter,
+          includeAi: filtersState.includeAiTagFilter,
         });
       }
     }
@@ -5828,6 +5844,7 @@ function AppInner() {
         field: "rating",
         values: ratings,
         exclude: filtersState.excludeRatingFilter,
+        includeAi: filtersState.includeAiRatingFilter,
       });
     if (filtersState.favoriteFilter !== "any")
       filters.push({
@@ -6756,8 +6773,10 @@ function AppInner() {
     excludeFormatFilter,
     tagFilter,
     excludeTagFilter,
+    includeAiTagFilter,
     ratingFilter,
     excludeRatingFilter,
+    includeAiRatingFilter,
     favoriteFilter,
     sourceUrlFilter,
     availabilityFilter,
@@ -11029,6 +11048,8 @@ function AppInner() {
             excludeFormatFilter={excludeFormatFilter}
             excludeRatingFilter={excludeRatingFilter}
             excludeTagFilter={excludeTagFilter}
+            includeAiRating={includeAiRatingFilter}
+            includeAiTag={includeAiTagFilter}
             favoriteFilter={favoriteFilter}
             formatFilter={formatFilter}
             heightRange={heightRange}
@@ -11053,6 +11074,8 @@ function AppInner() {
             setExcludeFormatFilter={setExcludeFormatFilter}
             setExcludeRatingFilter={setExcludeRatingFilter}
             setExcludeTagFilter={setExcludeTagFilter}
+            setIncludeAiRating={setIncludeAiRatingFilter}
+            setIncludeAiTag={setIncludeAiTagFilter}
             setFavoriteFilter={setFavoriteFilter}
             setFormatFilter={setFormatFilter}
             setHeightRange={setHeightRange}
@@ -11087,8 +11110,10 @@ function AppInner() {
               excludeFormatFilter,
               tagFilter,
               excludeTagFilter,
+              includeAiTagFilter,
               ratingFilter,
               excludeRatingFilter,
+              includeAiRatingFilter,
               favoriteFilter,
               sourceUrlFilter,
               availabilityFilter,

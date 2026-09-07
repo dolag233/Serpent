@@ -17,8 +17,12 @@ export type DiscoveryFilterSnapshot = {
   excludeFormatFilter: boolean;
   tagFilter: string;
   excludeTagFilter: boolean;
+  /** AI tags are included in the query by default; this switch has no chip. */
+  includeAiTagFilter: boolean;
   ratingFilter: string;
   excludeRatingFilter: boolean;
+  /** AI ratings are included in the query by default; this switch has no chip. */
+  includeAiRatingFilter: boolean;
   favoriteFilter: "any" | "yes" | "no";
   sourceUrlFilter: "any" | "yes" | "no";
   availabilityFilter: "any" | "available" | "missing";

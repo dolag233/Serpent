@@ -874,6 +874,14 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   gap: 6px !important;
 }
 
+.dimension-filter-check-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+  margin-top: 8px;
+}
+
 .dimension-rating-row {
   display: flex;
   flex-wrap: wrap;

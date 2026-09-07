@@ -22,8 +22,10 @@ function props(): DimensionFilterBarProps {
       excludeFormatFilter: false,
       tagFilter: "",
       excludeTagFilter: false,
+      includeAiTagFilter: true,
       ratingFilter: "",
       excludeRatingFilter: false,
+      includeAiRatingFilter: true,
       favoriteFilter: "any",
       sourceUrlFilter: "any",
       availabilityFilter: "any",
@@ -46,11 +48,15 @@ function props(): DimensionFilterBarProps {
     setTagFilter: vi.fn(),
     excludeTagFilter: false,
     setExcludeTagFilter: vi.fn(),
+    includeAiTag: true,
+    setIncludeAiTag: vi.fn(),
     onTagNamesChange: vi.fn(),
     ratingFilter: "",
     setRatingFilter: vi.fn(),
     excludeRatingFilter: false,
     setExcludeRatingFilter: vi.fn(),
+    includeAiRating: true,
+    setIncludeAiRating: vi.fn(),
     favoriteFilter: "any",
     setFavoriteFilter: vi.fn(),
     sourceUrlFilter: "any",
@@ -193,5 +199,36 @@ describe("DimensionFilterBar hover opening", () => {
       vi.advanceTimersByTime(350);
     });
     expect(document.body.querySelector("[data-dimension-filter-popover]")).toBeNull();
+  });
+
+  it("keeps AI values included by default in rating and tag filters", async () => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        createElement(
+          LocaleProvider,
+          { children: null, initialPreference: "en" },
+          createElement(DimensionFilterBar, props()),
+        ),
+      );
+    });
+
+    const ratingButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("Rating"));
+    expect(ratingButton).toBeDefined();
+    await act(async () => ratingButton?.focus());
+    const ratingPopover = document.body.querySelector(
+      '[data-dimension-filter-popover][data-dimension="rating"]',
+    );
+    expect(ratingPopover).not.toBeNull();
+    expect(ratingPopover?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')[1]?.checked)
+      .toBe(true);
+
+    await act(async () => root?.unmount());
+    root = undefined;
+    document.body.querySelector("[data-dimension-filter-popover]")?.remove();
   });
 });
