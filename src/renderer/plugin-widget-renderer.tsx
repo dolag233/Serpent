@@ -93,8 +93,8 @@ export function PluginWidgetRenderer({
     return (
       <div className="plugin-widget-list" role="table">
         <div className="plugin-widget-list__header" role="row" style={gridStyle}>
-          {tree.columns.map((column) => (
-            <div className="plugin-widget-list__cell" key={column} role="columnheader">
+          {tree.columns.map((column, columnIndex) => (
+            <div className="plugin-widget-list__cell" key={`column-${columnIndex}`} role="columnheader">
               {column}
             </div>
           ))}
