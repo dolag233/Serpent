@@ -159,6 +159,9 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('library.open.request'),
   }),
   z.strictObject({
+    type: z.literal('library.open-cancel.request'),
+  }),
+  z.strictObject({
     type: z.literal('library.recovery-report.request'),
     libraryId: identifierSchema,
   }),

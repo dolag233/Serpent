@@ -31,7 +31,10 @@ import { resolveViewerPrimarySurface } from "./viewer-preview-policy";
 import {
   resolveViewerPlaceholderUrl,
 } from "./viewer-mip-upgrade";
-import { isTransientMediaPlaybackError } from "./media-seek-session";
+import {
+  isRetryableSourceMediaPlaybackError,
+  isTransientMediaPlaybackError,
+} from "./media-seek-session";
 import { VideoPlayerControls } from "./VideoPlayerControls";
 import { AudioPlayerControls } from "./AudioPlayerControls";
 import { TextViewerControls, type TextViewerControlsHandle } from "./TextViewerControls";
@@ -250,6 +253,8 @@ const AssetPreviewModalContent = forwardRef<
   const resolutionRef = useRef<PreviewResolution | null>(null);
   const playbackErrorRef = useRef<string | null>(null);
   const requestedProxyFallbackRef = useRef<string | null>(null);
+  const sourcePlaybackRetryAttemptRef = useRef(0);
+  const sourcePlaybackRetryTimerRef = useRef<number | null>(null);
   const directApprovedRef = useRef(false);
   const directGateIdentityRef = useRef<string | null>(null);
   const textViewerRef = useRef<TextViewerControlsHandle>(null);
@@ -401,6 +406,11 @@ const AssetPreviewModalContent = forwardRef<
     playbackErrorRef.current = null;
     resolutionRef.current = null;
     requestedProxyFallbackRef.current = null;
+    sourcePlaybackRetryAttemptRef.current = 0;
+    if (sourcePlaybackRetryTimerRef.current !== null) {
+      window.clearTimeout(sourcePlaybackRetryTimerRef.current);
+      sourcePlaybackRetryTimerRef.current = null;
+    }
     directApprovedRef.current = false;
     directGateIdentityRef.current = null;
     setDirectApproved(false);
@@ -410,8 +420,33 @@ const AssetPreviewModalContent = forwardRef<
     setManualRetryError(null);
     return () => {
       viewerSessionController.cancelTask("proxy-fallback");
+      if (sourcePlaybackRetryTimerRef.current !== null) {
+        window.clearTimeout(sourcePlaybackRetryTimerRef.current);
+        sourcePlaybackRetryTimerRef.current = null;
+      }
     };
   }, [asset.assetId, asset.currentRevisionId, viewerSessionController]);
+
+  const scheduleSourcePlaybackRetry = useCallback(() => {
+    if (sourcePlaybackRetryTimerRef.current !== null) return;
+    const attempt = sourcePlaybackRetryAttemptRef.current;
+    if (attempt >= 3) return;
+    sourcePlaybackRetryAttemptRef.current = attempt + 1;
+    sourcePlaybackRetryTimerRef.current = window.setTimeout(() => {
+      sourcePlaybackRetryTimerRef.current = null;
+      setError(null);
+      setManualRetryError(null);
+      setPlaybackRetryGeneration((generation) => generation + 1);
+    }, 250 * 2 ** attempt);
+  }, []);
+
+  const resetSourcePlaybackRetry = useCallback(() => {
+    sourcePlaybackRetryAttemptRef.current = 0;
+    if (sourcePlaybackRetryTimerRef.current !== null) {
+      window.clearTimeout(sourcePlaybackRetryTimerRef.current);
+      sourcePlaybackRetryTimerRef.current = null;
+    }
+  }, []);
 
   const ensureProxyFallback = useCallback(
     async (errorCode: string) => {
@@ -748,8 +783,22 @@ const AssetPreviewModalContent = forwardRef<
       mediaError?.message ??
         "HTMLMediaElement emitted an error without MediaError details.",
     );
-    // Proxy only for codec/container failure — not MEDIA_ERR_NETWORK (2), which
-    // commonly appears when a Range fetch is cancelled during scrub.
+    // A transient source network error gets a bounded remount retry. This is
+    // common when a slow/network-backed library reconnects a Range request and
+    // should not immediately become a scary playback failure.
+    if (
+      resolution?.playbackMode === "source" &&
+      isRetryableSourceMediaPlaybackError(mediaError) &&
+      sourcePlaybackRetryAttemptRef.current < 3
+    ) {
+      playbackErrorRef.current = null;
+      setError(null);
+      setManualRetryError(null);
+      scheduleSourcePlaybackRetry();
+      return;
+    }
+    // Proxy fallback is reserved for codec/container failures. Network errors
+    // are retried above and only become a normal error after retries exhaust.
     const shouldProxyFallback =
       resolution?.playbackMode === "source" &&
       mediaError != null &&
@@ -1018,6 +1067,7 @@ const AssetPreviewModalContent = forwardRef<
               onMutedChange={setViewerMuted}
               onPresentationReady={notifyPresentationReady}
               onReady={() => {
+                resetSourcePlaybackRetry();
                 setDirectApproved(true);
                 setProxyFallbackState("idle");
                 if (playbackErrorRef.current === null) {
@@ -1045,6 +1095,7 @@ const AssetPreviewModalContent = forwardRef<
                   video.videoHeight <= 0
                 ) return;
                 playbackErrorRef.current = null;
+                resetSourcePlaybackRetry();
                 setManualRetryError(null);
                 setError(null);
               }}

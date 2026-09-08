@@ -797,6 +797,11 @@ const pendingImportSources = new Map<string, string>();
 // after destination is chosen, on inspect cancel, or when a new inspect starts.
 let pendingEagleOpenSourcePath: string | undefined;
 let pendingBillfishOpenSourcePath: string | undefined;
+type ActiveLibraryOpenCancellation = { cancelled: boolean };
+let activeLibraryOpenCancellation: ActiveLibraryOpenCancellation | undefined;
+// A corrupt plugin trust file is recovered before the first window is loaded;
+// keep a one-shot notice until Renderer has subscribed to shell notifications.
+let pendingPluginDeviceStateRecoveryNotice = false;
 
 // Archive-backed external libraries are extracted into Main-owned temporary
 // directories. The Worker only receives the extracted root; these callbacks
@@ -1523,6 +1528,14 @@ async function createMainWindow(): Promise<void> {
   window.once("ready-to-show", publishWindowFocus);
   window.webContents.once("did-finish-load", () => {
     publishPluginInputCaptureSessionsToRenderer();
+    if (pendingPluginDeviceStateRecoveryNotice) {
+      pendingPluginDeviceStateRecoveryNotice = false;
+      window.webContents.send(SHELL_NOTIFY_CHANNEL, {
+        severity: 'warning',
+        mode: 'toast',
+        message: '插件授权设置已重置，原设置已备份；如需使用插件，请重新授权。',
+      });
+    }
   });
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
@@ -1558,6 +1571,14 @@ async function createMainWindow(): Promise<void> {
 
 function cancelled(): RendererResult {
   return { ok: false, error: createPublicError("CANCELLED") };
+}
+
+function isLibraryOpenRequest(request: RendererRequest): boolean {
+  return request.type === "library.create.request"
+    || request.type === "library.open.request"
+    || request.type === "library.open-recent.request"
+    || request.type === "library.open-eagle.request"
+    || request.type === "library.open-billfish.request";
 }
 
 function getExtensionSaveRouting() {
@@ -3745,6 +3766,9 @@ async function commandFor(
     case "sync.library.binding.get.request":
       // Main-owned local config; handled before Worker dispatch.
       return undefined;
+    case "library.open-cancel.request":
+      // Main-only request; handled before Worker dispatch.
+      return undefined;
     default:
       return assertNever(request);
   }
@@ -3820,8 +3844,24 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     | { libraryId: string; previewId: string }
     | undefined;
   let previousLibraryPaths: string[] = [];
+  let openCancellation: ActiveLibraryOpenCancellation | undefined;
   try {
     const request = parseRendererRequest(input);
+
+    if (request.type === "library.open-cancel.request") {
+      if (activeLibraryOpenCancellation) {
+        activeLibraryOpenCancellation.cancelled = true;
+        logger?.info("library.open.cancel-requested", "Library opening cancellation requested.");
+      }
+      return {
+        ok: true,
+        type: "library.open-cancelled",
+      } satisfies RendererResult;
+    }
+    openCancellation = isLibraryOpenRequest(request)
+      ? { cancelled: false }
+      : undefined;
+    if (openCancellation) activeLibraryOpenCancellation = openCancellation;
 
     if (criticalRendererRequest(request)) {
       logger?.info(
@@ -4764,7 +4804,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           : undefined,
       );
     }
-    if (!command) return cancelled();
+    if (!command || openCancellation?.cancelled) return cancelled();
     if (
       command.type === "asset.import.prepare" &&
       command.sourceKind === "files" &&
@@ -4900,6 +4940,31 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         resultType: workerResult.ok ? workerResult.type : undefined,
         errorCode: workerResult.ok ? undefined : workerResult.error.code,
       });
+    }
+    if (openCancellation?.cancelled) {
+      if (workerResult.ok && workerResult.type === "library.opened") {
+        try {
+          await workerClient.request({
+            type: "library.close",
+            libraryId: workerResult.library.libraryId,
+          });
+        } catch (error) {
+          logger?.error("library.open.cancel-close", error, {
+            libraryId: workerResult.library.libraryId,
+          });
+        }
+      }
+      if (previousLibraryPaths.length > 0) {
+        await reopenLibrariesAfterFailedReplacement(previousLibraryPaths);
+      }
+      if (operation) {
+        publishLifecycle({
+          type: "library.open-failed",
+          operation,
+          error: createPublicError("CANCELLED"),
+        });
+      }
+      return cancelled();
     }
     if (!workerResult.ok && previousLibraryPaths.length > 0) {
       await reopenLibrariesAfterFailedReplacement(previousLibraryPaths);
@@ -5772,6 +5837,9 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
     return { ok: false, error: publicError };
   } finally {
+    if (activeLibraryOpenCancellation === openCancellation) {
+      activeLibraryOpenCancellation = undefined;
+    }
     if (deleteFromDiskLibraryId) {
       endLibraryDeleteMediaFence(deleteFromDiskLibraryId);
     }
@@ -7165,6 +7233,9 @@ async function startApplication(): Promise<void> {
       ...pluginCompatibility,
       nodeAbi,
       logger,
+      onDeviceStateRecovered: () => {
+        pendingPluginDeviceStateRecoveryNotice = true;
+      },
     });
     pluginActivationCoordinator = new PluginActivationCoordinator({
       packageManager: pluginPackageManager,

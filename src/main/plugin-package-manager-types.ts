@@ -46,6 +46,8 @@ export interface PluginPackageManagerOptions extends PluginCompatibilityTarget {
   deviceId: string;
   limits?: PluginPackageLimits;
   logger?: PluginPackageManagerLogger;
+  /** Called when an unreadable device state was quarantined and reset. */
+  onDeviceStateRecovered?: (backupFileName: string) => void;
 }
 
 export interface PluginInstallFromDirectoryInput {

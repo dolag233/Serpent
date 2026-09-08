@@ -10439,13 +10439,18 @@ function AppInner() {
       <LibraryLoadingOverlay
         name={libraryLoading.name}
         operation={libraryLoading.operation}
-        onSwitchLibrary={
+        onCancel={
           libraryLoading.operation === "deleting"
             ? undefined
             : () => {
-                setDialog(null);
-                setImportLibraryChooserOpen(false);
-                setOpenLibraryChooserOpen(true);
+                void api?.cancelOpen().then((result) => {
+                  if (!result.ok) return;
+                  setLibraryLoading(null);
+                  setUiState("idle");
+                  setDialog(null);
+                  setImportLibraryChooserOpen(false);
+                  setOpenLibraryChooserOpen(true);
+                });
               }
         }
       />

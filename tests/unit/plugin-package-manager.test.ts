@@ -105,6 +105,66 @@ describe('PluginPackageManager installation and integrity', () => {
     await expect(trustedManager.listGlobalActivationCandidates()).resolves.toEqual([]);
   });
 
+  it('recovers a corrupt device state without blocking startup', async () => {
+    const userData = temporaryRoot('serpent-plugin-corrupt-state-');
+    writeFileSync(path.join(userData, 'plugin-device-state.json'), '{ not valid json');
+    const recovered: string[] = [];
+    const manager = new PluginPackageManager({
+      userDataDirectory: userData,
+      deviceId: path.basename(userData),
+      serpentVersion: '0.2.4',
+      pluginApiVersion: 1,
+      platform: 'darwin',
+      arch: 'arm64',
+      nodeAbi: 140,
+      onDeviceStateRecovered: (backupFileName) => recovered.push(backupFileName),
+    });
+
+    await expect(manager.listGlobalActivationCandidates()).resolves.toEqual([]);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]).toMatch(/^plugin-device-state\.json\.corrupt-/);
+    expect(
+      readFileSync(path.join(userData, recovered[0]!), 'utf8'),
+    ).toContain('not valid json');
+    await expect(manager.listGlobalActivationCandidates()).resolves.toEqual([]);
+  });
+
+  it('recovers a device state containing a permission from a newer version', async () => {
+    const userData = temporaryRoot('serpent-plugin-unknown-permission-');
+    writeFileSync(path.join(userData, 'plugin-device-state.json'), JSON.stringify({
+      version: 1,
+      safeMode: false,
+      autoUpdateAll: false,
+      trustDecisions: [{
+        deviceId: 'device-1',
+        pluginId: 'com.example.palette-tools',
+        packageHash: 'a'.repeat(64),
+        sourceFingerprint: 'local:test',
+        runtimeMode: 'restricted',
+        permissions: ['permission.added-later'],
+        decision: 'trusted',
+        decidedAt: '2026-01-01T00:00:00.000Z',
+      }],
+      resolutions: [],
+      quarantines: [],
+      updatePreferences: [],
+    }));
+    const recovered: string[] = [];
+    const manager = new PluginPackageManager({
+      userDataDirectory: userData,
+      deviceId: 'device-1',
+      serpentVersion: '0.2.4',
+      pluginApiVersion: 1,
+      platform: 'darwin',
+      arch: 'arm64',
+      nodeAbi: 140,
+      onDeviceStateRecovered: (backupFileName) => recovered.push(backupFileName),
+    });
+
+    await expect(manager.listGlobalActivationCandidates()).resolves.toEqual([]);
+    expect(recovered).toHaveLength(1);
+  });
+
   it('does not expose a library-scoped global package through the no-library path', async () => {
     const source = temporaryRoot('serpent-library-only-source-');
     const userData = temporaryRoot('serpent-library-only-user-');

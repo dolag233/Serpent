@@ -2090,6 +2090,10 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('library.open-cancelled'),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('library.eagle-inspected'),
     displayName: nonBlankString,
   }),

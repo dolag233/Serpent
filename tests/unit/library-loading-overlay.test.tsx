@@ -51,19 +51,19 @@ describe("LibraryLoadingOverlay", () => {
 
   it("identifies the target library and keeps the workspace covered", () => {
     const html = renderToStaticMarkup(
-      overlay({ onSwitchLibrary: () => undefined }),
+      overlay({ onCancel: () => undefined }),
     );
 
     expect(html).toContain("正在打开“示例资源库”资源库");
-    expect(html).toContain("切换资源库");
+    expect(html).toContain("取消打开");
     expect(html).toContain('role="progressbar"');
     expect(html).not.toContain("进度");
     expect(html).not.toContain("Serpent 正在");
   });
 
   it("lets the user choose another library without dismissing the load", async () => {
-    const onSwitchLibrary = vi.fn();
-    await renderOverlay({ onSwitchLibrary });
+    const onCancel = vi.fn();
+    await renderOverlay({ onCancel });
 
     await act(async () => {
       container
@@ -71,18 +71,18 @@ describe("LibraryLoadingOverlay", () => {
         ?.click();
     });
 
-    expect(onSwitchLibrary).toHaveBeenCalledOnce();
+    expect(onCancel).toHaveBeenCalledOnce();
     expect(container?.querySelector('[role="dialog"]')).toBeTruthy();
   });
 
   it("reuses the quiet delayed surface for a slow library deletion", () => {
     const html = renderToStaticMarkup(
-      overlay({ operation: "deleting", onSwitchLibrary: undefined }),
+      overlay({ operation: "deleting", onCancel: undefined }),
     );
 
     expect(html).toContain("正在删除“示例资源库”资源库");
     expect(html).toContain('role="progressbar"');
-    expect(html).not.toContain("切换资源库");
+    expect(html).not.toContain("取消打开");
     expect(html).not.toContain("Serpent 正在");
   });
 });

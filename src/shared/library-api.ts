@@ -197,6 +197,8 @@ export interface PluginJobStatus {
 export interface SerpentLibraryApi {
   create(input: { displayName: string }): Promise<LibraryApiResult<RendererLibrarySummary>>;
   open(): Promise<LibraryApiResult<RendererLibrarySummary>>;
+  /** Request cancellation of the active library open/create transition. */
+  cancelOpen(): Promise<LibraryApiResult<void>>;
   /** Reveal a Main-owned recovery report without exposing its filesystem path. */
   revealRecoveryReport(input: { libraryId: string }): Promise<LibraryApiResult<void>>;
   /** Check only known source/trash locations for a selected missing asset. */

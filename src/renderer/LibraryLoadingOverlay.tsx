@@ -6,7 +6,7 @@ import { useT } from "./i18n";
 export type LibraryLoadingOverlayProps = {
   readonly name: string | null;
   readonly operation?: "opening" | "deleting";
-  readonly onSwitchLibrary?: () => void;
+  readonly onCancel?: () => void;
 };
 
 /**
@@ -20,7 +20,7 @@ export type LibraryLoadingOverlayProps = {
 export function LibraryLoadingOverlay({
   name,
   operation = "opening",
-  onSwitchLibrary,
+  onCancel,
 }: LibraryLoadingOverlayProps): ReactNode {
   const t = useT();
   const title = name?.trim()
@@ -39,11 +39,11 @@ export function LibraryLoadingOverlay({
   return (
     <BlockingProgressOverlay
       cancelLabel={
-        onSwitchLibrary ? t("progress.switchLibraryWhileLoading") : undefined
+        onCancel ? t("progress.cancelOpen") : undefined
       }
       indeterminate
       kind="library-loading"
-      onCancel={onSwitchLibrary}
+      onCancel={onCancel}
       solidBackdrop
       title={title}
     />

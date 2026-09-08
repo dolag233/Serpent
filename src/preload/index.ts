@@ -255,6 +255,15 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true as const, value: result.library };
   },
 
+  async cancelOpen(): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'library.open-cancel.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.open-cancelled') {
+      throw new Error('Unexpected cancel-open-library response.');
+    }
+    return { ok: true as const, value: undefined };
+  },
+
   async revealRecoveryReport({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<void>> {
     const result = await request({ type: 'library.recovery-report.request', libraryId });
     if (!result.ok) return failure(result);
