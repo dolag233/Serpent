@@ -1097,6 +1097,7 @@ export class PluginActivationCoordinator {
         pluginInstanceId: contribution.pluginInstanceId,
         ...(contribution.commandId === undefined ? {} : { commandId: contribution.commandId }),
         title: contribution.title,
+        ...(contribution.icon === undefined ? {} : { icon: contribution.icon }),
         target: contribution.target,
         ...(contribution.group === undefined ? {} : { group: contribution.group }),
         ...(contribution.parentId === undefined ? {} : { parentId: contribution.parentId }),

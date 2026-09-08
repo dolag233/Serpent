@@ -89,6 +89,12 @@ export const pluginInvocationContextSchema = z.strictObject({
   contextId: boundedId,
   revision: z.number().int().positive(),
   libraryId: boundedId,
+  // Command invocations created by the renderer carry the current app locale
+  // so plugins can render their own dialogs consistently. Keep this optional
+  // for older invocation producers (MCP/automation) and use a plugin fallback.
+  app: z.strictObject({
+    locale: z.string().min(1).max(32),
+  }).optional(),
   selection: z.strictObject({
     ref: boundedId.optional(),
     refs: boundedList(boundedId, 10_000),
@@ -190,6 +196,7 @@ export function createPluginInvocationContext(
     contextId: parsed.contextId,
     revision: parsed.revision,
     libraryId,
+    app: { locale: parsed.app.locale },
     selection: {
       ref: selection?.ref ?? parsed.selection.ref,
       refs: [...(selection?.refs ?? [])],

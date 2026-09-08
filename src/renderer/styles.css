@@ -12923,7 +12923,7 @@ select.ai-config-input.ai-config-languages {
   font-weight: 600;
 }
 .plugin-widget-list__body {
-  max-height: 18rem;
+  max-height: 20rem;
   overflow: auto;
 }
 .plugin-widget-list__row:nth-child(odd) {
@@ -12937,13 +12937,49 @@ select.ai-config-input.ai-config-languages {
 }
 .plugin-widget-list__cell {
   min-width: 0;
-  overflow: hidden;
+  overflow-wrap: anywhere;
   padding: 0.45rem 0.65rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-wrap;
+  line-height: 1.35;
 }
 .plugin-widget-list__empty {
   padding: 0.75rem 0.65rem;
   color: var(--secondary);
   text-align: center;
+}
+.plugin-widget-list__highlight {
+  border-radius: 0.18rem;
+  padding: 0 0.08em;
+}
+.plugin-widget-list__highlight--match {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  color: var(--accent);
+}
+.plugin-widget-list__highlight--change {
+  background: color-mix(in srgb, var(--warning) 28%, transparent);
+  color: var(--warning-fg);
+}
+.plugin-widget-toggle {
+  flex: 0 0 auto;
+  min-width: 2.25rem;
+  min-height: 2rem;
+  align-self: flex-end;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.35rem;
+  background: var(--raised);
+  color: var(--secondary);
+  font: inherit;
+  font-size: calc(12px * var(--ui-font-scale));
+  line-height: 1;
+  cursor: pointer;
+}
+.plugin-widget-toggle:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.plugin-widget-toggle[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-subtle));
+  background: var(--accent-soft);
+  color: var(--accent);
 }

@@ -321,6 +321,7 @@ export const pluginManagerMenuContributionSchema = z.strictObject({
   pluginInstanceId: z.string().min(1).max(255),
   commandId: pluginLocalIdSchema.optional(),
   title: z.string().min(1).max(160),
+  icon: z.string().min(1).max(64).regex(/^[a-z][a-z0-9-]*$/u).optional(),
   group: z.string().min(1).max(64).optional(),
   parentId: z.string().min(1).max(255).optional(),
   before: z.string().min(1).max(255).optional(),

@@ -4,6 +4,7 @@ import {
   type PluginWidgetEvent,
   type PluginWidgetNode,
   type PluginWidgetOption,
+  type PluginWidgetListCell,
   type PluginWidgetValue,
 } from '../shared/plugin-widget-ir';
 
@@ -31,7 +32,7 @@ export type PluginWidgetToolkit = {
   separator(): PluginWidgetNode;
   list(spec: {
     readonly columns: readonly string[];
-    readonly rows: readonly (readonly string[])[];
+    readonly rows: readonly (readonly PluginWidgetListCell[])[];
     readonly emptyText?: string;
   }): PluginWidgetNode;
   text(spec: FieldSpec<string>): PluginWidgetNode;
@@ -44,6 +45,7 @@ export type PluginWidgetToolkit = {
     readonly options: readonly PluginWidgetOption[];
   }): PluginWidgetNode;
   switch(spec: FieldSpec<boolean>): PluginWidgetNode;
+  toggle(spec: FieldSpec<boolean>): PluginWidgetNode;
   slider(spec: FieldSpec<number> & {
     readonly min?: number;
     readonly max?: number;
@@ -126,7 +128,14 @@ export function createPluginWidgetToolkit(): PluginWidgetToolkit {
       return {
         type: 'list',
         columns: spec.columns.map((column) => String(column)),
-        rows: spec.rows.map((row) => row.map((cell) => String(cell))),
+        rows: spec.rows.map((row) => row.map((cell) => (
+          typeof cell === 'string'
+            ? cell
+            : { segments: cell.segments.map((segment) => ({
+              text: String(segment.text),
+              ...(segment.tone === undefined ? {} : { tone: segment.tone }),
+            })) }
+        ))),
         ...(spec.emptyText === undefined ? {} : { emptyText: String(spec.emptyText) }),
       };
     },
@@ -174,6 +183,16 @@ export function createPluginWidgetToolkit(): PluginWidgetToolkit {
       const value = rememberField(spec);
       return {
         type: 'switch',
+        id: spec.id,
+        label: spec.label,
+        value,
+        ...optionalDescription(spec.description),
+      };
+    },
+    toggle(spec) {
+      const value = rememberField(spec);
+      return {
+        type: 'toggle',
         id: spec.id,
         label: spec.label,
         value,

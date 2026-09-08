@@ -23,7 +23,7 @@ import {
   useContextMenu,
   type ContextMenuDescriptor,
 } from "./context-menu";
-import { Icon } from "./Icons";
+import { Icon, type IconName } from "./Icons";
 import { TagPickerEntry, TagPickerMenu } from "./TagPickerMenu";
 import { CollectionPickerMenu } from "./CollectionPickerMenu";
 import { ColorSpaceSubmenuItems } from "./ColorSpacePickerMenu";
@@ -75,6 +75,18 @@ function pluginMenuGroupLabel(group: string, t: TranslateFn): string {
   return group;
 }
 
+const PLUGIN_MENU_ICON_NAMES: ReadonlySet<IconName> = new Set<IconName>([
+  "activity", "archive", "box", "clipboard", "copy", "edit", "file", "folder",
+  "globe", "grid", "heart", "info", "link", "refresh", "search", "settings",
+  "sliders", "star", "tag", "trash", "upload", "warning",
+]);
+
+function pluginMenuIcon(name: string | undefined): IconName {
+  return name !== undefined && PLUGIN_MENU_ICON_NAMES.has(name as IconName)
+    ? name as IconName
+    : "box";
+}
+
 function PluginMenuCommandsSection(props: {
   items: readonly PluginMenuDescriptor[];
   onRun: (item: PluginMenuDescriptor) => void;
@@ -120,7 +132,7 @@ function PluginMenuItems(props: {
     if (item.children.length > 0) {
       return (
         <ContextMenuSubmenu
-          icon={<Icon name="box" size={14} />}
+          icon={<Icon name={pluginMenuIcon(item.icon)} size={14} />}
           key={item.id}
           label={item.label}
           disabled={item.disabled}
@@ -133,7 +145,7 @@ function PluginMenuItems(props: {
     return (
       <ContextMenuItem
         key={item.id}
-        icon={<Icon name="box" size={14} />}
+        icon={<Icon name={pluginMenuIcon(item.icon)} size={14} />}
         label={item.label}
         shortcut={item.shortcut}
         disabled={item.disabled}

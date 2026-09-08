@@ -97,6 +97,7 @@ describe('plugin context kernel', () => {
       contextId: 'window-1',
       revision: 1,
       libraryId: 'library-1',
+      app: { locale: 'zh-CN' },
       selection: { refs: [], assetIds: [] },
     });
     expect(Object.isFrozen(invocation)).toBe(true);

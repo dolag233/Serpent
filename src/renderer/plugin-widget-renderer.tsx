@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 
 import {
   collectPluginWidgetValues,
+  type PluginWidgetListCell,
   type PluginWidgetNode,
   type PluginWidgetValue,
 } from '../shared/plugin-widget-ir';
@@ -11,6 +12,24 @@ import {
   Switch,
   TextField,
 } from './ui/primitives';
+
+function listCellText(value: PluginWidgetListCell): string {
+  return typeof value === 'string'
+    ? value
+    : value.segments.map((segment) => segment.text).join('');
+}
+
+function renderListCell(value: PluginWidgetListCell): ReactNode {
+  if (typeof value === 'string') return value;
+  return value.segments.map((segment, index) => (
+    <span
+      className={segment.tone === undefined ? undefined : `plugin-widget-list__highlight plugin-widget-list__highlight--${segment.tone}`}
+      key={`segment-${index}`}
+    >
+      {segment.text}
+    </span>
+  ));
+}
 
 function fieldValue(
   node: Extract<PluginWidgetNode, { id: string; value: PluginWidgetValue }>,
@@ -110,8 +129,8 @@ export function PluginWidgetRenderer({
                 {tree.columns.map((_, columnIndex) => {
                   const value = row[columnIndex] ?? '';
                   return (
-                    <div className="plugin-widget-list__cell" key={`cell-${columnIndex}`} role="cell" title={value}>
-                      {value}
+                    <div className="plugin-widget-list__cell" key={`cell-${columnIndex}`} role="cell" title={listCellText(value)}>
+                      {renderListCell(value)}
                     </div>
                   );
                 })}
@@ -173,6 +192,21 @@ export function PluginWidgetRenderer({
         label={tree.label}
         onCheckedChange={(checked) => onChange(tree.id, checked)}
       />
+    );
+  }
+  if (tree.type === 'toggle') {
+    const value = fieldValue(tree, values) === true;
+    return (
+      <button
+        aria-pressed={value}
+        className="plugin-widget-toggle"
+        data-hover-tip={tree.description}
+        title={tree.description}
+        type="button"
+        onClick={() => onChange(tree.id, !value)}
+      >
+        {tree.label}
+      </button>
     );
   }
   const value = Number(fieldValue(tree, values));
