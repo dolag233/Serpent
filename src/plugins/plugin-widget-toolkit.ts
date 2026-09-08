@@ -29,6 +29,11 @@ export type PluginWidgetToolkit = {
   note(text: string): PluginWidgetNode;
   heading(text: string): PluginWidgetNode;
   separator(): PluginWidgetNode;
+  list(spec: {
+    readonly columns: readonly string[];
+    readonly rows: readonly (readonly string[])[];
+    readonly emptyText?: string;
+  }): PluginWidgetNode;
   text(spec: FieldSpec<string>): PluginWidgetNode;
   number(spec: FieldSpec<number> & {
     readonly min?: number;
@@ -116,6 +121,14 @@ export function createPluginWidgetToolkit(): PluginWidgetToolkit {
     },
     separator() {
       return { type: 'separator' };
+    },
+    list(spec) {
+      return {
+        type: 'list',
+        columns: spec.columns.map((column) => String(column)),
+        rows: spec.rows.map((row) => row.map((cell) => String(cell))),
+        ...(spec.emptyText === undefined ? {} : { emptyText: String(spec.emptyText) }),
+      };
     },
     text(spec) {
       const value = rememberField(spec);

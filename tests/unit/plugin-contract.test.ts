@@ -508,6 +508,7 @@ describe('Plugin contribution registry and generated SDK', () => {
       'readonly ui:',
       'openDialog(input: {',
       'heading(text: string): unknown;',
+      'list(spec: Readonly<Record<string, unknown>>): unknown;',
       'getBinaryPaths(): Promise<{ readonly ffmpegPath: string; readonly ffprobePath: string }>;',
     ]) {
       expect(declaration).toContain(method);

@@ -12902,3 +12902,48 @@ select.ai-config-input.ai-config-languages {
   border: 0;
   background: var(--border-subtle);
 }
+.plugin-widget-list {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--ui-radius-control);
+  color: var(--text);
+  font-size: calc(12px * var(--ui-font-scale));
+}
+.plugin-widget-list__header,
+.plugin-widget-list__row {
+  display: grid;
+  grid-template-columns: repeat(var(--plugin-widget-list-columns), minmax(0, 1fr));
+  align-items: center;
+  min-width: 0;
+}
+.plugin-widget-list__header {
+  background: var(--raised);
+  color: var(--secondary);
+  font-weight: 600;
+}
+.plugin-widget-list__body {
+  max-height: 18rem;
+  overflow: auto;
+}
+.plugin-widget-list__row:nth-child(odd) {
+  background: var(--raised-2);
+}
+.plugin-widget-list__row:nth-child(even) {
+  background: var(--raised);
+}
+.plugin-widget-list__row + .plugin-widget-list__row {
+  border-top: 1px solid var(--border-subtle);
+}
+.plugin-widget-list__cell {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0.45rem 0.65rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plugin-widget-list__empty {
+  padding: 0.75rem 0.65rem;
+  color: var(--secondary);
+  text-align: center;
+}

@@ -53,6 +53,22 @@ describe('plugin widget IR', () => {
       text: '图像设置',
     })).toEqual({ type: 'heading', text: '图像设置' });
   });
+
+  it('accepts bounded standard lists for comparison previews', () => {
+    const tree = parsePluginWidgetTree({
+      type: 'list',
+      columns: ['原文件名', '新文件名'],
+      rows: [['before.png', 'after.png']],
+      emptyText: '没有可预览的项目',
+    });
+    expect(tree.type).toBe('list');
+    expect((tree as Extract<typeof tree, { type: 'list' }>).rows).toEqual([['before.png', 'after.png']]);
+    expect(() => parsePluginWidgetTree({
+      type: 'list',
+      columns: ['名称'],
+      rows: [['one', 'unexpected']],
+    })).toThrow(/more cells/u);
+  });
 });
 
 describe('plugin widget toolkit', () => {
@@ -175,6 +191,7 @@ describe('serpent.ui.openDialog widget wrap', () => {
     expect(PLUGIN_WIDGET_OPEN_DIALOG_WRAP_SOURCE).toContain(
       'allowed.indexOf(String(value)) === -1',
     );
+    expect(PLUGIN_WIDGET_OPEN_DIALOG_WRAP_SOURCE).toContain('type: "list"');
   });
 
   it('still maps dialogId calls onto ui.dialog', async () => {

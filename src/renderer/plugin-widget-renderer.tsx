@@ -85,6 +85,43 @@ export function PluginWidgetRenderer({
   if (tree.type === 'separator') {
     return <hr className="plugin-widget-separator" />;
   }
+  if (tree.type === 'list') {
+    const columnCount = tree.columns.length;
+    const gridStyle = {
+      ['--plugin-widget-list-columns' as string]: String(columnCount),
+    };
+    return (
+      <div className="plugin-widget-list" role="table">
+        <div className="plugin-widget-list__header" role="row" style={gridStyle}>
+          {tree.columns.map((column) => (
+            <div className="plugin-widget-list__cell" key={column} role="columnheader">
+              {column}
+            </div>
+          ))}
+        </div>
+        {tree.rows.length === 0 ? (
+          <div className="plugin-widget-list__empty" role="row">
+            {tree.emptyText ?? '暂无项目'}
+          </div>
+        ) : (
+          <div className="plugin-widget-list__body" role="rowgroup">
+            {tree.rows.map((row, rowIndex) => (
+              <div className="plugin-widget-list__row" key={`row-${rowIndex}`} role="row" style={gridStyle}>
+                {tree.columns.map((_, columnIndex) => {
+                  const value = row[columnIndex] ?? '';
+                  return (
+                    <div className="plugin-widget-list__cell" key={`cell-${columnIndex}`} role="cell" title={value}>
+                      {value}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
   if (tree.type === 'text') {
     const value = String(fieldValue(tree, values));
     return (

@@ -11,6 +11,8 @@ import { z } from 'zod';
 export const PLUGIN_WIDGET_MAX_DEPTH = 8;
 export const PLUGIN_WIDGET_MAX_NODES = 128;
 export const PLUGIN_WIDGET_MAX_CHILDREN = 32;
+export const PLUGIN_WIDGET_MAX_LIST_ROWS = 2_000;
+export const PLUGIN_WIDGET_MAX_LIST_COLUMNS = 8;
 
 export const pluginWidgetValueSchema = z.union([
   z.string().max(8_192),
@@ -24,6 +26,25 @@ export const pluginWidgetOptionSchema = z.strictObject({
   label: z.string().min(1).max(160),
 });
 export type PluginWidgetOption = z.infer<typeof pluginWidgetOptionSchema>;
+
+const pluginWidgetListRowSchema = z.array(z.string().max(8_192)).max(PLUGIN_WIDGET_MAX_LIST_COLUMNS);
+const pluginWidgetListSchema = z.strictObject({
+  type: z.literal('list'),
+  columns: z.array(z.string().min(1).max(160)).min(1).max(PLUGIN_WIDGET_MAX_LIST_COLUMNS),
+  rows: z.array(pluginWidgetListRowSchema).max(PLUGIN_WIDGET_MAX_LIST_ROWS),
+  emptyText: z.string().min(1).max(160).optional(),
+}).superRefine((list, context) => {
+  list.rows.forEach((row, index) => {
+    if (row.length > list.columns.length) {
+      context.addIssue({
+        code: 'custom',
+        path: ['rows', index],
+        message: 'List rows cannot contain more cells than the declared columns.',
+      });
+    }
+  });
+});
+export type PluginWidgetList = z.infer<typeof pluginWidgetListSchema>;
 
 export const pluginWidgetFieldIdSchema = z.string().min(1).max(64)
   .regex(/^[A-Za-z][A-Za-z0-9_-]*$/u, 'Widget field ids must be identifiers.');
@@ -40,6 +61,7 @@ export type PluginWidgetNode =
   | { readonly type: 'note'; readonly text: string }
   | { readonly type: 'heading'; readonly text: string }
   | { readonly type: 'separator' }
+  | PluginWidgetList
   | {
     readonly type: 'text';
     readonly id: string;
@@ -99,6 +121,7 @@ export const pluginWidgetNodeSchema: z.ZodType<PluginWidgetNode> = z.lazy(() => 
   z.strictObject({
     type: z.literal('separator'),
   }),
+  pluginWidgetListSchema,
   z.strictObject({
     ...pluginWidgetFieldBase,
     type: z.literal('text'),

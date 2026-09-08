@@ -91,6 +91,7 @@ export function generatePluginSdkTypeDeclaration(_moduleSpecifier = '@serpent/pl
     '    note(text: string): unknown;',
     '    heading(text: string): unknown;',
     '    separator(): unknown;',
+    '    list(spec: Readonly<Record<string, unknown>>): unknown;',
     '    text(spec: Readonly<Record<string, unknown>>): unknown;',
     '    number(spec: Readonly<Record<string, unknown>>): unknown;',
     '    select(spec: Readonly<Record<string, unknown>>): unknown;',

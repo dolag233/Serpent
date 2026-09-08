@@ -45,6 +45,7 @@ export const PLUGIN_WIDGET_OPEN_DIALOG_WRAP_SOURCE = [
   '      note: function(text) { return { type: "note", text: String(text) }; },',
   '      heading: function(text) { return { type: "heading", text: String(text) }; },',
   '      separator: function() { return { type: "separator" }; },',
+  '      list: function(spec) { return Object.assign({ type: "list", columns: spec.columns.map(function(column) { return String(column); }), rows: spec.rows.map(function(row) { return row.map(function(cell) { return String(cell); }); }) }, spec.emptyText === undefined ? {} : { emptyText: String(spec.emptyText) }); },',
   '      text: function(spec) {',
   '        const value = remember(spec);',
   '        return Object.assign({ type: "text", id: spec.id, label: spec.label, value: value }, optionalDescription(spec.description));',
