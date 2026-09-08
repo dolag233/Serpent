@@ -2,6 +2,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, test } from 'vitest';
 
+import { UI_LAYER } from '../../src/renderer/ui/foundation';
 import {
   Activity,
   Notice,
@@ -20,7 +21,7 @@ test('Notice exposes a tone, live-region semantics, message, and dismiss action'
 
   expect(html).toContain('data-ui-pattern="notice"');
   expect(html).toContain('data-ui-tone="warning"');
-  expect(html).toContain('data-ui-layer="600"');
+  expect(html).toContain(`data-ui-layer="${UI_LAYER.notice}"`);
   expect(html).toContain('role="alert"');
   expect(html).toContain('aria-live="assertive"');
   expect(html).toContain('Import needs attention');

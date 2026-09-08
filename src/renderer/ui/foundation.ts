@@ -40,7 +40,8 @@ export const UI_LAYER = {
   menu: 300,
   popover: 400,
   activity: 500,
-  notice: 600,
+  /** Notices stay visible while settings or another modal surface is open. */
+  notice: 850,
   modalBackdrop: 700,
   modal: 800,
   tooltip: 900,

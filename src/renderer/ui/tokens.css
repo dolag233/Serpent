@@ -175,8 +175,9 @@
    * Layer contract. These are the only public UI z-indexes. Keep gaps between
    * layers so internal stacking contexts can use local ordering without
    * competing with another page. A component chooses one named layer; it does
-   * not invent a number. Modal backdrop is below modal content but above all
-   * application activity. Tooltip is the final interaction layer.
+   * not invent a number. Modal backdrop is below modal content; notices stay
+   * above modal content so failures remain visible while a dialog is open.
+   * Tooltip is the final interaction layer.
    */
   --ui-layer-base: 0;
   --ui-layer-shell: 100;
@@ -184,7 +185,7 @@
   --ui-layer-menu: 300;
   --ui-layer-popover: 400;
   --ui-layer-activity: 500;
-  --ui-layer-notice: 600;
+  --ui-layer-notice: 850;
   --ui-layer-modal-backdrop: 700;
   /* Serpent-52a9b4: window caption buttons (frameless minimize/maximize/close)
      stay above the modal backdrop so a modal never traps the window — any
