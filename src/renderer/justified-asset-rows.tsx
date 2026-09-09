@@ -27,6 +27,7 @@ import {
 import { useFontSize } from "./FontSizeProvider";
 import { columnWindow, useCanvasLocalViewport } from "./viewport-window";
 import type { VirtualBrowseLayout } from "./browse/virtual-browse-layout";
+import { resolveBrowseCanvasLayout } from "./browse-window-slots";
 import {
   VirtualJustifiedAssetRows,
   virtualJustifiedRowStyle,
@@ -137,9 +138,10 @@ function RegularJustifiedAssetRows({
     [assets],
   );
   const layoutEntries = useMemo(() => {
-    const source = layout.length > 0 ? layout : fallbackLayout;
-    return overlayLiveAssetGeometry(source, assetById);
-  }, [assetById, fallbackLayout, layout]);
+    const source = resolveBrowseCanvasLayout(layout, assets);
+    const resolved = source.length > 0 ? source : fallbackLayout;
+    return overlayLiveAssetGeometry(resolved, assetById);
+  }, [assetById, assets, fallbackLayout, layout]);
   const layoutById = useMemo(
     () => new Map(layoutEntries.map((entry) => [entry.assetId, entry] as const)),
     [layoutEntries],

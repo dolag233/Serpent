@@ -42,6 +42,12 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-09-09 链接文件夹递归浏览
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| LINKED-BROWSE-001 / `Serpent-9cfc8c` | 链接文件夹递归显示超过 100 项时其余资产仍可浏览、选中 | 待人类验收 | ① 打开含大型链接文件夹的资源库（单层或带子目录，合计明显超过 100 个文件）。② 点进该链接文件夹。③ 打开「递归显示子文件夹内容」。④ 向下滚动画布到底。⑤ 点选第 101 张及更后面的卡片，再框选一段。 | 画布应出现全部可见资产，而不是停在约 100 张；滚动后能继续加载；后面的卡片可以单击/框选。侧栏或文件夹计数与画布一致（已忽略的子文件夹除外）。 | [开发日志](../development/2026-09-09-linked-folder-browse-page-cap-development-log.md) / `use-browse-pagination.ts` / `browse-window-slots.ts` / `masonry-columns.tsx` / `linked-folders.test.ts` | 自动化：定向单测 + linked-folder Worker。Computer Use、packaged 未执行。 |
+
 ### 2026-09-06 导入进度遮罩
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

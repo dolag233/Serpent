@@ -4,8 +4,11 @@ import type { AssetSummary } from "../../src/shared/asset-types";
 import {
   browsePageOffset,
   browsePageOffsetsForRange,
+  compactBrowseLayoutIsComplete,
   contiguousBrowsePageRuns,
   mergeLoadedBrowsePage,
+  nextUnfilledBrowsePageOffset,
+  resolveBrowseCanvasLayout,
   assetSummaryFromLayoutEntry,
 } from "../../src/renderer/browse-window-slots";
 
@@ -109,5 +112,37 @@ describe("browse window virtualization (Serpent-sa65)", () => {
       width: 1920,
       height: 1080,
     });
+  });
+
+  it("does not treat a first page of 100 as a complete compact layout (Serpent-9cfc8c)", () => {
+    expect(compactBrowseLayoutIsComplete(100, 398)).toBe(false);
+    expect(compactBrowseLayoutIsComplete(398, 398)).toBe(true);
+    expect(compactBrowseLayoutIsComplete(0, 398)).toBe(false);
+    expect(nextUnfilledBrowsePageOffset(new Set([0]), 398, 100)).toBe(100);
+    expect(nextUnfilledBrowsePageOffset(new Set([0, 100, 200, 300]), 398, 100)).toBeNull();
+  });
+
+  it("grows a stale first-page layout with later loaded summaries", () => {
+    const layout = resolveBrowseCanvasLayout(
+      [
+        { assetId: "a", width: 1, height: 1 },
+        { assetId: "b", width: 1, height: 1 },
+      ],
+      [asset("a"), asset("b"), asset("c"), asset("d")],
+    );
+    expect(layout.map((entry) => entry.assetId)).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("keeps a complete compact index when summaries are still streaming in", () => {
+    const layout = resolveBrowseCanvasLayout(
+      [
+        { assetId: "a", width: 8, height: 8 },
+        { assetId: "b", width: 8, height: 8 },
+        { assetId: "c", width: 8, height: 8 },
+      ],
+      [asset("a"), asset("b")],
+    );
+    expect(layout.map((entry) => entry.assetId)).toEqual(["a", "b", "c"]);
+    expect(layout[0]?.width).toBe(8);
   });
 });

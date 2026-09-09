@@ -1138,4 +1138,65 @@ describe('Linked folder sync diagnostics', () => {
     expect(status?.context?.newStatus).toBe('offline');
     service.closeAll();
   });
+
+  it('Serpent-9cfc8c: recursive linked browse session pages past the first 100 assets', () => {
+    const root = temporaryRoot();
+    const sourceRoot = path.join(root, 'source');
+    mkdirSync(path.join(sourceRoot, 'nested'), { recursive: true });
+    for (let index = 0; index < 80; index += 1) {
+      writeFileSync(path.join(sourceRoot, `root-${String(index).padStart(3, '0')}.png`), 'x');
+    }
+    for (let index = 0; index < 70; index += 1) {
+      writeFileSync(
+        path.join(sourceRoot, 'nested', `nested-${String(index).padStart(3, '0')}.png`),
+        'y',
+      );
+    }
+
+    const service = newService();
+    const created = service.createLibrary({
+      displayName: 'LinkedBrowsePage',
+      selectedParentPath: root,
+    });
+    const linked = service.importFolderAsLinked({
+      libraryId: created.libraryId,
+      sourceRootPath: sourceRoot,
+    });
+    expect(linked.assetCount).toBe(150);
+
+    const session = service.createBrowseSession({
+      libraryId: created.libraryId,
+      libraryGeneration: 1,
+      query: null,
+      scope: { kind: 'folder', folderId: linked.folderId, recursive: true },
+      limit: 100,
+    });
+    expect(session.total).toBe(150);
+    expect(session.items).toHaveLength(100);
+
+    const page = service.readBrowseSessionPage({
+      libraryId: created.libraryId,
+      libraryGeneration: 1,
+      sessionId: session.session.sessionId,
+      limit: 100,
+      offset: 100,
+    });
+    expect(page).toMatchObject({ status: 'ready', total: 150, offset: 100 });
+    if (page.status === 'ready') {
+      expect(page.items).toHaveLength(50);
+      const firstPageIds = new Set(session.items.map((item) => item.assetId));
+      expect(page.items.every((item) => !firstPageIds.has(item.assetId))).toBe(true);
+    }
+
+    const layout = service.searchAssets({
+      libraryId: created.libraryId,
+      query: null,
+      scope: { kind: 'folder', folderId: linked.folderId, recursive: true },
+      layoutOnly: true,
+    });
+    expect(layout.total).toBe(150);
+    expect(layout.layout).toHaveLength(150);
+
+    service.closeAll();
+  });
 });
