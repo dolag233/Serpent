@@ -22239,6 +22239,103 @@ export class LibraryService {
     return { assetId: existing.asset_id, created: false };
   }
 
+  /**
+   * 远端单侧改路径：按交换格式相对路径搬动托管资产（建缺失文件夹后走既有 managed-move）。
+   * 链接资产保持外部目录布局，此处为 no-op。
+   */
+  applySyncRelocate(libraryId: string, syncId: string, relativePath: string): void {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    this.assertLibraryWritable(openLibrary);
+    const existing = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, relative_file_path, location_kind, managed_folder_id, availability
+           FROM assets
+          WHERE sync_id = ? AND deleted_at IS NULL`,
+      )
+      .get(syncId) as
+      | {
+          asset_id: string;
+          relative_file_path: string;
+          location_kind: 'managed' | 'linked';
+          managed_folder_id: string | null;
+          availability: 'available' | 'missing';
+        }
+      | undefined;
+    if (!existing) return;
+    if (existing.location_kind !== 'managed') return;
+    if (existing.availability !== 'available') {
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+    if (portablePathIdentity(existing.relative_file_path) === portablePathIdentity(relativePath)) return;
+    const destDir = path.posix.dirname(relativePath);
+    const destinationFolderId = destDir === '.' ? null : this.ensureManagedFolderIdForRelativeDir(
+      openLibrary,
+      libraryId,
+      destDir,
+    );
+    const operationId = randomUUID();
+    if (this.managedMoveConflict(openLibrary, operationId, '0', relativePath, existing.asset_id)) {
+      throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
+    }
+    this.applyManagedMoveOperation(openLibrary, operationId, {
+      files: [{
+        assetId: existing.asset_id,
+        destinationConflict: null,
+        destinationFolderId,
+        destinationRelativePath: relativePath,
+        restoreConflict: null,
+        sourceFolderId: existing.managed_folder_id,
+        sourceRelativePath: existing.relative_file_path,
+      }],
+      kind: 'managed-move',
+      originalOperationId: null,
+      version: 4,
+    });
+    this.noteClientFilesystemMutation();
+  }
+
+  /** 按 posix 相对路径逐级确保托管文件夹存在，返回最内层 folder_id。 */
+  private ensureManagedFolderIdForRelativeDir(
+    openLibrary: OpenLibrary,
+    libraryId: string,
+    relativeDir: string,
+  ): string {
+    const segments = relativeDir.split('/').filter((part) => part.length > 0);
+    let parentId: string | undefined;
+    let acc = '';
+    for (const segment of segments) {
+      acc = acc === '' ? segment : `${acc}/${segment}`;
+      const existing = openLibrary.connection
+        .prepare(
+          'SELECT folder_id FROM managed_folders WHERE path_identity = ?',
+        )
+        .get(portablePathIdentity(acc)) as { folder_id: string } | undefined;
+      if (existing) {
+        parentId = existing.folder_id;
+        continue;
+      }
+      try {
+        const created = this.createManagedFolder({
+          libraryId,
+          name: segment,
+          ...(parentId === undefined ? {} : { parentFolderId: parentId }),
+        });
+        parentId = created.folderId;
+      } catch (error) {
+        if (!(error instanceof LibraryServiceError) || error.code !== 'FOLDER_ALREADY_EXISTS') throw error;
+        const raced = openLibrary.connection
+          .prepare(
+            'SELECT folder_id FROM managed_folders WHERE path_identity = ?',
+          )
+          .get(portablePathIdentity(acc)) as { folder_id: string } | undefined;
+        if (!raced) throw error;
+        parentId = raced.folder_id;
+      }
+    }
+    if (!parentId) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    return parentId;
+  }
+
   /** 远端墓碑传播：本地资产进回收站（已回收资产为幂等 no-op）。 */
   applySyncRecycle(libraryId: string, syncId: string): void {
     const openLibrary = this.requireOpenLibrary(libraryId);

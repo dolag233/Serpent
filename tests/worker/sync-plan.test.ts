@@ -161,4 +161,66 @@ describe('planSyncActions (Serpent-xffq)', () => {
     });
     expect(actions).toEqual([]);
   });
+
+  it('plans a remote MOVE when only the local path changed (Serpent-038ecf)', () => {
+    const localManifest = manifest();
+    localManifest.entries.a1 = entry({ path: 'cd.png' });
+    const remoteManifest = manifest();
+    remoteManifest.entries.a1 = entry({ path: 'cd.png' });
+    const actions = planSyncActions({
+      localAssets: new Map([['a1', { ...asset(), path: '2D/cd.png' }]]),
+      localManifest,
+      remoteManifest,
+      remoteTombstones: new Set(),
+    });
+    expect(actions).toEqual([
+      expect.objectContaining({
+        type: 'move-remote',
+        assetId: 'a1',
+        fromPath: 'cd.png',
+        entry: expect.objectContaining({ path: '2D/cd.png', contentHash: 'hash-1', version: 2 }),
+      }),
+    ]);
+  });
+
+  it('plans a local relocate when only the remote path changed', () => {
+    const localManifest = manifest();
+    localManifest.entries.a1 = entry({ path: 'cd.png' });
+    const remoteManifest = manifest();
+    remoteManifest.entries.a1 = entry({ path: '2D/cd.png', version: 2 });
+    const actions = planSyncActions({
+      localAssets: new Map([['a1', { ...asset(), path: 'cd.png' }]]),
+      localManifest,
+      remoteManifest,
+      remoteTombstones: new Set(),
+    });
+    expect(actions).toEqual([
+      expect.objectContaining({
+        type: 'relocate-local',
+        assetId: 'a1',
+        entry: expect.objectContaining({ path: '2D/cd.png' }),
+      }),
+    ]);
+  });
+
+  it('plans upload to the new path and records previousPath when local content and path both changed', () => {
+    const localManifest = manifest();
+    localManifest.entries.a1 = entry({ path: 'cd.png', contentHash: 'hash-1' });
+    const remoteManifest = manifest();
+    remoteManifest.entries.a1 = entry({ path: 'cd.png', contentHash: 'hash-1' });
+    const actions = planSyncActions({
+      localAssets: new Map([['a1', { contentHash: 'hash-2', size: 12, modifiedAt: '2026-08-15T10:00:00Z', path: '2D/cd.png' }]]),
+      localManifest,
+      remoteManifest,
+      remoteTombstones: new Set(),
+    });
+    expect(actions).toEqual([
+      expect.objectContaining({
+        type: 'upload',
+        assetId: 'a1',
+        previousPath: 'cd.png',
+        entry: expect.objectContaining({ path: '2D/cd.png', contentHash: 'hash-2' }),
+      }),
+    ]);
+  });
 });

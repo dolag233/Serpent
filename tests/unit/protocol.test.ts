@@ -33,6 +33,19 @@ describe('renderer request protocol', () => {
     });
   });
 
+  it('keeps pollIntervalMs on sync binding save (Serpent-8c4920)', () => {
+    expect(parseRendererRequest({
+      type: 'sync.library.binding.save.request',
+      libraryId: 'lib-1',
+      serverId: 'server-1',
+      enabled: true,
+      pollIntervalMs: 60_000,
+    })).toMatchObject({
+      type: 'sync.library.binding.save.request',
+      pollIntervalMs: 60_000,
+    });
+  });
+
   it('keeps recovery report paths on the Worker/Main side', () => {
     expect(parseRendererRequest({
       type: 'library.recovery-report.request',

@@ -42,6 +42,13 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-09-09 WebDAV 同步（GitHub #31）
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| SYNC-FOLDER-001 / `Serpent-038ecf` | 创建文件夹并把已有资产移入后，远端出现该文件夹且根目录不再留原文件 | 待人类验收 | ① 打开已绑定 WebDAV 且自动同步开启的资源库。② 在库内新建文件夹（例如 `2D`）。③ 把一张**已经同步过**的照片拖进该文件夹（不要只拖新文件）。④ 等自动同步（约 10 秒）或点「立即同步」。⑤ 用 WebDAV 客户端或 NAS 文件管理器查看远端库目录的 `assets/`。 | 远端 `assets/` 下出现与库内一致的子文件夹和文件；根目录那张原图消失，不是两份副本。空文件夹里还没有任何资产时，远端可以暂时没有该空目录（按文件布局同步）。 | [开发日志](../development/2026-09-09-webdav-folder-move-sync-development-log.md) / `sync-plan.ts` / `sync-runner.ts` / GitHub #31 | 自动化：plan/runner/engine/library 定向测试。Computer Use、packaged 未执行。同步状态展示与冲突手动选择见路线图 `Serpent-871f34`，本条不含。 |
+| SYNC-POLL-001 / `Serpent-8c4920` | 自动同步轮询间隔保存后再打开仍是用户填写的秒数 | 待人类验收 | ① 资源库设置 → 同步。② 把轮询间隔改成 60 秒，保存绑定。③ 关掉设置再打开同步页。④ 观察之后是否还像每隔几秒就在同步。 | 再打开时仍显示 60 秒，不是 5 秒；保存后不会按 5 秒一轮询把界面占满。 | [开发日志](../development/2026-09-09-webdav-folder-move-sync-development-log.md) / `src/preload/index.ts` `syncSaveBinding` / GitHub #31 | 自动化：协议解析保留 `pollIntervalMs`。Computer Use、packaged 未执行。 |
+
 ### 2026-09-09 链接文件夹递归浏览
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

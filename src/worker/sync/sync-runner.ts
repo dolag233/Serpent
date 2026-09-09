@@ -12,6 +12,7 @@
 import path from 'node:path';
 
 import type { RemoteStorageDriver, RemoteStorageError } from './remote-storage';
+import { DriverUnsupportedError } from './remote-storage';
 import type { SyncManifest, SyncManifestEntry } from './manifest';
 import { SYNC_ASSETS_DIR, SYNC_TRASH_DIR } from '../../shared/sync-paths';
 import type { SyncAction } from './sync-plan';
@@ -53,6 +54,8 @@ export interface SyncRunnerContext {
   readLocalAsset(assetId: string): Promise<Buffer>;
   /** 把远端内容写入本地资产（新资产或更新）。 */
   writeLocalAsset(assetId: string, relativePath: string, body: Buffer): Promise<void>;
+  /** 远端单侧改路径：本地按新相对路径搬文件，不重新下载内容。 */
+  relocateLocalAsset(assetId: string, relativePath: string): Promise<void>;
   /** 远端墓碑传播：本地资产进回收站。 */
   recycleLocalAsset(assetId: string): Promise<void>;
   /**
@@ -74,6 +77,8 @@ export interface SyncRunResult {
   conflicts: Array<{ assetId: string; conflictCopyPath: string }>;
   uploaded: number;
   downloaded: number;
+  movedRemote: number;
+  relocatedLocal: number;
   deletedRemote: number;
   recycledLocal: number;
   tombstones: number;
@@ -101,6 +106,21 @@ async function ensureRemoteDir(driver: RemoteStorageDriver, remotePath: string):
   if (dir && dir !== '.') await withRetry(() => driver.mkdir(dir));
 }
 
+/** 远端 MOVE；服务端不支持时退化为复制 + 删除。from === to 为 no-op。 */
+async function moveRemoteFile(driver: RemoteStorageDriver, from: string, to: string): Promise<void> {
+  if (from === to) return;
+  await ensureRemoteDir(driver, to);
+  try {
+    await withRetry(() => driver.move(from, to));
+    return;
+  } catch (error) {
+    if (!(error instanceof DriverUnsupportedError)) throw error;
+  }
+  const read = await withRetry(() => driver.read(from));
+  await withRetry(() => driver.write(to, read.body));
+  await withRetry(() => driver.delete(from));
+}
+
 export async function runSyncActions(
   actions: readonly SyncAction[],
   manifest: SyncManifest,
@@ -111,6 +131,8 @@ export async function runSyncActions(
     conflicts: [],
     uploaded: 0,
     downloaded: 0,
+    movedRemote: 0,
+    relocatedLocal: 0,
     deletedRemote: 0,
     recycledLocal: 0,
     tombstones: 0,
@@ -125,6 +147,13 @@ export async function runSyncActions(
       case 'upload': {
         const body = await context.readLocalAsset(action.assetId);
         const remotePath = assetPath(action.entry.path);
+        if (action.previousPath && action.previousPath !== action.entry.path) {
+          try {
+            await moveRemoteFile(driver, assetPath(action.previousPath), remotePath);
+          } catch {
+            // 旧路径可能已不在远端（仅内容变更或上次未同步移动），继续 PUT 新路径。
+          }
+        }
         await ensureRemoteDir(driver, remotePath);
         const written = await withRetry(() => driver.write(remotePath, body, { ifMatch: action.entry.etag }));
         const entry: SyncManifestEntry = { ...action.entry, etag: written.etag, deviceId: context.deviceId, modifiedAt: now };
@@ -194,6 +223,24 @@ export async function runSyncActions(
           result.uploaded += 1;
         }
         result.conflicts.push({ assetId: action.assetId, conflictCopyPath: conflictName });
+        break;
+      }
+      case 'move-remote': {
+        const fromPath = assetPath(action.fromPath);
+        const toPath = assetPath(action.entry.path);
+        await moveRemoteFile(driver, fromPath, toPath);
+        manifest.entries[action.assetId] = {
+          ...action.entry,
+          deviceId: context.deviceId,
+          modifiedAt: now,
+        };
+        result.movedRemote += 1;
+        break;
+      }
+      case 'relocate-local': {
+        await context.relocateLocalAsset(action.assetId, action.entry.path);
+        manifest.entries[action.assetId] = { ...action.entry };
+        result.relocatedLocal += 1;
         break;
       }
       case 'delete-remote': {

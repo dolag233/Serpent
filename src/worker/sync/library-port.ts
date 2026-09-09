@@ -27,6 +27,9 @@ export function createLibrarySyncPort(libraryService: LibraryService): SyncLibra
     async applySyncContentUpdate(libraryId, syncId, relativePath, body) {
       return libraryService.applySyncContentUpdate(libraryId, syncId, relativePath, body);
     },
+    async applySyncRelocate(libraryId, syncId, relativePath) {
+      libraryService.applySyncRelocate(libraryId, syncId, relativePath);
+    },
     async applySyncRecycle(libraryId, syncId) {
       libraryService.applySyncRecycle(libraryId, syncId);
     },

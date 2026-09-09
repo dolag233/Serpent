@@ -134,4 +134,21 @@ describe('library sync integration (Serpent-xffq)', () => {
     expect(service.readSyncManifestCache(libraryId)).toBe('{"formatVersion":1}');
     service.closeAll();
   });
+
+  it('relocates a managed asset into a new folder without rewriting content (Serpent-038ecf)', () => {
+    const service = new LibraryService();
+    const { libraryId, assetId } = createLibraryWithAsset(service, '搬路径库');
+    const snapshot = service.syncSnapshot(libraryId);
+    const syncId = snapshot.assets[0]!.syncId;
+    const beforePath = service.resolveAssetPath(libraryId, assetId);
+    expect(existsSync(beforePath)).toBe(true);
+
+    service.applySyncRelocate(libraryId, syncId, '2D/source.txt');
+    const after = service.listAssets({ libraryId, recursive: true })[0]!;
+    expect(after.relativeFilePath).toBe('2D/source.txt');
+    const afterPath = service.resolveAssetPath(libraryId, assetId);
+    expect(existsSync(afterPath)).toBe(true);
+    expect(existsSync(beforePath)).toBe(false);
+    service.closeAll();
+  });
 });

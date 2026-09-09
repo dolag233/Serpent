@@ -47,7 +47,16 @@ class MemoryDriver implements RemoteStorageDriver {
 
   async mkdir(): Promise<void> {}
 
-  async move(): Promise<void> {}
+  async move(from: string, to: string): Promise<void> {
+    if (from === to) return;
+    const body = this.files.get(from);
+    if (!body) throw new Error(`missing ${from}`);
+    this.files.set(to, body);
+    const etag = this.etags.get(from);
+    if (etag) this.etags.set(to, etag);
+    this.files.delete(from);
+    this.etags.delete(from);
+  }
 
   async exists(path: string): Promise<boolean> {
     return this.files.has(path);
@@ -101,6 +110,12 @@ class FakeLibrary implements SyncLibraryPort {
     }
     this.assets.set(syncId, { syncId, relativePath, body });
     return { assetId: syncId, created: true };
+  }
+
+  async applySyncRelocate(_libraryId: string, syncId: string, relativePath: string) {
+    this.calls.push(`relocate:${syncId}:${relativePath}`);
+    const existing = this.assets.get(syncId);
+    if (existing) existing.relativePath = relativePath;
   }
 
   async applySyncRecycle(_libraryId: string, syncId: string) {
@@ -373,5 +388,22 @@ describe('SyncEngine end-to-end (Serpent-xffq)', () => {
     // 上传 4 字节（1 个文件）。
     expect(last.bytesDone).toBe(4);
     expect(last.bytesTotal).toBe(4);
+  });
+
+  it('moves a remote file when only the local folder path changed (Serpent-038ecf)', async () => {
+    const driver = new MemoryDriver();
+    const library = new FakeLibrary();
+    library.assets.set('s1', { syncId: 's1', relativePath: 'cd.png', body: Buffer.from('cover') });
+    const engine = new SyncEngine(library, { deviceId: 'dev-a' });
+    engine.buildDriver = () => driver;
+
+    await engine.syncOnce('lib-1', root);
+    expect(driver.files.get('参考库/assets/cd.png')?.toString()).toBe('cover');
+
+    library.assets.get('s1')!.relativePath = '2D/cd.png';
+    const outcome = await engine.syncOnce('lib-1', root);
+    expect(outcome.report.uploads).toBe(1);
+    expect(driver.files.get('参考库/assets/2D/cd.png')?.toString()).toBe('cover');
+    expect(driver.files.has('参考库/assets/cd.png')).toBe(false);
   });
 });
