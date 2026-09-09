@@ -44292,9 +44292,29 @@ export class LibraryService {
 
   cancelImport(importId: string): void {
     const state = this.activeImports.get(importId);
-    if (!state) throw new LibraryServiceError('IMPORT_NOT_FOUND');
-    state.cancelled = true;
-    state.onCancel?.();
+    if (state) {
+      state.cancelled = true;
+      state.onCancel?.();
+      return;
+    }
+    // After prepare returns a conflict/sequence decision, the import lives in
+    // pendingImports. Overlay "取消导入" must abandon rather than throw
+    // IMPORT_NOT_FOUND and leave the UI deadlocked (Serpent-224ac8).
+    if (this.pendingImports.has(importId)) {
+      this.abandonImport(importId);
+      this.emitProgress({
+        type: 'import.progress',
+        importId,
+        phase: 'cancelled',
+        cancelable: false,
+        filesProcessed: 0,
+        totalFiles: 0,
+        bytesProcessed: 0,
+        totalBytes: 0,
+      });
+      return;
+    }
+    throw new LibraryServiceError('IMPORT_NOT_FOUND');
   }
 
   cancelDiskDelete(operationId: string): void {

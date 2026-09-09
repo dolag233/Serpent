@@ -90,6 +90,14 @@ export function resolveDialogEscapeAction(
   if (snapshot.aiConnectionFailureOpen) {
     return { kind: "abort-ai-connection-failure" };
   }
+  // Import decision dialogs must beat the progress overlay (Serpent-224ac8).
+  // Sequence import is also above the regular sequence settings dialog.
+  if (snapshot.imageSequenceImportOpen) {
+    return { kind: "close-image-sequence-import" };
+  }
+  if (snapshot.conflictsImportId) {
+    return { kind: "abandon-import", importId: snapshot.conflictsImportId };
+  }
   if (snapshot.blockingImportOpen) {
     return snapshot.blockingImportCancelable
       ? { kind: "cancel-blocking-import" }
@@ -101,11 +109,6 @@ export function resolveDialogEscapeAction(
       : { kind: "hold-blocking-delete" };
   }
   if (snapshot.assetRenameOpen) return { kind: "cancel-asset-rename" };
-  // Sequence import is rendered above the regular sequence settings dialog;
-  // keep its pending offer and focus trap together when Escape dismisses it.
-  if (snapshot.imageSequenceImportOpen) {
-    return { kind: "close-image-sequence-import" };
-  }
   if (snapshot.imageSequenceDialogOpen) {
     return { kind: "close-image-sequence-dialog" };
   }
@@ -133,9 +136,6 @@ export function resolveDialogEscapeAction(
   if (snapshot.dialogOpen) return { kind: "close-dialog" };
   if (snapshot.pluginTrustPromptOpen) {
     return { kind: "dismiss-plugin-trust-prompt" };
-  }
-  if (snapshot.conflictsImportId) {
-    return { kind: "abandon-import", importId: snapshot.conflictsImportId };
   }
   return { kind: "none" };
 }

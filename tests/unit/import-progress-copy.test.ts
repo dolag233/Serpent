@@ -4,6 +4,8 @@ import {
   importOverlayDetail,
   importOverlayTitle,
   isBlockingImportOverlayVisible,
+  isImportAwaitingUserDecision,
+  shouldApplyImportProgressEvent,
 } from "../../src/renderer/import-progress-copy";
 import type { ImportProgressEvent } from "../../src/shared/protocol/responses";
 
@@ -34,6 +36,15 @@ describe("import overlay copy", () => {
     expect(
       isBlockingImportOverlayVisible("ready", progress({ phase: "complete" })),
     ).toBe(false);
+  });
+
+  it("hides the overlay while a name/duplicate/sequence decision is required", () => {
+    expect(isImportAwaitingUserDecision({ hasConflicts: true, hasSequenceOffer: false })).toBe(true);
+    expect(isBlockingImportOverlayVisible("ready", progress(), true)).toBe(false);
+    expect(shouldApplyImportProgressEvent(progress(), true)).toBe(false);
+    expect(
+      shouldApplyImportProgressEvent(progress({ phase: "cancelled" }), true),
+    ).toBe(true);
   });
 
   it("uses an import title for file transfers and open titles for library conversion", () => {

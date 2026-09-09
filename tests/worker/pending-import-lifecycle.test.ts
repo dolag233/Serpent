@@ -89,6 +89,27 @@ describe('pending import lifecycle', () => {
     service.closeAll();
   });
 
+  it('treats cancelImport of a pending conflict plan as abandon (Serpent-224ac8)', () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'same.png');
+    writeFileSync(source, 'incoming');
+    const events: Array<{ phase: string; importId: string }> = [];
+    const service = new LibraryService({
+      onProgress: (event) => {
+        if (event.type === 'import.progress') {
+          events.push({ phase: event.phase, importId: event.importId });
+        }
+      },
+    });
+    const library = service.createLibrary({ displayName: 'Cancel Pending', selectedParentPath: root });
+    writeFileSync(path.join(library.libraryPath, 'Assets', 'same.png'), 'old');
+    const plan = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
+    expect(() => service.cancelImport(plan.importId)).not.toThrow();
+    expect(events.some((event) => event.phase === 'cancelled' && event.importId === plan.importId)).toBe(true);
+    expectCode(() => service.abandonImport(plan.importId), 'IMPORT_NOT_FOUND');
+    service.closeAll();
+  });
+
   it('cancels the expiry timer during normal close cleanup', () => {
     const root = temporaryRoot();
     const source = path.join(root, 'same.png');

@@ -46,7 +46,6 @@ describe("dialog-escape-stack", () => {
         ...empty,
         assetRenameOpen: true,
         dialogOpen: true,
-        conflictsImportId: "imp_1",
       }),
     ).toEqual({ kind: "cancel-asset-rename" });
   });
@@ -150,14 +149,25 @@ describe("dialog-escape-stack", () => {
     ).toBe(true);
   });
 
-  it("closes generic dialog before conflicts", () => {
+  it("lets import decision dialogs beat the progress overlay (Serpent-224ac8)", () => {
     expect(
       resolveDialogEscapeAction({
         ...empty,
+        blockingImportOpen: true,
+        blockingImportCancelable: true,
+        conflictsImportId: "imp_2",
         dialogOpen: true,
+      }),
+    ).toEqual({ kind: "abandon-import", importId: "imp_2" });
+    expect(
+      resolveDialogEscapeAction({
+        ...empty,
+        blockingImportOpen: true,
+        blockingImportCancelable: true,
+        imageSequenceImportOpen: true,
         conflictsImportId: "imp_2",
       }),
-    ).toEqual({ kind: "close-dialog" });
+    ).toEqual({ kind: "close-image-sequence-import" });
   });
 
   it("treats embedded AI configuration as part of settings", () => {

@@ -74,7 +74,10 @@ import {
 import { ImportProgressOverlay } from "./ImportProgressOverlay";
 import { DeleteProgressOverlay } from "./DeleteProgressOverlay";
 import { BlockingProgressOverlay } from "./BlockingProgressOverlay";
-import { isBlockingImportOverlayVisible } from "./import-progress-copy";
+import {
+  isBlockingImportOverlayVisible,
+  shouldApplyImportProgressEvent,
+} from "./import-progress-copy";
 import { isActiveDeleteProgress, isDeleteProgressCancelable } from "./delete-progress-copy";
 import { activeLibrarySwitchActivity } from "./library-switch-safety";
 import { createLibraryTransitionLock } from "./library-transition-lock";
@@ -1429,6 +1432,7 @@ function AppInner() {
     useState<ImportProgressEvent | null>(null);
   const importProgressRef = useRef(importProgress);
   importProgressRef.current = importProgress;
+  const importAwaitingUserDecisionRef = useRef(false);
   const [deleteProgress, setDeleteProgress] =
     useState<DeleteProgressEvent | null>(null);
   const [libraryTransferKind, setLibraryTransferKind] = useState<LibraryTransferKind>("import");
@@ -7106,6 +7110,7 @@ function AppInner() {
       if (!result.ok) throw new LibraryOperationError(result.error);
       if (isImportConflictPlan(result.value)) {
         setImageSequenceImportOffer(null);
+        setImportProgress(null);
         presentImportConflicts(result.value);
         return;
       }
@@ -7197,6 +7202,7 @@ function AppInner() {
     if (!api || !conflicts) return;
     const plan = conflicts;
     clearImportConflictsUi();
+    setImportProgress(null);
     try {
       const result = await api.abandonImport({ importId: plan.importId });
       if (!result.ok) throw new LibraryOperationError(result.error);
@@ -8371,6 +8377,17 @@ function AppInner() {
 
   async function cancelImport() {
     if (!api) return;
+    if (conflicts) {
+      await abandonConflicts();
+      setImportProgress(null);
+      return;
+    }
+    if (imageSequenceImportOffer) {
+      setImageSequenceImportOffer(null);
+      setImageSequenceImportError(null);
+      setImportProgress(null);
+      return;
+    }
     if (!importProgress?.importId) {
       setImportProgress(null);
       setLibraryTransferKind("import");
@@ -8783,6 +8800,14 @@ function AppInner() {
           if (startedAt !== null) playTaskCompletionSound(startedAt);
         }
       } else if (event.type === "import.progress") {
+        if (
+          !shouldApplyImportProgressEvent(
+            event,
+            importAwaitingUserDecisionRef.current,
+          )
+        ) {
+          return;
+        }
         setImportProgress(event);
         if (["complete", "cancelled", "failed"].includes(event.phase)) {
           setImportProgress(null);
@@ -8818,9 +8843,14 @@ function AppInner() {
     });
   }, [api, setNotice, t]);
 
+  const importAwaitingUserDecision = Boolean(
+    (conflicts && conflictPhase) || imageSequenceImportOffer,
+  );
+  importAwaitingUserDecisionRef.current = importAwaitingUserDecision;
   const blockingImportOverlayVisible = isBlockingImportOverlayVisible(
     uiState,
     importProgress,
+    importAwaitingUserDecision,
   );
   const blockingDeleteOverlayVisible =
     isActiveDeleteProgress(deleteProgress) && deleteProgress.totalFiles >= 2;
@@ -8898,6 +8928,7 @@ function AppInner() {
     cancelImageSequenceImport: () => {
       setImageSequenceImportOffer(null);
       setImageSequenceImportError(null);
+      setImportProgress(null);
     },
     cancelImageSequenceDialog: () => setImageSequenceDialog(null),
     cancelBatchRelink,
@@ -8929,8 +8960,10 @@ function AppInner() {
     },
     setShowCollectionInput,
     setConflicts: (value) => {
-      if (value === null) clearImportConflictsUi();
-      else presentImportConflicts(value);
+      if (value === null) {
+        clearImportConflictsUi();
+        setImportProgress(null);
+      } else presentImportConflicts(value);
     },
     setError,
     onDismissFatalAlert: dismissFatalAlert,
@@ -10465,6 +10498,45 @@ function AppInner() {
         transferName={libraryTransferName}
       />
     ) : null}
+    {/* Import decision dialogs must sit outside .app-shell (isolation:isolate)
+        and after the progress overlay so they remain clickable (Serpent-224ac8). */}
+    <ImageSequenceImportDialog
+      error={imageSequenceImportError}
+      offer={imageSequenceImportOffer}
+      sequenceIndex={imageSequenceImportIndex}
+      onCancel={() => {
+        setImageSequenceImportOffer(null);
+        setImageSequenceImportError(null);
+        setImportProgress(null);
+      }}
+      onConfirm={(input) => void confirmImageSequenceImportOffer(input)}
+      open={imageSequenceImportOffer !== null}
+      submitting={imageSequenceImportSubmitting}
+    />
+    {conflicts && conflictPhase === "name" && library && (
+      <NameConflictDialog
+        conflicts={conflicts}
+        libraryId={library.libraryId}
+        decision={nameDecision}
+        remember={rememberNameConflict}
+        onDecisionChange={setNameDecision}
+        onRememberChange={setRememberNameConflict}
+        onCancel={() => void abandonConflicts()}
+        onConfirm={() => confirmNameConflictDialog()}
+      />
+    )}
+    {conflicts && conflictPhase === "duplicate" && library && (
+      <ContentDuplicateDialog
+        conflicts={conflicts}
+        libraryId={library.libraryId}
+        decision={duplicateDecision}
+        remember={rememberDuplicate}
+        onDecisionChange={setDuplicateDecision}
+        onRememberChange={setRememberDuplicate}
+        onCancel={() => void abandonConflicts()}
+        onConfirm={() => confirmContentDuplicateDialog()}
+      />
+    )}
     {blockingDeleteOverlayVisible && !blockingImportOverlayVisible ? (
       <DeleteProgressOverlay
         onCancel={() => {
@@ -12162,18 +12234,6 @@ function AppInner() {
         open={imageSequenceDialog !== null}
         submitting={imageSequenceDialog?.submitting}
       />
-      <ImageSequenceImportDialog
-        error={imageSequenceImportError}
-        offer={imageSequenceImportOffer}
-        sequenceIndex={imageSequenceImportIndex}
-        onCancel={() => {
-          setImageSequenceImportOffer(null);
-          setImageSequenceImportError(null);
-        }}
-        onConfirm={(input) => void confirmImageSequenceImportOffer(input)}
-        open={imageSequenceImportOffer !== null}
-        submitting={imageSequenceImportSubmitting}
-      />
       {linkedRulesEditor && (
         <LinkedRulesDialog
           name={linkedRulesEditor.name}
@@ -12708,30 +12768,6 @@ function AppInner() {
         }}
         recentLibraries={recentLibraries}
       />
-      {conflicts && conflictPhase === "name" && library && (
-        <NameConflictDialog
-          conflicts={conflicts}
-          libraryId={library.libraryId}
-          decision={nameDecision}
-          remember={rememberNameConflict}
-          onDecisionChange={setNameDecision}
-          onRememberChange={setRememberNameConflict}
-          onCancel={() => void abandonConflicts()}
-          onConfirm={() => confirmNameConflictDialog()}
-        />
-      )}
-      {conflicts && conflictPhase === "duplicate" && library && (
-        <ContentDuplicateDialog
-          conflicts={conflicts}
-          libraryId={library.libraryId}
-          decision={duplicateDecision}
-          remember={rememberDuplicate}
-          onDecisionChange={setDuplicateDecision}
-          onRememberChange={setRememberDuplicate}
-          onCancel={() => void abandonConflicts()}
-          onConfirm={() => confirmContentDuplicateDialog()}
-        />
-      )}
       {exportDialogOpen && (
         <ExportDialog
           open={exportDialogOpen}
