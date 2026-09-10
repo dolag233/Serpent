@@ -159,7 +159,7 @@ function attachToForeground(
   hwnd: bigint,
   api: WindowsForegroundApi,
 ): Array<[number, number]> {
-  let foreground = 0n;
+  let foreground: bigint;
   try {
     foreground = asBigInt(api.GetForegroundWindow());
   } catch {

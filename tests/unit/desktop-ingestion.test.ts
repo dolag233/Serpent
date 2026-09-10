@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -201,7 +202,11 @@ describe('windows clipboard image extraction', () => {
     const fileUrl = process.platform === 'win32'
       ? 'file:///C:/temp/a&amp;b.png'
       : 'file:///tmp/a&amp;b.png';
-    const expectedPath = process.platform === 'win32' ? 'C:/temp/a&b.png' : '/tmp/a&b.png';
+    const expectedPath = fileURLToPath(
+      process.platform === 'win32'
+        ? 'file:///C:/temp/a&b.png'
+        : 'file:///tmp/a&b.png',
+    );
     const sources = extractClipboardHtmlImageSources(
       `<img src="${fileUrl}"><img src="data:image/jpeg;base64,AAA">`,
     );

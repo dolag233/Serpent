@@ -91,7 +91,9 @@ export function usePluginWidgetDialogKeyboardFocus(dialogId: string): void {
     };
 
     focusField();
-    const raf = requestAnimationFrame(focusField);
+    const raf = requestAnimationFrame(() => {
+      focusField();
+    });
     const timer = window.setTimeout(focusField, 50);
     const stealTimer = window.setTimeout(() => {
       restoreDocumentKeyboardFocus();

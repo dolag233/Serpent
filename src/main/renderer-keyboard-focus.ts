@@ -9,6 +9,8 @@
  * same reason Alt-Tab recovers typing.
  */
 
+import { app } from "electron";
+
 import { stealWindowsForeground } from "./windows-foreground";
 
 export type RendererKeyboardFocusLogger = {
@@ -50,9 +52,7 @@ export function bindRendererKeyboardFocusLogger(
 
 function defaultStealAppFocus(): void {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const electron = require("electron") as typeof import("electron");
-    electron.app.focus({ steal: true });
+    app.focus({ steal: true });
   } catch {
     // unit tests / app not ready
   }
@@ -69,7 +69,7 @@ function applyFocus(
   },
 ): void {
   (options?.stealAppFocus ?? defaultStealAppFocus)();
-  let stolen = false;
+  let stolen: boolean;
   let renderWidgetFound: boolean | null = null;
   let focusedClass: string | null = null;
   if (options?.stealNativeForeground) {
