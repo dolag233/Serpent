@@ -1080,6 +1080,17 @@ describe('renderer request protocol', () => {
       suspectedDuplicate: 'skip',
       nameConflict: 'keep-both',
     });
+    expect(
+      parseRendererRequest({
+        type: 'asset.import.skip-source-failure',
+        importId: 'import-01',
+        applyToRest: true,
+      }),
+    ).toEqual({
+      type: 'asset.import.skip-source-failure',
+      importId: 'import-01',
+      applyToRest: true,
+    });
     expect(parseRendererRequest({ type: 'asset.import.abandon', importId: 'import-01' }))
       .toEqual({ type: 'asset.import.abandon', importId: 'import-01' });
   });

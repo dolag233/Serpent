@@ -88,6 +88,7 @@ const MUTATION_COMMANDS = new Set([
   'asset.import-eagle',
   'asset.import-billfish',
   'asset.import.resolve',
+  'asset.import.skip-source-failure',
   'asset.import.abandon',
   'asset.import-linked',
   'asset.relink',

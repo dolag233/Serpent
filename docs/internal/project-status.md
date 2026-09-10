@@ -3,6 +3,8 @@
 > 更新时间：2026-09-10
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
+- **2026-09-10 导入冲突连点 / 跳过无法读取的文件**：内容重复窗连点会把已消费的 `resolveImport` 打成一串 `IMPORT_NOT_FOUND`（`Serpent-85e60c`）。批量导入夹杂无法读取的项时整批失败（`Serpent-7d1ba2`）。已加提交锁，并弹出可跳过的「无法导入部分文件」决策窗（勾选文案对齐序列帧 applyToRest）。见 [开发日志](development/2026-09-10-import-skip-failures-and-conflict-submit-development-log.md)。
+
 - **2026-09-10 插件对话框键盘**：从右键菜单打开 Host widget 对话框后，Windows 上输入框可能无法打字（`activeElement` 已是输入框，但 `document.hasFocus()` 为 false）。根因是 `SetFocus` 打在无边框外壳 HWND，键盘进不了 `Chrome_RenderWidgetHostHWND`。已改为只聚焦渲染子窗口，并在窗口已 `isFocused` 时先 blur 再激活（`Serpent-e3fe21`，用户确认可输入）。见 [开发日志](development/2026-09-10-plugin-dialog-keyboard-focus-development-log.md)。
 
 - **2026-09-10 插件 Host 卡顿**：设置里已安装列表、开关、插件设置面板，以及右键菜单里插件项有时明显滞后。未修，工单 `Serpent-a5ddfc`。

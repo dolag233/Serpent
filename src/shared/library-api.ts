@@ -51,6 +51,7 @@ import type {
 import type {
   ImportCompletion,
   ImportConflictPlan,
+  ImportSourceFailurePlan,
   ImageSequenceImportOffer,
   EagleImportResult,
   BillfishImportResult,
@@ -266,7 +267,7 @@ export interface SerpentLibraryApi {
   pasteIntoFolder(input: {
     libraryId: string;
     folderId?: string | null;
-  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer>>;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan | ImageSequenceImportOffer>>;
   /** Duplicate managed folder subtree as a sibling. */
   cloneFolder(input: {
     libraryId: string;
@@ -378,12 +379,12 @@ export interface SerpentLibraryApi {
     libraryId: string;
     targetFolderId?: string;
     autoDetectImageSequences?: boolean;
-  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer>>;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan | ImageSequenceImportOffer>>;
   importFolder(input: {
     libraryId: string;
     targetFolderId?: string;
     autoDetectImageSequences?: boolean;
-  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>>;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan>>;
   importEagleLibrary(input: {
     libraryId: string;
   }): Promise<LibraryApiResult<EagleImportResult>>;
@@ -398,7 +399,7 @@ export interface SerpentLibraryApi {
     html?: string;
     uriList?: string;
     autoDetectImageSequences?: boolean;
-  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer>>;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan | ImageSequenceImportOffer>>;
   /** Resolve native dropped File handles to managed asset ids without exposing paths. */
   resolveManagedAssetDrop(input: {
     libraryId: string;
@@ -408,7 +409,7 @@ export interface SerpentLibraryApi {
     libraryId: string;
     targetFolderId?: string;
     targetCollectionId?: string;
-  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>>;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan>>;
   confirmImageSequenceImport(input: {
     libraryId: string;
     offerId: string;
@@ -418,12 +419,16 @@ export interface SerpentLibraryApi {
     lastFrame?: number;
     fps?: number;
     applyToRest?: boolean;
-  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>>;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan>>;
   resolveImport(input: {
     importId: string;
     suspectedDuplicate: SuspectedDuplicateDecision;
     nameConflict: NameConflictDecision;
   }): Promise<LibraryApiResult<ImportCompletion>>;
+  skipImportSourceFailure(input: {
+    importId: string;
+    applyToRest: boolean;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan>>;
   abandonImport(input: { importId: string }): Promise<LibraryApiResult<{ importId: string }>>;
   refreshAssets(input: { libraryId: string }): Promise<
     LibraryApiResult<{

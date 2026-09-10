@@ -36,6 +36,7 @@ export type UseDialogEscapeDismissParams = {
   setDialog: (value: null) => void;
   setShowCollectionInput: (open: boolean) => void;
   setConflicts: (value: ImportConflictPlan | null) => void;
+  setSourceFailurePlan?: (value: null) => void;
   setError: (message: string | null) => void;
   /** Serpent-c2rm: Escape dismisses the pending library-plugin trust prompt as Later. */
   onDismissPluginTrustPrompt?: () => void;
@@ -76,6 +77,7 @@ export function useDialogEscapeDismiss({
   setDialog,
   setShowCollectionInput,
   setConflicts,
+  setSourceFailurePlan,
   setError,
   onDismissPluginTrustPrompt,
   onDismissFatalAlert,
@@ -108,6 +110,7 @@ export function useDialogEscapeDismiss({
           onAbortAiConnectionFailure?.();
           return;
         case "hold-blocking-import":
+        case "hold-import-decision":
         case "hold-blocking-delete":
           return;
         case "cancel-blocking-delete":
@@ -184,6 +187,7 @@ export function useDialogEscapeDismiss({
           if (!api) return;
           const importId = action.importId;
           setConflicts(null);
+          setSourceFailurePlan?.(null);
           void Promise.resolve().then(async () => {
             try {
               const result = await api.abandonImport({ importId });
@@ -226,6 +230,7 @@ export function useDialogEscapeDismiss({
     setDialog,
     setShowCollectionInput,
     setConflicts,
+    setSourceFailurePlan,
     setError,
     onDismissPluginTrustPrompt,
     onDismissFatalAlert,

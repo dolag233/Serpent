@@ -4,11 +4,13 @@ import type { SerpentLibraryApi } from "../shared/library-api";
 import type {
   ImportConflictPlan,
   ImportCompletion,
+  ImportSourceFailurePlan,
   ImageSequenceImportOffer,
 } from "../shared/protocol/responses";
 import {
   isImageSequenceImportOffer,
   isImportConflictPlan,
+  isImportSourceFailurePlan,
 } from "../shared/import-outcome";
 import { LibraryOperationError, toMessage, shouldSuppressClipboardPasteFeedback } from "./error-utils";
 import { useT } from "./i18n";
@@ -27,6 +29,7 @@ export type UseFolderOrganizeActionsParams = {
    * Returns true if the caller will finish the import (conflicts dialog).
    */
   onPasteConflict?: (plan: ImportConflictPlan) => void;
+  onPasteSourceFailure?: (plan: ImportSourceFailurePlan) => void;
   onPasteCompleted?: (completion: ImportCompletion) => void | Promise<void>;
   onPasteSequenceOffer?: (offer: ImageSequenceImportOffer) => void;
 };
@@ -45,6 +48,7 @@ export function useFolderOrganizeActions({
   setUiState,
   reloadCurrentContent,
   onPasteConflict,
+  onPasteSourceFailure,
   onPasteCompleted,
   onPasteSequenceOffer,
 }: UseFolderOrganizeActionsParams) {
@@ -62,6 +66,10 @@ export function useFolderOrganizeActions({
         if (!result.ok) throw new LibraryOperationError(result.error);
         if (isImageSequenceImportOffer(result.value)) {
           onPasteSequenceOffer?.(result.value);
+          return;
+        }
+        if (isImportSourceFailurePlan(result.value)) {
+          onPasteSourceFailure?.(result.value);
           return;
         }
         if (isImportConflictPlan(result.value)) {
@@ -87,6 +95,7 @@ export function useFolderOrganizeActions({
       locale,
       onPasteCompleted,
       onPasteConflict,
+      onPasteSourceFailure,
       onPasteSequenceOffer,
       reloadCurrentContent,
       setError,

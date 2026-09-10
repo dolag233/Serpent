@@ -20,6 +20,7 @@ export type ImportConflictDialogShellProps = {
   confirmLabel: string;
   onCancel: () => void;
   onConfirm: () => void;
+  submitting?: boolean;
 };
 
 /**
@@ -42,6 +43,7 @@ export function ImportConflictDialogShell({
   confirmLabel,
   onCancel,
   onConfirm,
+  submitting = false,
 }: ImportConflictDialogShellProps): ReactNode {
   const t = useT();
   const preview =
@@ -74,6 +76,7 @@ export function ImportConflictDialogShell({
         <label className="conflict-remember-row" htmlFor={rememberId}>
           <input
             checked={remember}
+            disabled={submitting}
             id={rememberId}
             onChange={(event) => onRememberChange(event.target.checked)}
             type="checkbox"
@@ -90,11 +93,21 @@ export function ImportConflictDialogShell({
           )
         ) : null}
         <div className="dialog-actions">
-          <button className="secondary-button" onClick={onCancel} type="button">
+          <button
+            className="secondary-button"
+            disabled={submitting}
+            onClick={onCancel}
+            type="button"
+          >
             {t("dialog.conflicts.cancelImport")}
           </button>
-          <button className="primary-button" onClick={onConfirm} type="button">
-            {confirmLabel}
+          <button
+            className="primary-button"
+            disabled={submitting}
+            onClick={onConfirm}
+            type="button"
+          >
+            {submitting ? t("dialog.conflicts.continuing") : confirmLabel}
           </button>
         </div>
       </DialogShell>

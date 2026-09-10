@@ -2809,6 +2809,12 @@ async function commandFor(
         suspectedDuplicate: request.suspectedDuplicate,
         nameConflict: request.nameConflict,
       };
+    case "asset.import.skip-source-failure":
+      return {
+        type: "asset.import.skip-source-failure",
+        importId: request.importId,
+        applyToRest: request.applyToRest,
+      };
     case "asset.import.abandon":
       return { type: "asset.import.abandon", importId: request.importId };
     case "asset.refresh.request":
@@ -4996,7 +5002,8 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     const nativeDragLibraryId =
       "libraryId" in request && typeof request.libraryId === "string"
         ? request.libraryId
-        : request.type === "asset.import.resolve"
+        : (request.type === "asset.import.resolve" ||
+          request.type === "asset.import.skip-source-failure")
           ? pendingImportLibraries.get(request.importId)
           : undefined;
     if (
@@ -5127,7 +5134,8 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       );
     }
 
-    if (!workerResult.ok && request.type === "asset.import.resolve") {
+    if (!workerResult.ok && (request.type === "asset.import.resolve" ||
+          request.type === "asset.import.skip-source-failure")) {
       pendingImportLibraries.delete(request.importId);
       pendingImportCollections.delete(request.importId);
     }
@@ -5533,7 +5541,11 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     //
     // Track importId -> libraryId mapping for resolve flows where libraryId
     // is not carried in the resolve request itself.
-    if (workerResult.ok && workerResult.type === "asset.import.conflicts") {
+    if (
+      workerResult.ok &&
+      (workerResult.type === "asset.import.conflicts" ||
+        workerResult.type === "asset.import.source-failure")
+    ) {
       pendingImportLibraries.set(
         workerResult.plan.importId,
         (request as { libraryId?: string }).libraryId ?? "",
@@ -5556,17 +5568,20 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
 
     if (workerResult.ok && workerResult.type === "asset.import.completed") {
       const collectionId =
-        request.type === "asset.import.resolve"
+        (request.type === "asset.import.resolve" ||
+          request.type === "asset.import.skip-source-failure")
           ? pendingImportCollections.get(request.importId)
           : request.type === "asset.import-drop.request" ||
               request.type === "asset.import-clipboard.request"
             ? request.targetCollectionId
             : undefined;
-      if (request.type === "asset.import.resolve")
+      if ((request.type === "asset.import.resolve" ||
+          request.type === "asset.import.skip-source-failure"))
         pendingImportCollections.delete(request.importId);
       if (collectionId && workerResult.completion.assets.length > 0) {
         const importLibraryId =
-          request.type === "asset.import.resolve"
+          (request.type === "asset.import.resolve" ||
+          request.type === "asset.import.skip-source-failure")
             ? pendingImportLibraries.get(request.importId)
             : request.type === "asset.import-drop.request" ||
                 request.type === "asset.import-clipboard.request"
@@ -5614,7 +5629,8 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
                 : relationResult.error.reason,
             },
           );
-          if (request.type === "asset.import.resolve")
+          if ((request.type === "asset.import.resolve" ||
+          request.type === "asset.import.skip-source-failure"))
             pendingImportLibraries.delete(request.importId);
           return {
             ok: false,
@@ -5680,7 +5696,8 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           request.type === "asset.import-clipboard.request"
         ) {
           libId = request.libraryId;
-        } else if (request.type === "asset.import.resolve") {
+        } else if ((request.type === "asset.import.resolve" ||
+          request.type === "asset.import.skip-source-failure")) {
           libId = pendingImportLibraries.get(request.importId);
           pendingImportLibraries.delete(request.importId);
         }

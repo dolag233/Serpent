@@ -34,6 +34,10 @@ export type DialogEscapeSnapshot = {
   aiConnectionFailureOpen: boolean;
   /** When set, Escape abandons this pending import conflict plan. */
   conflictsImportId: string | null;
+  /** When set, Escape abandons this pending unreadable-source skip plan. */
+  sourceFailureImportId?: string | null;
+  /** Confirm is in-flight; Escape must not abandon the token (Serpent-85e60c). */
+  importDecisionSubmitting?: boolean;
   /** Full-window import overlay: Escape cancels when the Worker importId exists. */
   blockingImportOpen?: boolean;
   blockingImportCancelable?: boolean;
@@ -68,6 +72,7 @@ export type DialogEscapeAction =
   | { kind: "dismiss-fatal-alert" }
   | { kind: "abort-ai-connection-failure" }
   | { kind: "abandon-import"; importId: string }
+  | { kind: "hold-import-decision" }
   | { kind: "cancel-blocking-import" }
   | { kind: "hold-blocking-import" }
   | { kind: "hold-blocking-delete" }
@@ -95,8 +100,13 @@ export function resolveDialogEscapeAction(
   if (snapshot.imageSequenceImportOpen) {
     return { kind: "close-image-sequence-import" };
   }
-  if (snapshot.conflictsImportId) {
-    return { kind: "abandon-import", importId: snapshot.conflictsImportId };
+  const pendingImportId =
+    snapshot.conflictsImportId ?? snapshot.sourceFailureImportId ?? null;
+  if (pendingImportId) {
+    if (snapshot.importDecisionSubmitting) {
+      return { kind: "hold-import-decision" };
+    }
+    return { kind: "abandon-import", importId: pendingImportId };
   }
   if (snapshot.blockingImportOpen) {
     return snapshot.blockingImportCancelable

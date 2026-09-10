@@ -746,7 +746,8 @@ export const zhCN = {
       confirmReplace: "覆盖并导入",
       confirmSkip: "跳过并继续",
       confirmImportAnyway: "仍然导入",
-      examplesMore: "{name} 等 {count} 项"
+      examplesMore: "{name} 等 {count} 项",
+      continuing: "正在导入…"
     },
     nameConflict: {
       title: "同名冲突",
@@ -827,6 +828,12 @@ export const zhCN = {
       importSelected: "导入单独文件",
       importSequence: "导入序列帧",
       importing: "正在导入…"
+    },
+    sourceFailure: {
+      title: "无法导入部分文件",
+      summary: "{count} 个文件无法导入；还有 {remaining} 个文件可以继续。",
+      summaryNoneRemaining: "{count} 个文件无法导入。",
+      applyToRest: "将当前选择应用到后面无法导入的文件"
     },
     pluginTrustPrompt: {
       title: "新的资源库插件",
@@ -1209,6 +1216,8 @@ export const zhCN = {
     pluginOpenGitHubSource: "打开 GitHub 仓库",
     pluginReload: "重新加载插件",
     pluginOpenSettings: "打开插件设置",
+    pluginUninstallTitle: "卸载插件",
+    pluginUninstallConfirm: "确定要从「{scope}」卸载“{plugin}” v{version}吗？已安装的插件包将被删除。",
     pluginSettingsEmpty: "该插件暂无设置页。",
     pluginSettingsNavEmpty: "暂无可用的插件设置。",
     pluginTrustTrustedConfirmHint: "信任后，此非受限模式插件将获得本机完整系统能力，请谨慎确认。",

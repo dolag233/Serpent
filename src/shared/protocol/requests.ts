@@ -480,6 +480,11 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     nameConflict: nameConflictDecisionSchema,
   }),
   z.strictObject({
+    type: z.literal('asset.import.skip-source-failure'),
+    importId: identifierSchema,
+    applyToRest: z.boolean(),
+  }),
+  z.strictObject({
     type: z.literal('asset.import.abandon'),
     importId: identifierSchema,
   }),
@@ -1586,6 +1591,11 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     importId: identifierSchema,
     suspectedDuplicate: suspectedDuplicateDecisionSchema,
     nameConflict: nameConflictDecisionSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.import.skip-source-failure'),
+    importId: identifierSchema,
+    applyToRest: z.boolean(),
   }),
   z.strictObject({
     type: z.literal('asset.import.abandon'),
