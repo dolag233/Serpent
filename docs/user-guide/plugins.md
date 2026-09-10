@@ -17,7 +17,7 @@
 本地文件夹、本地 ZIP，或自己粘贴的 GitHub 地址，走同一页的「高级安装」：
 
 1. 在「设置」→「插件」点击「高级安装」。
-2. 选择已构建的插件目录或 ZIP，或粘贴 GitHub 仓库 / Release 地址。例如：
+2. 点「安装 ZIP」或「安装文件夹」，或粘贴 GitHub 仓库 / Release 地址。例如：
 
    `https://github.com/dolag233/Serpent-Plugin-ImageUpscaler`
 

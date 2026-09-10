@@ -15,9 +15,11 @@ import {
 } from "electron";
 
 import {
+  pluginLocalInstallDialogSpec,
   resolveNativeDialogCopy,
   type AppLocale,
   type NativeDialogId,
+  type PluginLocalInstallSourceKind,
 } from "../shared/native-dialog-i18n";
 
 export type NativeDialogHost = {
@@ -191,6 +193,27 @@ export async function selectOpenFile(
     openOptionsFor(host.getLocale(), dialogId, ["openFile"], { filters }),
   );
   return result.canceled ? undefined : result.filePaths[0];
+}
+
+/**
+ * Local plugin install picker. ZIP and folder are separate dialogs because
+ * Windows cannot combine `openFile` and `openDirectory` (GitHub #19).
+ */
+export async function selectPluginPackage(
+  host: NativeDialogHost,
+  sourceKind: PluginLocalInstallSourceKind,
+  e2ePath: string | undefined,
+): Promise<string | undefined> {
+  if (host.isE2e()) {
+    return e2ePath && path.isAbsolute(e2ePath) ? e2ePath : undefined;
+  }
+  const spec = pluginLocalInstallDialogSpec(sourceKind);
+  if (spec.zipFilter) {
+    return selectOpenFile(host, spec.dialogId, undefined, [
+      { name: "ZIP files", extensions: ["zip"] },
+    ]);
+  }
+  return selectOpenDirectory(host, spec.dialogId, undefined);
 }
 
 export async function selectSavePath(

@@ -17,7 +17,7 @@ A user-wide plugin is available in every library; a library plugin is used only 
 Local folders, local ZIP archives, and GitHub URLs you paste yourself use **Advanced install** on the same page:
 
 1. In **Settings → Plugins**, choose **Advanced install**.
-2. Pick a built plugin folder or ZIP, or paste a GitHub repository / Release URL. For example:
+2. Choose **Install ZIP** or **Install folder**, or paste a GitHub repository / Release URL. For example:
 
    `https://github.com/dolag233/Serpent-Plugin-ImageUpscaler`
 

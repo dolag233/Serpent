@@ -56,7 +56,7 @@ describe('plugin install failure detail', () => {
       chooseLocalPackage: async () => source,
     });
 
-    await expect(handler({ type: 'plugin-manager.install-local', scope: 'user' })).resolves.toMatchObject({
+    await expect(handler({ type: 'plugin-manager.install-local', scope: 'user', sourceKind: 'folder' })).resolves.toMatchObject({
       ok: false,
       code: 'operation-failed',
       failureCode: 'PLUGIN_SOURCE_SYMLINK_FORBIDDEN',
@@ -86,7 +86,7 @@ describe('plugin install failure detail', () => {
       chooseLocalPackage: async () => source,
     });
 
-    const installed = await handler({ type: 'plugin-manager.install-local', scope: 'user' });
+    const installed = await handler({ type: 'plugin-manager.install-local', scope: 'user', sourceKind: 'folder' });
     expect(installed).toMatchObject({ ok: true });
     expect(JSON.stringify(installed)).not.toContain(source);
   });

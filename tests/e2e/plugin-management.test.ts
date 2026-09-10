@@ -54,7 +54,8 @@ test('installs a library plugin through the settings bridge, then trusts and Saf
     await expect(globalAutoUpdate).toBeVisible();
     await expect(globalAutoUpdate).not.toBeChecked();
     const installDialog = await openPluginAdvancedInstallDialog(window, dialog);
-    await expect(installDialog.getByRole('button', { name: '本地安装' })).toBeVisible();
+    await expect(installDialog.getByRole('button', { name: '安装 ZIP' })).toBeVisible();
+    await expect(installDialog.getByRole('button', { name: '安装文件夹' })).toBeVisible();
     await expect(installDialog.getByRole('button', { name: '从 GitHub 安装' })).toBeVisible();
     await installDialog.getByRole('button', { name: '从 GitHub 安装' }).click();
     const githubDialog = window.getByRole('dialog', { name: '从 GitHub 安装' });
@@ -63,7 +64,7 @@ test('installs a library plugin through the settings bridge, then trusts and Saf
     await expect(githubDialog.getByText('请输入有效的 GitHub HTTPS 仓库地址、owner/repository 或 Release 链接。', { exact: true })).toBeVisible();
     await githubDialog.getByRole('button', { name: '返回' }).click();
     await installDialog.getByLabel('安装范围').selectOption('library');
-    await installDialog.getByRole('button', { name: '本地安装' }).click();
+    await installDialog.getByRole('button', { name: '安装文件夹' }).click();
 
     const libraryCard = dialog.locator('.plugin-settings-scope-card').filter({ hasText: '资源库插件' });
 

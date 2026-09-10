@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   NATIVE_DIALOG_IDS,
+  pluginLocalInstallDialogSpec,
   mapSystemLocaleToAppLocale,
   resolveNativeDialogCopy,
   tryParseAppLocaleSync,
@@ -69,5 +70,22 @@ describe("native dialog i18n (Serpent-bwb)", () => {
     expect(zhDest.title).toBe("\u9009\u62e9\u7528\u6765\u5b58\u653e\u65b0 Serpent \u8d44\u6e90\u5e93\u7684\u7236\u6587\u4ef6\u5939");
     expect(enDest.title).not.toBe(enSource.title);
     expect(zhDest.title).not.toBe(zhSource.title);
+  });
+
+  it("keeps plugin ZIP and folder pickers as separate native dialogs (GitHub #19)", () => {
+    const zip = pluginLocalInstallDialogSpec("zip");
+    const folder = pluginLocalInstallDialogSpec("folder");
+    expect(zip.properties).toEqual(["openFile"]);
+    expect(zip.zipFilter).toBe(true);
+    expect(zip.dialogId).toBe("installPluginZip");
+    expect(folder.properties).toEqual(["openDirectory"]);
+    expect(folder.zipFilter).toBe(false);
+    expect(folder.dialogId).toBe("installPluginFolder");
+    expect(zip.properties).not.toContain("openDirectory");
+    expect(folder.properties).not.toContain("openFile");
+    expect(resolveNativeDialogCopy("en", "installPluginZip").filterName).toBe("ZIP files");
+    expect(resolveNativeDialogCopy("zh-CN", "installPluginFolder").title).toBe(
+      "\u5b89\u88c5\u63d2\u4ef6\u6587\u4ef6\u5939",
+    );
   });
 });

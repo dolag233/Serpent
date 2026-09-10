@@ -121,7 +121,7 @@ test('does not resume a plugin job after the whole Electron process restarts', a
     await expect(dialog.getByText('暂未安装插件。', { exact: true }).first()).toBeVisible();
     const installDialog = await openPluginAdvancedInstallDialog(window, dialog);
     await installDialog.getByLabel('安装范围').selectOption('library');
-    await installDialog.getByRole('button', { name: '本地安装' }).click();
+    await installDialog.getByRole('button', { name: '安装文件夹' }).click();
     await expect(dialog.getByText(/Job Probe\s*-\s*v1\.0\.0/)).toBeVisible({ timeout: 30_000 });
     window.once('dialog', (browserDialog) => browserDialog.accept());
     await dialog.locator('label.plugin-settings-enable-toggle').click();

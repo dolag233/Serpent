@@ -1000,6 +1000,25 @@ export function PluginSettingsPage({
                     disabled={busy || api === undefined || libraryInstallDisabled}
                     onClick={() => void installScoped({
                       type: 'plugin-manager.install-local',
+                      sourceKind: 'zip',
+                      scope: installScope,
+                      ...(installScope === 'library' && libraryId !== undefined ? { libraryId } : {}),
+                    })}
+                    type="button"
+                  >
+                    <span className="plugin-install-choice-icon"><Icon name="archive" size={22} /></span>
+                    <span className="plugin-install-choice-copy">
+                      <strong>{t('settings.pluginInstallLocalZipAction')}</strong>
+                      <span>{t('settings.pluginInstallLocalZipHint')}</span>
+                    </span>
+                    <Icon name="chevron-right" size={16} />
+                  </button>
+                  <button
+                    className="plugin-install-choice"
+                    disabled={busy || api === undefined || libraryInstallDisabled}
+                    onClick={() => void installScoped({
+                      type: 'plugin-manager.install-local',
+                      sourceKind: 'folder',
                       scope: installScope,
                       ...(installScope === 'library' && libraryId !== undefined ? { libraryId } : {}),
                     })}
@@ -1007,8 +1026,8 @@ export function PluginSettingsPage({
                   >
                     <span className="plugin-install-choice-icon"><Icon name="folder" size={22} /></span>
                     <span className="plugin-install-choice-copy">
-                      <strong>{t('settings.pluginInstallLocalAction')}</strong>
-                      <span>{t('settings.pluginInstallLocalHint')}</span>
+                      <strong>{t('settings.pluginInstallLocalFolderAction')}</strong>
+                      <span>{t('settings.pluginInstallLocalFolderHint')}</span>
                     </span>
                     <Icon name="chevron-right" size={16} />
                   </button>

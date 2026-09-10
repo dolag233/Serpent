@@ -44,6 +44,10 @@ const scopedRequestFields = {
   libraryId: libraryIdSchema.optional(),
 };
 
+/** ZIP vs folder pickers stay separate: Windows cannot mix them in one dialog. */
+export const pluginLocalInstallSourceKindSchema = z.enum(['zip', 'folder']);
+export type PluginLocalInstallSourceKind = z.infer<typeof pluginLocalInstallSourceKindSchema>;
+
 /**
  * Renderer-safe provenance. Local locations intentionally have no path field;
  * the Main process remains the only process which ever sees one.
@@ -175,7 +179,11 @@ export const pluginManagerRequestSchema = z.discriminatedUnion('type', [
     assetId: z.string().min(1).max(255),
     deadlineMs: z.number().int().positive().max(5_000).optional(),
   }),
-  z.strictObject({ type: z.literal('plugin-manager.install-local'), ...scopedRequestFields }),
+  z.strictObject({
+    type: z.literal('plugin-manager.install-local'),
+    ...scopedRequestFields,
+    sourceKind: pluginLocalInstallSourceKindSchema,
+  }),
   z.strictObject({
     type: z.literal('plugin-manager.install-github'),
     ...scopedRequestFields,

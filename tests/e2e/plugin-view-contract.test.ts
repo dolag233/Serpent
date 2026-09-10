@@ -104,7 +104,7 @@ test('plugin view contract: mount, theme-without-reload, reload, unmount, librar
     await openPluginSettingsTab(settingsDialog);
     const installDialog = await openPluginAdvancedInstallDialog(window, settingsDialog);
     await installDialog.getByLabel('安装范围').selectOption('library');
-    const installButton = installDialog.getByRole('button', { name: '本地安装' });
+    const installButton = installDialog.getByRole('button', { name: '安装文件夹' });
     await expect(installButton).toBeEnabled();
     await installButton.click();
     // Surface the install error (if any) instead of timing out blindly.

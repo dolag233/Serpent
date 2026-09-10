@@ -55,6 +55,7 @@ import {
   selectOpenLibrarySource,
   selectOpenFile,
   selectSavePath,
+  selectPluginPackage,
   type NativeDialogHost,
 } from "./native-dialogs";
 import {
@@ -2376,28 +2377,14 @@ async function selectDirectory(
   return selectLibraryDirectory(createNativeDialogHost(), dialogId);
 }
 
-async function selectPluginPackage(): Promise<string | undefined> {
-  // Isolated Electron E2E injects a disposable package path. Production and
-  // normal development always use the native picker, so Renderer never gains
-  // path selection capability.
-  if (!app.isPackaged && process.env.SERPENT_E2E === '1') {
-    const e2ePackage = process.env.SERPENT_E2E_PLUGIN_PACKAGE;
-    return e2ePackage && path.isAbsolute(e2ePackage) ? e2ePackage : undefined;
-  }
-  const result = mainWindow
-    ? await dialog.showOpenDialog(mainWindow, {
-      title: 'Install a Serpent plugin',
-      buttonLabel: 'Choose plugin',
-      properties: ['openFile', 'openDirectory'],
-      filters: [{ name: 'Serpent plugin package', extensions: ['zip'] }],
-    })
-    : await dialog.showOpenDialog({
-      title: 'Install a Serpent plugin',
-      buttonLabel: 'Choose plugin',
-      properties: ['openFile', 'openDirectory'],
-      filters: [{ name: 'Serpent plugin package', extensions: ['zip'] }],
-    });
-  return result.canceled || result.filePaths.length === 0 ? undefined : result.filePaths[0];
+async function selectPluginPackageForInstall(
+  sourceKind: "zip" | "folder",
+): Promise<string | undefined> {
+  return selectPluginPackage(
+    createNativeDialogHost(),
+    sourceKind,
+    process.env.SERPENT_E2E_PLUGIN_PACKAGE,
+  );
 }
 
 let cachedSyncDeviceId: string | undefined;
@@ -8054,7 +8041,7 @@ async function startApplication(): Promise<void> {
         if (!result.ok || result.type !== 'library.list') return undefined;
         return result.libraries.find((library) => library.libraryId === libraryId)?.libraryPath;
       },
-      chooseLocalPackage: selectPluginPackage,
+      chooseLocalPackage: selectPluginPackageForInstall,
       notifyInstallProgress: (event) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send(PLUGIN_INSTALL_PROGRESS_CHANNEL, event);

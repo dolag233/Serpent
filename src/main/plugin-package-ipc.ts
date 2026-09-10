@@ -12,6 +12,7 @@ import {
   type PluginManagerResponse,
   type PluginManagerSourceSummary,
   type PluginManagerRequest,
+  type PluginLocalInstallSourceKind,
   pluginManagerRequestSchema,
 } from '../shared/plugin-manager-api';
 import {
@@ -97,7 +98,7 @@ export interface PluginPackageIpcOptions {
   mcpExposureStore?: PluginMcpExposureStore;
   resolveLibraryDirectory(libraryId: string): Promise<string | undefined>;
   /** Main-owned native picker. It must never return a value to Renderer. */
-  chooseLocalPackage(): Promise<string | undefined>;
+  chooseLocalPackage(sourceKind: PluginLocalInstallSourceKind): Promise<string | undefined>;
   /** Main-only event sink; payloads are already Renderer-safe and path-free. */
   notifyInstallProgress?(event: PluginInstallProgress): void;
   /** Reveal an installed package directory in the OS file manager. Path stays in Main. */
@@ -442,7 +443,7 @@ async function installLocal(
   libraryDirectory: string | undefined,
   options: PluginPackageIpcOptions,
 ): Promise<boolean> {
-  const selected = await options.chooseLocalPackage();
+  const selected = await options.chooseLocalPackage(request.sourceKind);
   if (selected === undefined) return false;
   const source = {
     kind: 'local-directory' as const,

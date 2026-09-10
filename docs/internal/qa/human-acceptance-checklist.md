@@ -42,6 +42,12 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-09-10 本地插件 ZIP / 文件夹安装（GitHub #19）
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| PLUGIN-053 / `Serpent-1dc3c5` | 高级安装可分别选择插件 ZIP 或插件文件夹 | 待人类验收 | ① 设置 → 插件 → 高级安装。② 确认有「安装 ZIP」「安装文件夹」「从 GitHub 安装」三项。③ 点「安装 ZIP」：应打开文件选择器，能选 `.zip`，不能只能选文件夹。④ 取消后再点「安装文件夹」：应打开文件夹选择器。⑤ 用一份有效插件 ZIP 和一份含 `serpent-plugin.json` 的文件夹各装一次。 | Windows 上 ZIP 选择器能直接选压缩包；文件夹选择器能选插件目录；装完后列表出现该插件。取消选择器不得报错。 | [开发日志](../development/2026-09-10-plugin-local-zip-folder-picker-development-log.md) / `native-dialog-i18n.ts` `pluginLocalInstallDialogSpec` / `native-dialogs.ts` `selectPluginPackage` / `PluginSettingsPage.tsx` / GitHub #19 | 自动化：4 files / 29 passed；`tsc --noEmit` 通过；`plugin-management` E2E 1 passed。Computer Use、packaged 未执行。Windows 真机选择器待本条验收。 |
+
 ### 2026-09-09 WebDAV 同步（GitHub #31）
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

@@ -42,7 +42,7 @@ test('activates the fixed standard Host probe and writes library storage', async
     await expect(dialog.getByText('暂未安装插件。', { exact: true }).first()).toBeVisible();
     const installDialog = await openPluginAdvancedInstallDialog(window, dialog);
     await installDialog.getByLabel('安装范围').selectOption('library');
-    await installDialog.getByRole('button', { name: '本地安装' }).click();
+    await installDialog.getByRole('button', { name: '安装文件夹' }).click();
     await expect(dialog.getByText(/Standard Host Probe\s*-\s*v1\.0\.0/)).toBeVisible({ timeout: 30_000 });
     // Trust is now granted as part of enabling a library-scoped plugin; the
     // old standalone「信任」button was removed from the settings card.
