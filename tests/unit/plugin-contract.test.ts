@@ -110,6 +110,17 @@ describe('Plugin v1 manifest contract', () => {
     expect(pluginManifestSchema.toJSONSchema()).toMatchObject({ type: 'object' });
   });
 
+  it('accepts built-in menu icon names as transport-safe strings', () => {
+    const parsed = pluginManifestSchema.parse({
+      ...validManifest,
+      contributes: {
+        ...validManifest.contributes,
+        menus: { asset: [{ command: 'extract-palette', icon: 'edit' }] },
+      },
+    });
+    expect(parsed.contributes.menus.asset?.[0]).toMatchObject({ icon: 'edit' });
+  });
+
   it('reports precise JSON paths for invalid static setting schemas', () => {
     const invalid = pluginManifestSchema.safeParse({
       ...validManifestFixture,
@@ -508,6 +519,8 @@ describe('Plugin contribution registry and generated SDK', () => {
       'readonly ui:',
       'openDialog(input: {',
       'heading(text: string): unknown;',
+      'list(spec: Readonly<Record<string, unknown>>): unknown;',
+      'toggle(spec: Readonly<Record<string, unknown>>): unknown;',
       'getBinaryPaths(): Promise<{ readonly ffmpegPath: string; readonly ffprobePath: string }>;',
     ]) {
       expect(declaration).toContain(method);

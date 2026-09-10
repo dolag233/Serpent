@@ -14,6 +14,7 @@ export interface ContentDuplicateDialogProps {
   onRememberChange: (value: boolean) => void;
   onCancel: () => void;
   onConfirm: () => void;
+  submitting?: boolean;
 }
 
 /** Library / content duplicates only (Serpent-glua / zp8q / 79c7 / thuy). */
@@ -26,6 +27,7 @@ export function ContentDuplicateDialog({
   onRememberChange,
   onCancel,
   onConfirm,
+  submitting = false,
 }: ContentDuplicateDialogProps) {
   const t = useT();
   const totalDuplicates =
@@ -87,6 +89,7 @@ export function ContentDuplicateDialog({
       decision={
         <select
           autoFocus
+          disabled={submitting}
           id="content-duplicate-decision"
           value={decision}
           onChange={(event) =>
@@ -107,6 +110,7 @@ export function ContentDuplicateDialog({
       examplesContent={examplesContent}
       onCancel={onCancel}
       onConfirm={onConfirm}
+      submitting={submitting}
       onRememberChange={onRememberChange}
       remember={remember}
       rememberId="content-duplicate-remember"

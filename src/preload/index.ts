@@ -171,6 +171,7 @@ import {
   type RendererResult,
   type ImportCompletion,
   type ImportConflictPlan,
+  type ImportSourceFailurePlan,
   type ImageSequenceImportOffer,
   type EagleImportResult,
   type BillfishImportResult,
@@ -253,6 +254,15 @@ const library: SerpentLibraryApi = Object.freeze({
     if (!result.ok) return failure(result);
     if (result.type !== 'library.opened') throw new Error('Unexpected open-library response.');
     return { ok: true as const, value: result.library };
+  },
+
+  async cancelOpen(): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'library.open-cancel.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.open-cancelled') {
+      throw new Error('Unexpected cancel-open-library response.');
+    }
+    return { ok: true as const, value: undefined };
   },
 
   async revealRecoveryReport({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<void>> {
@@ -523,15 +533,8 @@ const library: SerpentLibraryApi = Object.freeze({
   async pasteIntoFolder(input: {
     libraryId: string;
     folderId?: string | null;
-  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer>> {
-    const result = await importRequest({ type: 'folder.paste.request', ...input });
-    if (!result.ok) return { ok: false, error: result.error };
-    // Sequence offers are a normal import branch (same as file import); surface
-    // them to the renderer instead of treating paste as a hard failure.
-    return {
-      ok: true,
-      value: result.value as ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer,
-    };
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan | ImageSequenceImportOffer>> {
+    return importRequest({ type: 'folder.paste.request', ...input });
   },
 
   async cloneFolder(input: {
@@ -773,7 +776,7 @@ const library: SerpentLibraryApi = Object.freeze({
     libraryId: string;
     targetFolderId?: string;
     autoDetectImageSequences?: boolean;
-  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer>> {
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan | ImageSequenceImportOffer>> {
     return importRequest({ type: 'asset.import-files.request', ...input });
   },
 
@@ -781,7 +784,7 @@ const library: SerpentLibraryApi = Object.freeze({
     libraryId: string;
     targetFolderId?: string;
     autoDetectImageSequences?: boolean;
-  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>> {
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan>> {
     const result = await importRequest({ type: 'asset.import-folder.request', ...input });
     if (!result.ok) return { ok: false, error: result.error };
     if (isImageSequenceImportOffer(result.value)) {
@@ -789,7 +792,7 @@ const library: SerpentLibraryApi = Object.freeze({
     }
     return {
       ok: true,
-      value: result.value as ImportCompletion | ImportConflictPlan,
+      value: result.value,
     };
   },
 
@@ -819,7 +822,7 @@ const library: SerpentLibraryApi = Object.freeze({
     html?: string;
     uriList?: string;
     autoDetectImageSequences?: boolean;
-  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer>> {
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan | ImageSequenceImportOffer>> {
     // Native File handles always win. Browser drags can include text/html
     // beside Files; the secondary metadata must never turn a local import into
     // a network request.
@@ -940,6 +943,18 @@ const library: SerpentLibraryApi = Object.freeze({
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.import.completed') throw new Error('Unexpected resolve-import response.');
     return { ok: true, value: result.completion };
+  },
+
+  async skipImportSourceFailure(input: {
+    importId: string;
+    applyToRest: boolean;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan>> {
+    const result = await request({ type: 'asset.import.skip-source-failure', ...input });
+    if (!result.ok) return failure(result);
+    if (result.type === 'asset.import.completed') return { ok: true, value: result.completion };
+    if (result.type === 'asset.import.conflicts') return { ok: true, value: result.plan };
+    if (result.type === 'asset.import.source-failure') return { ok: true, value: result.plan };
+    throw new Error('Unexpected skip-source-failure response.');
   },
 
   async abandonImport({ importId }: { importId: string }) {
@@ -2000,13 +2015,13 @@ const library: SerpentLibraryApi = Object.freeze({
     if (result.type !== 'sync.server.deleted') throw new Error('Unexpected sync server delete response.');
     return { ok: true, value: { id: result.id } };
   },
-  async syncSaveBinding({ libraryId, serverId, directoryName, enabled }: { libraryId: string; serverId: string; directoryName?: string; enabled?: boolean }): Promise<LibraryApiResult<void>> {
-    const result = await request({ type: 'sync.library.binding.save.request', libraryId, serverId, directoryName, enabled });
+  async syncSaveBinding({ libraryId, serverId, directoryName, enabled, pollIntervalMs }: { libraryId: string; serverId: string; directoryName?: string; enabled?: boolean; pollIntervalMs?: number }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'sync.library.binding.save.request', libraryId, serverId, directoryName, enabled, pollIntervalMs });
     if (!result.ok) return failure(result);
     if (result.type !== 'sync.binding.saved') throw new Error('Unexpected sync binding response.');
     return { ok: true, value: undefined };
   },
-  async syncGetBinding({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<{ serverId: string; directoryName?: string; lastSyncedAt?: string; enabled?: boolean } | null>> {
+  async syncGetBinding({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<{ serverId: string; directoryName?: string; lastSyncedAt?: string; enabled?: boolean; pollIntervalMs?: number } | null>> {
     const result = await request({ type: 'sync.library.binding.get.request', libraryId });
     if (!result.ok) return failure(result);
     if (result.type !== 'sync.binding.got') throw new Error('Unexpected sync binding get response.');
@@ -2428,11 +2443,12 @@ async function importRequest(
       | 'asset.import-sequence.confirm'
       | 'folder.paste.request';
   }>,
-): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer>> {
+): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan | ImageSequenceImportOffer>> {
   const result = await request(command);
   if (!result.ok) return failure(result);
   if (result.type === 'asset.import.completed') return { ok: true, value: result.completion };
   if (result.type === 'asset.import.conflicts') return { ok: true, value: result.plan };
+  if (result.type === 'asset.import.source-failure') return { ok: true, value: result.plan };
   if (result.type === 'asset.import.sequence-offer') return { ok: true, value: result.offer };
   if (result.type === 'extension.asset-saved') {
     return {

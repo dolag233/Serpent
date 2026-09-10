@@ -14,6 +14,7 @@ export interface NameConflictDialogProps {
   onRememberChange: (value: boolean) => void;
   onCancel: () => void;
   onConfirm: () => void;
+  submitting?: boolean;
 }
 
 /** Same-folder name conflicts only (Serpent-9iyi / zp8q / 79c7 / 793k). */
@@ -26,6 +27,7 @@ export function NameConflictDialog({
   onRememberChange,
   onCancel,
   onConfirm,
+  submitting = false,
 }: NameConflictDialogProps) {
   const t = useT();
   const nameConflicts = conflicts.examples.filter(
@@ -91,6 +93,7 @@ export function NameConflictDialog({
       decision={
         <select
           autoFocus
+          disabled={submitting}
           id="name-conflict-decision"
           value={decision}
           onChange={(event) =>
@@ -109,6 +112,7 @@ export function NameConflictDialog({
       examples={examples}
       onCancel={onCancel}
       onConfirm={onConfirm}
+      submitting={submitting}
       onRememberChange={onRememberChange}
       remember={remember}
       rememberId="name-conflict-remember"

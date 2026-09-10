@@ -178,6 +178,20 @@ export const importConflictPlanSchema = z.strictObject({
 
 export type ImportConflictPlan = z.infer<typeof importConflictPlanSchema>;
 
+export const importSourceFailurePlanSchema = z.strictObject({
+  importId: nonBlankString,
+  failedCount: z.number().int().positive(),
+  remainingCount: z.number().int().nonnegative(),
+  examples: z.array(
+    z.strictObject({
+      displayName: safeDisplayName,
+      reason: publicErrorReasonSchema.optional(),
+    }),
+  ).max(8),
+});
+
+export type ImportSourceFailurePlan = z.infer<typeof importSourceFailurePlanSchema>;
+
 export const automationImportPlanSchema = z.strictObject({
   libraryId: nonBlankString,
   planHash: z.string().regex(/^[a-f0-9]{64}$/u),
@@ -810,6 +824,11 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('asset.import.conflicts'),
     plan: importConflictPlanSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.import.source-failure'),
+    plan: importSourceFailurePlanSchema,
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -2087,6 +2106,10 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     ok: z.literal(true),
     type: z.literal('library.opened'),
     library: rendererLibrarySummarySchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('library.open-cancelled'),
   }),
   z.strictObject({
     ok: z.literal(true),

@@ -65,6 +65,7 @@ const pluginContributionRegistrationSchema = z.strictObject({
   kind: pluginContributionKindSchema,
   target: pluginContributionTargetSchema,
   title: z.string().min(1).max(160),
+  icon: z.string().min(1).max(64).regex(/^[a-z][a-z0-9-]*$/u).optional(),
   mcpExported: z.boolean().optional(),
   commandId: pluginLocalIdSchema.optional(),
   commandTitle: z.string().min(1).max(160).optional(),
@@ -136,6 +137,7 @@ export type PluginMenuContribution = {
   pluginInstanceId: string;
   commandId?: string;
   title: string;
+  icon?: string;
   target: PluginHostMenuTarget;
   group?: string;
   parentId?: string;
@@ -273,6 +275,7 @@ export function registerManifestContributions(
         target,
         title,
         ...(item.command === undefined ? {} : { commandId: item.command }),
+        ...(item.icon === undefined ? {} : { icon: item.icon }),
         ...(item.group === undefined ? {} : { group: item.group }),
         ...(item.before === undefined ? {} : { before: resolveSiblingAnchor(item.before) }),
         ...(item.after === undefined ? {} : { after: resolveSiblingAnchor(item.after) }),

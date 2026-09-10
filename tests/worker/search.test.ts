@@ -1096,6 +1096,54 @@ describe('search filters', () => {
     });
     expect(excluded.total).toBe(0);
 
+    const humanOnly = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'tag', values: ['赛博朋克'], exclude: false, includeAi: false }],
+    });
+    expect(humanOnly.total).toBe(0);
+
+    service.closeAll();
+  });
+
+  it('filters AI ratings by default while allowing human-only filtering (Serpent-450a22)', () => {
+    const { service, libraryId, assetId, libraryPath } = createLibraryWithAssetAndTags();
+    const aiOnlyAssetId = createSecondAsset(service, libraryId, libraryPath, 'AI only');
+    service.writeAiAnalysisResult({
+      libraryId,
+      assetId: aiOnlyAssetId,
+      rating: 3,
+      modelId: 'test-model',
+      modelVersion: '1',
+      enabledFields: { description: false, tags: false, rating: true },
+    });
+
+    const combined = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'rating', values: ['3'], exclude: false }],
+    });
+    expect(combined.items.map((asset) => asset.assetId)).toEqual([aiOnlyAssetId]);
+
+    const humanOnly = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'rating', values: ['3'], exclude: false, includeAi: false }],
+    });
+    expect(humanOnly.total).toBe(0);
+
+    // A human rating takes precedence over a conflicting AI score.
+    service.writeAiAnalysisResult({
+      libraryId,
+      assetId,
+      rating: 1,
+      modelId: 'test-model',
+      modelVersion: '1',
+      enabledFields: { description: false, tags: false, rating: true },
+    });
+    const humanWins = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'rating', values: ['5'], exclude: false }],
+    });
+    expect(humanWins.items.some((asset) => asset.assetId === assetId)).toBe(true);
+
     service.closeAll();
   });
 
@@ -1408,6 +1456,27 @@ describe('sort', () => {
     });
     expect(result.items[0]!.assetId).toBe(assetId);
     expect(result.items[1]!.assetId).toBe(assetId2);
+
+    service.closeAll();
+  });
+
+  it('sorts by effective rating including AI ratings (Serpent-450a22)', () => {
+    const { service, libraryId, assetId, libraryPath } = createLibraryWithAssetAndTags();
+    const assetId2 = createSecondAsset(service, libraryId, libraryPath, 'AI rated');
+    service.writeAiAnalysisResult({
+      libraryId,
+      assetId: assetId2,
+      rating: 4,
+      modelId: 'test-model',
+      modelVersion: '1',
+      enabledFields: { description: false, tags: false, rating: true },
+    });
+
+    const result = service.searchAssets({
+      libraryId,
+      sort: { field: 'rating', order: 'desc' },
+    });
+    expect(result.items.map((asset) => asset.assetId).slice(0, 2)).toEqual([assetId, assetId2]);
 
     service.closeAll();
   });

@@ -65,7 +65,11 @@ export type NativeDialogId =
   | "openAutomationScript"
   | "saveAutomationScript"
   /** macOS application picker for "Open With…" (Serpent-w29). */
-  | "chooseApplication";
+  | "chooseApplication"
+  /** Local plugin ZIP (GitHub #19). Never combined with openDirectory. */
+  | "installPluginZip"
+  /** Local plugin folder (GitHub #19). Never combined with openFile. */
+  | "installPluginFolder";
 
 export type NativeDialogCopy = {
   readonly title: string;
@@ -161,6 +165,15 @@ const EN: DialogCatalog = {
     title: "Choose Application",
     buttonLabel: "Open",
     filterName: "Applications",
+  },
+  installPluginZip: {
+    title: "Install plugin ZIP",
+    buttonLabel: "Choose ZIP",
+    filterName: "ZIP files",
+  },
+  installPluginFolder: {
+    title: "Install plugin folder",
+    buttonLabel: "Choose Folder",
   },
 };
 
@@ -261,6 +274,15 @@ const ZH_CN: DialogCatalog = {
     buttonLabel: "\u6253\u5f00",
     filterName: "\u5e94\u7528\u7a0b\u5e8f",
   },
+  installPluginZip: {
+    title: "\u5b89\u88c5\u63d2\u4ef6 ZIP",
+    buttonLabel: "\u9009\u62e9 ZIP",
+    filterName: "ZIP \u6587\u4ef6",
+  },
+  installPluginFolder: {
+    title: "\u5b89\u88c5\u63d2\u4ef6\u6587\u4ef6\u5939",
+    buttonLabel: "\u9009\u62e9\u6587\u4ef6\u5939",
+  },
 };
 
 const CATALOGS: Record<AppLocale, DialogCatalog> = {
@@ -269,6 +291,33 @@ const CATALOGS: Record<AppLocale, DialogCatalog> = {
 };
 
 export const NATIVE_DIALOG_IDS = Object.keys(EN) as NativeDialogId[];
+
+/**
+ * Windows cannot combine `openFile` and `openDirectory` in one native panel
+ * (GitHub #19). ZIP and folder plugin installs must stay as separate pickers.
+ */
+export type PluginLocalInstallSourceKind = "zip" | "folder";
+
+export function pluginLocalInstallDialogSpec(
+  sourceKind: PluginLocalInstallSourceKind,
+): {
+  readonly dialogId: NativeDialogId;
+  readonly properties: readonly ["openFile"] | readonly ["openDirectory"];
+  readonly zipFilter: boolean;
+} {
+  if (sourceKind === "zip") {
+    return {
+      dialogId: "installPluginZip",
+      properties: ["openFile"],
+      zipFilter: true,
+    };
+  }
+  return {
+    dialogId: "installPluginFolder",
+    properties: ["openDirectory"],
+    zipFilter: false,
+  };
+}
 
 export function resolveNativeDialogCopy(
   locale: AppLocale,

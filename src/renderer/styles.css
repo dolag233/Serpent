@@ -874,6 +874,14 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   gap: 6px !important;
 }
 
+.dimension-filter-check-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+  margin-top: 8px;
+}
+
 .dimension-rating-row {
   display: flex;
   flex-wrap: wrap;
@@ -12832,18 +12840,17 @@ select.ai-config-input.ai-config-languages {
 }
 .plugin-ui-dialog--widget {
   width: min(520px, calc(100vw - 48px));
+  -webkit-app-region: no-drag;
+}
+.plugin-ui-dialog--widget input,
+.plugin-ui-dialog--widget button {
+  -webkit-app-region: no-drag;
 }
 .plugin-ui-dialog-stage {
-  position: fixed;
-  z-index: var(--ui-layer-modal);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  inset: 0;
-  padding: 24px;
-  box-sizing: border-box;
-  overflow: auto;
-  pointer-events: auto;
+  /* Extra class on `dialog-backdrop` so widget selects can detect the scrim.
+     Do not raise z-index: a full-window `--ui-layer-modal` overlay covered
+     caption chrome and left Chromium without keyboard until Alt-Tab. */
+  -webkit-app-region: no-drag;
 }
 .plugin-widget-select-trigger {
   display: flex;
@@ -12893,4 +12900,85 @@ select.ai-config-input.ai-config-languages {
   margin: 0.25rem 0;
   border: 0;
   background: var(--border-subtle);
+}
+.plugin-widget-list {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--ui-radius-control);
+  color: var(--text);
+  font-size: calc(12px * var(--ui-font-scale));
+}
+.plugin-widget-list__header,
+.plugin-widget-list__row {
+  display: grid;
+  grid-template-columns: repeat(var(--plugin-widget-list-columns), minmax(0, 1fr));
+  align-items: center;
+  min-width: 0;
+}
+.plugin-widget-list__header {
+  background: var(--raised);
+  color: var(--secondary);
+  font-weight: 600;
+}
+.plugin-widget-list__body {
+  max-height: 20rem;
+  overflow: auto;
+}
+.plugin-widget-list__row:nth-child(odd) {
+  background: var(--raised-2);
+}
+.plugin-widget-list__row:nth-child(even) {
+  background: var(--raised);
+}
+.plugin-widget-list__row + .plugin-widget-list__row {
+  border-top: 1px solid var(--border-subtle);
+}
+.plugin-widget-list__cell {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 0.45rem 0.65rem;
+  white-space: pre-wrap;
+  line-height: 1.35;
+}
+.plugin-widget-list__empty {
+  padding: 0.75rem 0.65rem;
+  color: var(--secondary);
+  text-align: center;
+}
+.plugin-widget-list__highlight {
+  border-radius: 0.18rem;
+  padding: 0 0.08em;
+}
+.plugin-widget-list__highlight--match {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  color: var(--accent);
+}
+.plugin-widget-list__highlight--change {
+  background: color-mix(in srgb, var(--warning) 28%, transparent);
+  color: var(--warning-fg);
+}
+.plugin-widget-toggle {
+  flex: 0 0 auto;
+  min-width: 2.25rem;
+  min-height: 2rem;
+  align-self: flex-end;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.35rem;
+  background: var(--raised);
+  color: var(--secondary);
+  font: inherit;
+  font-size: calc(12px * var(--ui-font-scale));
+  line-height: 1;
+  cursor: pointer;
+}
+.plugin-widget-toggle:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.plugin-widget-toggle[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-subtle));
+  background: var(--accent-soft);
+  color: var(--accent);
 }

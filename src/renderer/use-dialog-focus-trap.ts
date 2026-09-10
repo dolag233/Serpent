@@ -27,6 +27,13 @@ export function useDialogFocusTrap(active: boolean, focusKey?: string): void {
     const focusFirst = () => {
       const modal = getTopmostModal();
       if (!modal) return;
+      const initial = modal.querySelector<HTMLElement>(
+        '[data-dialog-initial-focus="true"]:not(:disabled)',
+      );
+      if (initial) {
+        initial.focus();
+        return;
+      }
       if (modal.contains(document.activeElement)) return;
       const defaultAction = getDialogDefaultAction(modal);
       if (defaultAction) {

@@ -137,6 +137,7 @@ describe('Plugin settings sections IPC', () => {
 
     await expect(handler({
       type: 'plugin-manager.install-local',
+      sourceKind: 'folder',
       scope: 'library',
       libraryId: 'library-a',
     })).resolves.toMatchObject({ ok: true });

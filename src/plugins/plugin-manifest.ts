@@ -281,6 +281,8 @@ type ContributionMenuItem = {
   command?: string;
   id?: string;
   title?: string;
+  /** Optional built-in Host icon name for menu rendering (for example `edit`). */
+  icon?: string;
   group?: string;
   before?: string;
   after?: string;
@@ -296,6 +298,7 @@ const contributionMenuItemSchema: z.ZodType<ContributionMenuItem> = z.lazy(() =>
   command: pluginLocalIdSchema.optional(),
   id: pluginLocalIdSchema.optional(),
   title: z.string().min(1).max(160).optional(),
+  icon: z.string().min(1).max(64).regex(/^[a-z][a-z0-9-]*$/u).optional(),
   group: z.string().min(1).max(64).optional(),
   before: pluginLocalIdSchema.optional(),
   after: pluginLocalIdSchema.optional(),

@@ -583,6 +583,8 @@ import type { ModelCompanionAsset } from '../shared/model-companions';
 import type {
   ImportCompletion,
   ImportConflictPlan,
+  ImportSourceFailurePlan,
+  ImageSequenceImportOffer,
   AutomationImportPlan,
   InternalLibrarySummary,
   ExportProgressEvent,
@@ -729,7 +731,14 @@ import {
   parseImageSequenceFileName,
   type ImageSequenceFrameCandidate,
 } from '../shared/image-sequence';
-import type { ImageSequenceImportOffer } from '../shared/protocol/responses';
+import { isImportConflictPlan, isImportSourceFailurePlan } from '../shared/import-outcome';
+import {
+  ImportSourceFailurePause,
+  isSkippableImportSourceFailure,
+  skippedImportSourceFromError,
+  toImportSourceFailurePlan,
+  type SkippedImportSource,
+} from './import-source-failure';
 import { assetSupportsThumbnail } from '../shared/thumbnail-support';
 import {
   extractZipStream,
@@ -3540,6 +3549,13 @@ interface PendingImport {
    * Resolve reuses this so a no-conflict import does not re-read the library.
    */
   contentHashCache?: Map<string, string>;
+  unstagedEntries?: ImportSourceEntry[];
+  skippedSources?: SkippedImportSource[];
+  skipRemainingSourceFailures?: boolean;
+  awaitingSourceFailureDecision?: boolean;
+  stagePath?: string;
+  prepareInput?: Parameters<LibraryService['prepareImport']>[0];
+  preparingManifest?: OperationManifest;
 }
 
 interface ExistingAssetRow {
@@ -7344,6 +7360,228 @@ export class LibraryService {
       this.updateImportOperation(pending, 'rolled_back', 'IMPORT_EXPIRED');
       this.removeOperation(pending.operationPath);
     }, Math.max(0, expiresAt - clock.now()));
+  }
+
+  private parkPendingImportSourceFailure(input: {
+    importId: string;
+    input: Parameters<LibraryService['prepareImport']>[0];
+    directories: string[];
+    stagedEntries: ImportSourceEntry[];
+    remainingEntries: ImportSourceEntry[];
+    skipped: SkippedImportSource[];
+    failed: SkippedImportSource[];
+    operationPath: string;
+    stagePath: string;
+    skipContentHash: boolean;
+    destinationIndex?: Map<string, ExistingDestination>;
+    preparingManifest?: OperationManifest;
+  }): ImportSourceFailurePlan {
+    if (input.stagedEntries.length === 0 && input.remainingEntries.length === 0) {
+      this.removeOperation(input.operationPath);
+      const first = input.failed[0] ?? input.skipped[0];
+      throw new LibraryServiceError(
+        'INVALID_IMPORT_SOURCE',
+        first?.reason === undefined ? undefined : { reason: first.reason },
+      );
+    }
+    const existing = this.pendingImports.get(input.importId);
+    if (existing) this.cancelImportExpiry(existing);
+    const pending: PendingImport = {
+      directories: input.directories,
+      entries: input.stagedEntries,
+      libraryId: input.input.libraryId,
+      operationPath: input.operationPath,
+      unstagedEntries: input.remainingEntries,
+      skippedSources: input.skipped,
+      awaitingSourceFailureDecision: true,
+      stagePath: input.stagePath,
+      prepareInput: input.input,
+      skipContentHash: input.skipContentHash,
+      ...(input.destinationIndex ? { destinationIndex: input.destinationIndex } : {}),
+      ...(input.input.createImageSequence !== undefined
+        ? { createImageSequence: input.input.createImageSequence }
+        : {}),
+      ...(input.input.imageSequenceFps !== undefined
+        ? { imageSequenceFps: input.input.imageSequenceFps }
+        : {}),
+      ...(input.input.suppressAssetChangeEvents === true
+        ? { suppressAssetChangeEvents: true }
+        : {}),
+      ...(input.input.dedupeSameNameByContent === true
+        ? { dedupeSameNameByContent: true }
+        : {}),
+      ...(input.input.skipLibraryDuplicateScan === true
+        ? { skipLibraryDuplicateScan: true }
+        : {}),
+      ...(input.preparingManifest ? { preparingManifest: input.preparingManifest } : {}),
+    };
+    this.pendingImports.set(input.importId, pending);
+    this.scheduleImportExpiry(input.importId, pending);
+    return toImportSourceFailurePlan({
+      importId: input.importId,
+      failed: input.failed,
+      remainingCount: input.remainingEntries.length + input.stagedEntries.length,
+    });
+  }
+
+  continueAfterSourceFailure(input: {
+    importId: string;
+    applyToRest: boolean;
+    yieldTransferCheckpoints?: boolean;
+  }): ImportConflictPlan | ImportCompletion | ImportSourceFailurePlan {
+    const pending = this.pendingImports.get(input.importId);
+    if (!pending?.awaitingSourceFailureDecision || !pending.prepareInput || !pending.stagePath) {
+      throw new LibraryServiceError('IMPORT_NOT_FOUND');
+    }
+    pending.awaitingSourceFailureDecision = false;
+    if (input.applyToRest) pending.skipRemainingSourceFailures = true;
+    const openLibrary = this.requireOpenLibrary(pending.libraryId);
+    const remaining = pending.unstagedEntries ?? [];
+    const alreadyStaged = pending.entries;
+    const skipped = pending.skippedSources ?? [];
+    const skipContentHash = pending.skipContentHash === true;
+    const trackProgress = this.activeImports.has(input.importId);
+    const finishStaged = (newlyStaged: ImportSourceEntry[]): ImportConflictPlan | ImportCompletion => {
+      const stagedEntries = [...alreadyStaged, ...newlyStaged];
+      pending.entries = stagedEntries;
+      pending.unstagedEntries = [];
+      pending.skippedSources = skipped;
+      const conflictPlan = this.completePreparedImport({
+        input: pending.prepareInput!,
+        openLibrary,
+        importId: input.importId,
+        operationPath: pending.operationPath,
+        directories: pending.directories,
+        stagedEntries,
+        skipContentHash,
+        destinationIndex: pending.destinationIndex,
+        preparingManifest: pending.preparingManifest ?? {
+          version: 1,
+          files: [],
+          directories: pending.directories.map((relativePath) => ({
+            existed: false,
+            relativePath,
+          })),
+        },
+        skippedSources: skipped,
+      });
+      if (conflictPlan.suspectedDuplicateCount !== 0 || conflictPlan.nameConflictCount !== 0) {
+        return conflictPlan;
+      }
+      return this.resolveImport({
+        importId: input.importId,
+        suspectedDuplicate: 'skip',
+        nameConflict: 'keep-both',
+      });
+    };
+    const parkPause = (error: ImportSourceFailurePause): ImportSourceFailurePlan => {
+      return this.parkPendingImportSourceFailure({
+        importId: input.importId,
+        input: pending.prepareInput!,
+        directories: pending.directories,
+        stagedEntries: [...alreadyStaged, ...(error.stagedEntries as ImportSourceEntry[])],
+        remainingEntries: error.remainingEntries as ImportSourceEntry[],
+        skipped: error.skipped,
+        failed: error.failed,
+        operationPath: pending.operationPath,
+        stagePath: pending.stagePath!,
+        skipContentHash,
+        destinationIndex: pending.destinationIndex,
+        preparingManifest: pending.preparingManifest,
+      });
+    };
+    if (remaining.length === 0) return finishStaged([]);
+    try {
+      const stagedResult = this.stageImportSourceEntries({
+        openLibrary,
+        entries: remaining,
+        stagePath: pending.stagePath,
+        skipContentHash,
+        importId: trackProgress ? input.importId : undefined,
+        totalFiles: remaining.length + alreadyStaged.length,
+        totalBytes:
+          remaining.reduce((total, entry) => total + entry.byteSize, 0)
+          + alreadyStaged.reduce((total, entry) => total + entry.byteSize, 0),
+        cancelState: this.activeImports.get(input.importId),
+        yieldCheckpoints: input.yieldTransferCheckpoints === true,
+        skipRemainingSourceFailures: pending.skipRemainingSourceFailures === true,
+        stageNameOffset: alreadyStaged.length,
+        skipped,
+      });
+      if (typeof (stagedResult as Promise<ImportSourceEntry[]>).then === 'function') {
+        return (stagedResult as Promise<ImportSourceEntry[]>).then(
+          (resolved) => finishStaged(resolved),
+          (error: unknown) => {
+            if (error instanceof ImportSourceFailurePause) return parkPause(error);
+            this.pendingImports.delete(input.importId);
+            this.cancelImportExpiry(pending);
+            this.failPreparedImport(error, {
+              importId: input.importId,
+              operationPath: pending.operationPath,
+              openLibrary,
+              trackProgress,
+            });
+          },
+        ) as unknown as ImportConflictPlan;
+      }
+      return finishStaged(stagedResult as ImportSourceEntry[]);
+    } catch (error) {
+      if (error instanceof ImportSourceFailurePause) return parkPause(error);
+      this.pendingImports.delete(input.importId);
+      this.cancelImportExpiry(pending);
+      this.failPreparedImport(error, {
+        importId: input.importId,
+        operationPath: pending.operationPath,
+        openLibrary,
+        trackProgress,
+      });
+    }
+  }
+
+  async continueAfterSourceFailureCancellable(input: {
+    importId: string;
+    applyToRest: boolean;
+  }): Promise<ImportConflictPlan | ImportCompletion | ImportSourceFailurePlan> {
+    if (!this.activeImports.has(input.importId)) {
+      this.activeImports.set(input.importId, { cancelled: false });
+    }
+    try {
+      return await Promise.resolve(this.continueAfterSourceFailure({
+        ...input,
+        yieldTransferCheckpoints: true,
+      }));
+    } catch (error) {
+      this.activeImports.delete(input.importId);
+      throw error;
+    }
+  }
+
+  private finishImportWithoutUserDecision(
+    prepared: ImportConflictPlan | ImportCompletion | ImportSourceFailurePlan,
+    decisions: {
+      suspectedDuplicate: SuspectedDuplicateDecision;
+      nameConflict: NameConflictDecision;
+    },
+  ): ImportCompletion {
+    let current: ImportConflictPlan | ImportCompletion | ImportSourceFailurePlan = prepared;
+    if (isImportSourceFailurePlan(current)) {
+      current = this.continueAfterSourceFailure({
+        importId: current.importId,
+        applyToRest: true,
+      });
+    }
+    if (isImportSourceFailurePlan(current)) {
+      this.abandonImport(current.importId);
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE');
+    }
+    if (isImportConflictPlan(current)) {
+      return this.resolveImport({
+        importId: current.importId,
+        suspectedDuplicate: decisions.suspectedDuplicate,
+        nameConflict: decisions.nameConflict,
+      });
+    }
+    return current;
   }
 
   private parseOperationManifest(serialized: string): PersistedOperationManifest {
@@ -11597,10 +11835,15 @@ export class LibraryService {
     targetPrefix: string;
     expandImageSequences?: boolean;
     sourcePageUrl?: string;
-  }): { directories: string[]; entries: ImportSourceEntry[] } {
+  }): { directories: string[]; entries: ImportSourceEntry[]; skipped: SkippedImportSource[] } {
     const directories = new Set<string>();
     const pathsByIdentity = new Map<string, { kind: 'directory' | 'file'; path: string }>();
     const entries: ImportSourceEntry[] = [];
+    const skipped: SkippedImportSource[] = [];
+    const recordSkippable = (error: unknown, sourcePath: string): void => {
+      if (!isSkippableImportSourceFailure(error)) throw error;
+      skipped.push(skippedImportSourceFromError(error, sourcePath));
+    };
     const assertSupportedSourceSegment = (segment: string): void => {
       if (path.sep === '/' && segment.includes('\\')) {
         throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
@@ -11715,20 +11958,24 @@ export class LibraryService {
       for (const child of children) {
         const childKind = child.isDirectory() ? 'directory' : 'file';
         if (isDefaultIgnoredAssetEntry(child.name, childKind)) continue;
-        assertSupportedSourceSegment(child.name);
         const childSourcePath = path.join(directoryPath, child.name);
         const childRelativePath = path.posix.join(relativeDirectory, child.name);
-        if (child.isSymbolicLink()) {
-          throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
-            reason: 'SYMBOLIC_LINK_NOT_ALLOWED',
-          });
-        }
-        if (child.isDirectory()) visitDirectory(childSourcePath, childRelativePath);
-        else if (child.isFile()) addFile(childSourcePath, childRelativePath);
-        else {
-          throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
-            reason: 'UNSUPPORTED_FILE_ENTRY',
-          });
+        try {
+          assertSupportedSourceSegment(child.name);
+          if (child.isSymbolicLink()) {
+            throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+              reason: 'SYMBOLIC_LINK_NOT_ALLOWED',
+            });
+          }
+          if (child.isDirectory()) visitDirectory(childSourcePath, childRelativePath);
+          else if (child.isFile()) addFile(childSourcePath, childRelativePath);
+          else {
+            throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+              reason: 'UNSUPPORTED_FILE_ENTRY',
+            });
+          }
+        } catch (error) {
+          recordSkippable(error, childSourcePath);
         }
       }
     };
@@ -11752,26 +11999,32 @@ export class LibraryService {
         try {
           sourceStat = lstatSync(sourcePath, { bigint: true });
         } catch (error) {
-          throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
+          recordSkippable(new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error }), sourcePath);
+          continue;
         }
         if (sourceStat.isSymbolicLink()) {
-          throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+          recordSkippable(new LibraryServiceError('INVALID_IMPORT_SOURCE', {
             reason: 'SYMBOLIC_LINK_NOT_ALLOWED',
-          });
+          }), sourcePath);
+          continue;
         }
         if (sourceStat.isDirectory()) selectedDirectories.push(sourcePath);
         else if (sourceStat.isFile()) selectedFiles.push(sourcePath);
         else {
-          throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+          recordSkippable(new LibraryServiceError('INVALID_IMPORT_SOURCE', {
             reason: 'UNSUPPORTED_FILE_ENTRY',
-          });
+          }), sourcePath);
         }
       }
       const filePaths = input.expandImageSequences
         ? this.expandImageSequenceSourcePaths(selectedFiles)
         : selectedFiles;
       for (const sourcePath of filePaths) {
-        addFile(sourcePath, path.posix.join(input.targetPrefix, path.basename(sourcePath)));
+        try {
+          addFile(sourcePath, path.posix.join(input.targetPrefix, path.basename(sourcePath)));
+        } catch (error) {
+          recordSkippable(error, sourcePath);
+        }
       }
       for (const sourcePath of selectedDirectories) {
         if (sourcePath === path.parse(sourcePath).root) {
@@ -11805,10 +12058,17 @@ export class LibraryService {
       );
     }
 
+    if (entries.length === 0 && skipped.length > 0) {
+      const first = skipped[0]!;
+      throw new LibraryServiceError(
+        'INVALID_IMPORT_SOURCE',
+        first.reason === undefined ? undefined : { reason: first.reason },
+      );
+    }
     if (entries.length === 0 && directories.size === 0) {
       throw new LibraryServiceError('INVALID_IMPORT_SOURCE');
     }
-    return { directories: [...directories].sort(), entries };
+    return { directories: [...directories].sort(), entries, skipped };
   }
 
   private persistEagleImportedMetadata(
@@ -15558,13 +15818,10 @@ export class LibraryService {
       sourcePaths,
       skipLibraryDuplicateScan: true,
     });
-    const completion = 'importId' in prepared
-      ? this.resolveImport({
-        importId: prepared.importId,
-        suspectedDuplicate: 'skip',
-        nameConflict: 'keep-both',
-      })
-      : prepared;
+    const completion = this.finishImportWithoutUserDecision(prepared, {
+      suspectedDuplicate: 'skip',
+      nameConflict: 'keep-both',
+    });
     return {
       copiedCount: completion.importedCount + completion.replacedCount,
       skippedCount: completion.skippedCount,
@@ -22144,13 +22401,10 @@ export class LibraryService {
           sourceKind: 'files',
           sourcePaths: [stagePath],
         });
-        if ('importId' in prepared) {
-          this.resolveImport({
-            importId: prepared.importId,
-            suspectedDuplicate: 'create-copy',
-            nameConflict: 'keep-both',
-          });
-        }
+        this.finishImportWithoutUserDecision(prepared, {
+          suspectedDuplicate: 'create-copy',
+          nameConflict: 'keep-both',
+        });
       } finally {
         rmSync(stageDir, { force: true, recursive: true });
       }
@@ -22239,6 +22493,103 @@ export class LibraryService {
     return { assetId: existing.asset_id, created: false };
   }
 
+  /**
+   * 远端单侧改路径：按交换格式相对路径搬动托管资产（建缺失文件夹后走既有 managed-move）。
+   * 链接资产保持外部目录布局，此处为 no-op。
+   */
+  applySyncRelocate(libraryId: string, syncId: string, relativePath: string): void {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    this.assertLibraryWritable(openLibrary);
+    const existing = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, relative_file_path, location_kind, managed_folder_id, availability
+           FROM assets
+          WHERE sync_id = ? AND deleted_at IS NULL`,
+      )
+      .get(syncId) as
+      | {
+          asset_id: string;
+          relative_file_path: string;
+          location_kind: 'managed' | 'linked';
+          managed_folder_id: string | null;
+          availability: 'available' | 'missing';
+        }
+      | undefined;
+    if (!existing) return;
+    if (existing.location_kind !== 'managed') return;
+    if (existing.availability !== 'available') {
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+    if (portablePathIdentity(existing.relative_file_path) === portablePathIdentity(relativePath)) return;
+    const destDir = path.posix.dirname(relativePath);
+    const destinationFolderId = destDir === '.' ? null : this.ensureManagedFolderIdForRelativeDir(
+      openLibrary,
+      libraryId,
+      destDir,
+    );
+    const operationId = randomUUID();
+    if (this.managedMoveConflict(openLibrary, operationId, '0', relativePath, existing.asset_id)) {
+      throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
+    }
+    this.applyManagedMoveOperation(openLibrary, operationId, {
+      files: [{
+        assetId: existing.asset_id,
+        destinationConflict: null,
+        destinationFolderId,
+        destinationRelativePath: relativePath,
+        restoreConflict: null,
+        sourceFolderId: existing.managed_folder_id,
+        sourceRelativePath: existing.relative_file_path,
+      }],
+      kind: 'managed-move',
+      originalOperationId: null,
+      version: 4,
+    });
+    this.noteClientFilesystemMutation();
+  }
+
+  /** 按 posix 相对路径逐级确保托管文件夹存在，返回最内层 folder_id。 */
+  private ensureManagedFolderIdForRelativeDir(
+    openLibrary: OpenLibrary,
+    libraryId: string,
+    relativeDir: string,
+  ): string {
+    const segments = relativeDir.split('/').filter((part) => part.length > 0);
+    let parentId: string | undefined;
+    let acc = '';
+    for (const segment of segments) {
+      acc = acc === '' ? segment : `${acc}/${segment}`;
+      const existing = openLibrary.connection
+        .prepare(
+          'SELECT folder_id FROM managed_folders WHERE path_identity = ?',
+        )
+        .get(portablePathIdentity(acc)) as { folder_id: string } | undefined;
+      if (existing) {
+        parentId = existing.folder_id;
+        continue;
+      }
+      try {
+        const created = this.createManagedFolder({
+          libraryId,
+          name: segment,
+          ...(parentId === undefined ? {} : { parentFolderId: parentId }),
+        });
+        parentId = created.folderId;
+      } catch (error) {
+        if (!(error instanceof LibraryServiceError) || error.code !== 'FOLDER_ALREADY_EXISTS') throw error;
+        const raced = openLibrary.connection
+          .prepare(
+            'SELECT folder_id FROM managed_folders WHERE path_identity = ?',
+          )
+          .get(portablePathIdentity(acc)) as { folder_id: string } | undefined;
+        if (!raced) throw error;
+        parentId = raced.folder_id;
+      }
+    }
+    if (!parentId) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    return parentId;
+  }
+
   /** 远端墓碑传播：本地资产进回收站（已回收资产为幂等 no-op）。 */
   applySyncRecycle(libraryId: string, syncId: string): void {
     const openLibrary = this.requireOpenLibrary(libraryId);
@@ -22268,13 +22619,10 @@ export class LibraryService {
         sourceKind: 'files',
         sourcePaths: [stagePath],
       });
-      if ('importId' in prepared) {
-        this.resolveImport({
-          importId: prepared.importId,
-          suspectedDuplicate: 'create-copy',
-          nameConflict: 'keep-both',
-        });
-      }
+      this.finishImportWithoutUserDecision(prepared, {
+        suspectedDuplicate: 'create-copy',
+        nameConflict: 'keep-both',
+      });
     } finally {
       rmSync(stageDir, { force: true, recursive: true });
     }
@@ -29526,6 +29874,10 @@ export class LibraryService {
 
   private buildFilterWhere(
     filters: FilterClause[],
+    options: { hasAiContent: boolean; hasAiAssetTags: boolean } = {
+      hasAiContent: true,
+      hasAiAssetTags: true,
+    },
   ): { sql: string; params: unknown[] } {
     const conditions: string[] = [];
     const params: unknown[] = [];
@@ -29602,12 +29954,16 @@ export class LibraryService {
           break;
         }
         case 'tag': {
-          // Match listTags: human + AI tags both count (Serpent-5cvr).
+          // Human + AI tags both count by default. The explicit switch is
+          // filter-only; sorting and display keep the combined result.
+          const includeAi = filter.includeAi !== false && options.hasAiAssetTags;
           const taggedAssetsSubquery = (nameParamCount: number) => {
             const phs = Array.from({ length: nameParamCount }, () => '?').join(',');
-            return `SELECT hat.asset_id FROM human_asset_tags hat
+            const human = `SELECT hat.asset_id FROM human_asset_tags hat
                       JOIN tags t ON t.tag_id = hat.tag_id
-                      WHERE t.name COLLATE NOCASE IN (${phs})
+                      WHERE t.name COLLATE NOCASE IN (${phs})`;
+            if (!includeAi) return human;
+            return `${human}
                     UNION
                     SELECT aat.asset_id FROM ai_asset_tags aat
                       JOIN tags t ON t.tag_id = aat.tag_id
@@ -29619,26 +29975,37 @@ export class LibraryService {
             );
             conditions.push(`(${notClauses.join(' AND ')})`);
             for (const value of filter.values) {
-              params.push(value, value);
+              params.push(value);
+              if (includeAi) params.push(value);
             }
           } else if (filter.exclude) {
             conditions.push(
               `(a.asset_id NOT IN (${taggedAssetsSubquery(1)}))`,
             );
-            params.push(filter.values[0]!, filter.values[0]!);
+            params.push(filter.values[0]!);
+            if (includeAi) params.push(filter.values[0]!);
           } else {
             conditions.push(
               `(a.asset_id IN (${taggedAssetsSubquery(filter.values.length)}))`,
             );
-            params.push(...filter.values, ...filter.values);
+            params.push(...filter.values);
+            if (includeAi) params.push(...filter.values);
           }
           break;
         }
         case 'rating': {
           const phs = filter.values.map(() => '?').join(',');
+          const aiRating = options.hasAiContent
+            ? `(SELECT CAST(ac.value AS INTEGER) FROM ai_content ac
+                 WHERE ac.asset_id = a.asset_id AND ac.field_name = 'rating'
+                 ORDER BY ac.generated_at DESC, ac.ai_content_id DESC LIMIT 1)`
+            : 'NULL';
+          const effectiveRating = filter.includeAi === false
+            ? 'COALESCE(m.rating, 0)'
+            : `COALESCE(NULLIF(m.rating, 0), ${aiRating}, 0)`;
           const clause = filter.exclude
-            ? `COALESCE(m.rating, 0) NOT IN (${phs})`
-            : `COALESCE(m.rating, 0) IN (${phs})`;
+            ? `${effectiveRating} NOT IN (${phs})`
+            : `${effectiveRating} IN (${phs})`;
           conditions.push(`(${clause})`);
           for (const v of filter.values) {
             params.push(Number(v));
@@ -29925,6 +30292,8 @@ export class LibraryService {
     const metadataColumns = columnsFor(connection, 'asset_metadata');
     const artifactColumns = columnsFor(connection, 'revision_artifacts');
     const hasIgnoreTable = hasTable(connection, 'linked_ignored_assets');
+    const hasAiContent = hasTable(connection, 'ai_content');
+    const hasAiAssetTags = hasTable(connection, 'ai_asset_tags');
     const hasSequenceFrames = hasTable(connection, 'asset_sequence_frames');
     const hasSearchIndex = hasTable(connection, 'asset_search_index');
     const hasSearchFts = hasTable(connection, 'asset_search');
@@ -29973,6 +30342,7 @@ export class LibraryService {
       : { sql: '', params: [] };
     const { sql: filterWhere, params: filterParams } = this.buildFilterWhere(
       input.filters ?? [],
+      { hasAiContent, hasAiAssetTags },
     );
 
     // A collection browse is a relational scope, not an asset-id list. Build
@@ -30116,7 +30486,9 @@ export class LibraryService {
           break;
         case 'rating':
           orderBy = sortableByStructure.rating
-            ? `COALESCE(m.rating, 0) ${dir}, a.asset_id ASC`
+            ? `${hasAiContent
+              ? `COALESCE(NULLIF(m.rating, 0), (SELECT CAST(ac.value AS INTEGER) FROM ai_content ac WHERE ac.asset_id = a.asset_id AND ac.field_name = 'rating' ORDER BY ac.generated_at DESC, ac.ai_content_id DESC LIMIT 1), 0)`
+              : 'COALESCE(m.rating, 0)'} ${dir}, a.asset_id ASC`
             : defaultNameSort;
           break;
         case 'author':
@@ -38283,7 +38655,7 @@ export class LibraryService {
     transferCancel?: TransferCancelState;
     /** Yield so a cancel command can run while files are staged. */
     yieldTransferCheckpoints?: boolean;
-  }): ImportConflictPlan {
+  }): ImportConflictPlan | ImportSourceFailurePlan {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (this.linkedFolderRowForImport(openLibrary, input.targetFolderId)) {
       // Linked imports skip the managed staging pipeline; callers should use
@@ -38293,10 +38665,11 @@ export class LibraryService {
       });
     }
     const targetFolder = this.targetFolder(openLibrary, input.targetFolderId);
-    const { directories, entries } = input.sourceEntries
+    const enumerated = input.sourceEntries
       ? {
           directories: input.sourceDirectories ?? [],
           entries: input.sourceEntries,
+          skipped: [] as SkippedImportSource[],
         }
       : this.enumerateImportSources({
           sourceKind: input.sourceKind,
@@ -38305,6 +38678,7 @@ export class LibraryService {
           expandImageSequences: input.expandImageSequences === true,
           ...(input.sourcePageUrl === undefined ? {} : { sourcePageUrl: input.sourcePageUrl }),
         });
+    const { directories, entries } = enumerated;
     const importId = randomUUID();
     const operationPath = path.join(
       openLibrary.summary.libraryPath,
@@ -38368,6 +38742,22 @@ export class LibraryService {
     let stagedEntries: ImportSourceEntry[];
     try {
       mkdirSync(stagePath, { recursive: true });
+      if (enumerated.skipped.length > 0 && skipContentHash !== true) {
+        return this.parkPendingImportSourceFailure({
+          importId,
+          input,
+          directories,
+          stagedEntries: [],
+          remainingEntries: entries,
+          skipped: enumerated.skipped,
+          failed: enumerated.skipped,
+          operationPath,
+          stagePath,
+          skipContentHash,
+          destinationIndex,
+          preparingManifest,
+        });
+      }
       const stagedResult = this.stageImportSourceEntries({
         openLibrary,
         entries,
@@ -38379,6 +38769,8 @@ export class LibraryService {
         totalBytes: totalImportBytes,
         cancelState,
         yieldCheckpoints: input.yieldTransferCheckpoints === true,
+        skipRemainingSourceFailures: skipContentHash,
+        skipped: [...enumerated.skipped],
       });
       if (typeof (stagedResult as Promise<ImportSourceEntry[]>).then === 'function') {
         return (stagedResult as Promise<ImportSourceEntry[]>).then((resolved) => {
@@ -38394,6 +38786,22 @@ export class LibraryService {
             preparingManifest,
           });
         }).catch((error: unknown) => {
+          if (error instanceof ImportSourceFailurePause) {
+            return this.parkPendingImportSourceFailure({
+              importId,
+              input,
+              directories,
+              stagedEntries: error.stagedEntries as ImportSourceEntry[],
+              remainingEntries: error.remainingEntries as ImportSourceEntry[],
+              skipped: error.skipped,
+              failed: error.failed,
+              operationPath,
+              stagePath,
+              skipContentHash,
+              destinationIndex,
+              preparingManifest,
+            });
+          }
           this.failPreparedImport(error, {
             importId,
             operationPath,
@@ -38404,6 +38812,22 @@ export class LibraryService {
       }
       stagedEntries = stagedResult as ImportSourceEntry[];
     } catch (error) {
+      if (error instanceof ImportSourceFailurePause) {
+        return this.parkPendingImportSourceFailure({
+          importId,
+          input,
+          directories,
+          stagedEntries: error.stagedEntries as ImportSourceEntry[],
+          remainingEntries: error.remainingEntries as ImportSourceEntry[],
+          skipped: error.skipped,
+          failed: error.failed,
+          operationPath,
+          stagePath,
+          skipContentHash,
+          destinationIndex,
+          preparingManifest,
+        });
+      }
       this.failPreparedImport(error, {
         importId,
         operationPath,
@@ -38476,6 +38900,7 @@ export class LibraryService {
     skipContentHash: boolean;
     destinationIndex: Map<string, ExistingDestination> | undefined;
     preparingManifest: OperationManifest;
+    skippedSources?: SkippedImportSource[];
   }): ImportConflictPlan {
     const {
       input,
@@ -38619,7 +39044,22 @@ export class LibraryService {
       throw serviceError(error, 'INVALID_IMPORT_SOURCE');
     }
 
-    const preparedManifest: OperationManifest = { ...preparingManifest, phase: 'prepared' };
+    const preparedManifest: OperationManifest = {
+      version: 1,
+      phase: 'prepared',
+      files: stagedEntries.map((entry, index) => ({
+        backupName: String(index),
+        destinationRelativePath: entry.destinationRelativePath,
+        hadDestination:
+          this.lookupImportDestination(
+            openLibrary,
+            entry.destinationRelativePath,
+            destinationIndex,
+          ) !== undefined,
+        stageName: String(index),
+      })),
+      directories: preparingManifest.directories,
+    };
     openLibrary.connection
       .prepare('UPDATE file_operations SET manifest_json = ?, updated_at = ? WHERE operation_id = ?')
       .run(JSON.stringify(preparedManifest), new Date().toISOString(), importId);
@@ -38628,6 +39068,9 @@ export class LibraryService {
       entries: stagedEntries,
       libraryId: input.libraryId,
       operationPath,
+      ...(context.skippedSources && context.skippedSources.length > 0
+        ? { skippedSources: context.skippedSources }
+        : {}),
       ...(input.createImageSequence !== undefined
         ? { createImageSequence: input.createImageSequence }
         : {}),
@@ -38675,7 +39118,7 @@ export class LibraryService {
       expectedChangeSequence: number;
       sourceStates: Array<{ sourcePath: string; stateToken: string }>;
     };
-  }): ImportConflictPlan | ImportCompletion {
+  }): ImportConflictPlan | ImportCompletion | ImportSourceFailurePlan {
     if (input.automationPlan !== undefined) {
       this.validateAutomationImportPlan(input);
     }
@@ -38696,6 +39139,7 @@ export class LibraryService {
       });
     }
     const plan = this.prepareImport(input);
+    if (isImportSourceFailurePlan(plan)) return plan;
     // An MCP/Desktop automation plan has already been shown to the user and
     // fenced against the readonly preview above.  Resolve the staged batch
     // with the same safe defaults as the normal no-conflict path so a
@@ -38718,7 +39162,7 @@ export class LibraryService {
 
   async prepareOrExecuteImportCancellable(
     input: Parameters<LibraryService['prepareOrExecuteImport']>[0],
-  ): Promise<ImportConflictPlan | ImportCompletion> {
+  ): Promise<ImportConflictPlan | ImportCompletion | ImportSourceFailurePlan> {
     if (input.automationPlan !== undefined) {
       this.validateAutomationImportPlan(input);
     }
@@ -38746,6 +39190,7 @@ export class LibraryService {
         yieldTransferCheckpoints: true,
       }),
     );
+    if (isImportSourceFailurePlan(plan)) return plan;
     const finish = (completion: ImportCompletion): ImportCompletion => {
       this.emitManagedImportProgress(
         plan.importId,
@@ -39584,7 +40029,7 @@ export class LibraryService {
         if (batch.length > 0) {
           let plan: ImportConflictPlan;
           try {
-            plan = this.prepareImport({
+            const prepared = this.prepareImport({
               libraryId: input.libraryId,
               sourceKind: 'files',
               sourcePaths: batch.map((entry) => entry.sourcePath),
@@ -39604,6 +40049,10 @@ export class LibraryService {
               },
               suppressAssetChangeEvents: true,
             });
+            if (isImportSourceFailurePlan(prepared)) {
+              throw new LibraryServiceError('INVALID_IMPORT_SOURCE');
+            }
+            plan = prepared;
           } catch (error) {
             throw this.wrapEagleImportStageError(error, 'IMPORT_COPY_FAILED');
           }
@@ -39774,6 +40223,9 @@ export class LibraryService {
   }): ImportCompletion {
     const pending = this.pendingImports.get(input.importId);
     if (!pending) throw new LibraryServiceError('IMPORT_NOT_FOUND');
+    if (pending.awaitingSourceFailureDecision) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
     this.pendingImports.delete(input.importId);
     this.cancelImportExpiry(pending);
     if (
@@ -43426,13 +43878,10 @@ export class LibraryService {
         sourcePaths: [sourcePath],
         ...(input.sourcePageUrl === undefined ? {} : { sourcePageUrl: input.sourcePageUrl }),
       });
-      const completion = 'importId' in prepared
-        ? this.resolveImport({
-          importId: prepared.importId,
-          suspectedDuplicate: 'skip',
-          nameConflict: 'keep-both',
-        })
-        : prepared;
+      const completion = this.finishImportWithoutUserDecision(prepared, {
+        suspectedDuplicate: 'skip',
+        nameConflict: 'keep-both',
+      });
       const asset = completion.assets[0];
       if (asset !== undefined) return { asset };
 
@@ -43556,10 +44005,15 @@ export class LibraryService {
     totalBytes: number;
     cancelState?: TransferCancelState;
     yieldCheckpoints?: boolean;
+    skipRemainingSourceFailures?: boolean;
+    stageNameOffset?: number;
+    skipped?: SkippedImportSource[];
   }): ImportSourceEntry[] | Promise<ImportSourceEntry[]> {
     const stagedEntries: ImportSourceEntry[] = [];
+    const skipped = input.skipped ?? [];
     const throttle = createProgressThrottle();
     let bytesProcessed = 0;
+    const stageNameOffset = input.stageNameOffset ?? 0;
     const stageIndex = (index: number): void => {
       if (input.cancelState?.cancelled) {
         if (input.importId) {
@@ -43575,16 +44029,33 @@ export class LibraryService {
         throw new LibraryServiceError('CANCELLED');
       }
       const entry = input.entries[index]!;
-      const stagedPath = path.join(input.stagePath, String(index));
-      const staged = this.stageOneImportSourceEntry({
-        openLibrary: input.openLibrary,
-        entry,
-        stagedPath,
-        skipContentHash: input.skipContentHash,
-      });
-      stagedEntries.push(staged);
-      bytesProcessed += staged.byteSize;
-      input.onStagedEntry?.(index + 1, staged.byteSize);
+      const stagedPath = path.join(
+        input.stagePath,
+        String(stageNameOffset + stagedEntries.length),
+      );
+      try {
+        const staged = this.stageOneImportSourceEntry({
+          openLibrary: input.openLibrary,
+          entry,
+          stagedPath,
+          skipContentHash: input.skipContentHash,
+        });
+        stagedEntries.push(staged);
+        bytesProcessed += staged.byteSize;
+        input.onStagedEntry?.(index + 1, staged.byteSize);
+      } catch (error) {
+        if (!isSkippableImportSourceFailure(error)) throw error;
+        const skippedEntry = skippedImportSourceFromError(error, entry.sourcePath);
+        skipped.push(skippedEntry);
+        if (!input.skipRemainingSourceFailures) {
+          throw new ImportSourceFailurePause(
+            [skippedEntry],
+            stagedEntries,
+            input.entries.slice(index + 1),
+            skipped,
+          );
+        }
+      }
       if (index === 0) this.failAt('crash-during-prepare-stage');
       if (
         input.importId
@@ -44268,9 +44739,29 @@ export class LibraryService {
 
   cancelImport(importId: string): void {
     const state = this.activeImports.get(importId);
-    if (!state) throw new LibraryServiceError('IMPORT_NOT_FOUND');
-    state.cancelled = true;
-    state.onCancel?.();
+    if (state) {
+      state.cancelled = true;
+      state.onCancel?.();
+      return;
+    }
+    // After prepare returns a conflict/sequence decision, the import lives in
+    // pendingImports. Overlay "取消导入" must abandon rather than throw
+    // IMPORT_NOT_FOUND and leave the UI deadlocked (Serpent-224ac8).
+    if (this.pendingImports.has(importId)) {
+      this.abandonImport(importId);
+      this.emitProgress({
+        type: 'import.progress',
+        importId,
+        phase: 'cancelled',
+        cancelable: false,
+        filesProcessed: 0,
+        totalFiles: 0,
+        bytesProcessed: 0,
+        totalBytes: 0,
+      });
+      return;
+    }
+    throw new LibraryServiceError('IMPORT_NOT_FOUND');
   }
 
   cancelDiskDelete(operationId: string): void {

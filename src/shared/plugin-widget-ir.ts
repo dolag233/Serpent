@@ -4,13 +4,15 @@ import { z } from 'zod';
  * Bounded widget IR for plugin-authored dialogs and pages.
  *
  * The plugin process builds this tree with `serpent.ui` helpers. Renderer maps
- * nodes onto Host primitives (`Field`, `Select`, `Switch`, `Slider`,
- * `TextField`). Closures never cross IPC; only this JSON travels.
+ * nodes onto Host primitives (`Field`, `Select`, `Switch`, `Slider`, `TextField`,
+ * and compact `Toggle`). Closures never cross IPC; only this JSON travels.
  */
 
 export const PLUGIN_WIDGET_MAX_DEPTH = 8;
 export const PLUGIN_WIDGET_MAX_NODES = 128;
 export const PLUGIN_WIDGET_MAX_CHILDREN = 32;
+export const PLUGIN_WIDGET_MAX_LIST_ROWS = 2_000;
+export const PLUGIN_WIDGET_MAX_LIST_COLUMNS = 8;
 
 export const pluginWidgetValueSchema = z.union([
   z.string().max(8_192),
@@ -24,6 +26,39 @@ export const pluginWidgetOptionSchema = z.strictObject({
   label: z.string().min(1).max(160),
 });
 export type PluginWidgetOption = z.infer<typeof pluginWidgetOptionSchema>;
+
+const pluginWidgetListCellSegmentSchema = z.strictObject({
+  text: z.string().max(8_192),
+  tone: z.enum(['match', 'change']).optional(),
+});
+export type PluginWidgetListCellSegment = z.infer<typeof pluginWidgetListCellSegmentSchema>;
+
+const pluginWidgetListCellSchema = z.union([
+  z.string().max(8_192),
+  z.strictObject({
+    segments: z.array(pluginWidgetListCellSegmentSchema).min(1).max(256),
+  }),
+]);
+export type PluginWidgetListCell = z.infer<typeof pluginWidgetListCellSchema>;
+
+const pluginWidgetListRowSchema = z.array(pluginWidgetListCellSchema).max(PLUGIN_WIDGET_MAX_LIST_COLUMNS);
+const pluginWidgetListSchema = z.strictObject({
+  type: z.literal('list'),
+  columns: z.array(z.string().min(1).max(160)).min(1).max(PLUGIN_WIDGET_MAX_LIST_COLUMNS),
+  rows: z.array(pluginWidgetListRowSchema).max(PLUGIN_WIDGET_MAX_LIST_ROWS),
+  emptyText: z.string().min(1).max(160).optional(),
+}).superRefine((list, context) => {
+  list.rows.forEach((row, index) => {
+    if (row.length > list.columns.length) {
+      context.addIssue({
+        code: 'custom',
+        path: ['rows', index],
+        message: 'List rows cannot contain more cells than the declared columns.',
+      });
+    }
+  });
+});
+export type PluginWidgetList = z.infer<typeof pluginWidgetListSchema>;
 
 export const pluginWidgetFieldIdSchema = z.string().min(1).max(64)
   .regex(/^[A-Za-z][A-Za-z0-9_-]*$/u, 'Widget field ids must be identifiers.');
@@ -40,6 +75,7 @@ export type PluginWidgetNode =
   | { readonly type: 'note'; readonly text: string }
   | { readonly type: 'heading'; readonly text: string }
   | { readonly type: 'separator' }
+  | PluginWidgetList
   | {
     readonly type: 'text';
     readonly id: string;
@@ -73,6 +109,13 @@ export type PluginWidgetNode =
     readonly description?: string;
   }
   | {
+    readonly type: 'toggle';
+    readonly id: string;
+    readonly label: string;
+    readonly value: boolean;
+    readonly description?: string;
+  }
+  | {
     readonly type: 'slider';
     readonly id: string;
     readonly label: string;
@@ -99,6 +142,7 @@ export const pluginWidgetNodeSchema: z.ZodType<PluginWidgetNode> = z.lazy(() => 
   z.strictObject({
     type: z.literal('separator'),
   }),
+  pluginWidgetListSchema,
   z.strictObject({
     ...pluginWidgetFieldBase,
     type: z.literal('text'),
@@ -121,6 +165,11 @@ export const pluginWidgetNodeSchema: z.ZodType<PluginWidgetNode> = z.lazy(() => 
   z.strictObject({
     ...pluginWidgetFieldBase,
     type: z.literal('switch'),
+    value: z.boolean(),
+  }),
+  z.strictObject({
+    ...pluginWidgetFieldBase,
+    type: z.literal('toggle'),
     value: z.boolean(),
   }),
   z.strictObject({
@@ -171,7 +220,7 @@ export function collectPluginWidgetFieldIds(node: PluginWidgetNode): string[] {
   const ids: string[] = [];
   walkPluginWidgetNodes(node, (current) => {
     if (current.type === 'text' || current.type === 'number' || current.type === 'select'
-      || current.type === 'switch' || current.type === 'slider') {
+      || current.type === 'switch' || current.type === 'toggle' || current.type === 'slider') {
       ids.push(current.id);
     }
   });
@@ -184,7 +233,7 @@ export function collectPluginWidgetValues(
   const values: Record<string, PluginWidgetValue> = {};
   walkPluginWidgetNodes(node, (current) => {
     if (current.type === 'text' || current.type === 'number' || current.type === 'select'
-      || current.type === 'switch' || current.type === 'slider') {
+      || current.type === 'switch' || current.type === 'toggle' || current.type === 'slider') {
       values[current.id] = current.value;
     }
   });

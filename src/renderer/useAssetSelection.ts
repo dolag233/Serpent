@@ -26,6 +26,7 @@ import {
   isToggleSelectionModifier,
   resolveSelectionPlatform,
 } from "./selection-modifiers";
+import { isPointerNearScrollbarTrack } from "./scrollbar-visibility";
 
 export interface UseAssetSelectionParams {
   /** Visible asset summaries, used for Shift+click range computation */
@@ -411,6 +412,12 @@ export function useAssetSelection({
       if (draggedMemberId || draggedCollectionId) return;
       // Only left-button drags start a marquee
       if (e.button !== 0) return;
+      // A native scrollbar thumb/track dispatches its pointerdown from the
+      // scrollport itself. Treat that edge as browser-owned input so dragging
+      // the scrollbar can never start a canvas marquee and select the cards
+      // crossed while the viewport scrolls.
+      const canvas = workspaceCanvasRef.current ?? e.currentTarget;
+      if (isPointerNearScrollbarTrack(canvas, e.clientX, e.clientY)) return;
 
       // `preventDefault()` below intentionally prevents the blank canvas from
       // taking focus.  Without first releasing focus from the navigation
@@ -426,7 +433,6 @@ export function useAssetSelection({
 
       marqueeStartRef.current = { x: e.clientX, y: e.clientY };
       marqueePointerClientRef.current = { x: e.clientX, y: e.clientY };
-      const canvas = workspaceCanvasRef.current ?? e.currentTarget;
       const canvasViewport = canvasViewportFromMetrics(
         canvas.getBoundingClientRect(),
         canvas,

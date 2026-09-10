@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   lstatSync,
   mkdirSync,
@@ -167,11 +168,7 @@ function decodeHtmlEntities(value: string): string {
 
 function fileUrlToPath(url: string): string | null {
   try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== 'file:') return null;
-    const pathname = decodeURIComponent(parsed.pathname);
-    // file:///C:/… → C:/…
-    return parsed.host ? `//${parsed.host}${pathname}` : pathname.replace(/^\/+/, '');
+    return fileURLToPath(url);
   } catch {
     return null;
   }

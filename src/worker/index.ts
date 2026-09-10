@@ -9,6 +9,9 @@ import {
   parseWorkerControlMessage,
   type WorkerResponse,
   type WorkerResult,
+  type ImportCompletion,
+  type ImportConflictPlan,
+  type ImportSourceFailurePlan,
 } from '../shared/protocol/responses';
 import type { ParentPort } from 'electron';
 import {
@@ -83,6 +86,11 @@ import { AiProgressThrottler } from './ai/progress-throttler';
 import { DEFAULT_AI_ANALYSIS_CONCURRENCY } from '../shared/ai-concurrency';
 import { DEFAULT_AI_RELIABILITY_SETTINGS } from '../shared/ai-reliability';
 import { dispatchAutomationReadOnlyRequest } from './automation-readonly-dispatch';
+import {
+  isImportCompletion,
+  isImportConflictPlan,
+  isImportSourceFailurePlan,
+} from '../shared/import-outcome';
 import { workerMediaDecodeWaveSize } from './media-concurrency';
 import { mediaResourceGuard } from './media-resource-guard';
 import {
@@ -1564,6 +1572,18 @@ function destructiveBackupLibraryId(command: WorkerCommand): string | undefined 
   }
 }
 
+function encodeImportPrepareOutcome(
+  prepared: ImportConflictPlan | ImportCompletion | ImportSourceFailurePlan,
+): WorkerResult {
+  if (isImportSourceFailurePlan(prepared)) {
+    return { ok: true, type: 'asset.import.source-failure', plan: prepared };
+  }
+  if (isImportConflictPlan(prepared)) {
+    return { ok: true, type: 'asset.import.conflicts', plan: prepared };
+  }
+  return { ok: true, type: 'asset.import.completed', completion: prepared };
+}
+
 async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
   const automationResult = dispatchAutomationReadOnlyRequest(libraryService, request);
   if (automationResult) return automationResult;
@@ -2523,7 +2543,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       const command = request.command;
       const prepared = await withMediaSchedulingSuspended(request.command.libraryId, () =>
         libraryService.prepareOrExecuteImportCancellable(command));
-      if (!('importId' in prepared)) {
+      if (isImportCompletion(prepared)) {
         scheduleThumbnailScene(
           request.command.libraryId,
           'mutation',
@@ -2532,9 +2552,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
           ),
         );
       }
-      return 'importId' in prepared
-        ? { ok: true, type: 'asset.import.conflicts', plan: prepared }
-        : { ok: true, type: 'asset.import.completed', completion: prepared };
+      return encodeImportPrepareOutcome(prepared);
     }
     case 'asset.import-eagle': {
       const command = request.command;
@@ -2573,6 +2591,23 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         type: 'asset.import.completed',
         completion,
       };
+    }
+    case 'asset.import.skip-source-failure': {
+      const command = request.command;
+      const prepared = await withMediaSchedulingSuspended(undefined, () =>
+        libraryService.continueAfterSourceFailureCancellable(command));
+      if (isImportCompletion(prepared) && prepared.assets.length > 0) {
+        for (const library of libraryService.listLibraries()) {
+          scheduleThumbnailScene(
+            library.libraryId,
+            'mutation',
+            prepared.assets.flatMap((asset) =>
+              asset.sequence?.frames.map((frame) => frame.assetId) ?? [asset.assetId],
+            ),
+          );
+        }
+      }
+      return encodeImportPrepareOutcome(prepared);
     }
     case 'asset.import.abandon':
       return {

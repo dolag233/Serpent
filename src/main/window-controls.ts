@@ -8,9 +8,11 @@ import {
   parseWindowControlRequest,
   shouldHideWindowOnClose,
   shouldUseFramelessTitleBar,
+  type WindowControlAction,
   type WindowControlResult,
   type WindowMaximizedStateEvent,
 } from "../shared/window-controls";
+import { ensureRendererKeyboardFocus } from "./renderer-keyboard-focus";
 
 type WindowControlLogger = {
   info: (scope: string, message: string, meta?: Record<string, unknown>) => void;
@@ -27,7 +29,7 @@ function sendMaximizedState(webContents: WebContents, maximized: boolean): void 
 
 function applyWindowControl(
   window: BrowserWindow,
-  action: "minimize" | "maximize-toggle" | "close" | "get-state",
+  action: WindowControlAction,
 ): WindowControlResult {
   if (window.isDestroyed()) {
     return { ok: false, code: "no_window" };
@@ -39,6 +41,13 @@ function applyWindowControl(
     case "maximize-toggle":
       if (window.isMaximized()) window.unmaximize();
       else window.maximize();
+      break;
+    case "steal-focus":
+      // Do not blur/reattach here: the renderer may call this while Main is
+      // already cycling activation after a native dialog.
+      ensureRendererKeyboardFocus(window, {
+        reason: "window-control.steal-focus",
+      });
       break;
     case "close":
       // Do not read isMaximized() after close — the window may already be destroyed.

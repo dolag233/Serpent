@@ -55,6 +55,7 @@ import {
   selectOpenLibrarySource,
   selectOpenFile,
   selectSavePath,
+  selectPluginPackage,
   type NativeDialogHost,
 } from "./native-dialogs";
 import {
@@ -91,6 +92,10 @@ import {
   bindWindowMaximizedEvents,
   registerWindowControls,
 } from "./window-controls";
+import {
+  bindRendererKeyboardFocusLogger,
+  ensureRendererKeyboardFocus,
+} from "./renderer-keyboard-focus";
 import {
   createWindowsTray,
   type WindowsTrayController,
@@ -138,8 +143,6 @@ import {
 import {
   createAutomationCommandGateway,
   type AutomationCommandGateway,
-  type AutomationMediaBinariesHandler,
-  type AutomationUiDialogHandler,
 } from '../automation/command-gateway';
 import {
   PLUGIN_UI_DIALOG_PATCH_CHANNEL,
@@ -799,6 +802,11 @@ const pendingImportSources = new Map<string, string>();
 // after destination is chosen, on inspect cancel, or when a new inspect starts.
 let pendingEagleOpenSourcePath: string | undefined;
 let pendingBillfishOpenSourcePath: string | undefined;
+type ActiveLibraryOpenCancellation = { cancelled: boolean };
+let activeLibraryOpenCancellation: ActiveLibraryOpenCancellation | undefined;
+// A corrupt plugin trust file is recovered before the first window is loaded;
+// keep a one-shot notice until Renderer has subscribed to shell notifications.
+let pendingPluginDeviceStateRecoveryNotice = false;
 
 // Archive-backed external libraries are extracted into Main-owned temporary
 // directories. The Worker only receives the extracted root; these callbacks
@@ -1525,6 +1533,14 @@ async function createMainWindow(): Promise<void> {
   window.once("ready-to-show", publishWindowFocus);
   window.webContents.once("did-finish-load", () => {
     publishPluginInputCaptureSessionsToRenderer();
+    if (pendingPluginDeviceStateRecoveryNotice) {
+      pendingPluginDeviceStateRecoveryNotice = false;
+      window.webContents.send(SHELL_NOTIFY_CHANNEL, {
+        severity: 'warning',
+        mode: 'toast',
+        message: '插件授权设置已重置，原设置已备份；如需使用插件，请重新授权。',
+      });
+    }
   });
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
@@ -1560,6 +1576,14 @@ async function createMainWindow(): Promise<void> {
 
 function cancelled(): RendererResult {
   return { ok: false, error: createPublicError("CANCELLED") };
+}
+
+function isLibraryOpenRequest(request: RendererRequest): boolean {
+  return request.type === "library.create.request"
+    || request.type === "library.open.request"
+    || request.type === "library.open-recent.request"
+    || request.type === "library.open-eagle.request"
+    || request.type === "library.open-billfish.request";
 }
 
 function getExtensionSaveRouting() {
@@ -2357,28 +2381,14 @@ async function selectDirectory(
   return selectLibraryDirectory(createNativeDialogHost(), dialogId);
 }
 
-async function selectPluginPackage(): Promise<string | undefined> {
-  // Isolated Electron E2E injects a disposable package path. Production and
-  // normal development always use the native picker, so Renderer never gains
-  // path selection capability.
-  if (!app.isPackaged && process.env.SERPENT_E2E === '1') {
-    const e2ePackage = process.env.SERPENT_E2E_PLUGIN_PACKAGE;
-    return e2ePackage && path.isAbsolute(e2ePackage) ? e2ePackage : undefined;
-  }
-  const result = mainWindow
-    ? await dialog.showOpenDialog(mainWindow, {
-      title: 'Install a Serpent plugin',
-      buttonLabel: 'Choose plugin',
-      properties: ['openFile', 'openDirectory'],
-      filters: [{ name: 'Serpent plugin package', extensions: ['zip'] }],
-    })
-    : await dialog.showOpenDialog({
-      title: 'Install a Serpent plugin',
-      buttonLabel: 'Choose plugin',
-      properties: ['openFile', 'openDirectory'],
-      filters: [{ name: 'Serpent plugin package', extensions: ['zip'] }],
-    });
-  return result.canceled || result.filePaths.length === 0 ? undefined : result.filePaths[0];
+async function selectPluginPackageForInstall(
+  sourceKind: "zip" | "folder",
+): Promise<string | undefined> {
+  return selectPluginPackage(
+    createNativeDialogHost(),
+    sourceKind,
+    process.env.SERPENT_E2E_PLUGIN_PACKAGE,
+  );
 }
 
 let cachedSyncDeviceId: string | undefined;
@@ -2798,6 +2808,12 @@ async function commandFor(
         importId: request.importId,
         suspectedDuplicate: request.suspectedDuplicate,
         nameConflict: request.nameConflict,
+      };
+    case "asset.import.skip-source-failure":
+      return {
+        type: "asset.import.skip-source-failure",
+        importId: request.importId,
+        applyToRest: request.applyToRest,
       };
     case "asset.import.abandon":
       return { type: "asset.import.abandon", importId: request.importId };
@@ -3747,6 +3763,9 @@ async function commandFor(
     case "sync.library.binding.get.request":
       // Main-owned local config; handled before Worker dispatch.
       return undefined;
+    case "library.open-cancel.request":
+      // Main-only request; handled before Worker dispatch.
+      return undefined;
     default:
       return assertNever(request);
   }
@@ -3822,8 +3841,24 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     | { libraryId: string; previewId: string }
     | undefined;
   let previousLibraryPaths: string[] = [];
+  let openCancellation: ActiveLibraryOpenCancellation | undefined;
   try {
     const request = parseRendererRequest(input);
+
+    if (request.type === "library.open-cancel.request") {
+      if (activeLibraryOpenCancellation) {
+        activeLibraryOpenCancellation.cancelled = true;
+        logger?.info("library.open.cancel-requested", "Library opening cancellation requested.");
+      }
+      return {
+        ok: true,
+        type: "library.open-cancelled",
+      } satisfies RendererResult;
+    }
+    openCancellation = isLibraryOpenRequest(request)
+      ? { cancelled: false }
+      : undefined;
+    if (openCancellation) activeLibraryOpenCancellation = openCancellation;
 
     if (criticalRendererRequest(request)) {
       logger?.info(
@@ -4766,7 +4801,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           : undefined,
       );
     }
-    if (!command) return cancelled();
+    if (!command || openCancellation?.cancelled) return cancelled();
     if (
       command.type === "asset.import.prepare" &&
       command.sourceKind === "files" &&
@@ -4903,6 +4938,31 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         errorCode: workerResult.ok ? undefined : workerResult.error.code,
       });
     }
+    if (openCancellation?.cancelled) {
+      if (workerResult.ok && workerResult.type === "library.opened") {
+        try {
+          await workerClient.request({
+            type: "library.close",
+            libraryId: workerResult.library.libraryId,
+          });
+        } catch (error) {
+          logger?.error("library.open.cancel-close", error, {
+            libraryId: workerResult.library.libraryId,
+          });
+        }
+      }
+      if (previousLibraryPaths.length > 0) {
+        await reopenLibrariesAfterFailedReplacement(previousLibraryPaths);
+      }
+      if (operation) {
+        publishLifecycle({
+          type: "library.open-failed",
+          operation,
+          error: createPublicError("CANCELLED"),
+        });
+      }
+      return cancelled();
+    }
     if (!workerResult.ok && previousLibraryPaths.length > 0) {
       await reopenLibrariesAfterFailedReplacement(previousLibraryPaths);
     }
@@ -4942,7 +5002,8 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     const nativeDragLibraryId =
       "libraryId" in request && typeof request.libraryId === "string"
         ? request.libraryId
-        : request.type === "asset.import.resolve"
+        : (request.type === "asset.import.resolve" ||
+          request.type === "asset.import.skip-source-failure")
           ? pendingImportLibraries.get(request.importId)
           : undefined;
     if (
@@ -5073,7 +5134,8 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       );
     }
 
-    if (!workerResult.ok && request.type === "asset.import.resolve") {
+    if (!workerResult.ok && (request.type === "asset.import.resolve" ||
+          request.type === "asset.import.skip-source-failure")) {
       pendingImportLibraries.delete(request.importId);
       pendingImportCollections.delete(request.importId);
     }
@@ -5479,7 +5541,11 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     //
     // Track importId -> libraryId mapping for resolve flows where libraryId
     // is not carried in the resolve request itself.
-    if (workerResult.ok && workerResult.type === "asset.import.conflicts") {
+    if (
+      workerResult.ok &&
+      (workerResult.type === "asset.import.conflicts" ||
+        workerResult.type === "asset.import.source-failure")
+    ) {
       pendingImportLibraries.set(
         workerResult.plan.importId,
         (request as { libraryId?: string }).libraryId ?? "",
@@ -5502,17 +5568,20 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
 
     if (workerResult.ok && workerResult.type === "asset.import.completed") {
       const collectionId =
-        request.type === "asset.import.resolve"
+        (request.type === "asset.import.resolve" ||
+          request.type === "asset.import.skip-source-failure")
           ? pendingImportCollections.get(request.importId)
           : request.type === "asset.import-drop.request" ||
               request.type === "asset.import-clipboard.request"
             ? request.targetCollectionId
             : undefined;
-      if (request.type === "asset.import.resolve")
+      if ((request.type === "asset.import.resolve" ||
+          request.type === "asset.import.skip-source-failure"))
         pendingImportCollections.delete(request.importId);
       if (collectionId && workerResult.completion.assets.length > 0) {
         const importLibraryId =
-          request.type === "asset.import.resolve"
+          (request.type === "asset.import.resolve" ||
+          request.type === "asset.import.skip-source-failure")
             ? pendingImportLibraries.get(request.importId)
             : request.type === "asset.import-drop.request" ||
                 request.type === "asset.import-clipboard.request"
@@ -5560,7 +5629,8 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
                 : relationResult.error.reason,
             },
           );
-          if (request.type === "asset.import.resolve")
+          if ((request.type === "asset.import.resolve" ||
+          request.type === "asset.import.skip-source-failure"))
             pendingImportLibraries.delete(request.importId);
           return {
             ok: false,
@@ -5626,7 +5696,8 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           request.type === "asset.import-clipboard.request"
         ) {
           libId = request.libraryId;
-        } else if (request.type === "asset.import.resolve") {
+        } else if ((request.type === "asset.import.resolve" ||
+          request.type === "asset.import.skip-source-failure")) {
           libId = pendingImportLibraries.get(request.importId);
           pendingImportLibraries.delete(request.importId);
         }
@@ -5774,6 +5845,9 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
     return { ok: false, error: publicError };
   } finally {
+    if (activeLibraryOpenCancellation === openCancellation) {
+      activeLibraryOpenCancellation = undefined;
+    }
     if (deleteFromDiskLibraryId) {
       endLibraryDeleteMediaFence(deleteFromDiskLibraryId);
     }
@@ -5817,6 +5891,10 @@ async function confirmDesktopAutomationWrite(): Promise<boolean> {
     title: '运行自动化脚本',
     message: '此脚本可以读取资产、标签与合集，修改评分与元数据，创建标签或空文件夹，整理合集，入队 AI 分析，复制文件路径，以及重命名或移入回收站。',
     detail: '脚本只会获得受限自动化能力；新建资源库和批量导入仍需单独的本机计划确认，不会获得网络下载、磁盘直读、数据库或永久删除权限。每次运行都会记录到应用日志。',
+  });
+  ensureRendererKeyboardFocus(mainWindow, {
+    reattachHwnd: true,
+    reason: "native-dialog.message-box",
   });
   return response.response === 1;
 }
@@ -5888,6 +5966,10 @@ async function confirmDesktopAutomationFilePlan(
   const response = mainWindow && !mainWindow.isDestroyed()
     ? await dialog.showMessageBox(mainWindow, dialogOptions)
     : await dialog.showMessageBox(dialogOptions);
+  ensureRendererKeyboardFocus(mainWindow, {
+    reattachHwnd: true,
+    reason: "native-dialog.message-box",
+  });
   return response.response === 1;
 }
 
@@ -6176,6 +6258,7 @@ async function startApplication(): Promise<void> {
   }
   appLogPath = chooseUniqueSessionLogPath(app.getPath("logs"), new Date());
   logger = new AppLogger(appLogPath);
+  bindRendererKeyboardFocusLogger(logger);
   void sweepOrphanExternalLibraryStagingOnStartup();
   appUpdateService = createAppUpdateService({
     currentVersion: app.getVersion(),
@@ -6488,6 +6571,10 @@ async function startApplication(): Promise<void> {
               ...(input.submitLabel === undefined ? {} : { submitLabel: input.submitLabel }),
               tree: input.tree,
             });
+            ensureRendererKeyboardFocus(window, {
+              reattachHwnd: true,
+              reason: "plugin-ui-dialog.widget",
+            });
             return;
           }
           window.webContents.send(PLUGIN_UI_DIALOG_REQUEST_CHANNEL, {
@@ -6497,6 +6584,10 @@ async function startApplication(): Promise<void> {
             dialogId: input.dialogId,
             libraryId: context.libraryId ?? PLUGIN_GLOBAL_RUNTIME_LIBRARY_ID,
             payload: input.payload ?? null,
+          });
+          ensureRendererKeyboardFocus(window, {
+            reattachHwnd: true,
+            reason: "plugin-ui-dialog.iframe",
           });
         }),
         patch: (input) => {
@@ -7167,6 +7258,9 @@ async function startApplication(): Promise<void> {
       ...pluginCompatibility,
       nodeAbi,
       logger,
+      onDeviceStateRecovered: () => {
+        pendingPluginDeviceStateRecoveryNotice = true;
+      },
     });
     pluginActivationCoordinator = new PluginActivationCoordinator({
       packageManager: pluginPackageManager,
@@ -7985,7 +8079,7 @@ async function startApplication(): Promise<void> {
         if (!result.ok || result.type !== 'library.list') return undefined;
         return result.libraries.find((library) => library.libraryId === libraryId)?.libraryPath;
       },
-      chooseLocalPackage: selectPluginPackage,
+      chooseLocalPackage: selectPluginPackageForInstall,
       notifyInstallProgress: (event) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send(PLUGIN_INSTALL_PROGRESS_CHANNEL, event);

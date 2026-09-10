@@ -46,7 +46,6 @@ describe("dialog-escape-stack", () => {
         ...empty,
         assetRenameOpen: true,
         dialogOpen: true,
-        conflictsImportId: "imp_1",
       }),
     ).toEqual({ kind: "cancel-asset-rename" });
   });
@@ -150,14 +149,51 @@ describe("dialog-escape-stack", () => {
     ).toBe(true);
   });
 
-  it("closes generic dialog before conflicts", () => {
+  it("holds Escape on an in-flight import decision instead of abandoning (Serpent-85e60c)", () => {
     expect(
       resolveDialogEscapeAction({
         ...empty,
+        conflictsImportId: "imp_9",
+        importDecisionSubmitting: true,
+      }),
+    ).toEqual({ kind: "hold-import-decision" });
+    expect(
+      resolveDialogEscapeAction({
+        ...empty,
+        sourceFailureImportId: "imp_sf",
+        importDecisionSubmitting: true,
+      }),
+    ).toEqual({ kind: "hold-import-decision" });
+  });
+
+  it("abandons a source-failure skip plan with Escape", () => {
+    expect(
+      resolveDialogEscapeAction({
+        ...empty,
+        sourceFailureImportId: "imp_sf",
+      }),
+    ).toEqual({ kind: "abandon-import", importId: "imp_sf" });
+  });
+
+  it("lets import decision dialogs beat the progress overlay (Serpent-224ac8)", () => {
+    expect(
+      resolveDialogEscapeAction({
+        ...empty,
+        blockingImportOpen: true,
+        blockingImportCancelable: true,
+        conflictsImportId: "imp_2",
         dialogOpen: true,
+      }),
+    ).toEqual({ kind: "abandon-import", importId: "imp_2" });
+    expect(
+      resolveDialogEscapeAction({
+        ...empty,
+        blockingImportOpen: true,
+        blockingImportCancelable: true,
+        imageSequenceImportOpen: true,
         conflictsImportId: "imp_2",
       }),
-    ).toEqual({ kind: "close-dialog" });
+    ).toEqual({ kind: "close-image-sequence-import" });
   });
 
   it("treats embedded AI configuration as part of settings", () => {

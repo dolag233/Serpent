@@ -198,10 +198,14 @@ describe('windows clipboard image extraction', () => {
   });
 
   it('extracts html image sources with entity decoding', () => {
+    const fileUrl = process.platform === 'win32'
+      ? 'file:///C:/temp/a&amp;b.png'
+      : 'file:///tmp/a&amp;b.png';
+    const expectedPath = process.platform === 'win32' ? 'C:/temp/a&b.png' : '/tmp/a&b.png';
     const sources = extractClipboardHtmlImageSources(
-      '<img src="file:///C:/temp/a&amp;b.png"><img src="data:image/jpeg;base64,AAA">',
+      `<img src="${fileUrl}"><img src="data:image/jpeg;base64,AAA">`,
     );
-    expect(sources.filePaths).toEqual(['C:/temp/a&b.png']);
+    expect(sources.filePaths).toEqual([expectedPath]);
     expect(sources.dataUrls).toHaveLength(1);
   });
 });

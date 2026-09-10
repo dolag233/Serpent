@@ -539,7 +539,7 @@ describe('Plugin package IPC bridge', () => {
       chooseLocalPackage: async () => selected,
     });
 
-    const installed = await handler({ type: 'plugin-manager.install-local', scope: 'user' });
+    const installed = await handler({ type: 'plugin-manager.install-local', scope: 'user', sourceKind: 'folder' });
     expect(installed.ok).toBe(true);
     expect(JSON.stringify(installed)).not.toContain(source);
     if (installed.ok && 'packages' in installed) {
@@ -552,8 +552,36 @@ describe('Plugin package IPC bridge', () => {
     }
 
     selected = undefined;
-    await expect(handler({ type: 'plugin-manager.install-local', scope: 'user' }))
+    await expect(handler({ type: 'plugin-manager.install-local', scope: 'user', sourceKind: 'folder' }))
       .resolves.toEqual({ ok: false, code: 'selection-cancelled' });
+  });
+
+  it('asks Main for a ZIP picker or a folder picker, never a combined one', async () => {
+    const kinds: string[] = [];
+    const handler = createPluginPackageRequestHandler({
+      manager: createManager(temporaryRoot('serpent-plugin-ipc-source-kind-user-')),
+      resolveLibraryDirectory: async () => undefined,
+      chooseLocalPackage: async (sourceKind) => {
+        kinds.push(sourceKind);
+        return undefined;
+      },
+    });
+
+    await expect(handler({
+      type: 'plugin-manager.install-local',
+      scope: 'user',
+      sourceKind: 'zip',
+    })).resolves.toEqual({ ok: false, code: 'selection-cancelled' });
+    await expect(handler({
+      type: 'plugin-manager.install-local',
+      scope: 'user',
+      sourceKind: 'folder',
+    })).resolves.toEqual({ ok: false, code: 'selection-cancelled' });
+    expect(kinds).toEqual(['zip', 'folder']);
+    expect(() => pluginManagerRequestSchema.parse({
+      type: 'plugin-manager.install-local',
+      scope: 'user',
+    })).toThrow();
   });
 
   it('returns plugin command failure diagnostics through the management bridge', async () => {
@@ -644,10 +672,11 @@ describe('Plugin package IPC bridge', () => {
       chooseLocalPackage: async () => selected,
     });
 
-    await expect(handler({ type: 'plugin-manager.install-local', scope: 'user' })).resolves.toMatchObject({ ok: true });
+    await expect(handler({ type: 'plugin-manager.install-local', scope: 'user', sourceKind: 'folder' })).resolves.toMatchObject({ ok: true });
     selected = librarySource;
     await expect(handler({
       type: 'plugin-manager.install-local',
+      sourceKind: 'folder',
       scope: 'library',
       libraryId: 'library-a',
     })).resolves.toMatchObject({ ok: true });
@@ -717,6 +746,7 @@ describe('Plugin package IPC bridge', () => {
 
     const installed = await handler({
       type: 'plugin-manager.install-local',
+      sourceKind: 'folder',
       scope: 'library',
       libraryId: 'library-a',
     });
@@ -755,7 +785,7 @@ describe('Plugin package IPC bridge', () => {
       chooseLocalPackage: async () => selected,
     });
 
-    const firstInstall = await handler({ type: 'plugin-manager.install-local', scope: 'user' });
+    const firstInstall = await handler({ type: 'plugin-manager.install-local', scope: 'user', sourceKind: 'folder' });
     expect(firstInstall).toMatchObject({ ok: true, packages: [{ version: '1.2.0' }] });
     if (!firstInstall.ok || !('packages' in firstInstall)) throw new Error('Expected the first plugin install to succeed.');
     const firstPackage = firstInstall.packages[0];
@@ -771,7 +801,7 @@ describe('Plugin package IPC bridge', () => {
     // An in-place edit keeps the same source identity but replaces the active
     // package directory, so the stale resolution must be explicitly selected.
     writePlugin(firstSource, { version: '1.3.0' });
-    const upgradedInstall = await handler({ type: 'plugin-manager.install-local', scope: 'user' });
+    const upgradedInstall = await handler({ type: 'plugin-manager.install-local', scope: 'user', sourceKind: 'folder' });
     expect(upgradedInstall).toMatchObject({ ok: true, packages: [{ version: '1.3.0' }] });
     if (!upgradedInstall.ok || !('packages' in upgradedInstall)) throw new Error('Expected the replacement package to be listed.');
     const upgradedPackage = upgradedInstall.packages[0];

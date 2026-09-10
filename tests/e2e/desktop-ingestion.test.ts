@@ -8,6 +8,7 @@ import {
   resolveElectronExecutablePath,
   resolveSessionLogPath,
   waitForLibraryLoadingToFinish,
+  pasteClipboardImageThroughFileMenu,
 } from './electron-test-helpers';
 
 test.describe.configure({ timeout: 120_000 });
@@ -152,12 +153,7 @@ test('pastes a clipboard image through the File menu into the library (Serpent-a
 
     // The File menu must remain a discoverable entry point for clipboard-image
     // paste even when the browse canvas is not empty (Serpent-a3de58).
-    await window.getByRole('button', { name: '主菜单' }).click();
-    await window.getByRole('menuitem', { name: '文件', exact: true }).click();
-    await window
-      .locator('[data-main-menu-submenu="file"]')
-      .getByRole('menuitem', { name: '粘贴图片' })
-      .click();
+    await pasteClipboardImageThroughFileMenu(application, window);
 
     await expect(
       window.locator('.asset-card', { hasText: 'Clipboard 2026-09-05T08-00-00Z.png' }),
@@ -174,6 +170,7 @@ test('pastes a clipboard image through the File menu into the library (Serpent-a
 });
 
 test('creates an asset when an image is pasted via Ctrl+V with no clipboardData image item (Serpent-a3de58)', async () => {
+  test.skip(process.platform !== 'win32', 'Windows-only: CF_DIB clipboard images bypass renderer clipboardData.');
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-ctrl-v-paste-e2e-'));
   const clipboardSource = path.join(temporaryRoot, 'clipboard.png');
   writeFileSync(clipboardSource, Buffer.from(
@@ -214,6 +211,53 @@ await window.keyboard.press('Control+V');
 
     await expect(
       window.locator('.asset-card', { hasText: 'Clipboard 2026-09-05T09-00-00Z.png' }),
+    ).toBeVisible({ timeout: 15_000 });
+    const libraryPath = path.join(temporaryRoot, libraryName);
+    const imported = readdirSync(path.join(libraryPath, 'Assets')).filter(
+      (name) => /^Clipboard .*\.png$/.test(name),
+    );
+    expect(imported).toHaveLength(1);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test('creates an asset when an image is pasted via Cmd+V on macOS (Serpent-a3de58)', async () => {
+  test.skip(process.platform !== 'darwin', 'macOS keyboard paste delegates to Main clipboard read.');
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-cmd-v-paste-e2e-'));
+  const clipboardSource = path.join(temporaryRoot, 'clipboard.png');
+  writeFileSync(clipboardSource, Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    'base64',
+  ));
+  const libraryName = 'CmdV粘贴验收';
+  const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  const application = await electron.launch({
+    args: [applicationDirectory],
+    cwd: applicationDirectory,
+    executablePath: resolveElectronExecutablePath(),
+    env: {
+      ...process.env,
+      SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
+      SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
+      SERPENT_E2E_CLIPBOARD_IMAGE_PATH: clipboardSource,
+      SERPENT_E2E_CLIPBOARD_NOW: '2026-09-05T10:00:00.000Z',
+    },
+  });
+
+  try {
+    const window = await application.firstWindow();
+    await window.getByRole('button', { name: '创建资源库' }).click();
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
+    await window.getByRole('button', { name: '创建', exact: true }).click();
+    await waitForLibraryLoadingToFinish(window);
+    await window.waitForTimeout(1500);
+    await window.keyboard.press('Meta+V');
+
+    await expect(
+      window.locator('.asset-card', { hasText: 'Clipboard 2026-09-05T10-00-00Z.png' }),
     ).toBeVisible({ timeout: 15_000 });
     const libraryPath = path.join(temporaryRoot, libraryName);
     const imported = readdirSync(path.join(libraryPath, 'Assets')).filter(

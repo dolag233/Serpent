@@ -411,6 +411,7 @@ export const en = {
     missing: "Missing file",
     excludeAvailability: "Exclude this availability",
     exclude: "Exclude",
+    ai: "AI",
     shiftMultiSelectHint: "Hold Shift to multi-select",
     widthPx: "Width",
     heightPx: "Height",
@@ -757,7 +758,8 @@ export const en = {
       confirmReplace: "Overwrite and import",
       confirmSkip: "Skip and continue",
       confirmImportAnyway: "Import anyway",
-      examplesMore: "{name} and {count} more"
+      examplesMore: "{name} and {count} more",
+      continuing: "Importing…"
     },
     nameConflict: {
       title: "Name conflict",
@@ -839,6 +841,12 @@ export const en = {
       importSelected: "Import individual file",
       importSequence: "Import image sequence",
       importing: "Importing…"
+    },
+    sourceFailure: {
+      title: "Some files cannot be imported",
+      summary: "{count} files cannot be imported; {remaining} files can still continue.",
+      summaryNoneRemaining: "{count} files cannot be imported.",
+      applyToRest: "Apply this choice to later files that cannot be imported"
     },
     pluginTrustPrompt: {
       title: "New library plugins",
@@ -1187,6 +1195,10 @@ export const en = {
     pluginInstallLocal: "Install local plugin",
     pluginInstallLocalAction: "Local install",
     pluginInstallLocalHint: "Choose a plugin folder or ZIP archive from your computer.",
+    pluginInstallLocalZipAction: "Install ZIP",
+    pluginInstallLocalZipHint: "Choose a plugin ZIP archive.",
+    pluginInstallLocalFolderAction: "Install folder",
+    pluginInstallLocalFolderHint: "Choose a plugin folder that contains serpent-plugin.json.",
     pluginGitHubRepository: "GitHub repository or Release URL",
     pluginGitHubPlaceholder: "https://github.com/owner/plugin",
     pluginGitHubInvalidRepository: "Enter a valid HTTPS GitHub repository, owner/repository, or Release URL.",
@@ -1220,6 +1232,8 @@ export const en = {
     pluginOpenGitHubSource: "Open GitHub repository",
     pluginReload: "Reload plugins",
     pluginOpenSettings: "Open plugin settings",
+    pluginUninstallTitle: "Uninstall plugin",
+    pluginUninstallConfirm: "Uninstall “{plugin}” v{version} from the {scope} scope? Its installed package will be removed.",
     pluginSettingsEmpty: "This plugin has no settings page yet.",
     pluginSettingsNavEmpty: "No plugin settings are available yet.",
     pluginTrustTrustedConfirmHint: "After you trust it, this non-restricted-mode plugin will have full system capability on this device. Confirm carefully.",

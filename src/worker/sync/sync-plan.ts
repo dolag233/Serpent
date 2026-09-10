@@ -4,7 +4,8 @@
  * 输入三份事实：本地资产快照、本地 manifest 缓存、远端 manifest（+墓碑集合），
  * 输出文件级动作列表。规则对应规格 §6.3 决策表：
  * - 不同资产互不干扰（条目级并发）
- * - 同资产单侧变更 → upload/download
+ * - 同资产单侧内容变更 → upload/download
+ * - 同资产单侧路径变更（hash 不变）→ 远端 MOVE / 本地 relocate（GitHub #31 / Serpent-038ecf）
  * - 同资产双侧变更且哈希不同 → 冲突（LWW 定正式版，败者存冲突副本）
  * - 本地删除 → 远端删除 + 墓碑上传；远端墓碑 → 本地进回收站
  * 该模块不触碰 SQLite 与网络，保证可完全单测。
@@ -22,7 +23,13 @@ export interface LocalAssetSnapshotEntry {
 }
 
 export type SyncAction =
-  | { type: 'upload'; assetId: string; entry: SyncManifestEntry }
+  | {
+      type: 'upload';
+      assetId: string;
+      entry: SyncManifestEntry;
+      /** 内容变更前远端仍占用的旧路径；与 entry.path 不同时先 MOVE 再 PUT。 */
+      previousPath?: string;
+    }
   | { type: 'download'; assetId: string; entry: SyncManifestEntry }
   | {
       type: 'conflict';
@@ -32,6 +39,14 @@ export type SyncAction =
       /** LWW 裁决后成为正式版本的一方。 */
       winner: 'local' | 'remote';
     }
+  | {
+      type: 'move-remote';
+      assetId: string;
+      /** 远端当前路径（库内 portable 相对路径，不含 assets/ 前缀）。 */
+      fromPath: string;
+      entry: SyncManifestEntry;
+    }
+  | { type: 'relocate-local'; assetId: string; entry: SyncManifestEntry }
   | { type: 'delete-remote'; assetId: string }
   | { type: 'tombstone-upload'; assetId: string }
   | { type: 'delete-local'; assetId: string };
@@ -50,6 +65,62 @@ export interface PlanSyncInput {
 function conflictWinner(local: SyncManifestEntry, remote: SyncManifestEntry): 'local' | 'remote' {
   if (remote.version !== local.version) return remote.version > local.version ? 'remote' : 'local';
   return remote.modifiedAt > local.modifiedAt ? 'remote' : 'local';
+}
+
+function planPathOnlyAction(input: {
+  assetId: string;
+  localAsset: LocalAssetSnapshotEntry;
+  localEntry: SyncManifestEntry;
+  remoteEntry: SyncManifestEntry;
+  localPathChanged: boolean;
+  remotePathChanged: boolean;
+}): SyncAction | undefined {
+  const { assetId, localAsset, localEntry, remoteEntry, localPathChanged, remotePathChanged } = input;
+  if (!localPathChanged && !remotePathChanged) return undefined;
+  if (localPathChanged && !remotePathChanged) {
+    return {
+      type: 'move-remote',
+      assetId,
+      fromPath: remoteEntry.path,
+      entry: {
+        ...localEntry,
+        path: localAsset.path,
+        version: remoteEntry.version + 1,
+        modifiedAt: localAsset.modifiedAt,
+      },
+    };
+  }
+  if (!localPathChanged && remotePathChanged) {
+    return { type: 'relocate-local', assetId, entry: remoteEntry };
+  }
+  if (localAsset.path === remoteEntry.path) {
+    return {
+      type: 'move-remote',
+      assetId,
+      fromPath: remoteEntry.path,
+      entry: {
+        ...localEntry,
+        path: localAsset.path,
+        version: remoteEntry.version,
+        modifiedAt: localAsset.modifiedAt,
+      },
+    };
+  }
+  const localWins = localAsset.modifiedAt >= remoteEntry.modifiedAt;
+  if (localWins) {
+    return {
+      type: 'move-remote',
+      assetId,
+      fromPath: remoteEntry.path,
+      entry: {
+        ...localEntry,
+        path: localAsset.path,
+        version: remoteEntry.version + 1,
+        modifiedAt: localAsset.modifiedAt,
+      },
+    };
+  }
+  return { type: 'relocate-local', assetId, entry: remoteEntry };
 }
 
 export function planSyncActions(input: PlanSyncInput): SyncAction[] {
@@ -124,35 +195,53 @@ export function planSyncActions(input: PlanSyncInput): SyncAction[] {
 
     // 双侧已知条目。
     if (localAsset && localEntry && remoteEntry) {
-      const localChanged = localAsset.contentHash !== localEntry.contentHash;
-      const remoteChanged = remoteEntry.contentHash !== localEntry.contentHash;
-      if (localChanged && !remoteChanged) {
+      const localHashChanged = localAsset.contentHash !== localEntry.contentHash;
+      const remoteHashChanged = remoteEntry.contentHash !== localEntry.contentHash;
+      const localPathChanged = localAsset.path !== localEntry.path;
+      const remotePathChanged = remoteEntry.path !== localEntry.path;
+      if (localHashChanged && !remoteHashChanged) {
+        const previousPath = remoteEntry.path !== localAsset.path ? remoteEntry.path : undefined;
         actions.push({
           type: 'upload',
           assetId,
+          ...(previousPath === undefined ? {} : { previousPath }),
           entry: {
             ...localEntry,
+            path: localAsset.path,
             contentHash: localAsset.contentHash,
             size: localAsset.size,
             version: remoteEntry.version + 1,
             modifiedAt: localAsset.modifiedAt,
           },
         });
-      } else if (!localChanged && remoteChanged) {
+      } else if (!localHashChanged && remoteHashChanged) {
         actions.push({ type: 'download', assetId, entry: remoteEntry });
-      } else if (localChanged && remoteChanged && localAsset.contentHash !== remoteEntry.contentHash) {
+      } else if (localHashChanged && remoteHashChanged && localAsset.contentHash !== remoteEntry.contentHash) {
+        const localAsEntry: SyncManifestEntry = {
+          ...localEntry,
+          path: localAsset.path,
+          contentHash: localAsset.contentHash,
+          size: localAsset.size,
+          modifiedAt: localAsset.modifiedAt,
+        };
         actions.push({
           type: 'conflict',
           assetId,
-          local: { ...localEntry, contentHash: localAsset.contentHash, size: localAsset.size, modifiedAt: localAsset.modifiedAt },
+          local: localAsEntry,
           remote: remoteEntry,
-          winner: conflictWinner(
-            { ...localEntry, contentHash: localAsset.contentHash, size: localAsset.size, modifiedAt: localAsset.modifiedAt },
-            remoteEntry,
-          ),
+          winner: conflictWinner(localAsEntry, remoteEntry),
         });
+      } else {
+        const pathAction = planPathOnlyAction({
+          assetId,
+          localAsset,
+          localEntry,
+          remoteEntry,
+          localPathChanged,
+          remotePathChanged,
+        });
+        if (pathAction) actions.push(pathAction);
       }
-      // 双侧哈希一致（或都未变）：无需动作。
       continue;
     }
 

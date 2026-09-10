@@ -23,6 +23,9 @@ describe("window-controls protocol (Serpent-znex)", () => {
     expect(parseWindowControlRequest({ action: "get-state" })).toEqual({
       action: "get-state",
     });
+    expect(parseWindowControlRequest({ action: "steal-focus" })).toEqual({
+      action: "steal-focus",
+    });
     expect(parseWindowControlRequest({ action: "explode" })).toBeNull();
     expect(parseWindowControlRequest({})).toBeNull();
   });

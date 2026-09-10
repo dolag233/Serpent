@@ -39,6 +39,7 @@ export type PluginMenuDescriptor = {
   contributionId: string;
   commandId?: string;
   pluginId: string;
+  icon?: string;
   group?: string;
   before?: string;
   after?: string;

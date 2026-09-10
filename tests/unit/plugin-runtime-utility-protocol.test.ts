@@ -41,7 +41,7 @@ describe('plugin permission → automation capability mapping', () => {
 
 describe('plugin host command ids', () => {
   it('keeps plugin-only command ids disjoint from automation script ids', () => {
-    const scriptCommandIds = new Set(automationScriptCommandIdSchema.options);
+    const scriptCommandIds = new Set<string>(automationScriptCommandIdSchema.options);
     expect(pluginHostOnlyCommandIdSchema.options.some((id) => scriptCommandIds.has(id))).toBe(false);
   });
 });

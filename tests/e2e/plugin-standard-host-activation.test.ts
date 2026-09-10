@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { _electron as electron, expect, test } from '@playwright/test';
 
-import { closeLibraryViaSwitcher, electronLaunchEnv, resolveElectronExecutablePath } from './electron-test-helpers';
+import { closeLibraryViaSwitcher, electronLaunchEnv, openAppSettingsDialog, openPluginAdvancedInstallDialog, openPluginSettingsTab, resolveElectronExecutablePath } from './electron-test-helpers';
 import { PLUGIN_LIBRARY_DATA_DIRECTORY } from '../../src/plugins/plugin-package';
 
 test.describe.configure({ timeout: 180_000 });
@@ -37,23 +37,12 @@ test('activates the fixed standard Host probe and writes library storage', async
     await window.getByRole('textbox', { name: '名称' }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
 
-    if (process.platform === 'win32') {
-      // Windows 无工具栏设置齿轮（8-09~8-12 菜单重构）——从应用菜单栏打开。
-      await window.getByRole('button', { name: '主菜单' }).click();
-      await window
-        .getByRole('menuitem', { name: '设置', exact: true })
-        .click();
-    } else {
-      await window.getByRole('button', { name: '设置' }).click();
-    }
-    const dialog = window.getByRole('dialog', { name: '通用设置' });
-    await dialog.getByRole('tab', { name: '插件' }).click();
+    const dialog = await openAppSettingsDialog(application, window);
+    await openPluginSettingsTab(dialog);
     await expect(dialog.getByText('暂未安装插件。', { exact: true }).first()).toBeVisible();
-    await dialog.getByRole('button', { name: '安装插件' }).click();
-    const installDialog = window.getByRole('dialog', { name: '安装插件' });
-    await expect(installDialog).toBeVisible();
+    const installDialog = await openPluginAdvancedInstallDialog(window, dialog);
     await installDialog.getByLabel('安装范围').selectOption('library');
-    await installDialog.getByRole('button', { name: '本地安装' }).click();
+    await installDialog.getByRole('button', { name: '安装文件夹' }).click();
     await expect(dialog.getByText(/Standard Host Probe\s*-\s*v1\.0\.0/)).toBeVisible({ timeout: 30_000 });
     // Trust is now granted as part of enabling a library-scoped plugin; the
     // old standalone「信任」button was removed from the settings card.

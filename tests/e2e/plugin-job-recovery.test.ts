@@ -6,7 +6,7 @@ import { once } from 'node:events';
 
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
 
-import { electronLaunchEnv, resolveElectronExecutablePath } from './electron-test-helpers';
+import { electronLaunchEnv, openAppSettingsDialog, openPluginAdvancedInstallDialog, openPluginSettingsTab, resolveElectronExecutablePath } from './electron-test-helpers';
 import { PLUGIN_LIBRARY_DATA_DIRECTORY } from '../../src/plugins/plugin-package';
 
 test.describe.configure({ timeout: 180_000 });
@@ -116,16 +116,15 @@ test('does not resume a plugin job after the whole Electron process restarts', a
     await window.getByRole('textbox', { name: '名称' }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
 
-    await window.getByRole('button', { name: '设置', exact: true }).click();
-    const dialog = window.getByRole('dialog', { name: '通用设置' });
-    await dialog.getByRole('tab', { name: '插件' }).click();
+    const dialog = await openAppSettingsDialog(application, window);
+    await openPluginSettingsTab(dialog);
     await expect(dialog.getByText('暂未安装插件。', { exact: true }).first()).toBeVisible();
-    await dialog.getByRole('button', { name: '安装插件' }).click();
-    const installDialog = window.getByRole('dialog', { name: '安装插件' });
+    const installDialog = await openPluginAdvancedInstallDialog(window, dialog);
     await installDialog.getByLabel('安装范围').selectOption('library');
-    await installDialog.getByRole('button', { name: '本地安装' }).click();
+    await installDialog.getByRole('button', { name: '安装文件夹' }).click();
     await expect(dialog.getByText(/Job Probe\s*-\s*v1\.0\.0/)).toBeVisible({ timeout: 30_000 });
-    await dialog.getByRole('button', { name: '信任', exact: true }).click();
+    window.once('dialog', (browserDialog) => browserDialog.accept());
+    await dialog.locator('label.plugin-settings-enable-toggle').click();
     await expect(dialog.getByRole('checkbox', { name: '启用插件' })).toBeChecked();
 
     const libraryId = await window.evaluate(async () => {

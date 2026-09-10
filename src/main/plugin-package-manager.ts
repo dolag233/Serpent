@@ -1264,7 +1264,7 @@ export class PluginPackageManager {
       contents = await readFile(statePath, 'utf8');
     } catch (error: unknown) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return emptyDeviceState();
-      throw error;
+      return this.#recoverDeviceState(statePath, error);
     }
     try {
       const raw = JSON.parse(contents) as unknown;
@@ -1277,9 +1277,29 @@ export class PluginPackageManager {
         state.autoUpdateAll = true;
       }
       return state;
-    } catch {
-      throw new PluginPackageManagerError('PLUGIN_DEVICE_STATE_INVALID', 'The local plugin trust and resolution state is invalid.');
+    } catch (error) {
+      return this.#recoverDeviceState(statePath, error);
     }
+  }
+
+  async #recoverDeviceState(statePath: string, error: unknown): Promise<PluginDeviceState> {
+    const timestamp = new Date().toISOString().replace(/[.:]/gu, '-');
+    const backupPath = `${statePath}.corrupt-${timestamp}`;
+    try {
+      await rename(statePath, backupPath);
+      this.options.logger?.info(
+        'plugin.device-state.recovered',
+        'The invalid plugin device state was backed up and reset.',
+        { backupFileName: path.basename(backupPath) },
+      );
+      this.options.onDeviceStateRecovered?.(path.basename(backupPath));
+    } catch (backupError) {
+      this.options.logger?.error('plugin.device-state.backup-failed', backupError, {
+        backupFileName: path.basename(backupPath),
+        originalError: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return emptyDeviceState();
   }
 
   async #writeDeviceState(state: PluginDeviceState): Promise<void> {

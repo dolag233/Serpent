@@ -20,6 +20,32 @@ import {
 } from '../../src/shared/protocol/responses';
 
 describe('renderer request protocol', () => {
+  it('accepts the library-open cancellation request and acknowledgement', () => {
+    expect(parseRendererRequest({ type: 'library.open-cancel.request' })).toEqual({
+      type: 'library.open-cancel.request',
+    });
+    expect(parseRendererResult({
+      ok: true,
+      type: 'library.open-cancelled',
+    })).toEqual({
+      ok: true,
+      type: 'library.open-cancelled',
+    });
+  });
+
+  it('keeps pollIntervalMs on sync binding save (Serpent-8c4920)', () => {
+    expect(parseRendererRequest({
+      type: 'sync.library.binding.save.request',
+      libraryId: 'lib-1',
+      serverId: 'server-1',
+      enabled: true,
+      pollIntervalMs: 60_000,
+    })).toMatchObject({
+      type: 'sync.library.binding.save.request',
+      pollIntervalMs: 60_000,
+    });
+  });
+
   it('keeps recovery report paths on the Worker/Main side', () => {
     expect(parseRendererRequest({
       type: 'library.recovery-report.request',
@@ -1053,6 +1079,17 @@ describe('renderer request protocol', () => {
       importId: 'import-01',
       suspectedDuplicate: 'skip',
       nameConflict: 'keep-both',
+    });
+    expect(
+      parseRendererRequest({
+        type: 'asset.import.skip-source-failure',
+        importId: 'import-01',
+        applyToRest: true,
+      }),
+    ).toEqual({
+      type: 'asset.import.skip-source-failure',
+      importId: 'import-01',
+      applyToRest: true,
     });
     expect(parseRendererRequest({ type: 'asset.import.abandon', importId: 'import-01' }))
       .toEqual({ type: 'asset.import.abandon', importId: 'import-01' });

@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 
 import {
   collectPluginWidgetValues,
+  type PluginWidgetListCell,
   type PluginWidgetNode,
   type PluginWidgetValue,
 } from '../shared/plugin-widget-ir';
@@ -11,6 +12,24 @@ import {
   Switch,
   TextField,
 } from './ui/primitives';
+
+function listCellText(value: PluginWidgetListCell): string {
+  return typeof value === 'string'
+    ? value
+    : value.segments.map((segment) => segment.text).join('');
+}
+
+function renderListCell(value: PluginWidgetListCell): ReactNode {
+  if (typeof value === 'string') return value;
+  return value.segments.map((segment, index) => (
+    <span
+      className={segment.tone === undefined ? undefined : `plugin-widget-list__highlight plugin-widget-list__highlight--${segment.tone}`}
+      key={`segment-${index}`}
+    >
+      {segment.text}
+    </span>
+  ));
+}
 
 function fieldValue(
   node: Extract<PluginWidgetNode, { id: string; value: PluginWidgetValue }>,
@@ -85,6 +104,43 @@ export function PluginWidgetRenderer({
   if (tree.type === 'separator') {
     return <hr className="plugin-widget-separator" />;
   }
+  if (tree.type === 'list') {
+    const columnCount = tree.columns.length;
+    const gridStyle = {
+      ['--plugin-widget-list-columns' as string]: String(columnCount),
+    };
+    return (
+      <div className="plugin-widget-list" role="table">
+        <div className="plugin-widget-list__header" role="row" style={gridStyle}>
+          {tree.columns.map((column, columnIndex) => (
+            <div className="plugin-widget-list__cell" key={`column-${columnIndex}`} role="columnheader">
+              {column}
+            </div>
+          ))}
+        </div>
+        {tree.rows.length === 0 ? (
+          <div className="plugin-widget-list__empty" role="row">
+            {tree.emptyText ?? '暂无项目'}
+          </div>
+        ) : (
+          <div className="plugin-widget-list__body" role="rowgroup">
+            {tree.rows.map((row, rowIndex) => (
+              <div className="plugin-widget-list__row" key={`row-${rowIndex}`} role="row" style={gridStyle}>
+                {tree.columns.map((_, columnIndex) => {
+                  const value = row[columnIndex] ?? '';
+                  return (
+                    <div className="plugin-widget-list__cell" key={`cell-${columnIndex}`} role="cell" title={listCellText(value)}>
+                      {renderListCell(value)}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
   if (tree.type === 'text') {
     const value = String(fieldValue(tree, values));
     return (
@@ -136,6 +192,21 @@ export function PluginWidgetRenderer({
         label={tree.label}
         onCheckedChange={(checked) => onChange(tree.id, checked)}
       />
+    );
+  }
+  if (tree.type === 'toggle') {
+    const value = fieldValue(tree, values) === true;
+    return (
+      <button
+        aria-pressed={value}
+        className="plugin-widget-toggle"
+        data-hover-tip={tree.description}
+        title={tree.description}
+        type="button"
+        onClick={() => onChange(tree.id, !value)}
+      >
+        {tree.label}
+      </button>
     );
   }
   const value = Number(fieldValue(tree, values));

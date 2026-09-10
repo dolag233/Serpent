@@ -118,3 +118,84 @@ export function assetSummaryFromLayoutEntry(
     durationMs: null,
   };
 }
+
+function layoutEntryFromLoadedAsset(
+  asset: Pick<
+    AssetSummary,
+    | "assetId"
+    | "width"
+    | "height"
+    | "thumbnailArtifactId"
+    | "displayName"
+    | "relativeFilePath"
+    | "byteSize"
+    | "modifiedAt"
+    | "rating"
+  >,
+): BrowseLayoutEntry {
+  return {
+    assetId: asset.assetId,
+    width: asset.width,
+    height: asset.height,
+    previewArtifactId: asset.thumbnailArtifactId,
+    displayName: asset.displayName,
+    relativeFilePath: asset.relativeFilePath,
+    byteSize: asset.byteSize,
+    modifiedAt: asset.modifiedAt,
+    rating: asset.rating,
+  };
+}
+
+/**
+ * True when the compact geometry index already covers the reported scope.
+ * A first-page-sized layout is not complete just because it is non-empty.
+ */
+export function compactBrowseLayoutIsComplete(
+  layoutLength: number,
+  total: number,
+): boolean {
+  return total > 0 && layoutLength >= total;
+}
+
+/**
+ * Next page to fetch when the compact layout index is still incomplete
+ * (Serpent-9cfc8c). Tail-jump pagination assumes full scrollbar geometry;
+ * without it, only sequential windows can grow the visible canvas.
+ */
+export function nextUnfilledBrowsePageOffset(
+  filled: ReadonlySet<number>,
+  total: number,
+  pageSize: number,
+): number | null {
+  const step = Math.max(1, Math.trunc(pageSize));
+  const end = Math.max(0, Math.trunc(total));
+  if (end <= 0) return null;
+  for (let offset = 0; offset < end; offset += step) {
+    if (!filled.has(offset)) return offset;
+  }
+  return null;
+}
+
+/**
+ * Canvas source of truth: a stale first-page layout must not hide summaries
+ * that pagination already loaded. Full layout (length >= assets) still wins
+ * so unloaded slots can paint as compact previews.
+ */
+export function resolveBrowseCanvasLayout(
+  layout: readonly BrowseLayoutEntry[],
+  assets: readonly AssetSummary[],
+): BrowseLayoutEntry[] {
+  if (layout.length === 0) {
+    return assets.map(layoutEntryFromLoadedAsset);
+  }
+  if (assets.length <= layout.length) {
+    return layout as BrowseLayoutEntry[];
+  }
+  const seen = new Set(layout.map((entry) => entry.assetId));
+  const extra: BrowseLayoutEntry[] = [];
+  for (const asset of assets) {
+    if (seen.has(asset.assetId)) continue;
+    extra.push(layoutEntryFromLoadedAsset(asset));
+  }
+  return extra.length === 0 ? (layout as BrowseLayoutEntry[]) : [...layout, ...extra];
+}

@@ -20,6 +20,8 @@ import {
   LibraryServiceError,
   type ImportFailurePoint,
 } from '../../src/worker/library-service';
+import { isImportCompletion, isImportConflictPlan, isImportSourceFailurePlan } from '../../src/shared/import-outcome';
+import type { ImportConflictPlan } from '../../src/shared/protocol/responses';
 import { normalizeAbsolutePath as normalizeLibraryAbsolutePath } from '../../src/worker/library-rules';
 import { ONE_PX_RED_PNG } from '../fixtures/fbx/ascii-fbx';
 
@@ -29,6 +31,17 @@ function temporaryRoot(): string {
   const root = mkdtempSync(path.join(tmpdir(), 'serpent-import-plan-test-'));
   temporaryRoots.push(root);
   return root;
+}
+
+function prepareConflict(
+  service: LibraryService,
+  input: Parameters<LibraryService['prepareImport']>[0],
+): ImportConflictPlan {
+  const value = service.prepareImport(input);
+  if (!isImportConflictPlan(value)) {
+    throw new Error('expected import conflict plan');
+  }
+  return value;
 }
 
 function expectServiceCode(operation: () => unknown, code: LibraryServiceError['code']): void {
@@ -94,7 +107,7 @@ describe('pending import plans', () => {
     const service = new LibraryService();
     const library = service.createLibrary({ displayName: 'Batch dedupe', selectedParentPath: root });
 
-    const plan = service.prepareImport({
+    const plan = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [firstSource, secondSource],
@@ -215,7 +228,7 @@ describe('pending import plans', () => {
     const service = new LibraryService();
     const library = service.createLibrary({ displayName: 'Library', selectedParentPath: root });
 
-    const plan = service.prepareImport({
+    const plan = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'folder',
       sourcePaths: [source],
@@ -309,7 +322,7 @@ describe('pending import plans', () => {
     expect('assets' in initial).toBe(true);
     const initialAsset = 'assets' in initial ? initial.assets[0]! : undefined;
 
-    const plan = service.prepareImport({
+    const plan = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [secondSource],
@@ -340,7 +353,7 @@ describe('pending import plans', () => {
     const service = new LibraryService();
     const library = service.createLibrary({ displayName: 'Batch identity', selectedParentPath: root });
 
-    const plan = service.prepareImport({
+    const plan = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [first, second],
@@ -368,7 +381,7 @@ describe('pending import plans', () => {
 
     let thrown: unknown;
     try {
-      service.prepareImport({
+      prepareConflict(service, {
         libraryId: library.libraryId,
         sourceKind: 'files',
         sourcePaths: [source],
@@ -413,7 +426,7 @@ describe('pending import plans', () => {
       },
     });
     const library = service.openLibrary(created.libraryPath);
-    const plan = service.prepareImport({
+    const plan = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [second],
@@ -444,12 +457,12 @@ describe('pending import plans', () => {
 
     // Same destination basename wins as name-conflict even when bytes match
     // (IMPORT-007 / Serpent-12ae). Content-duplicate is only for free names.
-    const sameNameSameContent = service.prepareImport({
+    const sameNameSameContent = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [path.join(firstSource, 'same.png')],
     });
-    const conflict = service.prepareImport({
+    const conflict = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [path.join(secondSource, 'same.png')],
@@ -489,7 +502,7 @@ describe('pending import plans', () => {
     });
     expect('importedCount' in imported).toBe(true);
 
-    const conflict = service.prepareImport({
+    const conflict = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [path.join(secondSource, 'model.fbx')],
@@ -521,7 +534,7 @@ describe('pending import plans', () => {
 
     // Same content under a different name must be flagged as a duplicate —
     // duplicate detection is content-hash based and format-agnostic.
-    const conflict = service.prepareImport({
+    const conflict = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [path.join(sourceDir, 'copy.fbx')],
@@ -562,7 +575,7 @@ describe('pending import plans', () => {
     });
     expect('importedCount' in imported).toBe(true);
 
-    const unique = service.prepareImport({
+    const unique = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [path.join(sourceDir, 'gamma.bin')],
@@ -570,7 +583,7 @@ describe('pending import plans', () => {
     expect(unique.libraryDuplicateCount).toBe(0);
     expect(unique.nameConflictCount).toBe(0);
 
-    const duplicate = service.prepareImport({
+    const duplicate = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [path.join(sourceDir, 'alpha-copy.bin')],
@@ -603,7 +616,7 @@ describe('pending import plans', () => {
     }).openById.get(library.libraryId)!.connection;
     connection.prepare('UPDATE revisions SET content_fingerprint = NULL WHERE revision_id = ?').run(revisionId);
 
-    const conflict = service.prepareImport({
+    const conflict = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [path.join(sourceDir, 'copy.fbx')],
@@ -648,7 +661,7 @@ describe('pending import plans', () => {
     expect(thumb?.artifactId).toBeTruthy();
 
     // Import a different-content file that collides on the same basename.
-    const conflict = service.prepareImport({
+    const conflict = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [path.join(collideDir, 'same.png')],
@@ -689,7 +702,7 @@ describe('pending import plans', () => {
       generatorVersion: 'test',
     });
 
-    const nameConflict = service.prepareImport({
+    const nameConflict = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [path.join(collideDir, 'clip.mp4')],
@@ -704,7 +717,7 @@ describe('pending import plans', () => {
     );
     service.abandonImport(nameConflict.importId);
 
-    const contentDuplicate = service.prepareImport({
+    const contentDuplicate = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [path.join(collideDir, 'copy.mp4')],
@@ -744,7 +757,7 @@ describe('pending import plans', () => {
       targetFolderId: folderA.folderId,
     });
 
-    const plan = service.prepareImport({
+    const plan = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [sourceB],
@@ -785,15 +798,50 @@ describe('pending import plans', () => {
     const library = service.createLibrary({ displayName: 'Library', selectedParentPath: root });
 
     expectServiceCode(
-      () => service.prepareImport({ libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: [source] }),
+      () => prepareConflict(service, { libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: [source] }),
       'INVALID_IMPORT_SOURCE',
     );
     try {
-      service.prepareImport({ libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: [source] });
+      prepareConflict(service, { libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: [source] });
     } catch (error) {
       expect(error).toMatchObject({ reason: 'SYMBOLIC_LINK_NOT_ALLOWED' });
     }
     expect(existsSync(path.join(library.libraryPath, '.serpent', 'operations'))).toBe(false);
+    service.closeAll();
+  });
+
+  it('offers to skip unreadable files when a folder also has valid files (Serpent-7d1ba2)', () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'Source');
+    const outside = path.join(root, 'outside.png');
+    mkdirSync(source);
+    writeFileSync(path.join(source, 'keep.png'), ONE_PX_RED_PNG);
+    writeFileSync(outside, 'outside');
+    symlinkSync(outside, path.join(source, 'linked.png'));
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Skip Mix', selectedParentPath: root });
+
+    const prepared = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'folder',
+      sourcePaths: [source],
+    });
+    expect(isImportSourceFailurePlan(prepared)).toBe(true);
+    expect(prepared).toMatchObject({
+      failedCount: 1,
+      remainingCount: 1,
+      examples: [{ displayName: 'linked.png', reason: 'SYMBOLIC_LINK_NOT_ALLOWED' }],
+    });
+    if (!isImportSourceFailurePlan(prepared)) return;
+
+    const completion = service.continueAfterSourceFailure({
+      importId: prepared.importId,
+      applyToRest: true,
+    });
+    expect(isImportCompletion(completion)).toBe(true);
+    expect(completion).toMatchObject({ importedCount: 1, skippedCount: 0 });
+    expect(existsSync(path.join(library.libraryPath, 'Assets', 'Source', 'keep.png'))).toBe(true);
+    expect(existsSync(path.join(library.libraryPath, 'Assets', 'Source', 'linked.png'))).toBe(false);
     service.closeAll();
   });
 
@@ -813,7 +861,7 @@ describe('pending import plans', () => {
 
     let thrown: unknown;
     try {
-      service.prepareImport({
+      prepareConflict(service, {
         libraryId: library.libraryId,
         sourceKind: 'files',
         sourcePaths: [source],
@@ -843,7 +891,7 @@ describe('pending import plans', () => {
 
     let thrown: unknown;
     try {
-      service.prepareImport({
+      prepareConflict(service, {
         libraryId: library.libraryId,
         sourceKind: 'files',
         sourcePaths: [source],
@@ -865,7 +913,7 @@ describe('pending import plans', () => {
     writeFileSync(source, 'snapshot');
     const service = new LibraryService();
     const library = service.createLibrary({ displayName: 'Snapshot', selectedParentPath: root });
-    const plan = service.prepareImport({
+    const plan = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [source],
@@ -892,7 +940,7 @@ describe('pending import plans', () => {
     mkdirSync(path.join(source, 'Nested', 'Leaf'), { recursive: true });
     const service = new LibraryService();
     const library = service.createLibrary({ displayName: 'Folders', selectedParentPath: root });
-    const plan = service.prepareImport({
+    const plan = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'folder',
       sourcePaths: [source],
@@ -928,7 +976,7 @@ describe('pending import plans', () => {
     writeFileSync(source, 'source');
     const service = new LibraryService();
     const library = service.createLibrary({ displayName: 'Library', selectedParentPath: root });
-    const first = service.prepareImport({
+    const first = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [source],
@@ -939,7 +987,7 @@ describe('pending import plans', () => {
     expectServiceCode(() => service.abandonImport(first.importId), 'IMPORT_NOT_FOUND');
     expectServiceCode(() => service.abandonImport('forged-token'), 'IMPORT_NOT_FOUND');
 
-    const second = service.prepareImport({
+    const second = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [source],
@@ -948,7 +996,7 @@ describe('pending import plans', () => {
     expectServiceCode(() => service.abandonImport(second.importId), 'IMPORT_NOT_FOUND');
 
     const reopened = service.openLibrary(library.libraryPath);
-    const third = service.prepareImport({
+    const third = prepareConflict(service, {
       libraryId: reopened.libraryId,
       sourceKind: 'files',
       sourcePaths: [source],
@@ -963,7 +1011,7 @@ describe('pending import plans', () => {
     writeFileSync(source, 'source');
     const service = new LibraryService();
     const library = service.createLibrary({ displayName: 'Library', selectedParentPath: root });
-    const plan = service.prepareImport({
+    const plan = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [source],
@@ -1014,7 +1062,7 @@ describe('pending import plans', () => {
     writeFileSync(duplicateSource, 'same-content');
     const service = new LibraryService();
     const library = service.createLibrary({ displayName: 'Duplicates', selectedParentPath: root });
-    const initial = service.prepareImport({
+    const initial = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [originalSource],
@@ -1025,7 +1073,7 @@ describe('pending import plans', () => {
       nameConflict: 'keep-both',
     });
 
-    const skipPlan = service.prepareImport({
+    const skipPlan = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [duplicateSource],
@@ -1041,7 +1089,7 @@ describe('pending import plans', () => {
       'same-content',
     );
 
-    const copyPlan = service.prepareImport({
+    const copyPlan = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [duplicateSource],
@@ -1070,7 +1118,7 @@ describe('pending import plans', () => {
     writeFileSync(duplicateSource, 'same-content');
     const service = new LibraryService();
     const library = service.createLibrary({ displayName: 'MergeDuplicates', selectedParentPath: root });
-    const initial = service.prepareImport({
+    const initial = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [originalSource],
@@ -1081,7 +1129,7 @@ describe('pending import plans', () => {
       nameConflict: 'keep-both',
     }).assets[0]!;
 
-    const mergePlan = service.prepareImport({
+    const mergePlan = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [duplicateSource],
@@ -1113,18 +1161,18 @@ describe('pending import plans', () => {
     writeFileSync(incomingSource, 'new content');
     const service = new LibraryService();
     const library = service.createLibrary({ displayName: 'Conflicts', selectedParentPath: root });
-    const initial = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [originalSource] });
+    const initial = prepareConflict(service, { libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [originalSource] });
     const initialAsset = service.resolveImport({ importId: initial.importId, suspectedDuplicate: 'skip', nameConflict: 'keep-both' }).assets[0]!;
 
-    const skipPlan = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [incomingSource] });
+    const skipPlan = prepareConflict(service, { libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [incomingSource] });
     expect(skipPlan.nameConflictCount).toBe(1);
     expect(service.resolveImport({ importId: skipPlan.importId, suspectedDuplicate: 'merge', nameConflict: 'skip' }).skippedCount).toBe(1);
 
-    const keepPlan = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [incomingSource] });
+    const keepPlan = prepareConflict(service, { libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [incomingSource] });
     const kept = service.resolveImport({ importId: keepPlan.importId, suspectedDuplicate: 'merge', nameConflict: 'keep-both' });
     expect(kept.assets[0]?.relativeFilePath).toBe('same (2).png');
 
-    const replacePlan = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [incomingSource] });
+    const replacePlan = prepareConflict(service, { libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [incomingSource] });
     const replaced = service.resolveImport({ importId: replacePlan.importId, suspectedDuplicate: 'create-copy', nameConflict: 'replace' });
     expect(replaced).toMatchObject({ importedCount: 0, skippedCount: 0, replacedCount: 1 });
     expect(replaced.assets[0]?.assetId).toBe(initialAsset.assetId);
@@ -1139,7 +1187,7 @@ describe('pending import plans', () => {
     writeFileSync(source, 'source');
     const service = new LibraryService();
     const library = service.createLibrary({ displayName: 'Decisions', selectedParentPath: root });
-    const plan = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
+    const plan = prepareConflict(service, { libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
 
     expectServiceCode(
       () => service.resolveImport({ importId: plan.importId, suspectedDuplicate: 'invalid' as never, nameConflict: 'keep-both' }),
@@ -1175,7 +1223,7 @@ describe('pending import plans', () => {
 
     const service = new LibraryService({ failAt });
     const library = service.openLibrary(created.libraryPath);
-    const plan = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [incomingSource] });
+    const plan = prepareConflict(service, { libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [incomingSource] });
     expectServiceCode(
       () => service.resolveImport({ importId: plan.importId, suspectedDuplicate: 'merge', nameConflict: 'replace' }),
       'IMPORT_APPLY_FAILED',
@@ -1197,7 +1245,7 @@ describe('pending import plans', () => {
     writeFileSync(source, 'committed bytes');
     const service = new LibraryService({ failAt: 'committed-cleanup' });
     const library = service.createLibrary({ displayName: 'Committed Cleanup', selectedParentPath: root });
-    const plan = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
+    const plan = prepareConflict(service, { libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
 
     const completion = service.resolveImport({
       importId: plan.importId,
@@ -1224,7 +1272,7 @@ describe('pending import plans', () => {
     writeFileSync(source, 'listed bytes');
     const service = new LibraryService({ failAt: 'committed-result-list' });
     const library = service.createLibrary({ displayName: 'Committed Result', selectedParentPath: root });
-    const plan = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
+    const plan = prepareConflict(service, { libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
 
     expect(service.resolveImport({
       importId: plan.importId,
@@ -1254,7 +1302,7 @@ describe('pending import plans', () => {
     writeFileSync(second, 'second');
     const service = new LibraryService({ failAt: 'after-first-place' });
     const library = service.createLibrary({ displayName: 'Partial Batch', selectedParentPath: root });
-    const plan = service.prepareImport({
+    const plan = prepareConflict(service, {
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [first, second],
@@ -1339,7 +1387,7 @@ describe('managed asset refresh', () => {
     writeFileSync(source, 'first');
     const service = new LibraryService();
     const library = service.createLibrary({ displayName: 'Refresh', selectedParentPath: root });
-    const plan = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
+    const plan = prepareConflict(service, { libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
     const initial = service.resolveImport({ importId: plan.importId, suspectedDuplicate: 'skip', nameConflict: 'keep-both' }).assets[0]!;
     const managedPath = path.join(library.libraryPath, 'Assets', 'refresh.png');
 
@@ -1403,7 +1451,7 @@ describe('managed asset refresh', () => {
     writeFileSync(source, 'portable bytes');
     const service = new LibraryService();
     const library = service.createLibrary({ displayName: 'Portable', selectedParentPath: root });
-    const plan = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
+    const plan = prepareConflict(service, { libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
     service.resolveImport({ importId: plan.importId, suspectedDuplicate: 'skip', nameConflict: 'keep-both' });
     const managedPath = path.join(library.libraryPath, 'Assets', 'portable.png');
     const beforeRevision = service.listAssets({ libraryId: library.libraryId, recursive: true })[0]!.currentRevisionId;
@@ -1443,7 +1491,7 @@ describe('managed asset refresh', () => {
       },
     });
     const library = service.createLibrary({ displayName: `Refresh ${code}`, selectedParentPath: root });
-    const plan = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
+    const plan = prepareConflict(service, { libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
     const initial = service.resolveImport({ importId: plan.importId, suspectedDuplicate: 'skip', nameConflict: 'keep-both' }).assets[0]!;
     rejectStats = true;
 
@@ -1475,7 +1523,7 @@ describe('managed asset refresh', () => {
       },
     });
     const library = service.createLibrary({ displayName: 'Refresh ENOTDIR', selectedParentPath: root });
-    const plan = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
+    const plan = prepareConflict(service, { libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
     service.resolveImport({ importId: plan.importId, suspectedDuplicate: 'skip', nameConflict: 'keep-both' });
     missing = true;
 
@@ -1495,7 +1543,7 @@ describe('explicit path boundaries (Serpent-8b5b.3)', () => {
     const library = service.createLibrary({ displayName: 'Boundary', selectedParentPath: root });
 
     expectServiceCode(
-      () => service.prepareImport({
+      () => prepareConflict(service, {
         libraryId: library.libraryId,
         sourceKind: 'folder',
         sourcePaths: [path.parse(root).root],
@@ -1503,7 +1551,7 @@ describe('explicit path boundaries (Serpent-8b5b.3)', () => {
       'INVALID_IMPORT_SOURCE',
     );
     try {
-      service.prepareImport({
+      prepareConflict(service, {
         libraryId: library.libraryId,
         sourceKind: 'folder',
         sourcePaths: [path.parse(root).root],
@@ -1520,11 +1568,11 @@ describe('explicit path boundaries (Serpent-8b5b.3)', () => {
     const library = service.createLibrary({ displayName: 'Boundary2', selectedParentPath: root });
 
     expectServiceCode(
-      () => service.prepareImport({ libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: [''] }),
+      () => prepareConflict(service, { libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: [''] }),
       'INVALID_IMPORT_SOURCE',
     );
     expectServiceCode(
-      () => service.prepareImport({ libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: ['relative/path'] }),
+      () => prepareConflict(service, { libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: ['relative/path'] }),
       'INVALID_IMPORT_SOURCE',
     );
     service.closeAll();
@@ -1538,11 +1586,11 @@ describe('explicit path boundaries (Serpent-8b5b.3)', () => {
     const library = service.createLibrary({ displayName: 'WinBoundary', selectedParentPath: root });
 
     expectServiceCode(
-      () => service.prepareImport({ libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: ['C:\\'] }),
+      () => prepareConflict(service, { libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: ['C:\\'] }),
       'INVALID_IMPORT_SOURCE',
     );
     expectServiceCode(
-      () => service.prepareImport({ libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: ['\\\\server\\share'] }),
+      () => prepareConflict(service, { libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: ['\\\\server\\share'] }),
       'INVALID_IMPORT_SOURCE',
     );
     service.closeAll();
@@ -1570,7 +1618,7 @@ describe('Windows path hardening (Serpent-8b5b.7 review)', () => {
     const service = new LibraryService();
     const library = service.createLibrary({ displayName: 'Boundary3', selectedParentPath: root });
     expectServiceCode(
-      () => service.prepareImport({ libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: [source] }),
+      () => prepareConflict(service, { libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: [source] }),
       'INVALID_IMPORT_SOURCE',
     );
     service.closeAll();

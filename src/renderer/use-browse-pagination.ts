@@ -31,8 +31,10 @@ import {
 } from "./asset-browse-load-more";
 import {
   browsePageOffset,
+  compactBrowseLayoutIsComplete,
   contiguousBrowsePageRuns,
   mergeLoadedBrowsePage,
+  nextUnfilledBrowsePageOffset,
 } from "./browse-window-slots";
 import {
   useVirtualBrowseSession,
@@ -414,8 +416,11 @@ export function useBrowsePagination(
         firstPage,
       });
       layoutRef.current = getLoadedBrowseLayout();
-      layoutHydrationCompleteRef.current =
-        virtualized || firstPage.items.length >= firstPage.total;
+      // Compact scopes paginate from the first window. Blocking the sentinel
+      // until layout-only hydration used to freeze folders >100 on page 0
+      // when that fetch lagged or failed (Serpent-9cfc8c). Virtual 2k+
+      // sessions already have placeholder geometry, so a tail probe is safe.
+      layoutHydrationCompleteRef.current = true;
       setLayoutHydrationVersion((version) => version + 1);
       const filled = new Set<number>();
       filled.add(browsePageOffset(firstPage.offset, BROWSE_PAGE_SIZE));
@@ -443,10 +448,9 @@ export function useBrowsePagination(
       } else if (api) {
         void fetchBrowseLayout({ api, definition }).then((layout) => {
           if (generation !== generationRef.current) return;
-          // Whether the full layout succeeded or failed, the sentinel may now
-          // fall back to its normal tail-page behavior. On success the full
-          // geometry prevents a false early intersection; on failure this
-          // preserves the existing pagination fallback.
+          // Whether the full layout succeeded or failed, compact scopes already
+          // paginate from the first window (Serpent-9cfc8c). On success the
+          // complete geometry replaces that prefix so the scrollbar matches COUNT.
           layoutHydrationCompleteRef.current = true;
           setLayoutHydrationVersion((version) => version + 1);
           // A superseded/failed layout response must never erase the compact
@@ -689,12 +693,25 @@ export function useBrowsePagination(
   const appendNextPage = useCallback(async () => {
     const total = totalRef.current;
     if (total <= 0) return;
-    // The sentinel sits after the last slot. Fill the tail window — never the
-    // first unfilled offset — so a jump to the end is not queued behind
-    // pages 0, 100, 200…
-    const last = Math.max(0, total - 1);
-    await ensureVisibleRange(last, last);
-  }, [ensureVisibleRange]);
+    // Full geometry (virtual placeholders or a complete compact index) can
+    // jump to the tail. An incomplete first-page layout must append the next
+    // window in order or cards 101+ never appear (Serpent-9cfc8c).
+    if (
+      isVirtualBrowseSession()
+      || compactBrowseLayoutIsComplete(layoutRef.current.length, total)
+    ) {
+      const last = Math.max(0, total - 1);
+      await ensureVisibleRange(last, last);
+      return;
+    }
+    const nextOffset = nextUnfilledBrowsePageOffset(
+      filledOffsetsRef.current,
+      total,
+      BROWSE_PAGE_SIZE,
+    );
+    if (nextOffset === null) return;
+    await fetchPageAt(nextOffset, generationRef.current);
+  }, [ensureVisibleRange, fetchPageAt, isVirtualBrowseSession]);
 
   const fetchScopeAssetIds = useCallback(
     (): Promise<string[] | null> =>

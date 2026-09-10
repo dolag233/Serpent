@@ -34,6 +34,10 @@ export type DialogEscapeSnapshot = {
   aiConnectionFailureOpen: boolean;
   /** When set, Escape abandons this pending import conflict plan. */
   conflictsImportId: string | null;
+  /** When set, Escape abandons this pending unreadable-source skip plan. */
+  sourceFailureImportId?: string | null;
+  /** Confirm is in-flight; Escape must not abandon the token (Serpent-85e60c). */
+  importDecisionSubmitting?: boolean;
   /** Full-window import overlay: Escape cancels when the Worker importId exists. */
   blockingImportOpen?: boolean;
   blockingImportCancelable?: boolean;
@@ -68,6 +72,7 @@ export type DialogEscapeAction =
   | { kind: "dismiss-fatal-alert" }
   | { kind: "abort-ai-connection-failure" }
   | { kind: "abandon-import"; importId: string }
+  | { kind: "hold-import-decision" }
   | { kind: "cancel-blocking-import" }
   | { kind: "hold-blocking-import" }
   | { kind: "hold-blocking-delete" }
@@ -90,6 +95,19 @@ export function resolveDialogEscapeAction(
   if (snapshot.aiConnectionFailureOpen) {
     return { kind: "abort-ai-connection-failure" };
   }
+  // Import decision dialogs must beat the progress overlay (Serpent-224ac8).
+  // Sequence import is also above the regular sequence settings dialog.
+  if (snapshot.imageSequenceImportOpen) {
+    return { kind: "close-image-sequence-import" };
+  }
+  const pendingImportId =
+    snapshot.conflictsImportId ?? snapshot.sourceFailureImportId ?? null;
+  if (pendingImportId) {
+    if (snapshot.importDecisionSubmitting) {
+      return { kind: "hold-import-decision" };
+    }
+    return { kind: "abandon-import", importId: pendingImportId };
+  }
   if (snapshot.blockingImportOpen) {
     return snapshot.blockingImportCancelable
       ? { kind: "cancel-blocking-import" }
@@ -101,11 +119,6 @@ export function resolveDialogEscapeAction(
       : { kind: "hold-blocking-delete" };
   }
   if (snapshot.assetRenameOpen) return { kind: "cancel-asset-rename" };
-  // Sequence import is rendered above the regular sequence settings dialog;
-  // keep its pending offer and focus trap together when Escape dismisses it.
-  if (snapshot.imageSequenceImportOpen) {
-    return { kind: "close-image-sequence-import" };
-  }
   if (snapshot.imageSequenceDialogOpen) {
     return { kind: "close-image-sequence-dialog" };
   }
@@ -133,9 +146,6 @@ export function resolveDialogEscapeAction(
   if (snapshot.dialogOpen) return { kind: "close-dialog" };
   if (snapshot.pluginTrustPromptOpen) {
     return { kind: "dismiss-plugin-trust-prompt" };
-  }
-  if (snapshot.conflictsImportId) {
-    return { kind: "abandon-import", importId: snapshot.conflictsImportId };
   }
   return { kind: "none" };
 }

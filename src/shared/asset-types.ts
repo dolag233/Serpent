@@ -412,6 +412,8 @@ const categoricalFilterClauseSchema = z.strictObject({
   ]),
   values: z.array(boundedSearchValue).max(32),
   exclude: z.boolean(),
+  /** Include AI-derived values alongside human-authored values (default on). */
+  includeAi: z.boolean().optional(),
 });
 
 const numericRangeSchema = z.strictObject({

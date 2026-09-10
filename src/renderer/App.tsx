@@ -74,7 +74,10 @@ import {
 import { ImportProgressOverlay } from "./ImportProgressOverlay";
 import { DeleteProgressOverlay } from "./DeleteProgressOverlay";
 import { BlockingProgressOverlay } from "./BlockingProgressOverlay";
-import { isBlockingImportOverlayVisible } from "./import-progress-copy";
+import {
+  isBlockingImportOverlayVisible,
+  shouldApplyImportProgressEvent,
+} from "./import-progress-copy";
 import { isActiveDeleteProgress, isDeleteProgressCancelable } from "./delete-progress-copy";
 import { activeLibrarySwitchActivity } from "./library-switch-safety";
 import { createLibraryTransitionLock } from "./library-transition-lock";
@@ -163,11 +166,13 @@ import { MoveDialog } from "./MoveDialog";
 import { RestoreDialog } from "./RestoreDialog";
 import { ImageSequenceDialog } from "./ImageSequenceDialog";
 import { ImageSequenceImportDialog } from "./ImageSequenceImportDialog";
-import {
-  isImageSequenceImportOffer,
-  isImportConflictPlan,
-} from "../shared/import-outcome";
 import { DEFAULT_IMAGE_SEQUENCE_FPS } from "../shared/image-sequence";
+import { applyImportPrepareResult } from "./apply-import-prepare-result";
+import { ImportSourceFailureDialog } from "./ImportSourceFailureDialog";
+import {
+  canBeginImportDecisionSubmit,
+  shouldSuppressImportContinueError,
+} from "./import-conflict-submit";
 import { NameConflictDialog } from "./NameConflictDialog";
 import { ContentDuplicateDialog } from "./ContentDuplicateDialog";
 import {
@@ -401,6 +406,7 @@ import type { PluginContributionContext } from "../plugins/plugin-context";
 import type { AppLogEntry, ReadAppLogResult } from "../shared/app-log";
 import type {
   ImportConflictPlan,
+  ImportSourceFailurePlan,
   ImageSequenceImportOffer,
   RendererLibrarySummary,
   ExportProgressEvent,
@@ -565,9 +571,11 @@ type QueryFilterSnapshot = {
   excludeFormatFilter: boolean;
   tagFilter: string;
   excludeTagFilter: boolean;
+  includeAiTagFilter: boolean;
   tagFilterMatch: "any" | "all";
   ratingFilter: string;
   excludeRatingFilter: boolean;
+  includeAiRatingFilter: boolean;
   favoriteFilter: "any" | "yes" | "no";
   sourceUrlFilter: "any" | "yes" | "no";
   availabilityFilter: "any" | "available" | "missing";
@@ -840,6 +848,12 @@ function AppInner() {
   const hadLibraryRef = useRef(false);
   const [dialogValue, setDialogValue] = useState(() => t("shell.myLibrary"));
   const [conflicts, setConflicts] = useState<ImportConflictPlan | null>(null);
+  const [importSourceFailurePlan, setImportSourceFailurePlan] =
+    useState<ImportSourceFailurePlan | null>(null);
+  const [importDecisionSubmitting, setImportDecisionSubmitting] =
+    useState(false);
+  const importDecisionSubmittingRef = useRef(false);
+  const completedImportIdRef = useRef<string | null>(null);
   const [imageSequenceImportOffer, setImageSequenceImportOffer] =
     useState<ImageSequenceImportOffer | null>(null);
   const [imageSequenceImportIndex, setImageSequenceImportIndex] = useState(0);
@@ -876,6 +890,7 @@ function AppInner() {
   const presentImportConflicts = useCallback((plan: ImportConflictPlan) => {
     const prefs = loadImportConflictPreferences();
     const presentation = resolveImportConflictPresentation(plan, prefs);
+    setImportSourceFailurePlan(null);
     setConflicts(plan);
     setNameDecision(presentation.nameDecision);
     setDuplicateDecision(presentation.duplicateDecision);
@@ -893,6 +908,13 @@ function AppInner() {
   const clearImportConflictsUi = useCallback(() => {
     setConflicts(null);
     setConflictPhase(null);
+  }, []);
+  const presentImportSourceFailure = useCallback((plan: ImportSourceFailurePlan) => {
+    clearImportConflictsUi();
+    setImportSourceFailurePlan(plan);
+  }, [clearImportConflictsUi]);
+  const clearImportSourceFailureUi = useCallback(() => {
+    setImportSourceFailurePlan(null);
   }, []);
   const [leftOpen, setLeftOpen] = useState(() => window.innerWidth > 800);
   const [rightOpen, setRightOpen] = useState(() => window.innerWidth > 1020);
@@ -1033,12 +1055,14 @@ function AppInner() {
   const [excludeColorFilter, setExcludeColorFilter] = useState(false);
   const [tagFilter, setTagFilter] = useState("");
   const [excludeTagFilter, setExcludeTagFilter] = useState(false);
+  const [includeAiTagFilter, setIncludeAiTagFilter] = useState(true);
   // Serpent-eaxs: tag-management AND search ("包含 N 个标签") splits the tag
   // names into separate clauses (clauses are ANDed; values within one clause
   // are ORed). Any explicit filter-bar edit resets this to "any".
   const [tagFilterMatch, setTagFilterMatch] = useState<"any" | "all">("any");
   const [ratingFilter, setRatingFilter] = useState("");
   const [excludeRatingFilter, setExcludeRatingFilter] = useState(false);
+  const [includeAiRatingFilter, setIncludeAiRatingFilter] = useState(true);
   const [favoriteFilter, setFavoriteFilter] = useState<"any" | "yes" | "no">(
     "any",
   );
@@ -1425,6 +1449,7 @@ function AppInner() {
     useState<ImportProgressEvent | null>(null);
   const importProgressRef = useRef(importProgress);
   importProgressRef.current = importProgress;
+  const importAwaitingUserDecisionRef = useRef(false);
   const [deleteProgress, setDeleteProgress] =
     useState<DeleteProgressEvent | null>(null);
   const [libraryTransferKind, setLibraryTransferKind] = useState<LibraryTransferKind>("import");
@@ -2457,8 +2482,10 @@ function AppInner() {
       excludeFormatFilter,
       tagFilter,
       excludeTagFilter,
+      includeAiTagFilter,
       ratingFilter,
       excludeRatingFilter,
+      includeAiRatingFilter,
       favoriteFilter,
       sourceUrlFilter,
       availabilityFilter,
@@ -2490,8 +2517,10 @@ function AppInner() {
     excludeFormatFilter,
     tagFilter,
     excludeTagFilter,
+    includeAiTagFilter,
     ratingFilter,
     excludeRatingFilter,
+    includeAiRatingFilter,
     favoriteFilter,
     sourceUrlFilter,
     availabilityFilter,
@@ -4604,8 +4633,10 @@ function AppInner() {
     setExcludeColorFilter(false);
     setTagFilter("");
     setExcludeTagFilter(false);
+    setIncludeAiTagFilter(true);
     setRatingFilter("");
     setExcludeRatingFilter(false);
+    setIncludeAiRatingFilter(true);
     setFavoriteFilter("any");
     setSourceUrlFilter("any");
     setAvailabilityFilter("any");
@@ -4626,8 +4657,10 @@ function AppInner() {
     setExcludeColorFilter(false);
     setTagFilter("");
     setExcludeTagFilter(false);
+    setIncludeAiTagFilter(true);
     setRatingFilter("");
     setExcludeRatingFilter(false);
+    setIncludeAiRatingFilter(true);
     setFavoriteFilter("any");
     setSourceUrlFilter("any");
     setAvailabilityFilter("any");
@@ -5754,9 +5787,11 @@ function AppInner() {
       excludeFormatFilter,
       tagFilter,
       excludeTagFilter,
+      includeAiTagFilter,
       tagFilterMatch,
       ratingFilter,
       excludeRatingFilter,
+      includeAiRatingFilter,
       favoriteFilter,
       sourceUrlFilter,
       availabilityFilter,
@@ -5813,6 +5848,7 @@ function AppInner() {
             field: "tag",
             values: [tag],
             exclude: filtersState.excludeTagFilter,
+            includeAi: filtersState.includeAiTagFilter,
           });
         }
       } else {
@@ -5820,6 +5856,7 @@ function AppInner() {
           field: "tag",
           values: selectedTags,
           exclude: filtersState.excludeTagFilter,
+          includeAi: filtersState.includeAiTagFilter,
         });
       }
     }
@@ -5828,6 +5865,7 @@ function AppInner() {
         field: "rating",
         values: ratings,
         exclude: filtersState.excludeRatingFilter,
+        includeAi: filtersState.includeAiRatingFilter,
       });
     if (filtersState.favoriteFilter !== "any")
       filters.push({
@@ -6351,6 +6389,9 @@ function AppInner() {
       onPasteConflict: (plan) => {
         presentImportConflicts(plan);
       },
+      onPasteSourceFailure: (plan) => {
+        presentImportSourceFailure(plan);
+      },
       onPasteSequenceOffer: (offer) => {
         setImageSequenceImportOffer(offer);
       },
@@ -6444,6 +6485,10 @@ function AppInner() {
     setConflicts: (plan) => {
       if (plan === null) clearImportConflictsUi();
       else presentImportConflicts(plan);
+    },
+    setSourceFailurePlan: (plan) => {
+      if (plan === null) clearImportSourceFailureUi();
+      else presentImportSourceFailure(plan);
     },
     setImageSequenceImportOffer,
     onFoldersDroppedOnFolder: handleFoldersDroppedOnFolder,
@@ -6756,8 +6801,10 @@ function AppInner() {
     excludeFormatFilter,
     tagFilter,
     excludeTagFilter,
+    includeAiTagFilter,
     ratingFilter,
     excludeRatingFilter,
+    includeAiRatingFilter,
     favoriteFilter,
     sourceUrlFilter,
     availabilityFilter,
@@ -6977,16 +7024,14 @@ function AppInner() {
         }
         throw new LibraryOperationError(result.error);
       }
-      if (isImportConflictPlan(result.value)) {
-        presentImportConflicts(result.value);
-        return;
-      }
-      if (isImageSequenceImportOffer(result.value)) {
-        setImageSequenceImportOffer(result.value);
-        return;
-      }
-      setNotice(importSummaryMessage(result.value, locale));
-      await revealAfterImport(result.value);
+      const completion = applyImportPrepareResult(result.value, {
+        onConflicts: presentImportConflicts,
+        onSourceFailure: presentImportSourceFailure,
+        onSequenceOffer: setImageSequenceImportOffer,
+      });
+      if (!completion) return;
+      setNotice(importSummaryMessage(completion, locale));
+      await revealAfterImport(completion);
       playTaskCompletionSound(startedAt);
     } catch (caught) {
       playTaskCompletionSound(startedAt);
@@ -7085,13 +7130,22 @@ function AppInner() {
         applyToRest: input.applyToRest,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      if (isImportConflictPlan(result.value)) {
-        setImageSequenceImportOffer(null);
-        presentImportConflicts(result.value);
-        return;
-      }
-      setNotice(importSummaryMessage(result.value, locale));
-      await revealAfterImport(result.value);
+      const completion = applyImportPrepareResult(result.value, {
+        onConflicts: (plan) => {
+          setImageSequenceImportOffer(null);
+          setImportProgress(null);
+          presentImportConflicts(plan);
+        },
+        onSourceFailure: (plan) => {
+          setImageSequenceImportOffer(null);
+          setImportProgress(null);
+          presentImportSourceFailure(plan);
+        },
+        onSequenceOffer: setImageSequenceImportOffer,
+      });
+      if (!completion) return;
+      setNotice(importSummaryMessage(completion, locale));
+      await revealAfterImport(completion);
       const nextSequenceIndex = input.sequenceIndex + 1;
       if (
         !input.applyToRest &&
@@ -7119,6 +7173,9 @@ function AppInner() {
     duplicate: RememberedDuplicateDecision,
   ) {
     if (!api || !library) return;
+    if (!canBeginImportDecisionSubmit(importDecisionSubmittingRef.current)) return;
+    importDecisionSubmittingRef.current = true;
+    setImportDecisionSubmitting(true);
     const startedAt = Date.now();
     setUiState("importing");
     try {
@@ -7128,21 +7185,107 @@ function AppInner() {
         nameConflict: name,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      completedImportIdRef.current = plan.importId;
       clearImportConflictsUi();
       setNotice(importSummaryMessage(result.value, locale));
       await revealAfterImport(result.value);
       playTaskCompletionSound(startedAt);
     } catch (caught) {
       playTaskCompletionSound(startedAt);
+      const code =
+        caught instanceof LibraryOperationError ? caught.code : "";
+      if (
+        shouldSuppressImportContinueError({
+          code,
+          importId: plan.importId,
+          completedImportId: completedImportIdRef.current,
+          isInFlightRequest: true,
+        })
+      ) {
+        return;
+      }
       showBlockingError(
         t("dialog.blockingError.importContinueFailed"),
         toMessage(caught, t("toast.continueImportFailed"), locale),
       );
     } finally {
+      importDecisionSubmittingRef.current = false;
+      setImportDecisionSubmitting(false);
       setUiState("ready");
     }
   }
   resolveImportConflictsRef.current = resolveImportConflictsWith;
+
+  async function skipImportSourceFailureWith(input: {
+    applyToRest: boolean;
+  }) {
+    if (!api || !library || !importSourceFailurePlan) return;
+    if (!canBeginImportDecisionSubmit(importDecisionSubmittingRef.current)) return;
+    const plan = importSourceFailurePlan;
+    importDecisionSubmittingRef.current = true;
+    setImportDecisionSubmitting(true);
+    const startedAt = Date.now();
+    setUiState("importing");
+    try {
+      const result = await api.skipImportSourceFailure({
+        importId: plan.importId,
+        applyToRest: input.applyToRest,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      const completion = applyImportPrepareResult(result.value, {
+        onConflicts: (next) => {
+          clearImportSourceFailureUi();
+          presentImportConflicts(next);
+        },
+        onSourceFailure: presentImportSourceFailure,
+        onSequenceOffer: (offer) => {
+          clearImportSourceFailureUi();
+          setImageSequenceImportOffer(offer);
+        },
+      });
+      if (!completion) return;
+      completedImportIdRef.current = plan.importId;
+      clearImportSourceFailureUi();
+      setNotice(importSummaryMessage(completion, locale));
+      await revealAfterImport(completion);
+      playTaskCompletionSound(startedAt);
+    } catch (caught) {
+      playTaskCompletionSound(startedAt);
+      const code =
+        caught instanceof LibraryOperationError ? caught.code : "";
+      if (
+        shouldSuppressImportContinueError({
+          code,
+          importId: plan.importId,
+          completedImportId: completedImportIdRef.current,
+          isInFlightRequest: true,
+        })
+      ) {
+        return;
+      }
+      showBlockingError(
+        t("dialog.blockingError.importContinueFailed"),
+        toMessage(caught, t("toast.continueImportFailed"), locale),
+      );
+    } finally {
+      importDecisionSubmittingRef.current = false;
+      setImportDecisionSubmitting(false);
+      setUiState("ready");
+    }
+  }
+
+  async function abandonSourceFailure() {
+    if (!api || !importSourceFailurePlan) return;
+    const plan = importSourceFailurePlan;
+    clearImportSourceFailureUi();
+    setImportProgress(null);
+    try {
+      const result = await api.abandonImport({ importId: plan.importId });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.cancelPendingImportFailed"), locale));
+    }
+  }
 
   function confirmNameConflictDialog() {
     if (!conflicts) return;
@@ -7178,6 +7321,7 @@ function AppInner() {
     if (!api || !conflicts) return;
     const plan = conflicts;
     clearImportConflictsUi();
+    setImportProgress(null);
     try {
       const result = await api.abandonImport({ importId: plan.importId });
       if (!result.ok) throw new LibraryOperationError(result.error);
@@ -8352,6 +8496,17 @@ function AppInner() {
 
   async function cancelImport() {
     if (!api) return;
+    if (conflicts) {
+      await abandonConflicts();
+      setImportProgress(null);
+      return;
+    }
+    if (imageSequenceImportOffer) {
+      setImageSequenceImportOffer(null);
+      setImageSequenceImportError(null);
+      setImportProgress(null);
+      return;
+    }
     if (!importProgress?.importId) {
       setImportProgress(null);
       setLibraryTransferKind("import");
@@ -8764,6 +8919,14 @@ function AppInner() {
           if (startedAt !== null) playTaskCompletionSound(startedAt);
         }
       } else if (event.type === "import.progress") {
+        if (
+          !shouldApplyImportProgressEvent(
+            event,
+            importAwaitingUserDecisionRef.current,
+          )
+        ) {
+          return;
+        }
         setImportProgress(event);
         if (["complete", "cancelled", "failed"].includes(event.phase)) {
           setImportProgress(null);
@@ -8799,9 +8962,16 @@ function AppInner() {
     });
   }, [api, setNotice, t]);
 
+  const importAwaitingUserDecision = Boolean(
+    (conflicts && conflictPhase) ||
+      imageSequenceImportOffer ||
+      importSourceFailurePlan,
+  );
+  importAwaitingUserDecisionRef.current = importAwaitingUserDecision;
   const blockingImportOverlayVisible = isBlockingImportOverlayVisible(
     uiState,
     importProgress,
+    importAwaitingUserDecision,
   );
   const blockingDeleteOverlayVisible =
     isActiveDeleteProgress(deleteProgress) && deleteProgress.totalFiles >= 2;
@@ -8835,6 +9005,8 @@ function AppInner() {
       fatalAlertOpen: Boolean(fatalAlertMessage),
       aiConnectionFailureOpen: aiConnectionFailureGate.open,
       conflictsImportId: conflictPhase ? (conflicts?.importId ?? null) : null,
+      sourceFailureImportId: importSourceFailurePlan?.importId ?? null,
+      importDecisionSubmitting,
       blockingImportOpen: blockingImportOverlayVisible,
       blockingImportCancelable,
       blockingDeleteOpen: blockingDeleteOverlayVisible,
@@ -8866,6 +9038,8 @@ function AppInner() {
     aiConnectionFailureGate.open,
     conflicts?.importId,
     conflictPhase,
+    importSourceFailurePlan?.importId,
+    importDecisionSubmitting,
     blockingImportOverlayVisible,
     blockingImportCancelable,
     blockingDeleteOverlayVisible,
@@ -8879,6 +9053,7 @@ function AppInner() {
     cancelImageSequenceImport: () => {
       setImageSequenceImportOffer(null);
       setImageSequenceImportError(null);
+      setImportProgress(null);
     },
     cancelImageSequenceDialog: () => setImageSequenceDialog(null),
     cancelBatchRelink,
@@ -8910,8 +9085,16 @@ function AppInner() {
     },
     setShowCollectionInput,
     setConflicts: (value) => {
-      if (value === null) clearImportConflictsUi();
-      else presentImportConflicts(value);
+      if (value === null) {
+        clearImportConflictsUi();
+        setImportProgress(null);
+      } else presentImportConflicts(value);
+    },
+    setSourceFailurePlan: (value) => {
+      if (value === null) {
+        clearImportSourceFailureUi();
+        setImportProgress(null);
+      }
     },
     setError,
     onDismissFatalAlert: dismissFatalAlert,
@@ -8927,6 +9110,7 @@ function AppInner() {
   const dialogFocusTrapActive = Boolean(
     dialog ||
       conflicts ||
+      importSourceFailurePlan ||
       assetRenameDialog ||
       batchRelinkPreview ||
       restoreDialog ||
@@ -10420,13 +10604,18 @@ function AppInner() {
       <LibraryLoadingOverlay
         name={libraryLoading.name}
         operation={libraryLoading.operation}
-        onSwitchLibrary={
+        onCancel={
           libraryLoading.operation === "deleting"
             ? undefined
             : () => {
-                setDialog(null);
-                setImportLibraryChooserOpen(false);
-                setOpenLibraryChooserOpen(true);
+                void api?.cancelOpen().then((result) => {
+                  if (!result.ok) return;
+                  setLibraryLoading(null);
+                  setUiState("idle");
+                  setDialog(null);
+                  setImportLibraryChooserOpen(false);
+                  setOpenLibraryChooserOpen(true);
+                });
               }
         }
       />
@@ -10441,6 +10630,55 @@ function AppInner() {
         transferName={libraryTransferName}
       />
     ) : null}
+    {/* Import decision dialogs must sit outside .app-shell (isolation:isolate)
+        and after the progress overlay so they remain clickable (Serpent-224ac8). */}
+    <ImageSequenceImportDialog
+      error={imageSequenceImportError}
+      offer={imageSequenceImportOffer}
+      sequenceIndex={imageSequenceImportIndex}
+      onCancel={() => {
+        setImageSequenceImportOffer(null);
+        setImageSequenceImportError(null);
+        setImportProgress(null);
+      }}
+      onConfirm={(input) => void confirmImageSequenceImportOffer(input)}
+      open={imageSequenceImportOffer !== null}
+      submitting={imageSequenceImportSubmitting}
+    />
+    {conflicts && conflictPhase === "name" && library && (
+      <NameConflictDialog
+        conflicts={conflicts}
+        libraryId={library.libraryId}
+        decision={nameDecision}
+        remember={rememberNameConflict}
+        onDecisionChange={setNameDecision}
+        onRememberChange={setRememberNameConflict}
+        onCancel={() => void abandonConflicts()}
+        onConfirm={() => confirmNameConflictDialog()}
+        submitting={importDecisionSubmitting}
+      />
+    )}
+    {conflicts && conflictPhase === "duplicate" && library && (
+      <ContentDuplicateDialog
+        conflicts={conflicts}
+        libraryId={library.libraryId}
+        decision={duplicateDecision}
+        remember={rememberDuplicate}
+        onDecisionChange={setDuplicateDecision}
+        onRememberChange={setRememberDuplicate}
+        onCancel={() => void abandonConflicts()}
+        onConfirm={() => confirmContentDuplicateDialog()}
+        submitting={importDecisionSubmitting}
+      />
+    )}
+    <ImportSourceFailureDialog
+      key={importSourceFailurePlan?.importId ?? "import-source-failure"}
+      onCancel={() => void abandonSourceFailure()}
+      onConfirm={(input) => void skipImportSourceFailureWith(input)}
+      open={importSourceFailurePlan !== null}
+      plan={importSourceFailurePlan}
+      submitting={importDecisionSubmitting}
+    />
     {blockingDeleteOverlayVisible && !blockingImportOverlayVisible ? (
       <DeleteProgressOverlay
         onCancel={() => {
@@ -11029,6 +11267,8 @@ function AppInner() {
             excludeFormatFilter={excludeFormatFilter}
             excludeRatingFilter={excludeRatingFilter}
             excludeTagFilter={excludeTagFilter}
+            includeAiRating={includeAiRatingFilter}
+            includeAiTag={includeAiTagFilter}
             favoriteFilter={favoriteFilter}
             formatFilter={formatFilter}
             heightRange={heightRange}
@@ -11053,6 +11293,8 @@ function AppInner() {
             setExcludeFormatFilter={setExcludeFormatFilter}
             setExcludeRatingFilter={setExcludeRatingFilter}
             setExcludeTagFilter={setExcludeTagFilter}
+            setIncludeAiRating={setIncludeAiRatingFilter}
+            setIncludeAiTag={setIncludeAiTagFilter}
             setFavoriteFilter={setFavoriteFilter}
             setFormatFilter={setFormatFilter}
             setHeightRange={setHeightRange}
@@ -11087,8 +11329,10 @@ function AppInner() {
               excludeFormatFilter,
               tagFilter,
               excludeTagFilter,
+              includeAiTagFilter,
               ratingFilter,
               excludeRatingFilter,
+              includeAiRatingFilter,
               favoriteFilter,
               sourceUrlFilter,
               availabilityFilter,
@@ -12132,18 +12376,6 @@ function AppInner() {
         open={imageSequenceDialog !== null}
         submitting={imageSequenceDialog?.submitting}
       />
-      <ImageSequenceImportDialog
-        error={imageSequenceImportError}
-        offer={imageSequenceImportOffer}
-        sequenceIndex={imageSequenceImportIndex}
-        onCancel={() => {
-          setImageSequenceImportOffer(null);
-          setImageSequenceImportError(null);
-        }}
-        onConfirm={(input) => void confirmImageSequenceImportOffer(input)}
-        open={imageSequenceImportOffer !== null}
-        submitting={imageSequenceImportSubmitting}
-      />
       {linkedRulesEditor && (
         <LinkedRulesDialog
           name={linkedRulesEditor.name}
@@ -12678,30 +12910,6 @@ function AppInner() {
         }}
         recentLibraries={recentLibraries}
       />
-      {conflicts && conflictPhase === "name" && library && (
-        <NameConflictDialog
-          conflicts={conflicts}
-          libraryId={library.libraryId}
-          decision={nameDecision}
-          remember={rememberNameConflict}
-          onDecisionChange={setNameDecision}
-          onRememberChange={setRememberNameConflict}
-          onCancel={() => void abandonConflicts()}
-          onConfirm={() => confirmNameConflictDialog()}
-        />
-      )}
-      {conflicts && conflictPhase === "duplicate" && library && (
-        <ContentDuplicateDialog
-          conflicts={conflicts}
-          libraryId={library.libraryId}
-          decision={duplicateDecision}
-          remember={rememberDuplicate}
-          onDecisionChange={setDuplicateDecision}
-          onRememberChange={setRememberDuplicate}
-          onCancel={() => void abandonConflicts()}
-          onConfirm={() => confirmContentDuplicateDialog()}
-        />
-      )}
       {exportDialogOpen && (
         <ExportDialog
           open={exportDialogOpen}

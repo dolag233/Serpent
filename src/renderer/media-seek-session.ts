@@ -144,3 +144,17 @@ export function isTransientMediaPlaybackError(
   // 1 = MEDIA_ERR_ABORTED
   return mediaError.code === 1;
 }
+
+/**
+ * A source served through the custom serpent:// protocol can briefly report
+ * MEDIA_ERR_NETWORK while Chromium is reconnecting a Range request. This is
+ * recoverable for the source viewer and should get a bounded remount retry
+ * before we surface a playback error or generate a proxy.
+ */
+export function isRetryableSourceMediaPlaybackError(
+  mediaError: { code: number } | null | undefined,
+): boolean {
+  if (!mediaError) return false;
+  // 2 = MEDIA_ERR_NETWORK
+  return mediaError.code === 2;
+}

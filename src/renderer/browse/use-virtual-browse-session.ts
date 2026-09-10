@@ -185,19 +185,26 @@ export function useVirtualBrowseSession({
       : null;
     if (virtualized) registerSummaryPages(input.firstPage.offset, input.firstPage.items.length);
     virtualLayoutRef.current = nextVirtualLayout;
+    // Serpent-9cfc8c: a first window of 100 is not the full geometry index.
+    // Publishing it as layout made Masonry/Justified clip the canvas to those
+    // 100 cards, so later pages never appeared when the layout-only fetch
+    // lagged or failed (linked folders with recursive browse).
+    const firstPageCoversScope = input.firstPage.items.length >= input.total;
     layoutRef.current = virtualized
       ? materializeVirtualLoadedEntries(nextVirtualLayout!)
-      : input.firstPage.items.map((asset) => ({
-          assetId: asset.assetId,
-          width: asset.width,
-          height: asset.height,
-          previewArtifactId: asset.thumbnailArtifactId,
-          displayName: asset.displayName,
-          relativeFilePath: asset.relativeFilePath,
-          byteSize: asset.byteSize,
-          modifiedAt: asset.modifiedAt,
-          rating: asset.rating,
-        }));
+      : firstPageCoversScope
+        ? input.firstPage.items.map((asset) => ({
+            assetId: asset.assetId,
+            width: asset.width,
+            height: asset.height,
+            previewArtifactId: asset.thumbnailArtifactId,
+            displayName: asset.displayName,
+            relativeFilePath: asset.relativeFilePath,
+            byteSize: asset.byteSize,
+            modifiedAt: asset.modifiedAt,
+            rating: asset.rating,
+          }))
+        : [];
     setVirtualBrowseLayout(virtualLayoutRef.current);
     setBrowseLayout(layoutRef.current);
     return virtualized;

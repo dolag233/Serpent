@@ -17,10 +17,31 @@ export function isActiveImportProgress(
   return Boolean(progress && !TERMINAL_IMPORT_PROGRESS_PHASES.has(progress.phase));
 }
 
+export function isImportAwaitingUserDecision(input: {
+  hasConflicts: boolean;
+  hasSequenceOffer: boolean;
+}): boolean {
+  return input.hasConflicts || input.hasSequenceOffer;
+}
+
+/**
+ * While a blocking import decision is open, ignore non-terminal progress so a
+ * late copy 100% event cannot resurrect the overlay on top of the dialog.
+ */
+export function shouldApplyImportProgressEvent(
+  progress: ImportProgressEvent,
+  awaitingUserDecision: boolean,
+): boolean {
+  if (!awaitingUserDecision) return true;
+  return TERMINAL_IMPORT_PROGRESS_PHASES.has(progress.phase);
+}
+
 export function isBlockingImportOverlayVisible(
   _uiState: string,
   progress: ImportProgressEvent | null,
+  awaitingUserDecision = false,
 ): boolean {
+  if (awaitingUserDecision) return false;
   return isActiveImportProgress(progress);
 }
 

@@ -159,6 +159,9 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('library.open.request'),
   }),
   z.strictObject({
+    type: z.literal('library.open-cancel.request'),
+  }),
+  z.strictObject({
     type: z.literal('library.recovery-report.request'),
     libraryId: identifierSchema,
   }),
@@ -475,6 +478,11 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     importId: identifierSchema,
     suspectedDuplicate: suspectedDuplicateDecisionSchema,
     nameConflict: nameConflictDecisionSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.import.skip-source-failure'),
+    importId: identifierSchema,
+    applyToRest: z.boolean(),
   }),
   z.strictObject({
     type: z.literal('asset.import.abandon'),
@@ -1583,6 +1591,11 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     importId: identifierSchema,
     suspectedDuplicate: suspectedDuplicateDecisionSchema,
     nameConflict: nameConflictDecisionSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.import.skip-source-failure'),
+    importId: identifierSchema,
+    applyToRest: z.boolean(),
   }),
   z.strictObject({
     type: z.literal('asset.import.abandon'),

@@ -345,6 +345,7 @@ export function PluginSettingsPage({
       return;
     }
     setBusy(true);
+    setInstallError(undefined);
     try {
       const response = await api.request(request);
       if (!response.ok) {
@@ -991,42 +992,64 @@ export function PluginSettingsPage({
                 </div>
               </div>
             ) : (
-              <div className="plugin-install-choice-grid">
-                <button
-                  className="plugin-install-choice"
-                  disabled={busy || api === undefined || libraryInstallDisabled}
-                  onClick={() => void installScoped({
-                    type: 'plugin-manager.install-local',
-                    scope: installScope,
-                    ...(installScope === 'library' && libraryId !== undefined ? { libraryId } : {}),
-                  })}
-                  type="button"
-                >
-                  <span className="plugin-install-choice-icon"><Icon name="folder" size={22} /></span>
-                  <span className="plugin-install-choice-copy">
-                    <strong>{t('settings.pluginInstallLocalAction')}</strong>
-                    <span>{t('settings.pluginInstallLocalHint')}</span>
-                  </span>
-                  <Icon name="chevron-right" size={16} />
-                </button>
-                <button
-                  className="plugin-install-choice"
-                  disabled={busy || api === undefined || libraryInstallDisabled}
-                  onClick={() => {
-                    setGithubRepository('');
-                    setInstallError(undefined);
-                    setGithubInstallOpen(true);
-                  }}
-                  type="button"
-                >
-                  <span className="plugin-install-choice-icon github"><Icon name="github" size={22} /></span>
-                  <span className="plugin-install-choice-copy">
-                    <strong>{t('settings.pluginInstallGitHubAction')}</strong>
-                    <span>{t('settings.pluginInstallGitHubHint')}</span>
-                  </span>
-                  <Icon name="chevron-right" size={16} />
-                </button>
-              </div>
+              <>
+                {installError === undefined ? null : <p className="plugin-settings-error" role="status">{installError}</p>}
+                <div className="plugin-install-choice-grid">
+                  <button
+                    className="plugin-install-choice"
+                    disabled={busy || api === undefined || libraryInstallDisabled}
+                    onClick={() => void installScoped({
+                      type: 'plugin-manager.install-local',
+                      sourceKind: 'zip',
+                      scope: installScope,
+                      ...(installScope === 'library' && libraryId !== undefined ? { libraryId } : {}),
+                    })}
+                    type="button"
+                  >
+                    <span className="plugin-install-choice-icon"><Icon name="archive" size={22} /></span>
+                    <span className="plugin-install-choice-copy">
+                      <strong>{t('settings.pluginInstallLocalZipAction')}</strong>
+                      <span>{t('settings.pluginInstallLocalZipHint')}</span>
+                    </span>
+                    <Icon name="chevron-right" size={16} />
+                  </button>
+                  <button
+                    className="plugin-install-choice"
+                    disabled={busy || api === undefined || libraryInstallDisabled}
+                    onClick={() => void installScoped({
+                      type: 'plugin-manager.install-local',
+                      sourceKind: 'folder',
+                      scope: installScope,
+                      ...(installScope === 'library' && libraryId !== undefined ? { libraryId } : {}),
+                    })}
+                    type="button"
+                  >
+                    <span className="plugin-install-choice-icon"><Icon name="folder" size={22} /></span>
+                    <span className="plugin-install-choice-copy">
+                      <strong>{t('settings.pluginInstallLocalFolderAction')}</strong>
+                      <span>{t('settings.pluginInstallLocalFolderHint')}</span>
+                    </span>
+                    <Icon name="chevron-right" size={16} />
+                  </button>
+                  <button
+                    className="plugin-install-choice"
+                    disabled={busy || api === undefined || libraryInstallDisabled}
+                    onClick={() => {
+                      setGithubRepository('');
+                      setInstallError(undefined);
+                      setGithubInstallOpen(true);
+                    }}
+                    type="button"
+                  >
+                    <span className="plugin-install-choice-icon github"><Icon name="github" size={22} /></span>
+                    <span className="plugin-install-choice-copy">
+                      <strong>{t('settings.pluginInstallGitHubAction')}</strong>
+                      <span>{t('settings.pluginInstallGitHubHint')}</span>
+                    </span>
+                    <Icon name="chevron-right" size={16} />
+                  </button>
+                </div>
+              </>
             )}
           </DialogShell>
         </div>

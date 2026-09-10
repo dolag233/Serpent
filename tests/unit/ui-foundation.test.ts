@@ -14,13 +14,16 @@ describe('UI foundation contract', () => {
     expect(tokens).toContain(':root[data-theme="dark"]');
     expect(tokens).toContain('[data-theme="light"]');
     expect(tokens).toContain('--ui-action-accent: var(--accent, #3b82f6);');
+    expect(tokens).toContain('--ui-layer-notice: 850;');
     expect(tokens).toContain('--ui-layer-tooltip: 900;');
   });
 
   it('uses stable semantic layer values', () => {
     expect(UI_LAYER.base).toBe(0);
     expect(UI_LAYER.modalBackdrop).toBeLessThan(UI_LAYER.modal);
+    expect(UI_LAYER.modal).toBeLessThan(UI_LAYER.notice);
     expect(UI_LAYER.modal).toBeLessThan(UI_LAYER.tooltip);
+    expect(UI_LAYER.notice).toBeLessThan(UI_LAYER.tooltip);
   });
 
   it('resolves semantic CSS variable names without page-local values', () => {

@@ -54,6 +54,7 @@ export interface SyncLibraryPort {
     relativePath: string,
     body: Buffer,
   ): Promise<{ assetId: string; created: boolean }>;
+  applySyncRelocate(libraryId: string, syncId: string, relativePath: string): Promise<void>;
   applySyncRecycle(libraryId: string, syncId: string): Promise<void>;
   applySyncConflictCopy(
     libraryId: string,
@@ -161,6 +162,9 @@ export class SyncEngine {
       writeLocalAsset: async (syncId, relativePath, body) => {
         await this.library.applySyncContentUpdate(libraryId, syncId, relativePath, body);
       },
+      relocateLocalAsset: async (syncId, relativePath) => {
+        await this.library.applySyncRelocate(libraryId, syncId, relativePath);
+      },
       recycleLocalAsset: async (syncId) => this.library.applySyncRecycle(libraryId, syncId),
       saveLocalConflictCopy: (syncId, relativePath, body, conflictName) =>
         this.library.applySyncConflictCopy(libraryId, relativePath, body, conflictName),
@@ -196,6 +200,11 @@ export class SyncEngine {
         await context.writeLocalAsset(syncId, path, body);
         done += 1;
         reportBytes(body);
+      },
+      relocateLocalAsset: async (syncId, relativePath) => {
+        await context.relocateLocalAsset(syncId, relativePath);
+        done += 1;
+        this.options.onProgress?.(done, total, bytesDone, bytesTotal);
       },
       recycleLocalAsset: async (syncId) => {
         await context.recycleLocalAsset(syncId);
@@ -352,8 +361,8 @@ export class SyncEngine {
     let remoteDeletes = 0;
     let localRecycles = 0;
     for (const action of actions) {
-      if (action.type === 'upload') uploads += 1;
-      else if (action.type === 'download') downloads += 1;
+      if (action.type === 'upload' || action.type === 'move-remote') uploads += 1;
+      else if (action.type === 'download' || action.type === 'relocate-local') downloads += 1;
       else if (action.type === 'conflict') conflicts += 1;
       else if (action.type === 'delete-remote') remoteDeletes += 1;
       else if (action.type === 'delete-local') localRecycles += 1;

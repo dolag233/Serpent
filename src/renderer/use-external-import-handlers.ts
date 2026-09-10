@@ -11,12 +11,14 @@ import type { SerpentLibraryApi } from "../shared/library-api";
 import type {
   ImportCompletion,
   ImportConflictPlan,
+  ImportSourceFailurePlan,
   ImageSequenceImportOffer,
   RendererLibrarySummary,
 } from "../shared/protocol/responses";
 import {
   isImageSequenceImportOffer,
   isImportConflictPlan,
+  isImportSourceFailurePlan,
 } from "../shared/import-outcome";
 import { LibraryOperationError, toMessage, shouldSuppressClipboardPasteFeedback } from "./error-utils";
 import {
@@ -54,6 +56,7 @@ export type UseExternalImportHandlersParams = {
   setError: (message: string | null) => void;
   setNotice: (message: string | null) => void;
   setConflicts: (plan: ImportConflictPlan | null) => void;
+  setSourceFailurePlan?: (plan: ImportSourceFailurePlan | null) => void;
   setImageSequenceImportOffer: (offer: ImageSequenceImportOffer | null) => void;
   onFoldersDroppedOnFolder?: (
     targetFolderId: string,
@@ -88,6 +91,7 @@ export function useExternalImportHandlers({
   setError,
   setNotice,
   setConflicts,
+  setSourceFailurePlan,
   setImageSequenceImportOffer,
   onFoldersDroppedOnFolder,
   getManagedAssetDragIds,
@@ -123,6 +127,10 @@ export function useExternalImportHandlers({
         }
         throw new LibraryOperationError(result.error);
       }
+      if (isImportSourceFailurePlan(result.value)) {
+        setSourceFailurePlan?.(result.value);
+        return;
+      }
       if (isImportConflictPlan(result.value)) {
         setConflicts(result.value);
         return;
@@ -139,6 +147,7 @@ export function useExternalImportHandlers({
       onImportCompleted,
       reloadCurrentContent,
       setConflicts,
+      setSourceFailurePlan,
       setImageSequenceImportOffer,
       setNotice,
     ],
@@ -224,8 +233,12 @@ export function useExternalImportHandlers({
           }
           throw new LibraryOperationError(result.error);
         }
-        if ("importId" in result.value) {
+        if (isImportSourceFailurePlan(result.value)) {
+          setSourceFailurePlan?.(result.value);
+        } else if (isImportConflictPlan(result.value)) {
           setConflicts(result.value);
+        } else if (isImageSequenceImportOffer(result.value)) {
+          setImageSequenceImportOffer(result.value);
         } else {
           setNotice(importSummaryMessage(result.value, locale));
           await onImportCompleted(result.value);
@@ -248,6 +261,8 @@ export function useExternalImportHandlers({
       onImportCompleted,
       reloadCurrentContentRef,
       setConflicts,
+      setSourceFailurePlan,
+      setImageSequenceImportOffer,
       setError,
       setNotice,
       setUiState,

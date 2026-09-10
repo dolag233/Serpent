@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   canCommitMediaSeek,
   createMediaSeekSession,
+  isRetryableSourceMediaPlaybackError,
   isTransientMediaPlaybackError,
   MEDIA_SEEK_EPSILON_SECONDS,
   shouldApplyMediaSeek,
@@ -137,5 +138,13 @@ describe("isTransientMediaPlaybackError", () => {
     expect(isTransientMediaPlaybackError({ code: 1 })).toBe(true);
     expect(isTransientMediaPlaybackError({ code: 2 })).toBe(false);
     expect(isTransientMediaPlaybackError(null)).toBe(false);
+  });
+});
+
+describe("isRetryableSourceMediaPlaybackError", () => {
+  it("recognizes a network interruption as recoverable", () => {
+    expect(isRetryableSourceMediaPlaybackError({ code: 2 })).toBe(true);
+    expect(isRetryableSourceMediaPlaybackError({ code: 1 })).toBe(false);
+    expect(isRetryableSourceMediaPlaybackError(null)).toBe(false);
   });
 });

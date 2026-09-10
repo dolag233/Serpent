@@ -105,11 +105,15 @@ export type DimensionFilterBarProps = {
   setTagFilter: (value: string) => void;
   excludeTagFilter: boolean;
   setExcludeTagFilter: (value: boolean) => void;
+  includeAiTag: boolean;
+  setIncludeAiTag: (value: boolean) => void;
   onTagNamesChange: (names: string[]) => void;
   ratingFilter: string;
   setRatingFilter: (value: string) => void;
   excludeRatingFilter: boolean;
   setExcludeRatingFilter: (value: boolean) => void;
+  includeAiRating: boolean;
+  setIncludeAiRating: (value: boolean) => void;
   favoriteFilter: "any" | "yes" | "no";
   setFavoriteFilter: (value: "any" | "yes" | "no") => void;
   sourceUrlFilter: "any" | "yes" | "no";
@@ -225,11 +229,15 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     tagFilter,
     excludeTagFilter,
     setExcludeTagFilter,
+    includeAiTag,
+    setIncludeAiTag,
     onTagNamesChange,
     ratingFilter,
     setRatingFilter,
     excludeRatingFilter,
     setExcludeRatingFilter,
+    includeAiRating,
+    setIncludeAiRating,
     favoriteFilter,
     setFavoriteFilter,
     sourceUrlFilter,
@@ -733,17 +741,28 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 selectedNames={selectedTagNames}
                 tags={tags}
               />
-              <label className="dimension-filter-check">
-                <input
-                  checked={excludeTagFilter}
-                  disabled={disabled || selectedTagNames.length === 0}
-                  onChange={(event) =>
-                    setExcludeTagFilter(event.target.checked)
-                  }
-                  type="checkbox"
-                />
-                {t("filter.exclude")}
-              </label>
+              <div className="dimension-filter-check-row">
+                <label className="dimension-filter-check">
+                  <input
+                    checked={excludeTagFilter}
+                    disabled={disabled || selectedTagNames.length === 0}
+                    onChange={(event) =>
+                      setExcludeTagFilter(event.target.checked)
+                    }
+                    type="checkbox"
+                  />
+                  {t("filter.exclude")}
+                </label>
+                <label className="dimension-filter-check">
+                  <input
+                    checked={includeAiTag}
+                    disabled={controlsDisabled}
+                    onChange={(event) => setIncludeAiTag(event.target.checked)}
+                    type="checkbox"
+                  />
+                  <span className="inspector-ai-badge">{t("filter.ai")}</span>
+                </label>
+              </div>
               <p className="dimension-filter-hint">{t("filter.shiftMultiSelectHint")}</p>
             </PortaledPopover>
           )}
@@ -839,17 +858,28 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                   </button>
                 ))}
               </div>
-              <label className="dimension-filter-check">
-                <input
-                  checked={excludeRatingFilter}
-                  disabled={disabled || selectedRatings.size === 0}
-                  onChange={(event) =>
-                    setExcludeRatingFilter(event.target.checked)
-                  }
-                  type="checkbox"
-                />
-                {t("filter.exclude")}
-              </label>
+              <div className="dimension-filter-check-row">
+                <label className="dimension-filter-check">
+                  <input
+                    checked={excludeRatingFilter}
+                    disabled={disabled || selectedRatings.size === 0}
+                    onChange={(event) =>
+                      setExcludeRatingFilter(event.target.checked)
+                    }
+                    type="checkbox"
+                  />
+                  {t("filter.exclude")}
+                </label>
+                <label className="dimension-filter-check">
+                  <input
+                    checked={includeAiRating}
+                    disabled={controlsDisabled}
+                    onChange={(event) => setIncludeAiRating(event.target.checked)}
+                    type="checkbox"
+                  />
+                  <span className="inspector-ai-badge">{t("filter.ai")}</span>
+                </label>
+              </div>
               <p className="dimension-filter-hint">{t("filter.shiftMultiSelectHint")}</p>
             </PortaledPopover>
           )}

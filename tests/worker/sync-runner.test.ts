@@ -45,7 +45,16 @@ class MemoryDriver implements RemoteStorageDriver {
 
   async mkdir(): Promise<void> {}
 
-  async move(): Promise<void> {}
+  async move(from: string, to: string): Promise<void> {
+    if (from === to) return;
+    const body = this.files.get(from);
+    if (!body) throw new Error(`missing ${from}`);
+    this.files.set(to, body);
+    const etag = this.etags.get(from);
+    if (etag) this.etags.set(to, etag);
+    this.files.delete(from);
+    this.etags.delete(from);
+  }
 
   async exists(path: string): Promise<boolean> {
     return this.files.has(path);
@@ -80,6 +89,9 @@ function buildContext(driver: MemoryDriver, local: Map<string, Buffer>): {
     readLocalAsset: async (assetId) => local.get(assetId) ?? Buffer.alloc(0),
     writeLocalAsset: async (assetId, _path, body) => {
       writtenLocal.set(assetId, body);
+    },
+    relocateLocalAsset: async (assetId, relativePath) => {
+      writtenLocal.set(`relocate:${assetId}`, Buffer.from(relativePath));
     },
     recycleLocalAsset: async (assetId) => {
       recycled.push(assetId);
@@ -231,6 +243,32 @@ describe('runSyncActions end-to-end (Serpent-xffq)', () => {
 
     expect(result.recycledLocal).toBe(1);
     expect(recycled).toEqual(['a1']);
+  });
+
+  it('MOVEs a remote file into a new folder and drops the old path (Serpent-038ecf)', async () => {
+    const driver = new MemoryDriver();
+    driver.files.set('参考库/assets/cd.png', Buffer.from('cover'));
+    const remoteManifest = createEmptyManifest({ libraryId: 'lib-1', displayName: '参考库', directoryName: '参考库' });
+    remoteManifest.entries.a1 = {
+      path: 'cd.png', contentHash: 'hash-1', size: 5, version: 1,
+      deviceId: 'dev-b', modifiedAt: '2026-08-15T10:00:00Z', metadataVersion: 1,
+    };
+    const localManifest = createEmptyManifest({ libraryId: 'lib-1', displayName: '参考库', directoryName: '参考库' });
+    localManifest.entries.a1 = { ...remoteManifest.entries.a1! };
+    const { context } = buildContext(driver, new Map([['a1', Buffer.from('cover')]]));
+
+    const actions = planSyncActions({
+      localAssets: new Map([['a1', { contentHash: 'hash-1', size: 5, modifiedAt: '2026-08-15T10:00:00Z', path: '2D/cd.png' }]]),
+      localManifest,
+      remoteManifest,
+      remoteTombstones: new Set(),
+    });
+    const result = await runSyncActions(actions, localManifest, context);
+
+    expect(result.movedRemote).toBe(1);
+    expect(driver.files.get('参考库/assets/2D/cd.png')?.toString()).toBe('cover');
+    expect(driver.files.has('参考库/assets/cd.png')).toBe(false);
+    expect(result.manifest.entries.a1).toMatchObject({ path: '2D/cd.png', version: 2 });
   });
 });
 
