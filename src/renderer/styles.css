@@ -12840,18 +12840,17 @@ select.ai-config-input.ai-config-languages {
 }
 .plugin-ui-dialog--widget {
   width: min(520px, calc(100vw - 48px));
+  -webkit-app-region: no-drag;
+}
+.plugin-ui-dialog--widget input,
+.plugin-ui-dialog--widget button {
+  -webkit-app-region: no-drag;
 }
 .plugin-ui-dialog-stage {
-  position: fixed;
-  z-index: var(--ui-layer-modal);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  inset: 0;
-  padding: 24px;
-  box-sizing: border-box;
-  overflow: auto;
-  pointer-events: auto;
+  /* Extra class on `dialog-backdrop` so widget selects can detect the scrim.
+     Do not raise z-index: a full-window `--ui-layer-modal` overlay covered
+     caption chrome and left Chromium without keyboard until Alt-Tab. */
+  -webkit-app-region: no-drag;
 }
 .plugin-widget-select-trigger {
   display: flex;

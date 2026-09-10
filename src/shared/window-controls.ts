@@ -12,6 +12,7 @@ export const WINDOW_CONTROL_ACTIONS = [
   "maximize-toggle",
   "close",
   "get-state",
+  "steal-focus",
 ] as const;
 
 export type WindowControlAction = (typeof WINDOW_CONTROL_ACTIONS)[number];

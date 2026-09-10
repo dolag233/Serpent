@@ -48,6 +48,12 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | PLUGIN-053 / `Serpent-1dc3c5` | 高级安装可分别选择插件 ZIP 或插件文件夹 | 待人类验收 | ① 设置 → 插件 → 高级安装。② 确认有「安装 ZIP」「安装文件夹」「从 GitHub 安装」三项。③ 点「安装 ZIP」：应打开文件选择器，能选 `.zip`，不能只能选文件夹。④ 取消后再点「安装文件夹」：应打开文件夹选择器。⑤ 用一份有效插件 ZIP 和一份含 `serpent-plugin.json` 的文件夹各装一次。 | Windows 上 ZIP 选择器能直接选压缩包；文件夹选择器能选插件目录；装完后列表出现该插件。取消选择器不得报错。 | [开发日志](../development/2026-09-10-plugin-local-zip-folder-picker-development-log.md) / `native-dialog-i18n.ts` `pluginLocalInstallDialogSpec` / `native-dialogs.ts` `selectPluginPackage` / `PluginSettingsPage.tsx` / GitHub #19 | 自动化：4 files / 29 passed；`tsc --noEmit` 通过；`plugin-management` E2E 1 passed。Computer Use、packaged 未执行。Windows 真机选择器待本条验收。 |
 
+### 2026-09-10 插件对话框键盘（批量重命名）
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| PLUGIN-054 / `Serpent-e3fe21` | 打开批量重命名后可以直接在输入框打字 | 人类验收通过 | ① **完全退出 Serpent 再开**（托盘图标也要退干净）。② **同一进程内**先走一次原生选择器：设置 → 插件 → 高级安装 → 安装 ZIP 或安装文件夹（选完或取消均可）。③ 立刻选中资产，右键 → 批量重命名。④ **不要**先切到其他窗口。⑤ 点「添加前缀」，应出现光标，输入 `test-`。 | 装完插件或关过系统文件框之后，重命名窗仍能点出光标并打字，不必 Alt-Tab，也不必再重启一次。 | [开发日志](../development/2026-09-10-plugin-dialog-keyboard-focus-development-log.md) / `windows-foreground.ts` / `renderer-keyboard-focus.ts` / `plugin-ui-dialog-focus.ts` | 2026-09-10 用户确认：安装后当场打开可输入。根因是 Windows 原生选择器返回后 `SetFocus` 打在无边框外壳，键盘进不了 `Chrome_RenderWidgetHostHWND`。 |
+
 ### 2026-09-09 WebDAV 同步（GitHub #31）
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

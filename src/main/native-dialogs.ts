@@ -21,6 +21,7 @@ import {
   type NativeDialogId,
   type PluginLocalInstallSourceKind,
 } from "../shared/native-dialog-i18n";
+import { ensureRendererKeyboardFocus } from "./renderer-keyboard-focus";
 
 export type NativeDialogHost = {
   readonly getLocale: () => AppLocale;
@@ -76,9 +77,16 @@ async function showOpen(
   options: OpenDialogOptions,
 ): Promise<Electron.OpenDialogReturnValue> {
   const mainWindow = host.getMainWindow();
-  return mainWindow
-    ? dialog.showOpenDialog(mainWindow, options)
-    : dialog.showOpenDialog(options);
+  try {
+    return mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+  } finally {
+    ensureRendererKeyboardFocus(mainWindow, {
+      reattachHwnd: true,
+      reason: "native-dialog.open",
+    });
+  }
 }
 
 async function showSave(
@@ -86,9 +94,16 @@ async function showSave(
   options: SaveDialogOptions,
 ): Promise<Electron.SaveDialogReturnValue> {
   const mainWindow = host.getMainWindow();
-  return mainWindow
-    ? dialog.showSaveDialog(mainWindow, options)
-    : dialog.showSaveDialog(options);
+  try {
+    return mainWindow
+      ? await dialog.showSaveDialog(mainWindow, options)
+      : await dialog.showSaveDialog(options);
+  } finally {
+    ensureRendererKeyboardFocus(mainWindow, {
+      reattachHwnd: true,
+      reason: "native-dialog.save",
+    });
+  }
 }
 
 export async function selectImportSources(

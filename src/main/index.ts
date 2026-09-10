@@ -93,6 +93,10 @@ import {
   registerWindowControls,
 } from "./window-controls";
 import {
+  bindRendererKeyboardFocusLogger,
+  ensureRendererKeyboardFocus,
+} from "./renderer-keyboard-focus";
+import {
   createWindowsTray,
   type WindowsTrayController,
 } from "./windows-tray";
@@ -5871,6 +5875,10 @@ async function confirmDesktopAutomationWrite(): Promise<boolean> {
     message: '此脚本可以读取资产、标签与合集，修改评分与元数据，创建标签或空文件夹，整理合集，入队 AI 分析，复制文件路径，以及重命名或移入回收站。',
     detail: '脚本只会获得受限自动化能力；新建资源库和批量导入仍需单独的本机计划确认，不会获得网络下载、磁盘直读、数据库或永久删除权限。每次运行都会记录到应用日志。',
   });
+  ensureRendererKeyboardFocus(mainWindow, {
+    reattachHwnd: true,
+    reason: "native-dialog.message-box",
+  });
   return response.response === 1;
 }
 
@@ -5941,6 +5949,10 @@ async function confirmDesktopAutomationFilePlan(
   const response = mainWindow && !mainWindow.isDestroyed()
     ? await dialog.showMessageBox(mainWindow, dialogOptions)
     : await dialog.showMessageBox(dialogOptions);
+  ensureRendererKeyboardFocus(mainWindow, {
+    reattachHwnd: true,
+    reason: "native-dialog.message-box",
+  });
   return response.response === 1;
 }
 
@@ -6229,6 +6241,7 @@ async function startApplication(): Promise<void> {
   }
   appLogPath = chooseUniqueSessionLogPath(app.getPath("logs"), new Date());
   logger = new AppLogger(appLogPath);
+  bindRendererKeyboardFocusLogger(logger);
   void sweepOrphanExternalLibraryStagingOnStartup();
   appUpdateService = createAppUpdateService({
     currentVersion: app.getVersion(),
@@ -6541,6 +6554,10 @@ async function startApplication(): Promise<void> {
               ...(input.submitLabel === undefined ? {} : { submitLabel: input.submitLabel }),
               tree: input.tree,
             });
+            ensureRendererKeyboardFocus(window, {
+              reattachHwnd: true,
+              reason: "plugin-ui-dialog.widget",
+            });
             return;
           }
           window.webContents.send(PLUGIN_UI_DIALOG_REQUEST_CHANNEL, {
@@ -6550,6 +6567,10 @@ async function startApplication(): Promise<void> {
             dialogId: input.dialogId,
             libraryId: context.libraryId ?? PLUGIN_GLOBAL_RUNTIME_LIBRARY_ID,
             payload: input.payload ?? null,
+          });
+          ensureRendererKeyboardFocus(window, {
+            reattachHwnd: true,
+            reason: "plugin-ui-dialog.iframe",
           });
         }),
         patch: (input) => {

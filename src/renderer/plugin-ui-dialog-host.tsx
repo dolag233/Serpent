@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import { createPortal } from 'react-dom';
 import {
   isPluginUiWidgetDialogRequest,
   pluginDialogContributionMatches,
@@ -21,6 +28,7 @@ import {
 } from './plugin-ui-dialog-session';
 import { PluginWidgetRenderer, usePluginWidgetForm } from './plugin-widget-renderer';
 import { useT } from './i18n';
+import { usePluginWidgetDialogKeyboardFocus } from './plugin-ui-dialog-focus';
 import { DialogShell } from './ui/patterns';
 
 /**
@@ -98,13 +106,19 @@ function PluginDialogOverlay({
   readonly children: ReactNode;
   readonly onCancel: () => void;
 }): ReactNode {
-  return (
-    <>
-      <div aria-hidden="true" className="dialog-backdrop" />
-      <div className="plugin-ui-dialog-stage" onClick={onCancel} role="presentation">
-        {children}
-      </div>
-    </>
+  // Same surface as CreateDialog / RenameDialog: one dialog-backdrop wrapping
+  // the shell. A second full-window layer at `--ui-layer-modal` covered the
+  // caption and left Chromium without keyboard until the window was
+  // deactivated and reactivated.
+  return createPortal(
+    <div
+      className="dialog-backdrop plugin-ui-dialog-stage"
+      onClick={onCancel}
+      role="presentation"
+    >
+      {children}
+    </div>,
+    document.body,
   );
 }
 
@@ -155,6 +169,8 @@ function PluginWidgetDialogBody({
   const t = useT();
   const form = usePluginWidgetForm(request.tree);
   const onCancel = () => onComplete(null);
+  const dialogId = `plugin-ui-dialog-${request.requestId}`;
+  usePluginWidgetDialogKeyboardFocus(dialogId);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -179,7 +195,7 @@ function PluginWidgetDialogBody({
       <DialogShell
         aria-label={request.title}
         className="create-dialog plugin-ui-dialog plugin-ui-dialog--widget"
-        dialogId={`plugin-ui-dialog-${request.requestId}`}
+        dialogId={dialogId}
         footer={(
           <div className="dialog-actions plugin-ui-dialog-actions">
             <button className="secondary-button" onClick={onCancel} type="button">

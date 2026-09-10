@@ -3,6 +3,10 @@
 > 更新时间：2026-09-10
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
+- **2026-09-10 插件对话框键盘**：从右键菜单打开 Host widget 对话框后，Windows 上输入框可能无法打字（`activeElement` 已是输入框，但 `document.hasFocus()` 为 false）。根因是 `SetFocus` 打在无边框外壳 HWND，键盘进不了 `Chrome_RenderWidgetHostHWND`。已改为只聚焦渲染子窗口，并在窗口已 `isFocused` 时先 blur 再激活（`Serpent-e3fe21`，用户确认可输入）。见 [开发日志](development/2026-09-10-plugin-dialog-keyboard-focus-development-log.md)。
+
+- **2026-09-10 插件 Host 卡顿**：设置里已安装列表、开关、插件设置面板，以及右键菜单里插件项有时明显滞后。未修，工单 `Serpent-a5ddfc`。
+
 - **2026-09-10 GitHub #19 本地插件安装**：Windows 不能在同一原生对话框里同时选文件和文件夹。高级安装拆成「安装 ZIP」与「安装文件夹」两个选择器（`Serpent-1dc3c5`）。见 [开发日志](development/2026-09-10-plugin-local-zip-folder-picker-development-log.md)。
 
 - **2026-09-10 GitHub #31 WebDAV**：本地建文件夹并移动已有资产会对远端 `MOVE`（`Serpent-038ecf`）；同步轮询间隔会随绑定保存（`Serpent-8c4920`）。资产同步状态（已同步/等待/进行中/冲突）与冲突时手动选本地或云端、以及隐藏状态，记为 P2 路线图 `Serpent-871f34`，未实现。见 [开发日志](development/2026-09-09-webdav-folder-move-sync-development-log.md)。
