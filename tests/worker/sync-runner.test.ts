@@ -270,6 +270,73 @@ describe('runSyncActions end-to-end (Serpent-xffq)', () => {
     expect(driver.files.has('参考库/assets/cd.png')).toBe(false);
     expect(result.manifest.entries.a1).toMatchObject({ path: '2D/cd.png', version: 2 });
   });
+
+  it('treats a missing remote file as a successful delete-remote', async () => {
+    const driver = new MemoryDriver();
+    driver.delete = async () => {
+      throw new Error('CONFLICT');
+    };
+    const manifest = createEmptyManifest({ libraryId: 'lib-1', displayName: '参考库', directoryName: '参考库' });
+    manifest.entries.gone = {
+      path: 'gone.bin', contentHash: 'hash-gone', size: 1, version: 1,
+      deviceId: 'dev-a', modifiedAt: '2026-08-15T10:00:00Z', metadataVersion: 1,
+    };
+    const { context } = buildContext(driver, new Map());
+    const result = await runSyncActions(
+      [{ type: 'delete-remote', assetId: 'gone' }, { type: 'tombstone-upload', assetId: 'gone' }],
+      manifest,
+      context,
+    );
+    expect(result.failed).toBe(0);
+    expect(result.deletedRemote).toBe(1);
+    expect(result.tombstones).toBe(1);
+    expect(result.manifest.entries.gone).toBeUndefined();
+  });
+
+  it('keeps writing the manifest after a single asset write failure', async () => {
+    const driver = new MemoryDriver();
+    const originalWrite = driver.write.bind(driver);
+    driver.write = async (path, body, options) => {
+      if (path.endsWith('bad.bin')) {
+        const error = new Error('CONFLICT') as Error & { retryable?: boolean };
+        error.retryable = false;
+        throw error;
+      }
+      return originalWrite(path, body, options);
+    };
+    const manifest = createEmptyManifest({ libraryId: 'lib-1', displayName: '参考库', directoryName: '参考库' });
+    const local = new Map([
+      ['ok', Buffer.from('ok-content')],
+      ['bad', Buffer.from('bad-content')],
+    ]);
+    const { context } = buildContext(driver, local);
+    const result = await runSyncActions(
+      [
+        {
+          type: 'upload',
+          assetId: 'ok',
+          entry: {
+            path: 'ok.bin', contentHash: 'hash-ok', size: 10, version: 1,
+            deviceId: 'dev-a', modifiedAt: '2026-08-15T10:00:00Z', metadataVersion: 1,
+          },
+        },
+        {
+          type: 'upload',
+          assetId: 'bad',
+          entry: {
+            path: 'bad.bin', contentHash: 'hash-bad', size: 11, version: 1,
+            deviceId: 'dev-a', modifiedAt: '2026-08-15T10:00:00Z', metadataVersion: 1,
+          },
+        },
+      ],
+      manifest,
+      context,
+    );
+    expect(result.failed).toBe(1);
+    expect(result.uploaded).toBe(1);
+    expect(result.manifest.entries.ok).toBeTruthy();
+    expect(result.manifest.entries.bad).toBeUndefined();
+  });
 });
 
 describe('conflictCopyFileName', () => {

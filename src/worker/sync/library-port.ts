@@ -21,8 +21,15 @@ export function createLibrarySyncPort(libraryService: LibraryService): SyncLibra
           contentHash: asset.contentHash,
           size: asset.size,
           modifiedAt: asset.modifiedAt,
+          ...(asset.metadata === undefined ? {} : { metadata: asset.metadata }),
         })),
       };
+    },
+    async readLocalAssetMetadata(libraryId, syncId) {
+      return libraryService.readSyncAssetMetadata(libraryId, syncId);
+    },
+    async applyRemoteAssetMetadata(libraryId, syncId, metadata) {
+      libraryService.applySyncAssetMetadata(libraryId, syncId, metadata);
     },
     async applySyncContentUpdate(libraryId, syncId, relativePath, body) {
       return libraryService.applySyncContentUpdate(libraryId, syncId, relativePath, body);

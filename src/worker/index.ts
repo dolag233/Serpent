@@ -38,9 +38,11 @@ import { parseManifest, serializeManifest } from './sync/manifest';
 import {
   SYNC_MANIFEST_FILE,
   SYNC_ASSETS_DIR,
+  SYNC_METADATA_DIR,
   sanitizeSyncDirectoryName,
   normalizeWebDAVBaseUrl,
 } from '../shared/sync-paths';
+import { parseSyncAssetMetadata } from './sync/sync-metadata';
 import { RemoteStorageError } from './sync/remote-storage';
 import {
   LibraryService,
@@ -1988,15 +1990,27 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       const manifest = parseManifest(
         (await driver.read(`${directoryName}/${SYNC_MANIFEST_FILE}`)).body.toString('utf-8'),
       );
+      const identityLibraryId = manifest.libraryId || request.command.libraryId;
+      const identityDisplayName = manifest.displayName || request.command.displayName;
       const created = libraryService.createLibrary({
-        displayName: request.command.displayName || manifest.displayName,
+        displayName: identityDisplayName,
         selectedParentPath: request.command.selectedParentPath,
-        libraryId: request.command.libraryId || manifest.libraryId,
+        libraryId: identityLibraryId,
       });
       try {
         for (const [syncId, entry] of Object.entries(manifest.entries)) {
           const read = await driver.read(`${directoryName}/${SYNC_ASSETS_DIR}/${entry.path}`);
           libraryService.applySyncContentUpdate(created.libraryId, syncId, entry.path, read.body);
+          try {
+            const sidecar = await driver.read(`${directoryName}/${SYNC_METADATA_DIR}/${syncId}.json`);
+            libraryService.applySyncAssetMetadata(
+              created.libraryId,
+              syncId,
+              parseSyncAssetMetadata(sidecar.body.toString('utf-8')),
+            );
+          } catch {
+            // 无 sidecar：只落媒体。
+          }
         }
       } catch (error) {
         // 下载失败：关闭已创建的库并向上抛，用户可删除部分库后重试。

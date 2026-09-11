@@ -54,13 +54,15 @@ bd ready --json
 bd list --status=open -q --json | jq 'sort_by(.priority) | .[] | {id, priority, title}'
 ```
 
-当前应优先关注的 **open P0/P1** 类型（以 `node scripts/ticket.mjs ready --json` 为准）。2026-09-11 导入可靠性五个拆单已实现，待本轮提交后关闭：
+当前应优先关注的 **open P0/P1** 类型（以 `node scripts/ticket.mjs ready --json` 为准）。2026-09-11 导入可靠性五个拆单已实现。WebDAV 后续四张子单已落地；真实 WebDAV worker 门控已在临时远端目录通过，待人类 UI 验收：
 
 | 优先级 | 典型工单 | 含义 |
 |--------|----------|------|
-| P0 epic | `Serpent-168624` | 十万级导入失败 / 进度卡住 / 关窗回滚；设计 `docs/internal/implementation/2026-09-11-large-batch-import-reliability.md` |
-| 已实现 | `Serpent-d4d79f` / `Serpent-3d4290` | SQLite IN 分块、resolveImport 提交边界；本轮提交后关闭 |
-| 已实现 | `Serpent-41c7e1` / `Serpent-d1280f` / `Serpent-8fadb4` | applying 恢复、决策 TTL、导入遮罩与冲突取消文案；本轮提交后关闭 |
+| P0 epic | `Serpent-168624` | 十万级导入失败 / 进度卡住 / 关窗回滚；设计 `docs/internal/implementation/2026-09-11-large-batch-import-reliability.md`；双轴审查见 `docs/internal/reviews/2026-09-11-large-batch-import-reliability-review.md` |
+| 已实现 | `Serpent-d4d79f` / `Serpent-3d4290` / `Serpent-41c7e1` / `Serpent-d1280f` / `Serpent-8fadb4` | 导入可靠性；审查已沉淀 |
+| P1 epic | `Serpent-6e68cf` | WebDAV 后续；设计 `docs/internal/implementation/2026-09-11-webdav-sync-followups.md`。GitHub #31 已关闭，不要认领 epic |
+| 已实现待验收 | `Serpent-486cba` / `Serpent-77a39f` / `Serpent-079d71` / `Serpent-b20a7f` | 自动同步触发、#38 CONFLICT、#40 身份、#39 sidecar；清单 `SYNC-AUTO-MOVE-001` / `SYNC-TRASH-001` / `SYNC-ID-001` / `SYNC-META-001` |
+| P1 人类验收 | `Serpent-d15d92` | 手动 WebDAV UI/双机/自动同步点验。**不要认领写代码** |
 
 ### 2. 缺陷池：清单里「人类验收不通过」
 

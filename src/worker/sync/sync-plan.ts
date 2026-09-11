@@ -12,6 +12,10 @@
  */
 
 import type { SyncManifest, SyncManifestEntry } from './manifest';
+import {
+  metadataContentHash,
+  type SyncAssetMetadata,
+} from './sync-metadata';
 
 export interface LocalAssetSnapshotEntry {
   /** 文件内容 sha256。 */
@@ -20,6 +24,8 @@ export interface LocalAssetSnapshotEntry {
   modifiedAt: string;
   /** 库内 portable 相对路径。 */
   path: string;
+  /** 人标签/描述/评分/收藏；缺省表示本轮不规划元数据动作。 */
+  metadata?: SyncAssetMetadata;
 }
 
 export type SyncAction =
@@ -49,7 +55,14 @@ export type SyncAction =
   | { type: 'relocate-local'; assetId: string; entry: SyncManifestEntry }
   | { type: 'delete-remote'; assetId: string }
   | { type: 'tombstone-upload'; assetId: string }
-  | { type: 'delete-local'; assetId: string };
+  | { type: 'delete-local'; assetId: string }
+  | {
+      type: 'upload-metadata';
+      assetId: string;
+      entry: SyncManifestEntry;
+      metadata: SyncAssetMetadata;
+    }
+  | { type: 'download-metadata'; assetId: string; entry: SyncManifestEntry };
 
 export interface PlanSyncInput {
   /** 本地资产当前快照（路径 → 指纹）。 */
@@ -250,5 +263,89 @@ export function planSyncActions(input: PlanSyncInput): SyncAction[] {
       actions.push({ type: 'download', assetId, entry: remoteEntry });
     }
   }
+  occupyConflictingRemotePaths(actions, localAssets, remoteManifest);
+  planMetadataActions(actions, input);
   return actions;
+}
+
+/**
+ * 本地新资产要 PUT 的路径仍被远端另一个 syncId 占用时，先墓碑占用方，
+ * 避免再导入同一路径时 If-Match/409 整库 CONFLICT（GitHub #38）。
+ */
+function occupyConflictingRemotePaths(
+  actions: SyncAction[],
+  localAssets: Map<string, LocalAssetSnapshotEntry>,
+  remoteManifest: SyncManifest,
+): void {
+  const planned = new Set(
+    actions
+      .filter((action) => action.type === 'delete-remote' || action.type === 'tombstone-upload')
+      .map((action) => action.assetId),
+  );
+  const remoteByPath = new Map<string, string>();
+  for (const [syncId, entry] of Object.entries(remoteManifest.entries)) {
+    remoteByPath.set(entry.path, syncId);
+  }
+  const occupiers = new Set<string>();
+  for (const action of [...actions]) {
+    if (action.type !== 'upload') continue;
+    const occupier = remoteByPath.get(action.entry.path);
+    if (!occupier || occupier === action.assetId || localAssets.has(occupier) || planned.has(occupier)) {
+      continue;
+    }
+    actions.unshift({ type: 'tombstone-upload', assetId: occupier });
+    actions.unshift({ type: 'delete-remote', assetId: occupier });
+    planned.add(occupier);
+    occupiers.add(occupier);
+  }
+  if (occupiers.size === 0) return;
+  for (let index = actions.length - 1; index >= 0; index -= 1) {
+    const action = actions[index]!;
+    if (!occupiers.has(action.assetId)) continue;
+    if (action.type === 'download' || action.type === 'relocate-local' || action.type === 'delete-local') {
+      actions.splice(index, 1);
+    }
+  }
+}
+
+function planMetadataActions(actions: SyncAction[], input: PlanSyncInput): void {
+  const { localAssets, localManifest, remoteManifest } = input;
+  for (const [assetId, localAsset] of localAssets) {
+    if (!localAsset.metadata) continue;
+    const localHash = metadataContentHash(localAsset.metadata);
+    const localEntry = localManifest.entries[assetId];
+    const remoteEntry = remoteManifest.entries[assetId];
+    const lastHash = localEntry?.metadataHash ?? remoteEntry?.metadataHash;
+    const localChanged = lastHash !== localHash;
+    const remoteVersion = remoteEntry?.metadataVersion ?? 0;
+    const localVersion = localEntry?.metadataVersion ?? 0;
+    if (localChanged && remoteEntry && remoteVersion > localVersion && remoteEntry.metadataHash !== localHash) {
+      actions.push({ type: 'download-metadata', assetId, entry: remoteEntry });
+      continue;
+    }
+    if (localChanged) {
+      const nextVersion = Math.max(remoteVersion, localVersion) + (localEntry || remoteEntry ? 1 : 0);
+      const base = remoteEntry ?? localEntry;
+      actions.push({
+        type: 'upload-metadata',
+        assetId,
+        metadata: localAsset.metadata,
+        entry: {
+          path: localAsset.path,
+          contentHash: localAsset.contentHash,
+          size: localAsset.size,
+          version: base?.version ?? 1,
+          deviceId: base?.deviceId ?? '',
+          modifiedAt: localAsset.modifiedAt,
+          metadataVersion: Math.max(1, nextVersion),
+          metadataHash: localHash,
+          ...(base?.etag === undefined ? {} : { etag: base.etag }),
+        },
+      });
+      continue;
+    }
+    if (remoteEntry && remoteVersion > localVersion) {
+      actions.push({ type: 'download-metadata', assetId, entry: remoteEntry });
+    }
+  }
 }

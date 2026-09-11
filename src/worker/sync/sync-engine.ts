@@ -21,6 +21,7 @@ import {
   createEmptyManifest,
   parseManifest,
   serializeManifest,
+  stampRemoteIdentity,
   type SyncManifest,
 } from './manifest';
 import { planSyncActions, type LocalAssetSnapshotEntry } from './sync-plan';
@@ -46,8 +47,15 @@ export interface SyncLibraryPort {
       contentHash: string;
       size: number;
       modifiedAt: string;
+      metadata?: import('./sync-metadata').SyncAssetMetadata;
     }>;
   }>;
+  readLocalAssetMetadata?(libraryId: string, syncId: string): Promise<import('./sync-metadata').SyncAssetMetadata>;
+  applyRemoteAssetMetadata?(
+    libraryId: string,
+    syncId: string,
+    metadata: import('./sync-metadata').SyncAssetMetadata,
+  ): Promise<void>;
   applySyncContentUpdate(
     libraryId: string,
     syncId: string,
@@ -135,14 +143,19 @@ export class SyncEngine {
   }
 
   /** 完整同步：plan → 执行 → 写回 manifest。 */
-  async syncOnce(libraryId: string, root: SyncRootConfig): Promise<SyncOutcome> {    const driver = this.buildDriver(root);
+  async syncOnce(libraryId: string, root: SyncRootConfig): Promise<SyncOutcome> {
+    const driver = this.buildDriver(root);
     const capabilities = await driver.probe();
     if (!capabilities.supportsContentTransfer) {
       throw new RemoteStorageError('WRITE_UNSUPPORTED', '服务器不支持上传文件，无法用于同步。');
     }
     const snapshot = await this.library.syncSnapshot(libraryId);
     const directoryName = sanitizeSyncDirectoryName(root.directoryName ?? snapshot.library.displayName, snapshot.library.libraryId);
-    const { remoteManifest, tombstones } = await this.loadRemoteState(driver, directoryName, snapshot.library.libraryId);
+    const { remoteManifest, tombstones, existed: remoteExisted } = await this.loadRemoteState(
+      driver,
+      directoryName,
+      snapshot.library.libraryId,
+    );
     const localManifest = await this.loadLocalManifest(libraryId, snapshot.library, directoryName);
     const localAssets = this.snapshotToMap(snapshot);
     const actions = planSyncActions({
@@ -168,6 +181,12 @@ export class SyncEngine {
       recycleLocalAsset: async (syncId) => this.library.applySyncRecycle(libraryId, syncId),
       saveLocalConflictCopy: (syncId, relativePath, body, conflictName) =>
         this.library.applySyncConflictCopy(libraryId, relativePath, body, conflictName),
+      readLocalMetadata: this.library.readLocalAssetMetadata
+        ? (syncId) => this.library.readLocalAssetMetadata!(libraryId, syncId)
+        : undefined,
+      applyRemoteMetadata: this.library.applyRemoteAssetMetadata
+        ? (syncId, metadata) => this.library.applyRemoteAssetMetadata!(libraryId, syncId, metadata)
+        : undefined,
     };
 
     const total = actions.length;
@@ -217,9 +236,12 @@ export class SyncEngine {
         reportBytes(body);
         return meta;
       },
+      readLocalMetadata: context.readLocalMetadata,
+      applyRemoteMetadata: context.applyRemoteMetadata,
     };
 
     const result = await runSyncActions(actions, localManifest, wrappedContext);
+    result.manifest = stampRemoteIdentity(result.manifest, remoteManifest, remoteExisted);
 
     // 写回远端 manifest（带版本戳）与本地缓存。
     await withRetry(() => driver.mkdir(directoryName === '' ? '.' : directoryName));
@@ -295,6 +317,7 @@ export class SyncEngine {
         size: asset.size,
         modifiedAt: asset.modifiedAt,
         path: asset.relativePath,
+        ...(asset.metadata === undefined ? {} : { metadata: asset.metadata }),
       });
     }
     return map;
@@ -304,13 +327,15 @@ export class SyncEngine {
     driver: RemoteStorageDriver,
     directoryName: string,
     libraryId: string,
-  ): Promise<{ remoteManifest: SyncManifest; tombstones: Set<string> }> {
+  ): Promise<{ remoteManifest: SyncManifest; tombstones: Set<string>; existed: boolean }> {
     const prefix = directoryName === '' ? '' : `${directoryName}/`;
     const tombstones = new Set<string>();
     let remoteManifest = createEmptyManifest({ libraryId, displayName: '', directoryName });
+    let existed = false;
     try {
       const read = await driver.read(`${prefix}${SYNC_MANIFEST_FILE}`);
       remoteManifest = parseManifest(read.body.toString('utf-8'));
+      existed = true;
     } catch {
       // 无 manifest：视为首次同步。
     }
@@ -324,7 +349,7 @@ export class SyncEngine {
     } catch {
       // 无 trash 目录：无墓碑。
     }
-    return { remoteManifest, tombstones };
+    return { remoteManifest, tombstones, existed };
   }
 
   private async loadLocalManifest(

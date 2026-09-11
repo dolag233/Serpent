@@ -55,6 +55,16 @@ describe('two-device sync over a shared WebDAV server (Serpent-xffq)', () => {
     const fileA = path.join(rootA, 'a.txt');
     writeFileSync(fileA, 'hello-from-A');
     importFile(serviceA, libraryId, fileA);
+    const assetA = serviceA.listAssets({ libraryId, recursive: true }).find((asset) => asset.relativeFilePath === 'a.txt')!;
+    const tag = serviceA.createTag({ libraryId, name: '角色' });
+    serviceA.assignTags({ libraryId, assetIds: [assetA.assetId], tagIds: [tag.tagId] });
+    const currentMeta = serviceA.getAssetMetadata({ libraryId, assetId: assetA.assetId });
+    serviceA.setAssetMetadata({
+      libraryId,
+      assetId: assetA.assetId,
+      expectedVersion: currentMeta.entityVersion,
+      description: '主角设定',
+    });
 
     // 机器 B：全新本地库，但沿用同一 libraryId（与 A 指向同一远端目录）。
     const serviceB = new LibraryService();
@@ -73,6 +83,10 @@ describe('two-device sync over a shared WebDAV server (Serpent-xffq)', () => {
     expect(firstB.report.downloads).toBeGreaterThanOrEqual(1);
     const assetsB = serviceB.listAssets({ libraryId, recursive: true });
     expect(assetsB.some((asset) => asset.relativeFilePath === 'a.txt')).toBe(true);
+    const downloaded = assetsB.find((asset) => asset.relativeFilePath === 'a.txt')!;
+    const metaB = serviceB.getAssetMetadata({ libraryId, assetId: downloaded.assetId });
+    expect(metaB.description).toBe('主角设定');
+    expect(metaB.tags.some((item) => item.name === '角色')).toBe(true);
 
     // A 修改内容并新增 b.txt → 同步。
     writeFileSync(fileA, 'hello-from-A-v2');
@@ -91,6 +105,44 @@ describe('two-device sync over a shared WebDAV server (Serpent-xffq)', () => {
 
     // A 与 B 的 manifest 缓存一致（远端 manifest 是同一份）。
     expect(serviceA.readSyncManifestCache(libraryId)).toBe(serviceB.readSyncManifestCache(libraryId));
+
+    serviceA.closeAll();
+    serviceB.closeAll();
+    await server.close();
+  });
+
+  it('downloads nested folder paths onto a new device', async () => {
+    const server = await startMockWebDAVServer();
+    const root = { id: 'server', baseUrl: server.baseUrl };
+
+    const serviceA = new LibraryService();
+    const rootA = tempRoot();
+    const createdA = serviceA.createLibrary({ displayName: '文件夹库', selectedParentPath: rootA });
+    const libraryId = createdA.libraryId;
+    const fileA = path.join(rootA, 'alpha.txt');
+    writeFileSync(fileA, 'alpha-nested');
+    importFile(serviceA, libraryId, fileA);
+    const alpha = serviceA.listAssets({ libraryId, recursive: true })
+      .find((asset) => asset.relativeFilePath === 'alpha.txt')!;
+    const folder = serviceA.createManagedFolder({ libraryId, name: '2D' });
+    serviceA.moveAssets({
+      libraryId,
+      assetIds: [alpha.assetId],
+      targetFolderId: folder.folderId,
+    });
+
+    const serviceB = new LibraryService();
+    const rootB = tempRoot();
+    serviceB.createLibrary({ displayName: '文件夹库', selectedParentPath: rootB, libraryId });
+
+    const engineA = new SyncEngine(createLibrarySyncPort(serviceA), { deviceId: 'device-a' });
+    const engineB = new SyncEngine(createLibrarySyncPort(serviceB), { deviceId: 'device-b' });
+
+    await engineA.syncOnce(libraryId, root);
+    await engineB.syncOnce(libraryId, root);
+
+    const downloaded = serviceB.listAssets({ libraryId, recursive: true });
+    expect(downloaded.map((asset) => asset.relativeFilePath)).toEqual(['2D/alpha.txt']);
 
     serviceA.closeAll();
     serviceB.closeAll();

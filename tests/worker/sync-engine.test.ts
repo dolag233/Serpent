@@ -406,4 +406,32 @@ describe('SyncEngine end-to-end (Serpent-xffq)', () => {
     expect(driver.files.get('参考库/assets/2D/cd.png')?.toString()).toBe('cover');
     expect(driver.files.has('参考库/assets/cd.png')).toBe(false);
   });
+
+  it('keeps the remote library identity when a second device syncs', async () => {
+    const driver = new MemoryDriver();
+    driver.files.set('参考库/manifest.json', Buffer.from(JSON.stringify({
+      formatVersion: 1,
+      libraryId: 'lib-a',
+      displayName: 'A 库',
+      directoryName: 'A库',
+      entries: {
+        s1: {
+          path: 'a.png', contentHash: 'hash-aaa', size: 3, version: 1,
+          deviceId: 'dev-a', modifiedAt: '2026-08-15T10:00:00Z', metadataVersion: 1,
+        },
+      },
+    })));
+    driver.files.set('参考库/assets/a.png', Buffer.from('aaa'));
+    const library = new FakeLibrary();
+    const engine = new SyncEngine(library, { deviceId: 'dev-b' });
+    engine.buildDriver = () => driver;
+
+    await engine.syncOnce('lib-b', root);
+    const written = JSON.parse(driver.files.get('参考库/manifest.json')!.toString('utf-8')) as {
+      libraryId: string;
+      displayName: string;
+    };
+    expect(written.libraryId).toBe('lib-a');
+    expect(written.displayName).toBe('A 库');
+  });
 });

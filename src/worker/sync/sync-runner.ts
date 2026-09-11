@@ -14,8 +14,14 @@ import path from 'node:path';
 import type { RemoteStorageDriver, RemoteStorageError } from './remote-storage';
 import { DriverUnsupportedError } from './remote-storage';
 import type { SyncManifest, SyncManifestEntry } from './manifest';
-import { SYNC_ASSETS_DIR, SYNC_TRASH_DIR } from '../../shared/sync-paths';
+import { SYNC_ASSETS_DIR, SYNC_METADATA_DIR, SYNC_TRASH_DIR } from '../../shared/sync-paths';
 import type { SyncAction } from './sync-plan';
+import {
+  metadataContentHash,
+  parseSyncAssetMetadata,
+  serializeSyncAssetMetadata,
+  type SyncAssetMetadata,
+} from './sync-metadata';
 
 /** 可重试错误的自动重试：3 次，指数退避（1s/2s/4s）。 */
 const SYNC_RETRY_ATTEMPTS = 3;
@@ -69,6 +75,8 @@ export interface SyncRunnerContext {
     body: Buffer,
     conflictName: string,
   ): Promise<{ syncId: string; contentHash: string; size: number }>;
+  readLocalMetadata?(syncId: string): Promise<SyncAssetMetadata>;
+  applyRemoteMetadata?(syncId: string, metadata: SyncAssetMetadata): Promise<void>;
 }
 
 export interface SyncRunResult {
@@ -82,6 +90,8 @@ export interface SyncRunResult {
   deletedRemote: number;
   recycledLocal: number;
   tombstones: number;
+  /** 单资产失败次数；整次会话仍写回已成功条目。 */
+  failed: number;
 }
 
 /** `name.ext` → `name (conflict-YYYYMMDD-HHMM).ext`。 */
@@ -127,7 +137,10 @@ export async function runSyncActions(
   context: SyncRunnerContext,
 ): Promise<SyncRunResult> {
   const result: SyncRunResult = {
-    manifest,
+    manifest: {
+      ...manifest,
+      entries: { ...manifest.entries },
+    },
     conflicts: [],
     uploaded: 0,
     downloaded: 0,
@@ -136,141 +149,223 @@ export async function runSyncActions(
     deletedRemote: 0,
     recycledLocal: 0,
     tombstones: 0,
+    failed: 0,
   };
+  const working = result.manifest;
   const { driver } = context;
   const now = context.now();
   const { libraryDirectory } = context;
   const assetPath = (entryPath: string) => assetsPathOf(libraryDirectory, entryPath);
+  const metadataPath = (syncId: string) => `${libraryDirectory}/${SYNC_METADATA_DIR}/${syncId}.json`;
 
   for (const action of actions) {
-    switch (action.type) {
-      case 'upload': {
-        const body = await context.readLocalAsset(action.assetId);
-        const remotePath = assetPath(action.entry.path);
-        if (action.previousPath && action.previousPath !== action.entry.path) {
-          try {
-            await moveRemoteFile(driver, assetPath(action.previousPath), remotePath);
-          } catch {
-            // 旧路径可能已不在远端（仅内容变更或上次未同步移动），继续 PUT 新路径。
-          }
-        }
-        await ensureRemoteDir(driver, remotePath);
-        const written = await withRetry(() => driver.write(remotePath, body, { ifMatch: action.entry.etag }));
-        const entry: SyncManifestEntry = { ...action.entry, etag: written.etag, deviceId: context.deviceId, modifiedAt: now };
-        manifest.entries[action.assetId] = entry;
-        result.uploaded += 1;
-        break;
-      }
-      case 'download': {
-        const remotePath = assetPath(action.entry.path);
-        await ensureRemoteDir(driver, remotePath);
-        const read = await withRetry(() => driver.read(remotePath));
-        await context.writeLocalAsset(action.assetId, action.entry.path, read.body);
-        manifest.entries[action.assetId] = { ...action.entry, etag: read.etag ?? action.entry.etag };
-        result.downloaded += 1;
-        break;
-      }
-      case 'conflict': {
-        const conflictName = conflictCopyFileName(action.remote.path, now);
-        if (action.winner === 'local') {
-          // 正式版 = 本地内容上传；败者（远端内容）双端存冲突副本。
-          const localBody = await context.readLocalAsset(action.assetId);
-          const remoteBody = await withRetry(() => driver.read(assetPath(action.remote.path))).then((read) => read.body);
-          const remotePath = assetPath(action.remote.path);
-          await ensureRemoteDir(driver, remotePath);
-          const written = await withRetry(() => driver.write(remotePath, localBody, { ifMatch: action.remote.etag }));
-          manifest.entries[action.assetId] = {
-            ...action.remote,
-            contentHash: action.local.contentHash,
-            size: action.local.size,
-            version: action.remote.version + 1,
-            deviceId: context.deviceId,
-            modifiedAt: now,
-            etag: written.etag,
-          };
-          await ensureRemoteDir(driver, assetPath(conflictName));
-          await withRetry(() => driver.write(assetPath(conflictName), remoteBody));
-          const copyMeta = await context.saveLocalConflictCopy(action.assetId, action.remote.path, remoteBody, conflictName);
-          manifest.entries[copyMeta.syncId] = {
-            path: conflictName,
-            contentHash: copyMeta.contentHash,
-            size: copyMeta.size,
-            version: 1,
-            deviceId: context.deviceId,
-            modifiedAt: now,
-            metadataVersion: 1,
-          };
-          result.uploaded += 2;
-        } else {
-          // 正式版 = 远端内容落本地；败者（本地内容）双端存冲突副本。
-          const remoteBody = await withRetry(() => driver.read(assetPath(action.remote.path))).then((read) => read.body);
-          const localBody = await context.readLocalAsset(action.assetId);
-          await context.writeLocalAsset(action.assetId, action.remote.path, remoteBody);
-          manifest.entries[action.assetId] = { ...action.remote };
-          await ensureRemoteDir(driver, assetPath(conflictName));
-          await withRetry(() => driver.write(assetPath(conflictName), localBody));
-          const copyMeta = await context.saveLocalConflictCopy(action.assetId, action.remote.path, localBody, conflictName);
-          manifest.entries[copyMeta.syncId] = {
-            path: conflictName,
-            contentHash: copyMeta.contentHash,
-            size: copyMeta.size,
-            version: 1,
-            deviceId: context.deviceId,
-            modifiedAt: now,
-            metadataVersion: 1,
-          };
-          result.downloaded += 1;
-          result.uploaded += 1;
-        }
-        result.conflicts.push({ assetId: action.assetId, conflictCopyPath: conflictName });
-        break;
-      }
-      case 'move-remote': {
-        const fromPath = assetPath(action.fromPath);
-        const toPath = assetPath(action.entry.path);
-        await moveRemoteFile(driver, fromPath, toPath);
-        manifest.entries[action.assetId] = {
-          ...action.entry,
-          deviceId: context.deviceId,
-          modifiedAt: now,
-        };
-        result.movedRemote += 1;
-        break;
-      }
-      case 'relocate-local': {
-        await context.relocateLocalAsset(action.assetId, action.entry.path);
-        manifest.entries[action.assetId] = { ...action.entry };
-        result.relocatedLocal += 1;
-        break;
-      }
-      case 'delete-remote': {
-        const entry = manifest.entries[action.assetId];
-        if (entry) {
-          await withRetry(() => driver.delete(assetPath(entry.path)));
-          result.deletedRemote += 1;
-        }
-        break;
-      }
-      case 'tombstone-upload': {
-        const entry = manifest.entries[action.assetId];
-        const tombstone = JSON.stringify({
-          assetId: action.assetId,
-          path: entry?.path ?? '',
-          deviceId: context.deviceId,
-          deletedAt: now,
-        });
-        await driver.write(`${libraryDirectory}/${SYNC_TRASH_DIR}/${action.assetId}.json`, Buffer.from(tombstone, 'utf-8'));
-        delete manifest.entries[action.assetId];
-        result.tombstones += 1;
-        break;
-      }
-      case 'delete-local': {
-        await context.recycleLocalAsset(action.assetId);
-        delete manifest.entries[action.assetId];
-        result.recycledLocal += 1;
-        break;
-      }
+    try {
+      await executeSyncAction(action, working, result, {
+        driver,
+        context,
+        now,
+        libraryDirectory,
+        assetPath,
+        metadataPath,
+      });
+    } catch {
+      result.failed += 1;
     }
   }
   return result;
+}
+
+async function deleteRemoteIfPresent(driver: RemoteStorageDriver, remotePath: string): Promise<void> {
+  try {
+    await withRetry(() => driver.delete(remotePath));
+  } catch (error) {
+    if (await driver.exists(remotePath)) throw error;
+  }
+}
+
+async function executeSyncAction(
+  action: SyncAction,
+  manifest: SyncManifest,
+  result: SyncRunResult,
+  scope: {
+    driver: RemoteStorageDriver;
+    context: SyncRunnerContext;
+    now: string;
+    libraryDirectory: string;
+    assetPath: (entryPath: string) => string;
+    metadataPath: (syncId: string) => string;
+  },
+): Promise<void> {
+  const { driver, context, now, libraryDirectory, assetPath, metadataPath } = scope;
+  switch (action.type) {
+    case 'upload': {
+      const body = await context.readLocalAsset(action.assetId);
+      const remotePath = assetPath(action.entry.path);
+      if (action.previousPath && action.previousPath !== action.entry.path) {
+        try {
+          await moveRemoteFile(driver, assetPath(action.previousPath), remotePath);
+        } catch {
+          // 旧路径可能已不在远端（仅内容变更或上次未同步移动），继续 PUT 新路径。
+        }
+      }
+      await ensureRemoteDir(driver, remotePath);
+      const written = await withRetry(() => driver.write(remotePath, body, {
+        ...(action.entry.etag === undefined ? {} : { ifMatch: action.entry.etag }),
+      }));
+      const entry: SyncManifestEntry = { ...action.entry, etag: written.etag, deviceId: context.deviceId, modifiedAt: now };
+      manifest.entries[action.assetId] = entry;
+      result.uploaded += 1;
+      break;
+    }
+    case 'download': {
+      const remotePath = assetPath(action.entry.path);
+      await ensureRemoteDir(driver, remotePath);
+      const read = await withRetry(() => driver.read(remotePath));
+      await context.writeLocalAsset(action.assetId, action.entry.path, read.body);
+      let metadataHash = action.entry.metadataHash;
+      let metadataVersion = action.entry.metadataVersion;
+      if (context.applyRemoteMetadata) {
+        try {
+          const sidecar = await driver.read(metadataPath(action.assetId));
+          const metadata = parseSyncAssetMetadata(sidecar.body.toString('utf-8'));
+          await context.applyRemoteMetadata(action.assetId, metadata);
+          metadataHash = metadataContentHash(metadata);
+          metadataVersion = Math.max(1, action.entry.metadataVersion);
+        } catch {
+          // 无 sidecar：只落媒体。
+        }
+      }
+      manifest.entries[action.assetId] = {
+        ...action.entry,
+        etag: read.etag ?? action.entry.etag,
+        ...(metadataHash === undefined ? {} : { metadataHash }),
+        metadataVersion,
+      };
+      result.downloaded += 1;
+      break;
+    }
+    case 'conflict': {
+      const conflictName = conflictCopyFileName(action.remote.path, now);
+      if (action.winner === 'local') {
+        const localBody = await context.readLocalAsset(action.assetId);
+        const remoteBody = await withRetry(() => driver.read(assetPath(action.remote.path))).then((read) => read.body);
+        const remotePath = assetPath(action.remote.path);
+        await ensureRemoteDir(driver, remotePath);
+        const written = await withRetry(() => driver.write(remotePath, localBody, {
+          ...(action.remote.etag === undefined ? {} : { ifMatch: action.remote.etag }),
+        }));
+        manifest.entries[action.assetId] = {
+          ...action.remote,
+          contentHash: action.local.contentHash,
+          size: action.local.size,
+          version: action.remote.version + 1,
+          deviceId: context.deviceId,
+          modifiedAt: now,
+          etag: written.etag,
+        };
+        await ensureRemoteDir(driver, assetPath(conflictName));
+        await withRetry(() => driver.write(assetPath(conflictName), remoteBody));
+        const copyMeta = await context.saveLocalConflictCopy(action.assetId, action.remote.path, remoteBody, conflictName);
+        manifest.entries[copyMeta.syncId] = {
+          path: conflictName,
+          contentHash: copyMeta.contentHash,
+          size: copyMeta.size,
+          version: 1,
+          deviceId: context.deviceId,
+          modifiedAt: now,
+          metadataVersion: 1,
+        };
+        result.uploaded += 2;
+      } else {
+        const remoteBody = await withRetry(() => driver.read(assetPath(action.remote.path))).then((read) => read.body);
+        const localBody = await context.readLocalAsset(action.assetId);
+        await context.writeLocalAsset(action.assetId, action.remote.path, remoteBody);
+        manifest.entries[action.assetId] = { ...action.remote };
+        await ensureRemoteDir(driver, assetPath(conflictName));
+        await withRetry(() => driver.write(assetPath(conflictName), localBody));
+        const copyMeta = await context.saveLocalConflictCopy(action.assetId, action.remote.path, localBody, conflictName);
+        manifest.entries[copyMeta.syncId] = {
+          path: conflictName,
+          contentHash: copyMeta.contentHash,
+          size: copyMeta.size,
+          version: 1,
+          deviceId: context.deviceId,
+          modifiedAt: now,
+          metadataVersion: 1,
+        };
+        result.downloaded += 1;
+        result.uploaded += 1;
+      }
+      result.conflicts.push({ assetId: action.assetId, conflictCopyPath: conflictName });
+      break;
+    }
+    case 'move-remote': {
+      const fromPath = assetPath(action.fromPath);
+      const toPath = assetPath(action.entry.path);
+      await moveRemoteFile(driver, fromPath, toPath);
+      manifest.entries[action.assetId] = {
+        ...action.entry,
+        deviceId: context.deviceId,
+        modifiedAt: now,
+      };
+      result.movedRemote += 1;
+      break;
+    }
+    case 'relocate-local': {
+      await context.relocateLocalAsset(action.assetId, action.entry.path);
+      manifest.entries[action.assetId] = { ...action.entry };
+      result.relocatedLocal += 1;
+      break;
+    }
+    case 'delete-remote': {
+      const entry = manifest.entries[action.assetId];
+      if (entry) {
+        await deleteRemoteIfPresent(driver, assetPath(entry.path));
+        result.deletedRemote += 1;
+      }
+      break;
+    }
+    case 'tombstone-upload': {
+      const entry = manifest.entries[action.assetId];
+      const tombstone = JSON.stringify({
+        assetId: action.assetId,
+        path: entry?.path ?? '',
+        deviceId: context.deviceId,
+        deletedAt: now,
+      });
+      await ensureRemoteDir(driver, `${libraryDirectory}/${SYNC_TRASH_DIR}/placeholder.json`);
+      await driver.write(`${libraryDirectory}/${SYNC_TRASH_DIR}/${action.assetId}.json`, Buffer.from(tombstone, 'utf-8'));
+      delete manifest.entries[action.assetId];
+      result.tombstones += 1;
+      break;
+    }
+    case 'delete-local': {
+      await context.recycleLocalAsset(action.assetId);
+      delete manifest.entries[action.assetId];
+      result.recycledLocal += 1;
+      break;
+    }
+    case 'upload-metadata': {
+      const metadata = action.metadata ?? await context.readLocalMetadata?.(action.assetId);
+      if (!metadata) break;
+      const remotePath = metadataPath(action.assetId);
+      await ensureRemoteDir(driver, remotePath);
+      await withRetry(() => driver.write(remotePath, Buffer.from(serializeSyncAssetMetadata(metadata), 'utf-8')));
+      const previous = manifest.entries[action.assetId];
+      manifest.entries[action.assetId] = {
+        ...(previous ?? action.entry),
+        ...action.entry,
+        deviceId: context.deviceId,
+        modifiedAt: now,
+      };
+      break;
+    }
+    case 'download-metadata': {
+      if (!context.applyRemoteMetadata) break;
+      const read = await withRetry(() => driver.read(metadataPath(action.assetId)));
+      await context.applyRemoteMetadata(action.assetId, parseSyncAssetMetadata(read.body.toString('utf-8')));
+      manifest.entries[action.assetId] = { ...action.entry };
+      break;
+    }
+  }
 }

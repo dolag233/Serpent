@@ -255,4 +255,34 @@ describe('managed asset move and one-shot undo', () => {
     database.close();
     recovered.closeAll();
   });
+
+  it('broadcasts asset.changed after a user move, not after sync relocate', () => {
+    const events: Array<{ type: string; source?: string; changedCount: number }> = [];
+    const temp = root();
+    const service = new LibraryService({
+      onAssetsChanged: (event) => events.push(event),
+    });
+    const library = service.createLibrary({ displayName: 'MoveSync', selectedParentPath: temp });
+    const sourceFolder = service.createManagedFolder({ libraryId: library.libraryId, name: 'Source' });
+    const targetFolder = service.createManagedFolder({ libraryId: library.libraryId, name: 'Target' });
+    const sourceA = path.join(temp, 'sync-move.png');
+    writeFileSync(sourceA, 'move-sync');
+    const asset = importFile(service, library.libraryId, sourceA, sourceFolder.folderId).assets[0]!;
+    const snapshot = service.syncSnapshot(library.libraryId);
+    const syncId = snapshot.assets.find((entry) => entry.assetId === asset.assetId)?.syncId;
+    expect(syncId).toEqual(expect.any(String));
+    events.length = 0;
+
+    service.moveAssets({
+      libraryId: library.libraryId,
+      assetIds: [asset.assetId],
+      targetFolderId: targetFolder.folderId,
+    });
+    expect(events.some((event) => event.type === 'asset.changed' && event.source === 'client' && event.changedCount >= 1)).toBe(true);
+    events.length = 0;
+
+    service.applySyncRelocate(library.libraryId, syncId!, 'Source/sync-move.png');
+    expect(events).toEqual([]);
+    service.closeAll();
+  });
 });

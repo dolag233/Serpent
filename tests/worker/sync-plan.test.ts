@@ -223,4 +223,37 @@ describe('planSyncActions (Serpent-xffq)', () => {
       }),
     ]);
   });
+
+  it('tombstones a remote occupier before uploading a new asset at the same path', () => {
+    const remoteManifest = manifest();
+    remoteManifest.entries.old = entry({ path: 'a/b.png' });
+    const actions = planSyncActions({
+      localAssets: new Map([['new', asset()]]),
+      localManifest: manifest(),
+      remoteManifest,
+      remoteTombstones: new Set(),
+    });
+    const types = actions.map((action) => `${action.type}:${action.assetId}`);
+    expect(types[0]).toBe('delete-remote:old');
+    expect(types[1]).toBe('tombstone-upload:old');
+    expect(types).toContain('upload:new');
+    expect(types.some((type) => type.startsWith('download:old'))).toBe(false);
+  });
+
+  it('plans metadata upload when local tags change', () => {
+    const localManifest = manifest();
+    localManifest.entries.a1 = entry({ metadataHash: 'old-meta' });
+    const remoteManifest = manifest();
+    remoteManifest.entries.a1 = entry({ metadataHash: 'old-meta' });
+    const actions = planSyncActions({
+      localAssets: new Map([['a1', {
+        ...asset(),
+        metadata: { tags: ['角色'], description: '主角', rating: 5, favorite: true },
+      }]]),
+      localManifest,
+      remoteManifest,
+      remoteTombstones: new Set(),
+    });
+    expect(actions.some((action) => action.type === 'upload-metadata' && action.assetId === 'a1')).toBe(true);
+  });
 });

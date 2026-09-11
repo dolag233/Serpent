@@ -13,7 +13,7 @@
 
 - **2026-09-10 GitHub #19 本地插件安装**：Windows 不能在同一原生对话框里同时选文件和文件夹。高级安装拆成「安装 ZIP」与「安装文件夹」两个选择器（`Serpent-1dc3c5`）。见 [开发日志](development/2026-09-10-plugin-local-zip-folder-picker-development-log.md)。
 
-- **2026-09-10 GitHub #31 WebDAV**：本地建文件夹并移动已有资产会对远端 `MOVE`（`Serpent-038ecf`）；同步轮询间隔会随绑定保存（`Serpent-8c4920`）。资产同步状态（已同步/等待/进行中/冲突）与冲突时手动选本地或云端、以及隐藏状态，记为 P2 路线图 `Serpent-871f34`，未实现。见 [开发日志](development/2026-09-09-webdav-folder-move-sync-development-log.md)。
+- **2026-09-11 WebDAV 同步后续**：GitHub #31 按产品口径已关闭（MOVE 规划 `Serpent-038ecf`、轮询间隔 `Serpent-8c4920` 已在 HEAD）。#38/#39/#40 与「本地移动不触发自动同步」已在 worker 同步路径落地：用户搬家/改文件夹名发 `asset.changed`；单资产失败不中断会话；远端身份写回保留；人标签/描述走 `metadata/entries` sidecar。后接入设备按交换格式路径导入到托管文件夹（不再只落 basename）。真实 WebDAV worker 门控已在临时远端目录通过；既有用户同步目录未写入。设计 [2026-09-11-webdav-sync-followups.md](implementation/2026-09-11-webdav-sync-followups.md)，epic `Serpent-6e68cf`。冲突徽章仍是 P2 `Serpent-871f34`。人类 UI 验收跟踪 `Serpent-d15d92`；清单 `SYNC-AUTO-MOVE-001` / `SYNC-TRASH-001` / `SYNC-ID-001` / `SYNC-META-001` 仍待人点验。
 
 - **2026-09-06 官方插件社区**：设置 → 插件 → 打开插件社区，从 `Serpent-Plugin-Pool` raw catalog 浏览并安装一方/已认证插件；钉死 Release ZIP + sha256，禁止 zipball；失败用缓存并标未更新。点卡片进入详情：先显示作者/版本/仓库/运行模式/平台与简介，再按应用语言渲染 README（`README.zh-CN.md` / `README.en.md` 回退 `README.md`）。高级安装仍支持本地与 GitHub URL。不预装插件。见 [分发手册](../manual/plugins/distribution-and-updates.md) 与 PLUGIN-051 / PLUGIN-052 / PLUGIN-UI-002。
 

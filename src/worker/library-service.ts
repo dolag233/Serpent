@@ -208,6 +208,10 @@ import {
   readBillfishLibrary,
   type BillfishAssetCandidate,
 } from './billfish-library';
+import {
+  emptySyncAssetMetadata,
+  type SyncAssetMetadata,
+} from './sync/sync-metadata';
 
 // sharp is an optional N-API dependency (no rebuild needed for Electron).
 // The Worker loads it lazily so it can still start if sharp is missing.
@@ -6231,6 +6235,8 @@ export class LibraryService {
    * 手动同步不能同时在跑；进程退出自动释放，崩溃残留不会误锁。
    */
   private readonly activeSyncSessions = new Map<string, string>();
+  /** >0 时用户命令边界不广播 asset.changed，避免同步回放再触发自动同步。 */
+  private syncReplayDepth = 0;
   private readonly databaseBackupInFlight = new Map<string, Promise<boolean>>();
   private readonly databaseBackupTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly pendingImports = new Map<string, PendingImport>();
@@ -6404,6 +6410,26 @@ export class LibraryService {
   private modelAiViewsRenderer?: (
     input: ModelThumbnailRendererInput,
   ) => Promise<ModelThumbnailRenderOutcome>;
+
+  private withSyncReplay<T>(fn: () => T): T {
+    this.syncReplayDepth += 1;
+    try {
+      return fn();
+    } finally {
+      this.syncReplayDepth -= 1;
+    }
+  }
+
+  private emitClientAssetsChanged(libraryId: string, changedCount: number): void {
+    if (changedCount <= 0 || this.syncReplayDepth > 0) return;
+    this.options.onAssetsChanged?.({
+      type: 'asset.changed',
+      libraryId,
+      changedCount,
+      missingCount: 0,
+      source: 'client',
+    });
+  }
 
   private noteClientFilesystemMutation(): void {
     const debounceMs = this.options.debounceMs ?? 250;
@@ -12503,6 +12529,7 @@ export class LibraryService {
       throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
     }
 
+    this.emitClientAssetsChanged(input.libraryId, 1);
     return this.summarizeManagedFolderRowRecursive(openLibrary, {
       ...row,
       name,
@@ -12870,6 +12897,7 @@ export class LibraryService {
       );
     }
 
+    this.emitClientAssetsChanged(input.libraryId, movedCount);
     return { movedCount, skippedCount, folders: moved };
   }
 
@@ -17411,6 +17439,7 @@ export class LibraryService {
     for (const assetId of eligibleAssetIds) {
       this.syncAssetSearchContent(openLibrary.connection, assetId);
     }
+    this.emitClientAssetsChanged(input.libraryId, assignedCount);
     return { assignedCount, skipped };
   }
 
@@ -17460,6 +17489,7 @@ export class LibraryService {
     for (const assetId of eligibleAssetIds) {
       if (removedCount > 0) this.syncAssetSearchContent(openLibrary.connection, assetId);
     }
+    this.emitClientAssetsChanged(input.libraryId, removedCount);
     return { removedCount, skipped };
   }
 
@@ -18577,6 +18607,7 @@ export class LibraryService {
       );
     this.syncAssetSearchContent(openLibrary.connection, input.assetId);
 
+    this.emitClientAssetsChanged(input.libraryId, 1);
     return {
       assetId: input.assetId,
       description: newDescription,
@@ -18722,6 +18753,7 @@ export class LibraryService {
     })();
     // Rating is not part of the FTS content (see syncAssetSearchContent), so
     // no search-index sync is required here.
+    this.emitClientAssetsChanged(input.libraryId, eligibleAssetIds.length);
     return { updatedCount: eligibleAssetIds.length, skipped };
   }
 
@@ -22555,6 +22587,7 @@ export class LibraryService {
       contentHash: string;
       size: number;
       modifiedAt: string;
+      metadata?: SyncAssetMetadata;
     }>;
   } {
     const openLibrary = this.requireOpenLibrary(libraryId);
@@ -22568,6 +22601,7 @@ export class LibraryService {
       contentHash: string;
       size: number;
       modifiedAt: string;
+      metadata?: SyncAssetMetadata;
     }> = [];
     for (const asset of assets) {
       const absolutePath = this.resolveAssetPath(libraryId, asset.assetId);
@@ -22581,10 +22615,100 @@ export class LibraryService {
         modifiedAt: asset.modifiedAt,
       });
     }
+    const metadataByAssetId = this.readSyncAssetMetadataMap(openLibrary, out.map((asset) => asset.assetId));
+    for (const asset of out) {
+      asset.metadata = metadataByAssetId.get(asset.assetId) ?? emptySyncAssetMetadata();
+    }
     return {
       library: { libraryId, displayName: this.libraryDisplayName(libraryId) },
       assets: out,
     };
+  }
+
+  /**
+   * 把同步下载的字节导入为托管资产，并落在交换格式给出的相对路径上。
+   * 只按 basename 丢进根目录会让后接入设备看到扁平 assets/（真实 WebDAV 验收已复现）。
+   */
+  private importManagedFileForSync(
+    openLibrary: OpenLibrary,
+    libraryId: string,
+    relativePath: string,
+    body: Buffer,
+  ): string {
+    const normalized = path.posix.normalize(relativePath.replaceAll('\\', '/'));
+    if (
+      normalized.length === 0
+      || path.posix.isAbsolute(normalized)
+      || normalized.split('/').some((segment) => segment === '.' || segment === '..')
+    ) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'SOURCE_NOT_FOUND' });
+    }
+    const destDir = path.posix.dirname(normalized);
+    const basename = path.posix.basename(normalized);
+    const targetFolderId = destDir === '.'
+      ? undefined
+      : this.ensureManagedFolderIdForRelativeDir(openLibrary, libraryId, destDir);
+    const existingIds = new Set(
+      (
+        openLibrary.connection
+          .prepare('SELECT asset_id FROM assets WHERE deleted_at IS NULL')
+          .all() as Array<{ asset_id: string }>
+      ).map((row) => row.asset_id),
+    );
+    const stageDir = mkdtempSync(path.join(tmpdir(), 'serpent-sync-import-'));
+    const stagePath = path.join(stageDir, basename);
+    try {
+      writeFileSync(stagePath, body);
+      const prepared = this.prepareOrExecuteImport({
+        libraryId,
+        sourceKind: 'files',
+        sourcePaths: [stagePath],
+        ...(targetFolderId === undefined ? {} : { targetFolderId }),
+      });
+      this.finishImportWithoutUserDecision(prepared, {
+        suspectedDuplicate: 'create-copy',
+        nameConflict: 'keep-both',
+      });
+    } finally {
+      rmSync(stageDir, { force: true, recursive: true });
+    }
+    const created = (
+      openLibrary.connection
+        .prepare(
+          `SELECT asset_id, relative_file_path
+             FROM assets
+            WHERE deleted_at IS NULL`,
+        )
+        .all() as Array<{ asset_id: string; relative_file_path: string }>
+    ).filter((row) => !existingIds.has(row.asset_id));
+    const matched = created.find((row) =>
+      portablePathIdentity(row.relative_file_path) === portablePathIdentity(normalized)
+    ) ?? created.at(-1);
+    if (!matched) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'SOURCE_NOT_FOUND' });
+    }
+    return matched.asset_id;
+  }
+
+  private bindSyncIdAndRelocate(
+    libraryId: string,
+    assetId: string,
+    syncId: string,
+    relativePath: string,
+  ): void {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    openLibrary.connection
+      .prepare('UPDATE assets SET sync_id = ? WHERE asset_id = ?')
+      .run(syncId, assetId);
+    const current = openLibrary.connection
+      .prepare('SELECT relative_file_path FROM assets WHERE asset_id = ?')
+      .get(assetId) as { relative_file_path: string } | undefined;
+    if (
+      current
+      && portablePathIdentity(current.relative_file_path) !== portablePathIdentity(relativePath)
+    ) {
+      this.applySyncRelocate(libraryId, syncId, relativePath);
+    }
   }
 
   /**
@@ -22602,42 +22726,11 @@ export class LibraryService {
     this.assertLibraryWritable(openLibrary);
     const existing = this.assetRowBySyncId(openLibrary, syncId);
     if (!existing) {
-      // 新资产：临时文件走既有导入管线（revision/搜索索引/缩略图全部正确）。
-      const stageDir = mkdtempSync(path.join(tmpdir(), 'serpent-sync-import-'));
-      const stagePath = path.join(stageDir, path.posix.basename(relativePath));
-      try {
-        writeFileSync(stagePath, body);
-        const prepared = this.prepareOrExecuteImport({
-          libraryId,
-          sourceKind: 'files',
-          sourcePaths: [stagePath],
-        });
-        this.finishImportWithoutUserDecision(prepared, {
-          suspectedDuplicate: 'create-copy',
-          nameConflict: 'keep-both',
-        });
-      } finally {
-        rmSync(stageDir, { force: true, recursive: true });
-      }
-      const imported = this.assetRowBySyncId(openLibrary, syncId);
-      if (imported) return { assetId: imported.asset_id, created: true };
-      // 导入可能因名字冲突生成新名；按路径找最新资产。
-      const byPath = openLibrary.connection
-        .prepare(
-          `SELECT asset_id, current_revision_id
-             FROM assets
-            WHERE relative_file_path = ? AND deleted_at IS NULL
-            ORDER BY created_at DESC LIMIT 1`,
-        )
-        .get(relativePath) as { asset_id: string; current_revision_id: string | null } | undefined;
-      if (!byPath) {
-        throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'SOURCE_NOT_FOUND' });
-      }
-      const newSyncId = syncId;
-      openLibrary.connection
-        .prepare('UPDATE assets SET sync_id = ? WHERE asset_id = ?')
-        .run(newSyncId, byPath.asset_id);
-      return { assetId: byPath.asset_id, created: true };
+      return this.withSyncReplay(() => {
+        const assetId = this.importManagedFileForSync(openLibrary, libraryId, relativePath, body);
+        this.bindSyncIdAndRelocate(libraryId, assetId, syncId, relativePath);
+        return { assetId, created: true };
+      });
     }
 
     // 已存在：覆盖文件 + 新 revision。
@@ -22821,41 +22914,127 @@ export class LibraryService {
   ): { syncId: string; contentHash: string; size: number } {
     const openLibrary = this.requireOpenLibrary(libraryId);
     this.assertLibraryWritable(openLibrary);
-    const stageDir = mkdtempSync(path.join(tmpdir(), 'serpent-sync-conflict-'));
-    const stagePath = path.join(stageDir, path.posix.basename(conflictName));
-    try {
-      writeFileSync(stagePath, body);
-      const prepared = this.prepareOrExecuteImport({
+    return this.withSyncReplay(() => {
+      const assetId = this.importManagedFileForSync(openLibrary, libraryId, conflictName, body);
+      const syncId = randomUUID();
+      this.bindSyncIdAndRelocate(libraryId, assetId, syncId, conflictName);
+      return {
+        syncId,
+        contentHash: sha256FileAtPath(this.resolveAssetPath(libraryId, assetId)),
+        size: body.length,
+      };
+    });
+  }
+
+  readSyncAssetMetadata(libraryId: string, syncId: string): SyncAssetMetadata {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const row = this.assetRowBySyncId(openLibrary, syncId);
+    if (!row) return emptySyncAssetMetadata();
+    return this.readSyncAssetMetadataMap(openLibrary, [row.asset_id]).get(row.asset_id)
+      ?? emptySyncAssetMetadata();
+  }
+
+  applySyncAssetMetadata(libraryId: string, syncId: string, metadata: SyncAssetMetadata): void {
+    this.withSyncReplay(() => {
+      const openLibrary = this.requireOpenLibrary(libraryId);
+      this.assertLibraryWritable(openLibrary);
+      const row = this.assetRowBySyncId(openLibrary, syncId);
+      if (!row) return;
+      const current = this.getAssetMetadata({ libraryId, assetId: row.asset_id });
+      const currentHuman = current.tags.filter((tag) => tag.source === 'user');
+      const desired = new Set(metadata.tags.map((tag) => tag.trim()).filter(Boolean));
+      const toRemove = currentHuman.filter((tag) => !desired.has(tag.name));
+      if (toRemove.length > 0) {
+        this.removeTags({
+          libraryId,
+          assetIds: [row.asset_id],
+          tagIds: toRemove.map((tag) => tag.id),
+        });
+      }
+      for (const name of desired) {
+        if (currentHuman.some((tag) => tag.name === name)) continue;
+        const tag = this.findOrCreateTagByName(openLibrary, name);
+        this.assignTags({ libraryId, assetIds: [row.asset_id], tagIds: [tag.tagId] });
+      }
+      this.setAssetMetadata({
         libraryId,
-        sourceKind: 'files',
-        sourcePaths: [stagePath],
+        assetId: row.asset_id,
+        expectedVersion: current.entityVersion,
+        description: metadata.description ?? '',
+        rating: metadata.rating,
+        favorite: metadata.favorite,
       });
-      this.finishImportWithoutUserDecision(prepared, {
-        suspectedDuplicate: 'create-copy',
-        nameConflict: 'keep-both',
-      });
-    } finally {
-      rmSync(stageDir, { force: true, recursive: true });
+    });
+  }
+
+  private findOrCreateTagByName(openLibrary: OpenLibrary, name: string): TagSummary {
+    const existing = openLibrary.connection
+      .prepare('SELECT tag_id, name FROM tags WHERE library_id = ? AND name = ?')
+      .get(openLibrary.summary.libraryId, name) as { tag_id: string; name: string } | undefined;
+    if (existing) {
+      return { tagId: existing.tag_id, name: existing.name, assetCount: 0 };
     }
-    const imported = openLibrary.connection
-      .prepare(
-        `SELECT asset_id FROM assets
-          WHERE relative_file_path = ? AND deleted_at IS NULL
-          ORDER BY created_at DESC LIMIT 1`,
-      )
-      .get(path.posix.basename(conflictName)) as { asset_id: string } | undefined;
-    if (!imported) {
-      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'SOURCE_NOT_FOUND' });
+    try {
+      return this.createTag({ libraryId: openLibrary.summary.libraryId, name });
+    } catch (error) {
+      if (error instanceof LibraryServiceError && error.code === 'FOLDER_ALREADY_EXISTS') {
+        const retry = openLibrary.connection
+          .prepare('SELECT tag_id, name FROM tags WHERE library_id = ? AND name = ?')
+          .get(openLibrary.summary.libraryId, name) as { tag_id: string; name: string } | undefined;
+        if (retry) return { tagId: retry.tag_id, name: retry.name, assetCount: 0 };
+      }
+      throw error;
     }
-    const syncId = randomUUID();
-    openLibrary.connection
-      .prepare('UPDATE assets SET sync_id = ? WHERE asset_id = ?')
-      .run(syncId, imported.asset_id);
-    return {
-      syncId,
-      contentHash: sha256FileAtPath(this.resolveAssetPath(libraryId, imported.asset_id)),
-      size: body.length,
-    };
+  }
+
+  private readSyncAssetMetadataMap(
+    openLibrary: OpenLibrary,
+    assetIds: readonly string[],
+  ): Map<string, SyncAssetMetadata> {
+    const map = new Map<string, SyncAssetMetadata>();
+    if (assetIds.length === 0) return map;
+    for (const assetId of assetIds) {
+      map.set(assetId, emptySyncAssetMetadata());
+    }
+    if (!hasTable(openLibrary.connection, 'tags') || !hasTable(openLibrary.connection, 'human_asset_tags')) {
+      return map;
+    }
+    const tagRows = sqliteAllInChunks<string, { asset_id: string; name: string }>({
+      connection: openLibrary.connection,
+      values: assetIds,
+      buildSql: (placeholders) =>
+        `SELECT hat.asset_id, t.name
+           FROM human_asset_tags hat
+           JOIN tags t ON t.tag_id = hat.tag_id
+          WHERE hat.asset_id IN (${placeholders})`,
+    });
+    for (const row of tagRows) {
+      const current = map.get(row.asset_id) ?? emptySyncAssetMetadata();
+      if (!current.tags.includes(row.name)) current.tags.push(row.name);
+      map.set(row.asset_id, current);
+    }
+    if (!hasTable(openLibrary.connection, 'asset_metadata')) return map;
+    const metaRows = sqliteAllInChunks<string, {
+      asset_id: string;
+      description: string | null;
+      rating: number;
+      favorite: number;
+    }>({
+      connection: openLibrary.connection,
+      values: assetIds,
+      buildSql: (placeholders) =>
+        `SELECT asset_id, description, rating, favorite
+           FROM asset_metadata
+          WHERE asset_id IN (${placeholders})`,
+    });
+    for (const row of metaRows) {
+      const current = map.get(row.asset_id) ?? emptySyncAssetMetadata();
+      current.description = row.description?.trim() ? row.description.trim() : null;
+      current.rating = row.rating;
+      current.favorite = row.favorite !== 0;
+      map.set(row.asset_id, current);
+    }
+    return map;
   }
 
   /** 按 syncId 读取本地资产内容（同步上传用）。 */
@@ -26499,13 +26678,23 @@ export class LibraryService {
         // incompatible id without discarding valid siblings in the batch.
         continue;
       }
-      const absolutePath = this.artifactFilePathFromRoot(artifactsRoot, row.file_path);
-      this.artifactPathCache.set(`${libraryId}\u0000${artifactId}`, {
-        absolutePath,
-        kind: row.kind,
-        changeSequence,
-      });
-      entries.push({ artifactId, absolutePath });
+      try {
+        const absolutePath = this.artifactFilePathFromRoot(artifactsRoot, row.file_path);
+        this.artifactPathCache.set(`${libraryId}\u0000${artifactId}`, {
+          absolutePath,
+          kind: row.kind,
+          changeSequence,
+        });
+        entries.push({ artifactId, absolutePath });
+      } catch (error) {
+        if (
+          error instanceof LibraryServiceError
+          && (error.code === 'ASSET_NOT_FOUND' || error.code === 'INVALID_LIBRARY_PATH')
+        ) {
+          continue;
+        }
+        throw error;
+      }
     }
     return entries;
   }
@@ -32629,6 +32818,7 @@ export class LibraryService {
     };
     this.applyManagedMoveOperation(openLibrary, operationId, manifest);
     this.noteClientFilesystemMutation();
+    this.emitClientAssetsChanged(input.libraryId, files.length);
     return { movedCount: files.length, skippedCount, operationId,
       assets: this.managedMoveSummaries(openLibrary, files.map((file) => file.assetId)) };
   }
@@ -32706,6 +32896,8 @@ export class LibraryService {
       version: 4,
     };
     this.applyManagedMoveOperation(openLibrary, undoOperationId, manifest);
+    this.noteClientFilesystemMutation();
+    this.emitClientAssetsChanged(input.libraryId, files.length);
     return { undoneCount: files.length, skippedCount,
       assets: this.managedMoveSummaries(openLibrary, files.map((file) => file.assetId)) };
   }

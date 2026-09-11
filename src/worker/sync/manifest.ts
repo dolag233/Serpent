@@ -23,6 +23,8 @@ export interface SyncManifestEntry {
   etag?: string;
   /** 元数据条目版本（标签/评分/描述），独立于文件内容。 */
   metadataVersion: number;
+  /** 规范化 sidecar 内容 sha256；缺省表示尚未同步过元数据。 */
+  metadataHash?: string;
 }
 
 export interface SyncManifest {
@@ -62,6 +64,28 @@ export function parseManifest(raw: string): SyncManifest {
 
 export function serializeManifest(manifest: SyncManifest): string {
   return JSON.stringify(manifest);
+}
+
+/**
+ * 远端已有合法身份时，写回必须保留远端 libraryId/displayName/directoryName。
+ * 空 entries 不得覆盖非空远端清单（GitHub #40 / Serpent-079d71）。
+ */
+export function stampRemoteIdentity(
+  outgoing: SyncManifest,
+  remote: SyncManifest,
+  remoteExisted: boolean,
+): SyncManifest {
+  if (!remoteExisted || remote.libraryId.trim() === '') return outgoing;
+  const entries = Object.keys(outgoing.entries).length === 0 && Object.keys(remote.entries).length > 0
+    ? { ...remote.entries }
+    : outgoing.entries;
+  return {
+    ...outgoing,
+    libraryId: remote.libraryId,
+    displayName: remote.displayName || outgoing.displayName,
+    directoryName: remote.directoryName || outgoing.directoryName,
+    entries,
+  };
 }
 
 /** 条目新旧裁决：version → modifiedAt → hash（一致视为同版本）。 */

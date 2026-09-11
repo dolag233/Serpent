@@ -80,7 +80,22 @@ export function toMessage(
       ? translateForLocale(locale, "error.withReason", { message, reason })
       : message;
   }
-  return error instanceof Error && error.message ? error.message : fallback;
+  if (error && typeof error === "object" && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string") {
+      const mapped = messageForCode(code as PublicErrorCode, locale);
+      if (mapped) return mapped;
+    }
+    const objectMessage = (error as { message?: unknown }).message;
+    if (typeof objectMessage === "string" && objectMessage.trim()) {
+      return objectMessage;
+    }
+  }
+  if (typeof error === "string" && error.trim()) return error;
+  if (error instanceof Error && typeof error.message === "string" && error.message.trim()) {
+    return error.message;
+  }
+  return fallback;
 }
 
 /** Benign clipboard paste outcomes — no toast or blocking dialog. */

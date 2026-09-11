@@ -67,3 +67,11 @@ describe('toMessage Eagle import stages', () => {
     ).toContain('登记');
   });
 });
+
+describe('toMessage non-string errors', () => {
+  it('does not throw when the payload is a plain conflict object', () => {
+    expect(toMessage({ code: 'CONFLICT' }, '界面仍可用')).toBe('界面仍可用');
+    expect(() => toMessage({ code: 'ASSET_NOT_FOUND', message: 12 }, '界面仍可用')).not.toThrow();
+    expect(toMessage(null, '界面仍可用')).toBe('界面仍可用');
+  });
+});

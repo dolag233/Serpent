@@ -6,6 +6,7 @@ import {
   mergeManifests,
   parseManifest,
   serializeManifest,
+  stampRemoteIdentity,
   type SyncManifestEntry,
 } from '../../src/worker/sync/manifest';
 
@@ -73,5 +74,15 @@ describe('sync manifest (Serpent-xffq)', () => {
     local.entries.only = entry({});
     const { merged } = mergeManifests(local, remote);
     expect(merged.entries.only).toBeTruthy();
+  });
+
+  it('keeps the remote library identity and refuses empty overwrite', () => {
+    const remote = createEmptyManifest({ libraryId: 'lib-a', displayName: 'A 库', directoryName: 'A库' });
+    remote.entries.a1 = entry({});
+    const outgoing = createEmptyManifest({ libraryId: 'lib-b', displayName: '我的资源库', directoryName: '我的资源库' });
+    const stamped = stampRemoteIdentity(outgoing, remote, true);
+    expect(stamped.libraryId).toBe('lib-a');
+    expect(stamped.displayName).toBe('A 库');
+    expect(stamped.entries.a1).toBeTruthy();
   });
 });
