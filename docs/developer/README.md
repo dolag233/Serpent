@@ -11,7 +11,8 @@
 - [架构](architecture.md)——进程模型、目录结构、关键设计
 - [测试](testing.md)——测试体系与运行方式
 - [新增媒体格式支持](media-format-support.md)——从共享注册表到导入、预览、过滤、协议和验收
-- [分支与开发工作流](workflow.md)——`main`/`dev` 定位、Beads 工单、文档记录、验收和交接经验
+- [分支与开发工作流](workflow.md)——`main`/`dev` 定位、外部贡献、Beads 工单、文档记录、验收和交接经验
+- [贡献者名单](../../CONTRIBUTORS.md)——已被项目接受并合并的贡献
 
 其他软件文档（内部记录仅仓库 `dev` 分支，网站不发布）：
 

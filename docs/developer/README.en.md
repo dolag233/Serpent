@@ -11,7 +11,8 @@ For developers working on Serpent itself: architecture, building from source, te
 - [Architecture](architecture.md) — process model, directory layout, key design
 - [Testing](testing.md) — test layers and how to run them
 - [Adding media format support](media-format-support.md) — registry, import, preview, filters, protocols, and acceptance
-- [Branches and workflow](workflow.md) — `main`/`dev`, Beads tickets, development records, acceptance, and handoff
+- [Branches and workflow](workflow.md) — `main`/`dev`, external contributions, Beads tickets, development records, acceptance, and handoff
+- [Contributors](../../CONTRIBUTORS.md) — contributions accepted and merged into the project
 
 Other software docs (internal records live on the repo `dev` branch and are not published to the site):
 

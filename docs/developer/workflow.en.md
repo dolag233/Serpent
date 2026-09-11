@@ -11,6 +11,14 @@ This guide is for contributors joining Serpent for the first time. It explains t
 
 `main` is for “ready to release”; `dev` is for “safe to keep developing”. Feature branches must start from `dev`. Development, acceptance, ticket assignment, and internal records happen on `dev` or its feature branches. The current development branch in this repository is `dev`.
 
+## External contributions and pull requests
+
+External contributors should target pull requests at `dev`, rather than submitting directly to `main`. Maintainers review, integrate, and, when necessary, refine contributions on `dev`; once a group of features meets the release conditions, reviewed work is promoted to `main` through the release process.
+
+Accepted and merged code, documentation, tests, translations, design improvements, and other useful project changes may be credited in the root [`CONTRIBUTORS.md`](../../CONTRIBUTORS.md). Unmerged pull requests, issues that only provide suggestions, and changes that are not adopted are not listed yet. There is no hard line-count threshold: when a contribution is retained and merged, the original author should receive credit even if maintainers later reorganize or refine the change.
+
+GitHub's automatic Contributors graph is primarily based on commits to the default branch, so a contribution merged into `dev` may not appear there immediately. This does not prevent the project from recognizing the contributor in `CONTRIBUTORS.md`. Contributors should associate the email used for their commits with their GitHub account so that GitHub can attribute the commits correctly when the work later reaches `main`.
+
 Development-only files must not leak into the release baseline. Do not merge `dev` directly into `main`: prefer cherry-picking reviewed feature commits. If a merge is unavoidable, use `--no-commit`, remove `.beads/`, `.codex/`, `.cursor/`, agent instructions, and `docs/internal/` before committing. Verify the result with:
 
 ```bash
@@ -41,29 +49,29 @@ git branch --show-current
 
 In a shared worktree, never overwrite unrelated changes. Coordinate scope before editing a file another agent is changing.
 
-### 2. Claim one Beads ticket
+### 2. Inspect and claim one ticket
 
-Beads is Serpent’s task source of truth. Find available work, inspect the exact ticket, and claim it atomically before coding:
+Serpent’s task source of truth is the version-controlled `.beads/issues.jsonl`. Find available work, inspect the exact ticket, and claim it atomically before coding:
 
 ```bash
-bd ready --json
-bd show <issue-id>
-bd update <issue-id> --claim
+node scripts/ticket.mjs ready --json
+node scripts/ticket.mjs show <issue-id> --json
+node scripts/ticket.mjs claim <issue-id>
 ```
 
-Claiming sets `in_progress` and records the assignee. Only one agent may implement a ticket at a time. File a new ticket when new scope appears instead of silently expanding the current one:
+Claiming sets `in_progress` and records the owner. Only one agent may implement a ticket at a time. File a new ticket when new scope appears instead of silently expanding the current one:
 
 ```bash
-bd create "Short title" -d "Context, scope, and acceptance criteria" -p 1 -t bug -l "label"
+node scripts/ticket.mjs add "Short title" -d "Context, scope, and acceptance criteria" -p 1 -t bug -l "label"
 ```
 
 Close only after recording the commit and evidence:
 
 ```bash
-bd close <issue-id> --reason "What changed; commands and results; commit <sha>"
+node scripts/ticket.mjs status <issue-id> closed --reason "What changed; commands and results; commit <sha>"
 ```
 
-On `dev`, `.beads/issues.jsonl` is the Git-tracked mirror. After hooks are installed, commits and pushes synchronize the mirror. Dolt data cannot be merged with an ordinary Git merge: before a cross-branch ticket migration, save `bd export --all` and `bd stats` on both sides, form the union by issue ID, and resolve conflicts manually.
+On Windows, call `node scripts/ticket.mjs` directly; do not rely on `npm run ticket --` to forward valued options. The script rereads the JSONL under a lock and replaces it atomically; do not edit the file by hand or write it concurrently from another process. The current workflow does not use Dolt; do not run `bd dolt push`, `bd dolt pull`, `bd export`, or `bd import`.
 
 ### 3. Write the spec and development record first
 
@@ -111,7 +119,7 @@ Before handoff, check:
 
 1. `git diff --check` and tests directly affected by the change;
 2. code, tests, docs, development logs, and the `.beads` mirror belong to the same change;
-3. `bd show <issue-id>` has the correct status and assignee;
+3. `node scripts/ticket.mjs show <issue-id> --json` has the correct status and owner;
 4. `git status --short` contains only your intended changes;
 5. the handoff states the baseline, changed files, validation commands, unverified items, and next step.
 

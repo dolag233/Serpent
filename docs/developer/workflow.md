@@ -11,6 +11,14 @@
 
 `main` 的目标是“拿来发布”，`dev` 的目标是“方便持续开发”。功能分支必须从 `dev` 创建；开发、验收、工单认领和内部记录都在 `dev` 或其功能分支完成。当前仓库的开发分支名就是 `dev`。
 
+## 外部贡献与 Pull Request
+
+外部贡献者应将 Pull Request 的目标分支设为 `dev`，不要直接提交到 `main`。维护者会在 `dev` 上进行审查、整合和必要的二次修改；当一组功能达到发布条件后，再按发布流程将经过审查的内容合并到 `main`。
+
+被项目接受并合并的代码、文档、测试、翻译、设计改进和其他有效变更，都可以计入贡献，并记录在根目录的 [`CONTRIBUTORS.md`](../../CONTRIBUTORS.md) 中。尚未合并的 PR、仅提供建议的 issue，以及完全未被采用的改动暂不列入名单。贡献大小不设硬性行数门槛；只要变更被保留并合并，就应保留原作者的贡献归属，即使维护者后来进行了整理或二次修改。
+
+由于 GitHub 的自动 Contributors 图主要依据默认分支的提交统计，合并到 `dev` 后可能不会立即显示；这不影响项目在 `CONTRIBUTORS.md` 中及时致谢。贡献者应确保提交使用的邮箱已关联自己的 GitHub 账号，以便后续发布到 `main` 后 GitHub 正确归属提交。
+
 开发资料不应被偷偷带入发布基线。不要直接把 `dev` 合并到 `main`：优先逐个 cherry-pick 已审查的功能提交；如果必须合并，使用 `--no-commit`，并在提交前移除 `.beads/`、`.codex/`、`.cursor/`、agent 指南和 `docs/internal/` 等开发专用内容。合流后检查：
 
 ```bash
@@ -41,29 +49,29 @@ git branch --show-current
 
 共享工作树时不要覆盖不属于本任务的改动；发现同一文件正在被别人修改，先协调范围再编辑。
 
-### 2. 用 Beads 认领唯一工单
+### 2. 查看并认领唯一工单
 
-Serpent 的任务事实源是 Beads。先查看可做事项，再原子认领，不能凭标题直接开工：
+Serpent 的任务事实源是版本控制中的 `.beads/issues.jsonl`。先查看可做事项，再原子认领，不能凭标题直接开工：
 
 ```bash
-bd ready --json
-bd show <issue-id>
-bd update <issue-id> --claim
+node scripts/ticket.mjs ready --json
+node scripts/ticket.mjs show <issue-id> --json
+node scripts/ticket.mjs claim <issue-id>
 ```
 
-认领后，状态会变为 `in_progress` 并记录 assignee。一个工单同一时间只能由一个 agent 实施。发现新需求就新建工单，不要把范围偷偷塞进当前工单：
+认领后，状态会变为 `in_progress` 并记录负责人。一个工单同一时间只能由一个 agent 实施。发现新需求就新建工单，不要把范围偷偷塞进当前工单：
 
 ```bash
-bd create "简短标题" -d "背景、范围和验收条件" -p 1 -t bug -l "label"
+node scripts/ticket.mjs add "简短标题" -d "背景、范围和验收条件" -p 1 -t bug -l "label"
 ```
 
 完成后写清提交哈希和验证结果再关闭：
 
 ```bash
-bd close <issue-id> --reason "完成说明；验证命令和结果；提交 <sha>"
+node scripts/ticket.mjs status <issue-id> closed --reason "完成说明；验证命令和结果；提交 <sha>"
 ```
 
-`dev` 上的 `.beads/issues.jsonl` 是随代码提交的镜像；安装 hooks 后，提交/推送会同步镜像。Dolt 数据库不能用普通 Git merge 直接合并：跨分支迁移工单前先保存两边的 `bd export --all` 和 `bd stats`，按工单 ID 做并集并人工处理冲突。
+Windows 下请直接调用 `node scripts/ticket.mjs`，不要依赖 `npm run ticket --` 透传带值参数。脚本会在锁内重读 JSONL 并原子替换文件；不要与手工编辑或其他并行写入同时操作。当前流程不使用 Dolt，也不要运行 `bd dolt push`、`bd dolt pull`、`bd export` 或 `bd import`。
 
 ### 3. 先写规格和开发记录，再实现
 
@@ -111,7 +119,7 @@ npm run verify:mainline
 
 1. `git diff --check` 和与改动直接相关的测试；
 2. 代码、测试、文档、开发日志和 `.beads` 镜像是否属于同一个变更；
-3. `bd show <issue-id>` 是否记录了正确状态和 assignee；
+3. `node scripts/ticket.mjs show <issue-id> --json` 是否记录了正确状态和负责人；
 4. `git status --short` 是否只剩本任务改动；
 5. 向下一位开发者交接基线、改动文件、验证命令、未验证项和下一步。
 
