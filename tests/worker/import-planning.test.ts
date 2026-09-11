@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   existsSync,
   lstatSync,
@@ -18,11 +19,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   LibraryService,
   LibraryServiceError,
+  openConfiguredDatabase,
   type ImportFailurePoint,
 } from '../../src/worker/library-service';
 import { isImportCompletion, isImportConflictPlan, isImportSourceFailurePlan } from '../../src/shared/import-outcome';
 import type { ImportConflictPlan } from '../../src/shared/protocol/responses';
-import { normalizeAbsolutePath as normalizeLibraryAbsolutePath } from '../../src/worker/library-rules';
+import {
+  normalizeAbsolutePath as normalizeLibraryAbsolutePath,
+  portablePathIdentity,
+} from '../../src/worker/library-rules';
 import { ONE_PX_RED_PNG } from '../fixtures/fbx/ascii-fbx';
 
 const temporaryRoots: string[] = [];
@@ -1198,6 +1203,75 @@ describe('pending import plans', () => {
       'IMPORT_NOT_FOUND',
     );
     service.closeAll();
+  });
+
+  it('preserves an already registered file while recovering an applying import', () => {
+    const root = temporaryRoot();
+    const setup = new LibraryService();
+    const library = setup.createLibrary({ displayName: 'Applying Recovery', selectedParentPath: root });
+    setup.closeAll();
+
+    const operationId = randomUUID();
+    const operationPath = path.join(library.libraryPath, '.serpent', 'operations', operationId);
+    mkdirSync(path.join(operationPath, 'stage'), { recursive: true });
+    mkdirSync(path.join(operationPath, 'backup'), { recursive: true });
+    const destinationRelativePath = 'already-applied.png';
+    const destinationPath = path.join(library.libraryPath, 'Assets', destinationRelativePath);
+    writeFileSync(destinationPath, 'durable import');
+    const assetId = randomUUID();
+    const revisionId = randomUUID();
+    const now = new Date().toISOString();
+    const database = openConfiguredDatabase(path.join(library.libraryPath, '.serpent', 'library.db'));
+    database.prepare(
+      `INSERT INTO assets
+         (asset_id, location_kind, managed_folder_id, relative_file_path,
+          path_identity, current_revision_id, availability, created_at, updated_at)
+       VALUES (?, 'managed', NULL, ?, ?, ?, 'available', ?, ?)`,
+    ).run(
+      assetId,
+      destinationRelativePath,
+      portablePathIdentity(destinationRelativePath),
+      revisionId,
+      now,
+      now,
+    );
+    database.prepare(
+      `INSERT INTO revisions
+         (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
+          original_filename, origin, accepted_at, content_fingerprint)
+       VALUES (?, ?, NULL, ?, ?, ?, 'import', ?, NULL)`,
+    ).run(revisionId, assetId, Buffer.byteLength('durable import'), now, destinationRelativePath, now);
+    database.prepare(
+      `INSERT INTO file_operations
+         (operation_id, kind, status, manifest_json, error_code, created_at, updated_at)
+       VALUES (?, 'import', 'applying', ?, NULL, ?, ?)`,
+    ).run(operationId, JSON.stringify({
+      version: 1,
+      files: [{
+        backupName: '0',
+        destinationRelativePath,
+        hadDestination: false,
+        stageName: '0',
+      }],
+      directories: [],
+    }), now, now);
+    database.close();
+
+    const recovered = new LibraryService();
+    const opened = recovered.openLibrary(library.libraryPath);
+    expect(readFileSync(destinationPath, 'utf8')).toBe('durable import');
+    expect(recovered.listAssets({ libraryId: opened.libraryId, recursive: true })).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ assetId, relativeFilePath: destinationRelativePath }),
+      ]),
+    );
+    const recoveredDatabase = openConfiguredDatabase(path.join(library.libraryPath, '.serpent', 'library.db'));
+    expect(recoveredDatabase.prepare(
+      'SELECT status, error_code FROM file_operations WHERE operation_id = ?',
+    ).get(operationId)).toEqual({ status: 'committed', error_code: 'PROCESS_INTERRUPTED_RECOVERED' });
+    recoveredDatabase.close();
+    expect(existsSync(operationPath)).toBe(false);
+    recovered.closeAll();
   });
 
   it.each<ImportFailurePoint>([

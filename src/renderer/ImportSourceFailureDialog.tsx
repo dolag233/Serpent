@@ -53,6 +53,7 @@ export function ImportSourceFailureDialog({
         title={t("dialog.sourceFailure.title")}
       >
         <p className="conflict-summary-line">{summary}</p>
+        <p className="field-help">{t("dialog.conflicts.cancelNotice")}</p>
         {showApplyToRest ? (
           <label className="dialog-checkbox-row field-help">
             <input

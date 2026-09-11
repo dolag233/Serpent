@@ -1,7 +1,9 @@
 # Serpent 项目状态
 
-> 更新时间：2026-09-10
+> 更新时间：2026-09-11
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
+
+- **2026-09-11 十万级导入（用户日志）**：Windows 0.2.1 便携版、库在网盘同步盘。导入 10 万+ 在 `resolveImport` → `countLogicalAssetUnits` 上 `too many SQL variables`；进度遮罩不消失；取消 `IMPORT_NOT_FOUND`；冲突窗关闭/applying 中断恢复会丢掉已拷文件。五个可靠性工单已实现并完成自动化验证：SQLite 动态 IN 分块、提交后处理隔离、应用中断恢复、24 小时决策 TTL、Renderer 失败/取消收口与复制进度。见设计 [2026-09-11-large-batch-import-reliability.md](implementation/2026-09-11-large-batch-import-reliability.md) 与[开发日志](development/2026-09-11-large-batch-import-reliability-development-log.md)。Epic `Serpent-168624` 仍待真实 10 万级 Eagle 库、Windows/打包环境和人工 UI 验收。
 
 - **2026-09-10 导入冲突连点 / 跳过无法读取的文件**：内容重复窗连点会把已消费的 `resolveImport` 打成一串 `IMPORT_NOT_FOUND`（`Serpent-85e60c`）。批量导入夹杂无法读取的项时整批失败（`Serpent-7d1ba2`）。已加提交锁，并弹出可跳过的「无法导入部分文件」决策窗（勾选文案对齐序列帧 applyToRest）。见 [开发日志](development/2026-09-10-import-skip-failures-and-conflict-submit-development-log.md)。
 

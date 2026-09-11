@@ -69,6 +69,7 @@ export function ImportConflictDialogShell({
         title={title}
       >
         <p className="conflict-summary-line">{summary}</p>
+        <p className="field-help">{t("dialog.conflicts.cancelNotice")}</p>
         <label className="decision-field" htmlFor={decisionControlId}>
           <span>{decisionLabel}</span>
           {decision}

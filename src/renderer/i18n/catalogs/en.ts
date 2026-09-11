@@ -759,7 +759,8 @@ export const en = {
       confirmSkip: "Skip and continue",
       confirmImportAnyway: "Import anyway",
       examplesMore: "{name} and {count} more",
-      continuing: "Importing…"
+      continuing: "Importing…",
+      cancelNotice: "Cancelling discards the staged copy in the library; files in the original source folder are untouched."
     },
     nameConflict: {
       title: "Name conflict",

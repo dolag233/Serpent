@@ -1,6 +1,6 @@
 # Agent 工作队列发现指南
 
-> 更新时间：2026-07-25  
+> 更新时间：2026-09-11
 > 目的：让 agent **不靠聊天记忆**也能找到「现在该写什么代码」，并与人类验收队列区分职责。
 
 ## 三套系统，各管一事
@@ -54,14 +54,13 @@ bd ready --json
 bd list --status=open -q --json | jq 'sort_by(.priority) | .[] | {id, priority, title}'
 ```
 
-当前应优先关注的 **open P0/P1** 类型（2026-07-25 卫生后快照，以 `bd list` 为准）：
+当前应优先关注的 **open P0/P1** 类型（以 `node scripts/ticket.mjs ready --json` 为准）。2026-09-11 导入可靠性五个拆单已实现，待本轮提交后关闭：
 
 | 优先级 | 典型工单 | 含义 |
 |--------|----------|------|
-| P0 | `Serpent-pxd` | 导入库后缩略图破损 |
-| P1 | `Serpent-omn`, `itr`, `32p`, `5p45`, `woa`, `an1`, `4l7`, `e3e`, `7ny`, `rgp` | Windows/画布/文本/过滤等用户点名缺陷 |
-| P1 | `Serpent-ak94` | EXT-003 Pinterest 浮层右键（原 `pn8k` 丢失后重建） |
-| in_progress | `l67w`, `5p45`, `eaxs`, `kipk` | 已认领，勿撞单 |
+| P0 epic | `Serpent-168624` | 十万级导入失败 / 进度卡住 / 关窗回滚；设计 `docs/internal/implementation/2026-09-11-large-batch-import-reliability.md` |
+| 已实现 | `Serpent-d4d79f` / `Serpent-3d4290` | SQLite IN 分块、resolveImport 提交边界；本轮提交后关闭 |
+| 已实现 | `Serpent-41c7e1` / `Serpent-d1280f` / `Serpent-8fadb4` | applying 恢复、决策 TTL、导入遮罩与冲突取消文案；本轮提交后关闭 |
 
 ### 2. 缺陷池：清单里「人类验收不通过」
 

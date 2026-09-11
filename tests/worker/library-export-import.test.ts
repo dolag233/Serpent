@@ -577,6 +577,41 @@ describe('LibraryService import folder', () => {
     service.closeAll();
   });
 
+  it('reports file and byte totals while copying a library', async () => {
+    const root = temporaryRoot();
+    const events: Array<{
+      filesProcessed: number;
+      totalFiles: number;
+      bytesProcessed: number;
+      totalBytes: number;
+    }> = [];
+    const service = newService({
+      onProgress: (event) => {
+        if (event.type === 'import.progress' && event.phase === 'copy') {
+          events.push(event);
+        }
+      },
+    });
+    const created = service.createLibrary({ displayName: 'Counted Copy', selectedParentPath: root });
+    writeFileSync(path.join(created.libraryPath, 'Assets', 'copy-progress.txt'), 'copy progress');
+    service.closeAll();
+
+    const copyParent = path.join(root, 'counted-copy-parent');
+    mkdirSync(copyParent);
+    await service.importLibraryFromFolder({
+      sourceFolderPath: created.libraryPath,
+      copyToParentPath: copyParent,
+    });
+
+    expect(events.length).toBeGreaterThan(0);
+    const final = events.at(-1)!;
+    expect(final.totalFiles).toBeGreaterThan(0);
+    expect(final.filesProcessed).toBe(final.totalFiles);
+    expect(final.totalBytes).toBeGreaterThan(0);
+    expect(final.bytesProcessed).toBe(final.totalBytes);
+    service.closeAll();
+  });
+
   it('rejects non-library source', async () => {
     const root = temporaryRoot();
     const service = newService();

@@ -747,7 +747,8 @@ export const zhCN = {
       confirmSkip: "跳过并继续",
       confirmImportAnyway: "仍然导入",
       examplesMore: "{name} 等 {count} 项",
-      continuing: "正在导入…"
+      continuing: "正在导入…",
+      cancelNotice: "取消后，资源库中的暂存副本会被丢弃；原始文件夹中的文件不会受影响。"
     },
     nameConflict: {
       title: "同名冲突",

@@ -1,0 +1,31 @@
+# 大批量导入可靠性开发日志（2026-09-11）
+
+## 范围
+
+本轮收口 `Serpent-d4d79f`、`Serpent-3d4290`、`Serpent-41c7e1`、`Serpent-d1280f`、`Serpent-8fadb4`，对应设计文档 `docs/internal/implementation/2026-09-11-large-batch-import-reliability.md`。
+
+## 实现摘要
+
+- 新增 `src/worker/sqlite-in.ts`，把 SQLite 动态 `IN` 的查询与更新统一按 900 个绑定参数分块；双 `IN` 关系查询使用更小的成对分块。导入后处理、序列摘要、刷新对账，以及资产/标签/合集/回收站/恢复/移动复制等大批量选择路径均已接入。
+- `resolveImport` 以文件与数据库提交为边界；序列检测、逻辑计数和结果卡片查询均为提交后的独立可恢复步骤。后处理失败时仍返回成功完成结果并写诊断；已提交 import token 在短时窗口内对迟到的 cancel/abandon 保持幂等。
+- 进程中断恢复在 applying 的 v1 导入中先核对目标路径是否已经有活动资产记录；已登记目标保留并标记 `PROCESS_INTERRUPTED_RECOVERED`，未登记的孤儿目标才清理。
+- 冲突决策默认 TTL 从 15 分钟调整为 24 小时，避免大库导入在用户作决定前静默丢弃暂存内容。
+- Renderer 在 resolve/取消失败路径清理进度状态；冲突取消说明明确表示丢弃资源库暂存副本、保留源文件夹；导入资源库复制阶段报告文件数与字节数。
+
+## 自动化证据
+
+以下命令均基于本轮工作树执行：
+
+- `npm run typecheck`：通过。
+- `npm run lint`：通过。
+- `node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/sqlite-in.test.ts tests/worker/import-planning.test.ts tests/worker/pending-import-lifecycle.test.ts tests/worker/library-export-import.test.ts tests/unit/import-progress-overlay.test.tsx tests/unit/import-progress-copy.test.ts`：6 个测试文件通过，98 项通过，1 项既有跳过。
+- `npm run test:library-availability`：9 个测试文件通过，209 项通过，1 项跳过。
+- `npm test`：534 个测试文件通过、1 个失败、15 个跳过；4,589 项通过、1 项失败、27 项跳过。唯一失败为未被本轮修改触及的 `tests/worker/reconciliation-performance.test.ts` 事件循环性能基准，`p95LagMs=85.27ms` 超过 75ms 门槛（`maxLagMs=333.1ms` 仍低于 1,000ms）。因此全量测试不是全绿，但本轮新增与资源库可用性门禁均通过。
+
+## 验收边界
+
+`IMPORT-UI-005`、`IMPORT-UI-006`、`IMPORT-SQL-001`、`IMPORT-RECOVER-001` 已加入 `docs/internal/qa/human-acceptance-checklist.md`，状态保持“待人类验收”。真实 10w+ Eagle 用户库、Windows 真机、packaged、Computer Use 和独立进程桌面验收未在本轮执行，不能以自动化结果替代。
+
+## 代码审查
+
+待使用 `gpt-5.6-luna`、`high` 对本轮固定差异进行 Standards + Spec 双轴审查，并在此处记录结论。

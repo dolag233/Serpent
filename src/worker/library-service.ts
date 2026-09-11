@@ -760,6 +760,13 @@ import {
   RemoteMediaMagicProbe,
 } from './remote-media-validation';
 import { requeueRetryableFailedArtifacts } from './derived-artifact-repair';
+import {
+  SQLITE_IN_BIND_LIMIT,
+  sqliteAllInChunks,
+  sqliteInChunks,
+  sqliteInPlaceholders,
+  sqliteRunInChunks,
+} from './sqlite-in';
 
 interface RunResult {
   changes: number;
@@ -803,6 +810,8 @@ const REQUIRED_DIRECTORIES = ['Assets'] as const;
 const REGENERABLE_DIRECTORIES = ['previews', 'revisions', 'trash', 'artifacts'] as const;
 const DATABASE_BACKUP_DIRECTORY = 'backups';
 const DATABASE_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1_000;
+const DEFAULT_IMPORT_DECISION_TTL_MS = 24 * 60 * 60 * 1_000;
+const FINALIZED_IMPORT_RETENTION_MS = 10 * 60_000;
 
 const MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
@@ -4839,6 +4848,7 @@ async function copyDirRecursiveCancellable(
   sourcePath: string,
   destPath: string,
   cancelState: TransferCancelState,
+  onFileCopied?: (byteSize: number) => void,
 ): Promise<void> {
   mkdirSync(destPath, { recursive: true });
   let children;
@@ -4856,7 +4866,7 @@ async function copyDirRecursiveCancellable(
       throw new LibraryServiceError('NOT_A_LIBRARY', { reason: 'SYMBOLIC_LINK_NOT_ALLOWED' });
     }
     if (child.isDirectory()) {
-      await copyDirRecursiveCancellable(childSource, childDest, cancelState);
+      await copyDirRecursiveCancellable(childSource, childDest, cancelState, onFileCopied);
     } else if (child.isFile()) {
       copyFileSync(childSource, childDest);
       // Keep the source mtime across a library copy. The first open compares
@@ -4865,8 +4875,32 @@ async function copyDirRecursiveCancellable(
       // allowing a genuinely changed source file to be reconciled normally.
       const sourceStat = statSync(childSource);
       utimesSync(childDest, sourceStat.atime, sourceStat.mtime);
+      onFileCopied?.(sourceStat.size);
     }
   }
+}
+
+function measureCopyTree(sourcePath: string): { fileCount: number; totalBytes: number } {
+  let fileCount = 0;
+  let totalBytes = 0;
+  const visit = (directoryPath: string): void => {
+    for (const child of readdirSync(directoryPath, { withFileTypes: true })) {
+      const childPath = path.join(directoryPath, child.name);
+      if (child.isSymbolicLink()) {
+        throw new LibraryServiceError('NOT_A_LIBRARY', {
+          reason: 'SYMBOLIC_LINK_NOT_ALLOWED',
+        });
+      }
+      if (child.isDirectory()) {
+        visit(childPath);
+      } else if (child.isFile()) {
+        fileCount += 1;
+        totalBytes += statSync(childPath).size;
+      }
+    }
+  };
+  visit(sourcePath);
+  return { fileCount, totalBytes };
 }
 
 function assertTreeContainsNoSymlinks(rootPath: string): void {
@@ -6200,6 +6234,12 @@ export class LibraryService {
   private readonly databaseBackupInFlight = new Map<string, Promise<boolean>>();
   private readonly databaseBackupTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly pendingImports = new Map<string, PendingImport>();
+  /**
+   * A resolve can finish the durable commit before a late cancel/abandon RPC
+   * arrives. Retain those ids briefly so the already-successful operation is
+   * idempotent from the renderer's point of view.
+   */
+  private readonly finalizedImportIds = new Map<string, number>();
   private readonly watchByLibraryId = new Map<string, LibraryWatch>();
   private readonly linkedWatchByKey = new Map<string, LinkedFolderWatch>();
   /** One coalesced asynchronous filesystem refresh per open library. */
@@ -7332,6 +7372,30 @@ export class LibraryService {
     pending.expiryHandle = undefined;
   }
 
+  private pruneFinalizedImportIds(now = Date.now()): void {
+    for (const [importId, finalizedAt] of this.finalizedImportIds) {
+      if (now - finalizedAt > FINALIZED_IMPORT_RETENTION_MS) {
+        this.finalizedImportIds.delete(importId);
+      }
+    }
+  }
+
+  private rememberFinalizedImport(importId: string): void {
+    const now = Date.now();
+    this.pruneFinalizedImportIds(now);
+    this.finalizedImportIds.set(importId, now);
+  }
+
+  private isFinalizedImport(importId: string): boolean {
+    const finalizedAt = this.finalizedImportIds.get(importId);
+    if (finalizedAt === undefined) return false;
+    if (Date.now() - finalizedAt > FINALIZED_IMPORT_RETENTION_MS) {
+      this.finalizedImportIds.delete(importId);
+      return false;
+    }
+    return true;
+  }
+
   private updateImportOperation(
     pending: PendingImport,
     status: 'failed' | 'rolled_back',
@@ -7350,7 +7414,10 @@ export class LibraryService {
 
   private scheduleImportExpiry(importId: string, pending: PendingImport): void {
     const clock = this.options.importClock ?? DEFAULT_IMPORT_EXPIRY_CLOCK;
-    const ttlMs = this.options.importTtlMs ?? 15 * 60 * 1_000;
+    // A large import can legitimately leave the conflict/source-failure
+    // dialog open for longer than the copy itself. Never silently discard its
+    // staged files after the old 15-minute default.
+    const ttlMs = this.options.importTtlMs ?? DEFAULT_IMPORT_DECISION_TTL_MS;
     const expiresAt = clock.now() + Math.max(0, ttlMs);
     pending.expiryHandle = clock.schedule(() => {
       const current = this.pendingImports.get(importId);
@@ -8422,6 +8489,18 @@ export class LibraryService {
           .run(new Date().toISOString(), row.operation_id);
         continue;
       }
+      const findAppliedImportAsset =
+        row.kind === 'import' && row.status === 'applying' && manifest.version === 1
+          ? openLibrary.connection.prepare(
+              `SELECT asset_id
+                 FROM assets
+                WHERE location_kind = 'managed'
+                  AND path_identity = ?
+                  AND deleted_at IS NULL
+                LIMIT 1`,
+            )
+          : undefined;
+      let recoveredAppliedImportAsset = false;
       for (const file of [...manifest.files].reverse()) {
         const destinationPath = this.folderPath(openLibrary, file.destinationRelativePath);
         const backupPath = path.join(operationPath, 'backup', file.backupName);
@@ -8444,6 +8523,14 @@ export class LibraryService {
           rmSync(destinationPath, { force: true, recursive: true });
           mkdirSync(path.dirname(destinationPath), { recursive: true });
           renameSync(backupPath, destinationPath);
+        } else if (
+          findAppliedImportAsset?.get(portablePathIdentity(file.destinationRelativePath))
+        ) {
+          // The file was already registered before the process stopped. It is
+          // durable application state, not an orphan left between rename and
+          // INSERT; preserve it and let normal reconciliation repair a source
+          // that is still missing on disk.
+          recoveredAppliedImportAsset = true;
         } else if (!file.hadDestination && !existsSync(stagedPath) && existsSync(destinationPath)) {
           rmSync(destinationPath, { force: true, recursive: true });
         }
@@ -8459,9 +8546,18 @@ export class LibraryService {
       this.removeOperation(operationPath);
       openLibrary.connection
         .prepare(
-          "UPDATE file_operations SET status = 'rolled_back', error_code = 'PROCESS_INTERRUPTED', updated_at = ? WHERE operation_id = ?",
+          `UPDATE file_operations
+              SET status = ?, error_code = ?, updated_at = ?
+            WHERE operation_id = ?`,
         )
-        .run(new Date().toISOString(), row.operation_id);
+        .run(
+          recoveredAppliedImportAsset ? 'committed' : 'rolled_back',
+          recoveredAppliedImportAsset
+            ? 'PROCESS_INTERRUPTED_RECOVERED'
+            : 'PROCESS_INTERRUPTED',
+          new Date().toISOString(),
+          row.operation_id,
+        );
     }
 
     if (directoryExists(operationsPath)) {
@@ -8528,10 +8624,13 @@ export class LibraryService {
     }
 
     if (manifest.assetIds.length > 0 && manifest.assetOperationId) {
-      const active = openLibrary.connection.prepare(
-        `SELECT asset_id FROM assets WHERE asset_id IN (${manifest.assetIds.map(() => '?').join(', ')})
-          AND deleted_at IS NULL`,
-      ).all(...manifest.assetIds) as Array<{ asset_id: string }>;
+      const active = sqliteAllInChunks<string, { asset_id: string }>({
+        connection: openLibrary.connection,
+        values: manifest.assetIds,
+        buildSql: (placeholders) =>
+          `SELECT asset_id FROM assets WHERE asset_id IN (${placeholders})
+            AND deleted_at IS NULL`,
+      });
       if (active.length > 0) {
         this.trashAssets({
           libraryId: openLibrary.summary.libraryId,
@@ -9495,19 +9594,26 @@ export class LibraryService {
   }): Array<{ assetId: string; tagId: string }> {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (input.assetIds.length === 0 || input.tagIds.length === 0) return [];
-    const assetPlaceholders = input.assetIds.map(() => '?').join(',');
-    const tagPlaceholders = input.tagIds.map(() => '?').join(',');
-    const rows = openLibrary.connection.prepare(
-      `SELECT hat.asset_id, hat.tag_id
-         FROM human_asset_tags hat
-         JOIN tags t ON t.tag_id = hat.tag_id
-        WHERE hat.asset_id IN (${assetPlaceholders})
-          AND hat.tag_id IN (${tagPlaceholders})
-          AND t.library_id = ?`,
-    ).all(...input.assetIds, ...input.tagIds, input.libraryId) as Array<{
-      asset_id: string;
-      tag_id: string;
-    }>;
+    const rows: Array<{ asset_id: string; tag_id: string }> = [];
+    // Two IN predicates share one SQLite statement, so split each side below
+    // half the single-IN budget instead of multiplying the bind count.
+    const relationChunkLimit = Math.floor((SQLITE_IN_BIND_LIMIT - 4) / 2);
+    for (const assetChunk of sqliteInChunks([...new Set(input.assetIds)], relationChunkLimit)) {
+      for (const tagChunk of sqliteInChunks([...new Set(input.tagIds)], relationChunkLimit)) {
+        rows.push(...sqliteAllInChunks<string, { asset_id: string; tag_id: string }>({
+          connection: openLibrary.connection,
+          values: assetChunk,
+          buildSql: (assetPlaceholders) =>
+            `SELECT hat.asset_id, hat.tag_id
+               FROM human_asset_tags hat
+               JOIN tags t ON t.tag_id = hat.tag_id
+              WHERE hat.asset_id IN (${assetPlaceholders})
+                AND hat.tag_id IN (${sqliteInPlaceholders(tagChunk)})
+                AND t.library_id = ?`,
+          bind: (chunk) => [...chunk, ...tagChunk, input.libraryId],
+        }));
+      }
+    }
     return rows.map((row) => ({ assetId: row.asset_id, tagId: row.tag_id }));
   }
 
@@ -9592,11 +9698,14 @@ export class LibraryService {
   }): string[] {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (input.assetIds.length === 0) return [];
-    const placeholders = input.assetIds.map(() => '?').join(',');
-    const rows = openLibrary.connection.prepare(
-      `SELECT asset_id FROM collection_assets
-        WHERE collection_id = ? AND asset_id IN (${placeholders})`,
-    ).all(input.collectionId, ...input.assetIds) as Array<{ asset_id: string }>;
+    const rows = sqliteAllInChunks<string, { asset_id: string }>({
+      connection: openLibrary.connection,
+      values: input.assetIds,
+      buildSql: (placeholders) =>
+        `SELECT asset_id FROM collection_assets
+          WHERE collection_id = ? AND asset_id IN (${placeholders})`,
+      bind: (chunk) => [input.collectionId, ...chunk],
+    });
     return rows.map((row) => row.asset_id);
   }
 
@@ -9878,12 +9987,15 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const ids = [...new Set(input.collectionIds)];
     if (ids.length === 0) return [];
-    return (openLibrary.connection.prepare(
-      `SELECT collection_id, asset_id, position
-         FROM collection_assets
-        WHERE collection_id IN (${ids.map(() => '?').join(',')})
-        ORDER BY collection_id, position, asset_id`,
-    ).all(...ids) as Array<{ collection_id: string; asset_id: string; position: number }>).map((row) => ({
+    return sqliteAllInChunks<string, { collection_id: string; asset_id: string; position: number }>({
+      connection: openLibrary.connection,
+      values: ids,
+      buildSql: (placeholders) =>
+        `SELECT collection_id, asset_id, position
+           FROM collection_assets
+          WHERE collection_id IN (${placeholders})
+          ORDER BY collection_id, position, asset_id`,
+    }).map((row) => ({
       collectionId: row.collection_id,
       assetId: row.asset_id,
       position: row.position,
@@ -10055,17 +10167,21 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const ids = [...new Set(input.collectionIds)];
     if (ids.length === 0) return [];
-    const rows = openLibrary.connection.prepare(
-      `SELECT collection_id, library_id, name, query_definition_json, position
-         FROM smart_collections
-        WHERE library_id = ? AND collection_id IN (${ids.map(() => '?').join(',')})`,
-    ).all(input.libraryId, ...ids) as Array<{
+    const rows = sqliteAllInChunks<string, {
       collection_id: string;
       library_id: string;
       name: string;
       query_definition_json: string;
       position: number;
-    }>;
+    }>({
+      connection: openLibrary.connection,
+      values: ids,
+      buildSql: (placeholders) =>
+        `SELECT collection_id, library_id, name, query_definition_json, position
+           FROM smart_collections
+          WHERE library_id = ? AND collection_id IN (${placeholders})`,
+      bind: (chunk) => [input.libraryId, ...chunk],
+    });
     if (rows.length !== ids.length && !input.allowMissing) throw new LibraryServiceError('FOLDER_NOT_FOUND');
     return rows.map((row) => ({
       collectionId: row.collection_id,
@@ -10177,15 +10293,22 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const ids = [...new Set(input.tagIds)];
     if (ids.length === 0) return [];
-    const rows = openLibrary.connection.prepare(
-      `SELECT tag_id, library_id, name FROM tags
-        WHERE library_id = ? AND tag_id IN (${ids.map(() => '?').join(',')})`,
-    ).all(input.libraryId, ...ids) as Array<{ tag_id: string; library_id: string; name: string }>;
+    const rows = sqliteAllInChunks<string, { tag_id: string; library_id: string; name: string }>({
+      connection: openLibrary.connection,
+      values: ids,
+      buildSql: (placeholders) =>
+        `SELECT tag_id, library_id, name FROM tags
+          WHERE library_id = ? AND tag_id IN (${placeholders})`,
+      bind: (chunk) => [input.libraryId, ...chunk],
+    });
     if (rows.length !== ids.length && !input.allowMissing) throw new LibraryServiceError('FOLDER_NOT_FOUND');
-    const relations = openLibrary.connection.prepare(
-      `SELECT asset_id, tag_id FROM human_asset_tags
-        WHERE tag_id IN (${ids.map(() => '?').join(',')})`,
-    ).all(...ids) as Array<{ asset_id: string; tag_id: string }>;
+    const relations = sqliteAllInChunks<string, { asset_id: string; tag_id: string }>({
+      connection: openLibrary.connection,
+      values: ids,
+      buildSql: (placeholders) =>
+        `SELECT asset_id, tag_id FROM human_asset_tags
+          WHERE tag_id IN (${placeholders})`,
+    });
     return rows.map((row) => ({
       tagId: row.tag_id,
       libraryId: row.library_id,
@@ -10940,12 +11063,7 @@ export class LibraryService {
         if (!folder) throw new LibraryServiceError('INVALID_IMPORT_DECISION');
       }
     }
-    const rows = openLibrary.connection.prepare(
-      `SELECT asset_id, current_revision_id, relative_file_path, deleted_at,
-              availability, location_kind, linked_folder_id
-         FROM assets
-        WHERE asset_id IN (${input.assetIds.map(() => '?').join(',')})`,
-    ).all(...input.assetIds) as Array<{
+    const rows = sqliteAllInChunks<string, {
       asset_id: string;
       current_revision_id: string;
       relative_file_path: string;
@@ -10953,7 +11071,15 @@ export class LibraryService {
       availability: 'available' | 'missing';
       location_kind: 'managed' | 'linked';
       linked_folder_id: string | null;
-    }>;
+    }>({
+      connection: openLibrary.connection,
+      values: input.assetIds,
+      buildSql: (placeholders) =>
+        `SELECT asset_id, current_revision_id, relative_file_path, deleted_at,
+                availability, location_kind, linked_folder_id
+           FROM assets
+          WHERE asset_id IN (${placeholders})`,
+    });
     const rowById = new Map(rows.map((row) => [row.asset_id, row]));
     const assetStates: Array<{ assetId: string; stateToken: string }> = [];
     const resolutionFacts: Array<{
@@ -12511,13 +12637,14 @@ export class LibraryService {
       throw new LibraryServiceError('FOLDER_NOT_FOUND');
     }
 
-    const rows = openLibrary.connection
-      .prepare(
+    const rows = sqliteAllInChunks<string, ManagedFolderRow>({
+      connection: openLibrary.connection,
+      values: input.folderIds,
+      buildSql: (placeholders) =>
         `SELECT folder_id, parent_folder_id, name, relative_path, path_identity, created_at
            FROM managed_folders
-          WHERE folder_id IN (${input.folderIds.map(() => '?').join(',')})`,
-      )
-      .all(...input.folderIds) as ManagedFolderRow[];
+          WHERE folder_id IN (${placeholders})`,
+    });
     if (rows.length !== input.folderIds.length) {
       throw new LibraryServiceError('FOLDER_NOT_FOUND');
     }
@@ -13018,9 +13145,12 @@ export class LibraryService {
         }
         if (tombstonesWritten) {
           openLibrary.connection.transaction(() => {
-            openLibrary.connection.prepare(
-              `DELETE FROM trashed_managed_folders WHERE tombstone_id IN (${tombstoneIds.map(() => '?').join(', ')})`,
-            ).run(...tombstoneIds);
+            sqliteRunInChunks({
+              connection: openLibrary.connection,
+              values: tombstoneIds,
+              buildSql: (placeholders) =>
+                `DELETE FROM trashed_managed_folders WHERE tombstone_id IN (${placeholders})`,
+            });
           })();
         }
         if (assetOperationId) {
@@ -13161,16 +13291,16 @@ export class LibraryService {
     const folderIds = [...new Set(input.folderIds)];
     if (folderIds.length === 0) throw new LibraryServiceError('FOLDER_NOT_FOUND');
 
-    const rows = openLibrary.connection.prepare(
-      // Serpent review: managed_folders lives inside the per-library DB —
-      // there is no library_id column (the table is already library-scoped).
-      `SELECT folder_id, relative_path
-         FROM managed_folders
-        WHERE folder_id IN (${folderIds.map(() => '?').join(',')})`,
-    ).all(...folderIds) as Array<{
-      folder_id: string;
-      relative_path: string;
-    }>;
+    const rows = sqliteAllInChunks<string, { folder_id: string; relative_path: string }>({
+      connection: openLibrary.connection,
+      values: folderIds,
+      buildSql: (placeholders) =>
+        // Serpent review: managed_folders lives inside the per-library DB —
+        // there is no library_id column (the table is already library-scoped).
+        `SELECT folder_id, relative_path
+           FROM managed_folders
+          WHERE folder_id IN (${placeholders})`,
+    });
     if (rows.length !== folderIds.length) throw new LibraryServiceError('FOLDER_NOT_FOUND');
 
     const childCount = openLibrary.connection.prepare(
@@ -13850,15 +13980,15 @@ export class LibraryService {
     onFileDeleted?: (processed: number, total: number) => void,
   ): number {
     if (assetIds.length === 0) return 0;
-    const placeholders = assetIds.map(() => '?').join(', ');
-    const rows = openLibrary.connection
-      .prepare(
+    const rows = sqliteAllInChunks<string, { asset_id: string; relative_file_path: string }>({
+      connection: openLibrary.connection,
+      values: assetIds,
+      buildSql: (placeholders) =>
         `SELECT asset_id, relative_file_path FROM assets
           WHERE asset_id IN (${placeholders})
             AND location_kind = 'managed'
             AND deleted_at IS NULL`,
-      )
-      .all(...assetIds) as Array<{ asset_id: string; relative_file_path: string }>;
+    });
 
     if (rows.length !== assetIds.length) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
@@ -13933,15 +14063,15 @@ export class LibraryService {
     },
   ): Promise<number> {
     if (assetIds.length === 0) return 0;
-    const placeholders = assetIds.map(() => '?').join(', ');
-    const rows = openLibrary.connection
-      .prepare(
+    const rows = sqliteAllInChunks<string, { asset_id: string; relative_file_path: string }>({
+      connection: openLibrary.connection,
+      values: assetIds,
+      buildSql: (placeholders) =>
         `SELECT asset_id, relative_file_path FROM assets
           WHERE asset_id IN (${placeholders})
             AND location_kind = 'managed'
             AND deleted_at IS NULL`,
-      )
-      .all(...assetIds) as Array<{ asset_id: string; relative_file_path: string }>;
+    });
 
     if (rows.length !== assetIds.length) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
@@ -14000,17 +14130,18 @@ export class LibraryService {
       input.assetIds,
     );
     const assetIds = this.expandAssetIdsToSequenceMembers(openLibrary, input.assetIds);
-    const rows = openLibrary.connection
-      .prepare(
+    const rows = sqliteAllInChunks<string, {
+      asset_id: string;
+      location_kind: string;
+      deleted_at: string | null;
+    }>({
+      connection: openLibrary.connection,
+      values: assetIds,
+      buildSql: (placeholders) =>
         `SELECT asset_id, location_kind, deleted_at
            FROM assets
-          WHERE asset_id IN (${assetIds.map(() => '?').join(',')})`,
-      )
-      .all(...assetIds) as Array<{
-        asset_id: string;
-        location_kind: string;
-        deleted_at: string | null;
-      }>;
+          WHERE asset_id IN (${placeholders})`,
+    });
     if (rows.length !== assetIds.length) {
       for (const id of assetIds) {
         const row = rows.find((candidate) => candidate.asset_id === id);
@@ -15658,17 +15789,20 @@ export class LibraryService {
       input.folderId,
       input.relativePath ?? '',
     );
-    const rows = openLibrary.connection.prepare(
-      `SELECT a.asset_id, a.location_kind, a.linked_folder_id, a.relative_file_path
-         FROM assets a
-        WHERE a.asset_id IN (${input.assetIds.map(() => '?').join(',')})
-          AND a.deleted_at IS NULL AND a.availability = 'available'`,
-    ).all(...input.assetIds) as Array<{
+    const rows = sqliteAllInChunks<string, {
       asset_id: string;
       location_kind: 'managed' | 'linked';
       linked_folder_id: string | null;
       relative_file_path: string;
-    }>;
+    }>({
+      connection: openLibrary.connection,
+      values: input.assetIds,
+      buildSql: (placeholders) =>
+        `SELECT a.asset_id, a.location_kind, a.linked_folder_id, a.relative_file_path
+           FROM assets a
+          WHERE a.asset_id IN (${placeholders})
+            AND a.deleted_at IS NULL AND a.availability = 'available'`,
+    });
     if (rows.length !== input.assetIds.length) throw new LibraryServiceError('ASSET_NOT_FOUND');
     const copiedPaths: string[] = [];
     const copiedSourceAssetIds: string[] = [];
@@ -15780,17 +15914,20 @@ export class LibraryService {
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
     }
-    const rows = openLibrary.connection.prepare(
-      `SELECT asset_id, linked_folder_id, relative_file_path, availability
-         FROM assets
-        WHERE asset_id IN (${input.assetIds.map(() => '?').join(',')})
-          AND location_kind = 'linked' AND deleted_at IS NULL`,
-    ).all(...input.assetIds) as Array<{
+    const rows = sqliteAllInChunks<string, {
       asset_id: string;
       linked_folder_id: string | null;
       relative_file_path: string;
       availability: 'available' | 'missing';
-    }>;
+    }>({
+      connection: openLibrary.connection,
+      values: input.assetIds,
+      buildSql: (placeholders) =>
+        `SELECT asset_id, linked_folder_id, relative_file_path, availability
+           FROM assets
+          WHERE asset_id IN (${placeholders})
+            AND location_kind = 'linked' AND deleted_at IS NULL`,
+    });
     if (rows.length !== input.assetIds.length) {
       throw new LibraryServiceError('ASSET_NOT_FOUND');
     }
@@ -16012,15 +16149,17 @@ export class LibraryService {
   ): void {
     const uniqueIds = [...new Set(assetIds)];
     if (uniqueIds.length === 0) return;
-    const placeholders = uniqueIds.map(() => '?').join(',');
-    openLibrary.connection.prepare(
-      `DELETE FROM asset_sequences
-        WHERE sequence_id IN (
-          SELECT sequence_id
-            FROM asset_sequence_frames
-           WHERE asset_id IN (${placeholders})
-        )`,
-    ).run(...uniqueIds);
+    sqliteRunInChunks({
+      connection: openLibrary.connection,
+      values: uniqueIds,
+      buildSql: (placeholders) =>
+        `DELETE FROM asset_sequences
+          WHERE sequence_id IN (
+            SELECT sequence_id
+              FROM asset_sequence_frames
+             WHERE asset_id IN (${placeholders})
+          )`,
+    });
   }
 
   private createDetectedImageSequences(
@@ -16030,13 +16169,15 @@ export class LibraryService {
   ): string[] {
     const uniqueIds = [...new Set(assetIds)];
     if (uniqueIds.length === 0) return [];
-    const placeholders = uniqueIds.map(() => '?').join(',');
-    const triggerRows = openLibrary.connection.prepare(
-      `SELECT a.relative_file_path
-         FROM assets a
-        WHERE a.asset_id IN (${placeholders})
-          AND a.deleted_at IS NULL`,
-    ).all(...uniqueIds) as Array<{ relative_file_path: string }>;
+    const triggerRows = sqliteAllInChunks<string, { relative_file_path: string }>({
+      connection: openLibrary.connection,
+      values: uniqueIds,
+      buildSql: (placeholders) =>
+        `SELECT a.relative_file_path
+           FROM assets a
+          WHERE a.asset_id IN (${placeholders})
+            AND a.deleted_at IS NULL`,
+    });
     const directories = new Set(
       triggerRows.map((row) => path.posix.dirname(row.relative_file_path)),
     );
@@ -16159,17 +16300,18 @@ export class LibraryService {
     ) {
       return assets.map((asset) => ({ ...asset, sequence: null }));
     }
-    const assetIds = assets.map((asset) => asset.assetId);
-    const membershipPlaceholders = assetIds.map(() => '?').join(',');
-    const memberships = openLibrary.connection.prepare(
-      `SELECT sf.asset_id, sf.position, sf.sequence_id
-         FROM asset_sequence_frames sf
-        WHERE sf.asset_id IN (${membershipPlaceholders})`,
-    ).all(...assetIds) as Array<{
-      asset_id: string;
-      position: number;
-      sequence_id: string;
-    }>;
+    const assetIds = [...new Set(assets.map((asset) => asset.assetId))];
+    const memberships = sqliteAllInChunks<
+      string,
+      { asset_id: string; position: number; sequence_id: string }
+    >({
+      connection: openLibrary.connection,
+      values: assetIds,
+      buildSql: (placeholders) =>
+        `SELECT sf.asset_id, sf.position, sf.sequence_id
+           FROM asset_sequence_frames sf
+          WHERE sf.asset_id IN (${placeholders})`,
+    });
     const hiddenIds = new Set(
       memberships
         .filter((membership) => membership.position > 0)
@@ -16187,7 +16329,6 @@ export class LibraryService {
     if (primaryIds.length === 0) {
       return visible.map((asset) => ({ ...asset, sequence: null }));
     }
-    const primaryPlaceholders = primaryIds.map(() => '?').join(',');
     const sequenceArtifactColumns = columnsFor(openLibrary.connection, 'revision_artifacts');
     const sequenceSourceDimensionColumns = sequenceArtifactColumns.has('width') && sequenceArtifactColumns.has('height')
       ? `,
@@ -16208,19 +16349,7 @@ export class LibraryService {
                 ORDER BY source_metadata.generated_at DESC
                 LIMIT 1) AS source_height`
       : ', NULL AS source_width, NULL AS source_height';
-    const frameRows = openLibrary.connection.prepare(
-      `SELECT s.sequence_id, s.primary_asset_id, s.fps,
-              sf.asset_id, sf.frame_number, sf.position,
-              a.relative_file_path, a.current_revision_id, a.availability, a.deleted_at,
-              r.byte_size
-              ${sequenceSourceDimensionColumns}
-         FROM asset_sequences s
-         JOIN asset_sequence_frames sf ON sf.sequence_id = s.sequence_id
-         JOIN assets a ON a.asset_id = sf.asset_id
-         JOIN revisions r ON r.revision_id = a.current_revision_id
-        WHERE s.primary_asset_id IN (${primaryPlaceholders})
-        ORDER BY s.sequence_id, sf.position`,
-    ).all(...primaryIds) as Array<{
+    const frameRows = sqliteAllInChunks<string, {
       sequence_id: string;
       primary_asset_id: string;
       fps: number;
@@ -16234,7 +16363,22 @@ export class LibraryService {
       byte_size: number;
       source_width: number | null;
       source_height: number | null;
-    }>;
+    }>({
+      connection: openLibrary.connection,
+      values: primaryIds,
+      buildSql: (placeholders) =>
+        `SELECT s.sequence_id, s.primary_asset_id, s.fps,
+                sf.asset_id, sf.frame_number, sf.position,
+                a.relative_file_path, a.current_revision_id, a.availability, a.deleted_at,
+                r.byte_size
+                ${sequenceSourceDimensionColumns}
+           FROM asset_sequences s
+           JOIN asset_sequence_frames sf ON sf.sequence_id = s.sequence_id
+           JOIN assets a ON a.asset_id = sf.asset_id
+           JOIN revisions r ON r.revision_id = a.current_revision_id
+          WHERE s.primary_asset_id IN (${placeholders})
+          ORDER BY s.sequence_id, sf.position`,
+    });
     const artifacts = this.thumbnailArtifactMap(
       openLibrary.summary.libraryId,
       frameRows.map((row) => row.asset_id),
@@ -16316,17 +16460,19 @@ export class LibraryService {
     if (uniqueIds.length < 3 || uniqueIds.length !== input.assetIds.length) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
     }
-    const placeholders = uniqueIds.map(() => '?').join(',');
-    const rows = openLibrary.connection.prepare(
-      `SELECT a.asset_id, a.relative_file_path
-         FROM assets a
-        WHERE a.asset_id IN (${placeholders})
-          AND a.deleted_at IS NULL
-          AND a.availability = 'available'
-          AND NOT EXISTS (
-            SELECT 1 FROM asset_sequence_frames sf WHERE sf.asset_id = a.asset_id
-          )`,
-    ).all(...uniqueIds) as Array<{ asset_id: string; relative_file_path: string }>;
+    const rows = sqliteAllInChunks<string, { asset_id: string; relative_file_path: string }>({
+      connection: openLibrary.connection,
+      values: uniqueIds,
+      buildSql: (placeholders) =>
+        `SELECT a.asset_id, a.relative_file_path
+           FROM assets a
+          WHERE a.asset_id IN (${placeholders})
+            AND a.deleted_at IS NULL
+            AND a.availability = 'available'
+            AND NOT EXISTS (
+              SELECT 1 FROM asset_sequence_frames sf WHERE sf.asset_id = a.asset_id
+            )`,
+    });
     if (rows.length !== uniqueIds.length) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
     }
@@ -16494,7 +16640,7 @@ export class LibraryService {
           WHERE ${hasTable(connection, 'linked_ignored_assets')
             ? 'NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id) AND '
             : ''}${this.explicitIgnoreSql(connection, 'a', input.showIgnored === true)}${
-            byIds ? ` AND a.asset_id IN (${idList.map(() => '?').join(',')})` : ''
+            byIds ? ` AND a.asset_id IN (${sqliteInPlaceholders(idList)})` : ''
           }
           ORDER BY a.relative_file_path`,
       )
@@ -16560,6 +16706,28 @@ export class LibraryService {
         })(),
       }));
     return this.withImageSequenceSummaries(openLibrary, assets);
+  }
+
+  /**
+   * Resolve a large affected-id set without asking listAssets to bind the
+   * whole set at once. listAssets intentionally caps direct-id reads at 200
+   * so this helper is also safe for the sequence-summary query it invokes.
+   */
+  private listAssetSummariesByIds(
+    openLibrary: OpenLibrary,
+    assetIds: readonly string[],
+  ): AssetSummary[] {
+    const uniqueIds = [...new Set(assetIds.filter((assetId) => assetId.length > 0))];
+    const assets = sqliteInChunks(uniqueIds, 200).flatMap((chunk) =>
+      this.listAssets({
+        libraryId: openLibrary.summary.libraryId,
+        recursive: true,
+        assetIds: chunk,
+      }),
+    );
+    return assets.sort((left, right) =>
+      left.relativeFilePath.localeCompare(right.relativeFilePath),
+    );
   }
 
   importFolderAsLinked(input: {
@@ -17219,11 +17387,13 @@ export class LibraryService {
       input.assetIds,
     );
 
-    const tagRows = openLibrary.connection
-      .prepare(
-        `SELECT tag_id FROM tags WHERE tag_id IN (${input.tagIds.map(() => '?').join(',')}) AND library_id = ?`,
-      )
-      .all(...input.tagIds, openLibrary.summary.libraryId) as Array<{ tag_id: string }>;
+    const tagRows = sqliteAllInChunks<string, { tag_id: string }>({
+      connection: openLibrary.connection,
+      values: input.tagIds,
+      buildSql: (placeholders) =>
+        `SELECT tag_id FROM tags WHERE tag_id IN (${placeholders}) AND library_id = ?`,
+      bind: (chunk) => [...chunk, openLibrary.summary.libraryId],
+    });
     if (tagRows.length !== input.tagIds.length) throw new LibraryServiceError('FOLDER_NOT_FOUND');
 
     let assignedCount = 0;
@@ -17258,22 +17428,35 @@ export class LibraryService {
     );
     if (eligibleAssetIds.length === 0) return { removedCount: 0, skipped };
 
-    const humanResult = openLibrary.connection
-      .prepare(
-        `DELETE FROM human_asset_tags
-           WHERE asset_id IN (${eligibleAssetIds.map(() => '?').join(',')})
-             AND tag_id IN (${input.tagIds.map(() => '?').join(',')})`,
-      )
-      .run(...eligibleAssetIds, ...input.tagIds);
-    // Serpent-h2i2: removing a chip must also clear AI-authored tag links.
-    const aiResult = openLibrary.connection
-      .prepare(
-        `DELETE FROM ai_asset_tags
-           WHERE asset_id IN (${eligibleAssetIds.map(() => '?').join(',')})
-             AND tag_id IN (${input.tagIds.map(() => '?').join(',')})`,
-      )
-      .run(...eligibleAssetIds, ...input.tagIds);
-    const removedCount = humanResult.changes + aiResult.changes;
+    let removedCount = 0;
+    const relationChunkLimit = Math.floor((SQLITE_IN_BIND_LIMIT - 4) / 2);
+    for (const assetChunk of sqliteInChunks(eligibleAssetIds, relationChunkLimit)) {
+      for (const tagChunk of sqliteInChunks(input.tagIds, relationChunkLimit)) {
+        const bind = (chunk: readonly string[]) => [
+          ...chunk,
+          ...tagChunk,
+        ];
+        // Serpent-h2i2: removing a chip must also clear AI-authored tag links.
+        removedCount += sqliteRunInChunks({
+          connection: openLibrary.connection,
+          values: assetChunk,
+          buildSql: (placeholders) =>
+            `DELETE FROM human_asset_tags
+               WHERE asset_id IN (${placeholders})
+                 AND tag_id IN (${sqliteInPlaceholders(tagChunk)})`,
+          bind,
+        });
+        removedCount += sqliteRunInChunks({
+          connection: openLibrary.connection,
+          values: assetChunk,
+          buildSql: (placeholders) =>
+            `DELETE FROM ai_asset_tags
+               WHERE asset_id IN (${placeholders})
+                 AND tag_id IN (${sqliteInPlaceholders(tagChunk)})`,
+          bind,
+        });
+      }
+    }
     for (const assetId of eligibleAssetIds) {
       if (removedCount > 0) this.syncAssetSearchContent(openLibrary.connection, assetId);
     }
@@ -17290,11 +17473,12 @@ export class LibraryService {
     assetIds: string[],
   ): { eligibleAssetIds: string[]; skipped: TagOperationSkip[] } {
     const requestedAssetIds = [...new Set(assetIds)];
-    const assetRows = connection
-      .prepare(
-        `SELECT asset_id FROM assets WHERE asset_id IN (${requestedAssetIds.map(() => '?').join(',')})`,
-      )
-      .all(...requestedAssetIds) as Array<{ asset_id: string }>;
+    const assetRows = sqliteAllInChunks<string, { asset_id: string }>({
+      connection,
+      values: requestedAssetIds,
+      buildSql: (placeholders) =>
+        `SELECT asset_id FROM assets WHERE asset_id IN (${placeholders})`,
+    });
     const knownAssetIds = new Set(assetRows.map((row) => row.asset_id));
     const eligibleAssetIds: string[] = [];
     const skipped: TagOperationSkip[] = [];
@@ -17570,15 +17754,15 @@ export class LibraryService {
     if (uniqueIds.size !== input.orderedCollectionIds.length) {
       throw new LibraryServiceError('FOLDER_NOT_FOUND');
     }
-    const placeholders = input.orderedCollectionIds.map(() => '?').join(',');
-    const rows = openLibrary.connection.prepare(
-      `SELECT collection_id, parent_id
-         FROM collections
-        WHERE library_id = ? AND collection_id IN (${placeholders})`,
-    ).all(openLibrary.summary.libraryId, ...input.orderedCollectionIds) as Array<{
-      collection_id: string;
-      parent_id: string | null;
-    }>;
+    const rows = sqliteAllInChunks<string, { collection_id: string; parent_id: string | null }>({
+      connection: openLibrary.connection,
+      values: input.orderedCollectionIds,
+      buildSql: (placeholders) =>
+        `SELECT collection_id, parent_id
+           FROM collections
+          WHERE library_id = ? AND collection_id IN (${placeholders})`,
+      bind: (chunk) => [openLibrary.summary.libraryId, ...chunk],
+    });
     if (rows.length !== input.orderedCollectionIds.length) {
       throw new LibraryServiceError('FOLDER_NOT_FOUND');
     }
@@ -17636,11 +17820,12 @@ export class LibraryService {
       .get(input.collectionId, openLibrary.summary.libraryId);
     if (!col) throw new LibraryServiceError('FOLDER_NOT_FOUND');
 
-    const assetRows = openLibrary.connection
-      .prepare(
-        `SELECT asset_id FROM assets WHERE asset_id IN (${input.assetIds.map(() => '?').join(',')})`,
-      )
-      .all(...input.assetIds) as Array<{ asset_id: string }>;
+    const assetRows = sqliteAllInChunks<string, { asset_id: string }>({
+      connection: openLibrary.connection,
+      values: input.assetIds,
+      buildSql: (placeholders) =>
+        `SELECT asset_id FROM assets WHERE asset_id IN (${placeholders})`,
+    });
     if (assetRows.length !== input.assetIds.length) throw new LibraryServiceError('FOLDER_NOT_FOUND');
 
     const maxPosRow = openLibrary.connection
@@ -17668,13 +17853,15 @@ export class LibraryService {
     assetIds: string[];
   }): { collectionId: string } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
-    openLibrary.connection
-      .prepare(
+    sqliteRunInChunks({
+      connection: openLibrary.connection,
+      values: input.assetIds,
+      buildSql: (placeholders) =>
         `DELETE FROM collection_assets
            WHERE collection_id = ?
-             AND asset_id IN (${input.assetIds.map(() => '?').join(',')})`,
-      )
-      .run(input.collectionId, ...input.assetIds);
+             AND asset_id IN (${placeholders})`,
+      bind: (chunk) => [input.collectionId, ...chunk],
+    });
     return { collectionId: input.collectionId };
   }
 
@@ -17735,22 +17922,7 @@ export class LibraryService {
       collectionIds = [input.collectionId];
     }
 
-    const placeholders = collectionIds.map(() => '?').join(',');
-    const rows = openLibrary.connection
-      .prepare(
-        `SELECT DISTINCT a.asset_id, a.location_kind, a.managed_folder_id, a.relative_file_path,
-                a.current_revision_id, a.availability, r.byte_size, r.modified_at,
-                COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
-                a.deleted_at, a.trashed_from_relative_path
-           FROM collection_assets ca
-           JOIN assets a ON a.asset_id = ca.asset_id
-           JOIN revisions r ON r.revision_id = a.current_revision_id
-           LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
-          WHERE ca.collection_id IN (${placeholders})
-            AND a.deleted_at IS NULL
-          ORDER BY ca.position, a.relative_file_path`,
-      )
-      .all(...collectionIds) as Array<{
+    const rows = sqliteAllInChunks<string, {
         asset_id: string;
         location_kind: 'managed' | 'linked';
         availability: 'available' | 'missing';
@@ -17763,10 +17935,31 @@ export class LibraryService {
         favorite: number;
         deleted_at: string | null;
         trashed_from_relative_path: string | null;
-      }>;
+        collection_position: number;
+      }>({
+        connection: openLibrary.connection,
+        values: collectionIds,
+        buildSql: (placeholders) =>
+          `SELECT DISTINCT a.asset_id, a.location_kind, a.managed_folder_id, a.relative_file_path,
+                  a.current_revision_id, a.availability, r.byte_size, r.modified_at,
+                  COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
+                  a.deleted_at, a.trashed_from_relative_path, ca.position AS collection_position
+             FROM collection_assets ca
+             JOIN assets a ON a.asset_id = ca.asset_id
+             JOIN revisions r ON r.revision_id = a.current_revision_id
+             LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
+            WHERE ca.collection_id IN (${placeholders})
+              AND a.deleted_at IS NULL
+            ORDER BY ca.position, a.relative_file_path`,
+      });
+    rows.sort((left, right) =>
+      left.collection_position - right.collection_position ||
+      left.relative_file_path.localeCompare(right.relative_file_path),
+    );
+    const uniqueRows = [...new Map(rows.map((row) => [row.asset_id, row])).values()];
     return this.withImageSequenceSummaries(
       openLibrary,
-      rows.map((row) => this.assetSummaryFromRow(row)),
+      uniqueRows.map((row) => this.assetSummaryFromRow(row)),
     );
   }
 
@@ -17782,19 +17975,17 @@ export class LibraryService {
     const uniqueIds = [...new Set(input.assetIds)];
     if (uniqueIds.length === 0) return [];
 
-    const placeholders = uniqueIds.map(() => '?').join(',');
-    const rows = openLibrary.connection
-      .prepare(
+    const rows = sqliteAllInChunks<string, { asset_id: string; collection_id: string }>({
+      connection: openLibrary.connection,
+      values: uniqueIds,
+      buildSql: (placeholders) =>
         `SELECT ca.asset_id, ca.collection_id
            FROM collection_assets ca
            JOIN collections c ON c.collection_id = ca.collection_id
           WHERE ca.asset_id IN (${placeholders})
             AND c.library_id = ?`,
-      )
-      .all(...uniqueIds, openLibrary.summary.libraryId) as Array<{
-        asset_id: string;
-        collection_id: string;
-      }>;
+      bind: (chunk) => [...chunk, openLibrary.summary.libraryId],
+    });
 
     return rows.map((row) => ({
       assetId: row.asset_id,
@@ -19579,22 +19770,24 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const libId = openLibrary.summary.libraryId;
 
-    const result = openLibrary.connection
-      .prepare(
+    const retriedCount = sqliteRunInChunks({
+      connection: openLibrary.connection,
+      values: jobIds,
+      buildSql: (placeholders) =>
         `UPDATE jobs
-           SET status = 'queued',
-               attempt_count = 0,
-               error_code = NULL,
-               error_detail = NULL,
-               updated_at = ?
-         WHERE library_id = ?
-           AND kind IN ('ai.image.analysis', 'ai.video.analysis')
-           AND status = 'failed'
-           AND job_id IN (${jobIds.map(() => '?').join(',')})`,
-      )
-      .run(new Date().toISOString(), libId, ...jobIds);
+            SET status = 'queued',
+                attempt_count = 0,
+                error_code = NULL,
+                error_detail = NULL,
+                updated_at = ?
+          WHERE library_id = ?
+            AND kind IN ('ai.image.analysis', 'ai.video.analysis')
+            AND status = 'failed'
+            AND job_id IN (${placeholders})`,
+      bind: (chunk) => [new Date().toISOString(), libId, ...chunk],
+    });
 
-    return { retriedCount: result.changes as number };
+    return { retriedCount };
   }
 
   /** List all AI jobs for a library with counts by status. */
@@ -20106,25 +20299,29 @@ export class LibraryService {
   retryMediaJobs(libraryId: string, jobIds: string[]): { retriedCount: number } {
     if (jobIds.length === 0) return { retriedCount: 0 };
     const openLibrary = this.requireOpenLibrary(libraryId);
-    const result = openLibrary.connection.prepare(
-      `UPDATE jobs SET status = 'queued', progress = 0.0, attempt_count = 0,
-              error_code = CASE
-                WHEN error_code = '${IMPORTED_THUMBNAIL_NORMALIZATION_JOB}'
-                THEN '${IMPORTED_THUMBNAIL_NORMALIZATION_JOB}'
-                ELSE NULL
-              END,
-              error_detail = NULL, updated_at = ?
-        WHERE library_id = ?
-          AND kind IN (${MEDIA_JOB_KINDS.map(() => '?').join(',')})
-          AND status = 'failed'
-          AND job_id IN (${jobIds.map(() => '?').join(',')})`,
-    ).run(
-      new Date().toISOString(),
-      openLibrary.summary.libraryId,
-      ...MEDIA_JOB_KINDS,
-      ...jobIds,
-    );
-    return { retriedCount: result.changes };
+    const retriedCount = sqliteRunInChunks({
+      connection: openLibrary.connection,
+      values: jobIds,
+      buildSql: (placeholders) =>
+        `UPDATE jobs SET status = 'queued', progress = 0.0, attempt_count = 0,
+                error_code = CASE
+                  WHEN error_code = '${IMPORTED_THUMBNAIL_NORMALIZATION_JOB}'
+                  THEN '${IMPORTED_THUMBNAIL_NORMALIZATION_JOB}'
+                  ELSE NULL
+                END,
+                error_detail = NULL, updated_at = ?
+          WHERE library_id = ?
+            AND kind IN (${MEDIA_JOB_KINDS.map(() => '?').join(',')})
+            AND status = 'failed'
+            AND job_id IN (${placeholders})`,
+      bind: (chunk) => [
+        new Date().toISOString(),
+        openLibrary.summary.libraryId,
+        ...MEDIA_JOB_KINDS,
+        ...chunk,
+      ],
+    });
+    return { retriedCount };
   }
 
   private updateMediaJobStatus(
@@ -20135,24 +20332,38 @@ export class LibraryService {
   ): number {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const selectedIds = jobIds && jobIds.length > 0 ? [...new Set(jobIds)] : undefined;
-    const idClause = selectedIds
-      ? `AND job_id IN (${selectedIds.map(() => '?').join(',')})`
-      : '';
-    const result = openLibrary.connection.prepare(
-      `UPDATE jobs SET status = ?, progress = 0.0, updated_at = ?
-        WHERE library_id = ?
-          AND kind IN (${MEDIA_JOB_KINDS.map(() => '?').join(',')})
-          AND status IN (${fromStatuses.map(() => '?').join(',')})
-          ${idClause}`,
-    ).run(
-      toStatus,
-      new Date().toISOString(),
-      openLibrary.summary.libraryId,
-      ...MEDIA_JOB_KINDS,
-      ...fromStatuses,
-      ...(selectedIds ?? []),
-    );
-    return result.changes;
+    if (selectedIds === undefined) {
+      return openLibrary.connection.prepare(
+        `UPDATE jobs SET status = ?, progress = 0.0, updated_at = ?
+          WHERE library_id = ?
+            AND kind IN (${MEDIA_JOB_KINDS.map(() => '?').join(',')})
+            AND status IN (${fromStatuses.map(() => '?').join(',')})`,
+      ).run(
+        toStatus,
+        new Date().toISOString(),
+        openLibrary.summary.libraryId,
+        ...MEDIA_JOB_KINDS,
+        ...fromStatuses,
+      ).changes;
+    }
+    return sqliteRunInChunks({
+      connection: openLibrary.connection,
+      values: selectedIds,
+      buildSql: (placeholders) =>
+        `UPDATE jobs SET status = ?, progress = 0.0, updated_at = ?
+          WHERE library_id = ?
+            AND kind IN (${MEDIA_JOB_KINDS.map(() => '?').join(',')})
+            AND status IN (${fromStatuses.map(() => '?').join(',')})
+            AND job_id IN (${placeholders})`,
+      bind: (chunk) => [
+        toStatus,
+        new Date().toISOString(),
+        openLibrary.summary.libraryId,
+        ...MEDIA_JOB_KINDS,
+        ...fromStatuses,
+        ...chunk,
+      ],
+    });
   }
 
   private abortActiveMediaJobs(libraryId: string, jobIds?: string[]): void {
@@ -32305,12 +32516,15 @@ export class LibraryService {
       ? null
       : this.linkedFolderRowForImport(openLibrary, input.targetFolderId);
     if (linkedTarget) {
-      const managedSourceCount = openLibrary.connection.prepare(
-        `SELECT COUNT(*) AS count FROM assets
-          WHERE asset_id IN (${input.assetIds.map(() => '?').join(',')})
-            AND location_kind = 'managed' AND deleted_at IS NULL`,
-      ).get(...input.assetIds) as { count: number };
-      if (managedSourceCount.count !== input.assetIds.length) {
+      const managedSourceCount = sqliteAllInChunks<string, { count: number }>({
+        connection: openLibrary.connection,
+        values: input.assetIds,
+        buildSql: (placeholders) =>
+          `SELECT COUNT(*) AS count FROM assets
+             WHERE asset_id IN (${placeholders})
+               AND location_kind = 'managed' AND deleted_at IS NULL`,
+      }).reduce((total, row) => total + row.count, 0);
+      if (managedSourceCount !== input.assetIds.length) {
         // 链接资产移动到链接文件夹是另一场景，此处仅支持 managed → linked。
         throw new LibraryServiceError('INVALID_IMPORT_DECISION');
       }
@@ -32339,16 +32553,19 @@ export class LibraryService {
       };
     }
     const targetFolder = input.targetFolderId === null ? undefined : this.targetFolder(openLibrary, input.targetFolderId);
-    const rows = openLibrary.connection.prepare(
-      `SELECT asset_id, relative_file_path, managed_folder_id, availability FROM assets
-        WHERE asset_id IN (${input.assetIds.map(() => '?').join(',')})
-          AND location_kind = 'managed' AND deleted_at IS NULL`,
-    ).all(...input.assetIds) as Array<{
+    const rows = sqliteAllInChunks<string, {
       asset_id: string;
       relative_file_path: string;
       managed_folder_id: string | null;
       availability: 'available' | 'missing';
-    }>;
+    }>({
+      connection: openLibrary.connection,
+      values: input.assetIds,
+      buildSql: (placeholders) =>
+        `SELECT asset_id, relative_file_path, managed_folder_id, availability FROM assets
+          WHERE asset_id IN (${placeholders})
+            AND location_kind = 'managed' AND deleted_at IS NULL`,
+    });
     const byId = new Map(rows.map((row) => [row.asset_id, row]));
     for (const assetId of input.assetIds) {
       const row = byId.get(assetId);
@@ -32543,15 +32760,15 @@ export class LibraryService {
         outputAssetIdsBySource: [],
       };
     }
-    const locationRows = openLibrary.connection.prepare(
-      `SELECT asset_id, location_kind
-         FROM assets
-        WHERE asset_id IN (${input.assetIds.map(() => '?').join(',')})
-          AND deleted_at IS NULL`,
-    ).all(...input.assetIds) as Array<{
-      asset_id: string;
-      location_kind: 'managed' | 'linked';
-    }>;
+    const locationRows = sqliteAllInChunks<string, { asset_id: string; location_kind: 'managed' | 'linked' }>({
+      connection: openLibrary.connection,
+      values: input.assetIds,
+      buildSql: (placeholders) =>
+        `SELECT asset_id, location_kind
+           FROM assets
+          WHERE asset_id IN (${placeholders})
+            AND deleted_at IS NULL`,
+    });
     if (locationRows.some((row) => row.location_kind === 'linked')) {
       if (
         locationRows.length !== input.assetIds.length ||
@@ -32573,16 +32790,19 @@ export class LibraryService {
     const targetFolder = input.targetFolderId === null
       ? undefined
       : this.targetFolder(openLibrary, input.targetFolderId);
-    const rows = openLibrary.connection.prepare(
-      `SELECT asset_id, relative_file_path, managed_folder_id, availability FROM assets
-        WHERE asset_id IN (${input.assetIds.map(() => '?').join(',')})
-          AND location_kind = 'managed' AND deleted_at IS NULL`,
-    ).all(...input.assetIds) as Array<{
+    const rows = sqliteAllInChunks<string, {
       asset_id: string;
       relative_file_path: string;
       managed_folder_id: string | null;
       availability: 'available' | 'missing';
-    }>;
+    }>({
+      connection: openLibrary.connection,
+      values: input.assetIds,
+      buildSql: (placeholders) =>
+        `SELECT asset_id, relative_file_path, managed_folder_id, availability FROM assets
+          WHERE asset_id IN (${placeholders})
+            AND location_kind = 'managed' AND deleted_at IS NULL`,
+    });
     const byId = new Map(rows.map((row) => [row.asset_id, row]));
     for (const assetId of input.assetIds) {
       const row = byId.get(assetId);
@@ -34380,25 +34600,23 @@ export class LibraryService {
   ): string[] {
     const uniqueIds = [...new Set(assetIds)];
     if (uniqueIds.length === 0) return [];
-    const placeholders = uniqueIds.map(() => '?').join(',');
-    const sequenceRows = openLibrary.connection
-      .prepare(
+    const sequenceRows = sqliteAllInChunks<string, { sequence_id: string }>({
+      connection: openLibrary.connection,
+      values: uniqueIds,
+      buildSql: (placeholders) =>
         `SELECT DISTINCT sequence_id
            FROM asset_sequence_frames
           WHERE asset_id IN (${placeholders})`,
-      )
-      .all(...uniqueIds) as Array<{ sequence_id: string }>;
+    });
     if (sequenceRows.length === 0) return uniqueIds;
-    const sequencePlaceholders = sequenceRows.map(() => '?').join(',');
-    const memberRows = openLibrary.connection
-      .prepare(
+    const memberRows = sqliteAllInChunks<string, { asset_id: string }>({
+      connection: openLibrary.connection,
+      values: sequenceRows.map((row) => row.sequence_id),
+      buildSql: (placeholders) =>
         `SELECT DISTINCT asset_id
            FROM asset_sequence_frames
-          WHERE sequence_id IN (${sequencePlaceholders})`,
-      )
-      .all(...sequenceRows.map((row) => row.sequence_id)) as Array<{
-      asset_id: string;
-    }>;
+          WHERE sequence_id IN (${placeholders})`,
+    });
     return [...new Set([...uniqueIds, ...memberRows.map((row) => row.asset_id)])];
   }
 
@@ -34412,14 +34630,17 @@ export class LibraryService {
   ): number {
     const uniqueIds = [...new Set(assetIds)];
     if (uniqueIds.length === 0) return 0;
-    const placeholders = uniqueIds.map(() => '?').join(',');
-    const memberships = openLibrary.connection
-      .prepare(
+    const memberships = sqliteAllInChunks<
+      string,
+      { asset_id: string; sequence_id: string }
+    >({
+      connection: openLibrary.connection,
+      values: uniqueIds,
+      buildSql: (placeholders) =>
         `SELECT asset_id, sequence_id
            FROM asset_sequence_frames
           WHERE asset_id IN (${placeholders})`,
-      )
-      .all(...uniqueIds) as Array<{ asset_id: string; sequence_id: string }>;
+    });
     const inSequence = new Set(memberships.map((row) => row.asset_id));
     const sequences = new Set(memberships.map((row) => row.sequence_id));
     const standalone = uniqueIds.filter((id) => !inSequence.has(id)).length;
@@ -34454,19 +34675,20 @@ export class LibraryService {
     }
 
     // Validate all assets are managed, active, and exist.
-    const rows = openLibrary.connection
-      .prepare(
+    const rows = sqliteAllInChunks<string, {
+      asset_id: string;
+      relative_file_path: string;
+      managed_folder_id: string | null;
+    }>({
+      connection: openLibrary.connection,
+      values: assetIds,
+      buildSql: (placeholders) =>
         `SELECT a.asset_id, a.relative_file_path, a.managed_folder_id
            FROM assets a
-          WHERE a.asset_id IN (${assetIds.map(() => '?').join(',')})
+          WHERE a.asset_id IN (${placeholders})
             AND a.location_kind = 'managed'
             AND a.deleted_at IS NULL`,
-      )
-      .all(...assetIds) as Array<{
-        asset_id: string;
-        relative_file_path: string;
-        managed_folder_id: string | null;
-      }>;
+    });
 
     const foundIds = new Set(rows.map((r) => r.asset_id));
     for (const id of assetIds) {
@@ -34867,21 +35089,22 @@ export class LibraryService {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
     }
 
-    const rows = openLibrary.connection
-      .prepare(
+    const rows = sqliteAllInChunks<string, {
+      asset_id: string;
+      relative_file_path: string;
+      deleted_at: string;
+      trashed_from_relative_path: string;
+      trashed_from_folder_id: string | null;
+    }>({
+      connection: openLibrary.connection,
+      values: assetIds,
+      buildSql: (placeholders) =>
         `SELECT a.asset_id, a.relative_file_path, a.deleted_at,
                 a.trashed_from_relative_path, a.trashed_from_folder_id
            FROM assets a
-          WHERE a.asset_id IN (${assetIds.map(() => '?').join(',')})
+          WHERE a.asset_id IN (${placeholders})
             AND a.deleted_at IS NOT NULL`,
-      )
-      .all(...assetIds) as Array<{
-        asset_id: string;
-        relative_file_path: string;
-        deleted_at: string;
-        trashed_from_relative_path: string;
-        trashed_from_folder_id: string | null;
-      }>;
+    });
 
     const foundIds = new Set(rows.map((r) => r.asset_id));
     for (const id of assetIds) {
@@ -34958,28 +35181,29 @@ export class LibraryService {
     }
 
     // Validate all assets are trashed (deleted_at IS NOT NULL).
-    const rows = openLibrary.connection
-      .prepare(
+    const rows = sqliteAllInChunks<string, {
+      asset_id: string;
+      relative_file_path: string;
+      deleted_at: string;
+      trashed_from_relative_path: string;
+      trashed_from_folder_id: string | null;
+      trashed_from_tombstone_id: string | null;
+      current_revision_id: string;
+      byte_size: number;
+      modified_at: string;
+    }>({
+      connection: openLibrary.connection,
+      values: assetIds,
+      buildSql: (placeholders) =>
         `SELECT a.asset_id, a.relative_file_path, a.deleted_at,
                 a.trashed_from_relative_path, a.trashed_from_folder_id,
                 a.trashed_from_tombstone_id, a.current_revision_id,
                 r.byte_size, r.modified_at
            FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
-          WHERE a.asset_id IN (${assetIds.map(() => '?').join(',')})
+          WHERE a.asset_id IN (${placeholders})
             AND a.deleted_at IS NOT NULL`,
-      )
-      .all(...assetIds) as Array<{
-        asset_id: string;
-        relative_file_path: string;
-        deleted_at: string;
-      trashed_from_relative_path: string;
-      trashed_from_folder_id: string | null;
-      trashed_from_tombstone_id: string | null;
-      current_revision_id: string;
-        byte_size: number;
-        modified_at: string;
-      }>;
+    });
 
     const foundIds = new Set(rows.map((r) => r.asset_id));
     for (const id of assetIds) {
@@ -35448,19 +35672,22 @@ export class LibraryService {
     if (assetIds.length === 0 || new Set(assetIds).size !== assetIds.length) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
     }
-    const rows = openLibrary.connection.prepare(
-      `SELECT asset_id, relative_file_path, deleted_at,
-              trashed_from_relative_path, trashed_from_folder_id
-         FROM assets
-        WHERE asset_id IN (${assetIds.map(() => '?').join(',')})
-          AND deleted_at IS NOT NULL`,
-    ).all(...assetIds) as Array<{
+    const rows = sqliteAllInChunks<string, {
       asset_id: string;
       relative_file_path: string;
       deleted_at: string;
       trashed_from_relative_path: string;
       trashed_from_folder_id: string | null;
-    }>;
+    }>({
+      connection: openLibrary.connection,
+      values: assetIds,
+      buildSql: (placeholders) =>
+        `SELECT asset_id, relative_file_path, deleted_at,
+                trashed_from_relative_path, trashed_from_folder_id
+           FROM assets
+          WHERE asset_id IN (${placeholders})
+            AND deleted_at IS NOT NULL`,
+    });
     const rowById = new Map(rows.map((row) => [row.asset_id, row]));
     for (const assetId of assetIds) {
       if (rowById.has(assetId)) continue;
@@ -35564,18 +35791,16 @@ export class LibraryService {
       input.assetIds,
     );
 
-    const rows = openLibrary.connection
-      .prepare(
+    const rows = sqliteAllInChunks<string, { asset_id: string; relative_file_path: string }>({
+      connection: openLibrary.connection,
+      values: assetIds,
+      buildSql: (placeholders) =>
         `SELECT asset_id, relative_file_path
            FROM assets
-          WHERE asset_id IN (${assetIds.map(() => '?').join(',')})
+          WHERE asset_id IN (${placeholders})
             AND location_kind = 'managed'
             AND deleted_at IS NULL`,
-      )
-      .all(...assetIds) as Array<{
-        asset_id: string;
-        relative_file_path: string;
-      }>;
+    });
 
     if (rows.length !== assetIds.length) {
       for (const id of assetIds) {
@@ -35664,17 +35889,15 @@ export class LibraryService {
       input.assetIds,
     );
 
-    const rows = openLibrary.connection
-      .prepare(
+    const rows = sqliteAllInChunks<string, { asset_id: string; relative_file_path: string }>({
+      connection: openLibrary.connection,
+      values: assetIds,
+      buildSql: (placeholders) =>
         `SELECT asset_id, relative_file_path
            FROM assets
-          WHERE asset_id IN (${assetIds.map(() => '?').join(',')})
+          WHERE asset_id IN (${placeholders})
             AND deleted_at IS NOT NULL`,
-      )
-      .all(...assetIds) as Array<{
-        asset_id: string;
-        relative_file_path: string;
-      }>;
+    });
 
     if (rows.length !== assetIds.length) {
       // Validate the complete batch before touching the filesystem. A mixed
@@ -35926,25 +36149,27 @@ export class LibraryService {
     };
 
     if (tombstoneIds.length > 0) {
-      const byTombstone = openLibrary.connection
-        .prepare(
+      const byTombstone = sqliteAllInChunks<string, { asset_id: string }>({
+        connection: openLibrary.connection,
+        values: tombstoneIds,
+        buildSql: (placeholders) =>
           `SELECT asset_id FROM assets
             WHERE deleted_at IS NOT NULL
-              AND trashed_from_tombstone_id IN (${tombstoneIds.map(() => '?').join(', ')})`,
-        )
-        .all(...tombstoneIds) as Array<{ asset_id: string }>;
+              AND trashed_from_tombstone_id IN (${placeholders})`,
+      });
       for (const row of byTombstone) rememberRestoreAssetId(row.asset_id);
     }
 
     if (folderIds.length > 0) {
-      const byFolderId = openLibrary.connection
-        .prepare(
+      const byFolderId = sqliteAllInChunks<string, { asset_id: string }>({
+        connection: openLibrary.connection,
+        values: folderIds,
+        buildSql: (placeholders) =>
           `SELECT asset_id FROM assets
             WHERE deleted_at IS NOT NULL
               AND trashed_from_tombstone_id IS NULL
-              AND trashed_from_folder_id IN (${folderIds.map(() => '?').join(', ')})`,
-        )
-        .all(...folderIds) as Array<{ asset_id: string }>;
+              AND trashed_from_folder_id IN (${placeholders})`,
+      });
       for (const row of byFolderId) rememberRestoreAssetId(row.asset_id);
     }
 
@@ -37546,17 +37771,20 @@ export class LibraryService {
     assetIds: string[],
   ): void {
     if (assetIds.length === 0) return;
-    const rows = openLibrary.connection.prepare(
-      `SELECT asset_id, location_kind, linked_folder_id, relative_file_path
-         FROM assets
-        WHERE asset_id IN (${assetIds.map(() => '?').join(',')})
-          AND deleted_at IS NULL`,
-    ).all(...assetIds) as Array<{
+    const rows = sqliteAllInChunks<string, {
       asset_id: string;
       location_kind: 'managed' | 'linked';
       linked_folder_id: string | null;
       relative_file_path: string;
-    }>;
+    }>({
+      connection: openLibrary.connection,
+      values: assetIds,
+      buildSql: (placeholders) =>
+        `SELECT asset_id, location_kind, linked_folder_id, relative_file_path
+           FROM assets
+          WHERE asset_id IN (${placeholders})
+            AND deleted_at IS NULL`,
+    });
     for (const row of rows) {
       if (this.isExplicitlyIgnored(openLibrary, row.location_kind, row.linked_folder_id, row.relative_file_path, 'asset')) {
         throw new LibraryServiceError('ASSET_NOT_FOUND');
@@ -40208,7 +40436,10 @@ export class LibraryService {
 
   abandonImport(importId: string): string {
     const pending = this.pendingImports.get(importId);
-    if (!pending) throw new LibraryServiceError('IMPORT_NOT_FOUND');
+    if (!pending) {
+      if (this.isFinalizedImport(importId)) return importId;
+      throw new LibraryServiceError('IMPORT_NOT_FOUND');
+    }
     this.pendingImports.delete(importId);
     this.cancelImportExpiry(pending);
     this.updateImportOperation(pending, 'rolled_back', 'IMPORT_ABANDONED');
@@ -40590,6 +40821,46 @@ export class LibraryService {
     let importedCount = 0;
     let replacedCount = 0;
     let committed = false;
+
+    const completeCommittedImport = (): ImportCompletion => {
+      const affected = [...new Set([...affectedAssetIds, ...mergedAssetIds])];
+      let assetCount = new Set(affectedAssetIds).size;
+      try {
+        assetCount = this.countLogicalAssetUnits(openLibrary, affectedAssetIds);
+      } catch (error) {
+        this.diagnose('import-apply.post-commit-count', error, {
+          libraryId: pending.libraryId,
+          operationId,
+          affectedCount: affectedAssetIds.length,
+        });
+      }
+
+      let assets: AssetSummary[] = [];
+      try {
+        this.failAt('committed-result-list');
+        if (pending.skipContentHash) {
+          this.suppressAutoAnalysisForAssets(pending.libraryId, affectedAssetIds);
+        } else {
+          assets = this.listAssetSummariesByIds(openLibrary, affected);
+        }
+      } catch (error) {
+        this.diagnose('import-apply.post-commit-result', error, {
+          libraryId: pending.libraryId,
+          operationId,
+          affectedCount: affected.length,
+        });
+      }
+
+      return {
+        importedCount,
+        fileCount: importedCount,
+        assetCount,
+        skippedCount,
+        replacedCount,
+        assets,
+      };
+    };
+
     try {
       mkdirSync(backupPath, { recursive: true });
       this.failAt('after-stage');
@@ -40936,15 +41207,23 @@ export class LibraryService {
         .prepare("UPDATE file_operations SET status = 'committed', updated_at = ? WHERE operation_id = ?")
         .run(new Date().toISOString(), operationId);
       committed = true;
+      this.rememberFinalizedImport(input.importId);
       if (pending.createImageSequence !== false) {
-        this.createDetectedImageSequences(
-          openLibrary,
-          affectedAssetIds,
-          pending.imageSequenceFps ?? DEFAULT_IMAGE_SEQUENCE_FPS,
-        );
+        try {
+          this.createDetectedImageSequences(
+            openLibrary,
+            affectedAssetIds,
+            pending.imageSequenceFps ?? DEFAULT_IMAGE_SEQUENCE_FPS,
+          );
+        } catch (error) {
+          this.diagnose('import-apply.post-commit-sequences', error, {
+            libraryId: pending.libraryId,
+            operationId,
+            affectedCount: affectedAssetIds.length,
+          });
+        }
       }
 
-      const affected = new Set([...affectedAssetIds, ...mergedAssetIds]);
       // The SQLite commit is the point of no return. Cleanup is recoverable from the
       // committed operation row and must never enter the pre-commit rollback path.
       try {
@@ -40953,37 +41232,10 @@ export class LibraryService {
       } catch {
         // recoverFileOperations removes committed operation data on the next open.
       }
-      let assets: AssetSummary[] = [];
-      try {
-        this.failAt('committed-result-list');
-        if (pending.skipContentHash) {
-          this.suppressAutoAnalysisForAssets(pending.libraryId, affectedAssetIds);
-          assets = [];
-        } else {
-          const allAssets = this.listAssets({ libraryId: pending.libraryId, recursive: true });
-          assets = allAssets.filter((asset) => affected.has(asset.assetId));
-        }
-      } catch {
-        // A committed import is still success. A later list/refresh supplies cards.
-      }
-      return {
-        importedCount,
-        fileCount: importedCount,
-        assetCount: this.countLogicalAssetUnits(openLibrary, affectedAssetIds),
-        skippedCount,
-        replacedCount,
-        assets,
-      };
+      return completeCommittedImport();
     } catch (error) {
       if (committed) {
-        return {
-          importedCount,
-          fileCount: importedCount,
-          assetCount: this.countLogicalAssetUnits(openLibrary, affectedAssetIds),
-          skippedCount,
-          replacedCount,
-          assets: [],
-        };
+        return completeCommittedImport();
       }
       if (affectedAssetIds.length > 0) {
         // Partial durable import: keep committed rows/files and finish the op.
@@ -40995,29 +41247,23 @@ export class LibraryService {
         } catch {
           // Recovery can finalize a stale applying row on the next open.
         }
+        this.rememberFinalizedImport(input.importId);
         if (pending.createImageSequence !== false) {
-          this.createDetectedImageSequences(
-            openLibrary,
-            affectedAssetIds,
-            pending.imageSequenceFps ?? DEFAULT_IMAGE_SEQUENCE_FPS,
-          );
+          try {
+            this.createDetectedImageSequences(
+              openLibrary,
+              affectedAssetIds,
+              pending.imageSequenceFps ?? DEFAULT_IMAGE_SEQUENCE_FPS,
+            );
+          } catch (postCommitError) {
+            this.diagnose('import-apply.partial-post-commit-sequences', postCommitError, {
+              libraryId: pending.libraryId,
+              operationId,
+              affectedCount: affectedAssetIds.length,
+            });
+          }
         }
-        const affected = new Set([...affectedAssetIds, ...mergedAssetIds]);
-        let assets: AssetSummary[] = [];
-        try {
-          const allAssets = this.listAssets({ libraryId: pending.libraryId, recursive: true });
-          assets = allAssets.filter((asset) => affected.has(asset.assetId));
-        } catch {
-          // Committed rows remain; later list/refresh supplies cards.
-        }
-        return {
-          importedCount,
-          fileCount: importedCount,
-          assetCount: this.countLogicalAssetUnits(openLibrary, affectedAssetIds),
-          skippedCount,
-          replacedCount,
-          assets,
-        };
+        return completeCommittedImport();
       }
       if (error instanceof SimulatedCrashError) {
         throw new LibraryServiceError('IMPORT_APPLY_FAILED', { cause: error });
@@ -41802,11 +42048,33 @@ export class LibraryService {
     // 对账已有资产。discoverSources=false 跳过文件系统枚举（仅缺失资产
     // 批次走 fallback lstat）。
     const assetIds = options?.assetIds;
-    const assetFilter = assetIds === undefined
-      ? ''
-      : assetIds.length === 0
-        ? ' AND 1 = 0'
-        : ` AND a.asset_id IN (${assetIds.map(() => '?').join(',')})`;
+    type RefreshAssetRow = {
+      asset_id: string;
+      location_kind: 'managed' | 'linked';
+      linked_folder_id: string | null;
+      relative_file_path: string;
+      current_revision_id: string;
+      revision_row_id: string | null;
+      availability: 'available' | 'missing';
+      byte_size: number | null;
+      modified_at: string | null;
+      content_fingerprint: string | null;
+      source_device: string | null;
+      source_inode: string | null;
+    };
+    const queryBefore = (placeholders?: string): string =>
+      `SELECT a.asset_id, a.location_kind, a.linked_folder_id, a.relative_file_path,
+              a.current_revision_id, r.revision_id AS revision_row_id,
+              a.availability, r.byte_size, r.modified_at,
+              r.content_fingerprint, a.source_device, a.source_inode
+        FROM assets a
+         LEFT JOIN revisions r ON r.revision_id = a.current_revision_id
+        WHERE a.deleted_at IS NULL${placeholders === undefined
+          ? ''
+          : placeholders === ''
+            ? ' AND 1 = 0'
+            : ` AND a.asset_id IN (${placeholders})`}
+        ORDER BY a.relative_file_path`;
     const discoverSources = options?.discoverSources ?? true;
     const discovery = discoverSources
       ? options?.discovery ?? this.collectManagedAssetDiscovery(openLibrary)
@@ -41828,31 +42096,14 @@ export class LibraryService {
       }));
       stageMark = now;
     };
-    const before = openLibrary.connection
-      .prepare(
-        `SELECT a.asset_id, a.location_kind, a.linked_folder_id, a.relative_file_path,
-                a.current_revision_id, r.revision_id AS revision_row_id,
-                a.availability, r.byte_size, r.modified_at,
-                r.content_fingerprint, a.source_device, a.source_inode
-          FROM assets a
-           LEFT JOIN revisions r ON r.revision_id = a.current_revision_id
-          WHERE a.deleted_at IS NULL${assetFilter}
-          ORDER BY a.relative_file_path`,
-      )
-      .all(...(assetIds ?? [])) as Array<{
-        asset_id: string;
-        location_kind: 'managed' | 'linked';
-        linked_folder_id: string | null;
-        relative_file_path: string;
-        current_revision_id: string;
-        revision_row_id: string | null;
-        availability: 'available' | 'missing';
-        byte_size: number | null;
-        modified_at: string | null;
-        content_fingerprint: string | null;
-        source_device: string | null;
-        source_inode: string | null;
-    }>;
+    const requestedAssetIds = assetIds === undefined ? undefined : [...new Set(assetIds)];
+    const before = requestedAssetIds === undefined
+      ? openLibrary.connection.prepare(queryBefore()).all() as RefreshAssetRow[]
+      : sqliteAllInChunks<string, RefreshAssetRow>({
+          connection: openLibrary.connection,
+          values: requestedAssetIds,
+          buildSql: queryBefore,
+        });
     markStage('before-query');
 
     // A refresh can also be triggered by a watcher or an explicit client
@@ -44639,10 +44890,24 @@ export class LibraryService {
 
       if (input.copyToParentPath) {
         // Phase 2: copy.
+        const copyStats = measureCopyTree(input.sourceFolderPath);
+        let copiedFiles = 0;
+        let copiedBytes = 0;
+        const copyProgressThrottle = createProgressThrottle();
+        const emitCopyProgress = (force = false): void => {
+          if (!copyProgressThrottle.shouldEmit(force)) return;
+          this.emitProgress({
+            type: 'import.progress', importId,
+            phase: 'copy', cancelable: true,
+            filesProcessed: copiedFiles, totalFiles: copyStats.fileCount,
+            bytesProcessed: copiedBytes, totalBytes: copyStats.totalBytes,
+          });
+        };
         this.emitProgress({
           type: 'import.progress', importId,
-          phase: 'copy', filesProcessed: 0, totalFiles: 0,
-          bytesProcessed: 0, totalBytes: 0,
+          phase: 'copy', cancelable: true,
+          filesProcessed: 0, totalFiles: copyStats.fileCount,
+          bytesProcessed: 0, totalBytes: copyStats.totalBytes,
         });
 
         const baseName = path.basename(input.sourceFolderPath);
@@ -44667,19 +44932,37 @@ export class LibraryService {
         }
 
         try {
-          await copyDirRecursiveCancellable(input.sourceFolderPath, libraryPath, cancelState);
+          await copyDirRecursiveCancellable(
+            input.sourceFolderPath,
+            libraryPath,
+            cancelState,
+            (byteSize) => {
+              copiedFiles += 1;
+              copiedBytes += byteSize;
+              emitCopyProgress();
+            },
+          );
+          emitCopyProgress(true);
         } catch (error) {
           // Clean up incomplete copy.
           this.removeOwnedTransferPath('import.copy.failure.cleanup', libraryPath, true);
           if (error instanceof LibraryServiceError && error.code === 'CANCELLED') {
-            this.emitProgress({ type: 'import.progress', importId, phase: 'cancelled', filesProcessed: 0, totalFiles: 0, bytesProcessed: 0, totalBytes: 0 });
+            this.emitProgress({
+              type: 'import.progress', importId, phase: 'cancelled', cancelable: false,
+              filesProcessed: copiedFiles, totalFiles: copyStats.fileCount,
+              bytesProcessed: copiedBytes, totalBytes: copyStats.totalBytes,
+            });
           }
           throw error;
         }
 
         if (cancelState.cancelled) {
           this.removeOwnedTransferPath('import.copy.cancel.cleanup', libraryPath, true);
-          this.emitProgress({ type: 'import.progress', importId, phase: 'cancelled', filesProcessed: 0, totalFiles: 0, bytesProcessed: 0, totalBytes: 0 });
+          this.emitProgress({
+            type: 'import.progress', importId, phase: 'cancelled', cancelable: false,
+            filesProcessed: copiedFiles, totalFiles: copyStats.fileCount,
+            bytesProcessed: copiedBytes, totalBytes: copyStats.totalBytes,
+          });
           throw new LibraryServiceError('CANCELLED');
         }
 
@@ -44726,6 +45009,12 @@ export class LibraryService {
           phase: 'cancelled', filesProcessed: 0, totalFiles: 0,
           bytesProcessed: 0, totalBytes: 0,
         });
+      } else {
+        this.emitProgress({
+          type: 'import.progress', importId,
+          phase: 'failed', filesProcessed: 0, totalFiles: 0,
+          bytesProcessed: 0, totalBytes: 0,
+        });
       }
       if (error instanceof LibraryServiceError) throw error;
       throw new LibraryServiceError('NOT_A_LIBRARY', { cause: error });
@@ -44753,6 +45042,19 @@ export class LibraryService {
         type: 'import.progress',
         importId,
         phase: 'cancelled',
+        cancelable: false,
+        filesProcessed: 0,
+        totalFiles: 0,
+        bytesProcessed: 0,
+        totalBytes: 0,
+      });
+      return;
+    }
+    if (this.isFinalizedImport(importId)) {
+      this.emitProgress({
+        type: 'import.progress',
+        importId,
+        phase: 'complete',
         cancelable: false,
         filesProcessed: 0,
         totalFiles: 0,

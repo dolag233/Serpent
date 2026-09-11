@@ -7187,11 +7187,16 @@ function AppInner() {
       if (!result.ok) throw new LibraryOperationError(result.error);
       completedImportIdRef.current = plan.importId;
       clearImportConflictsUi();
+      setImportProgress(null);
+      setLibraryTransferKind("import");
       setNotice(importSummaryMessage(result.value, locale));
       await revealAfterImport(result.value);
       playTaskCompletionSound(startedAt);
     } catch (caught) {
       playTaskCompletionSound(startedAt);
+      clearImportConflictsUi();
+      setImportProgress(null);
+      setLibraryTransferKind("import");
       const code =
         caught instanceof LibraryOperationError ? caught.code : "";
       if (
@@ -7246,11 +7251,17 @@ function AppInner() {
       if (!completion) return;
       completedImportIdRef.current = plan.importId;
       clearImportSourceFailureUi();
+      setImportProgress(null);
+      setLibraryTransferKind("import");
       setNotice(importSummaryMessage(completion, locale));
       await revealAfterImport(completion);
       playTaskCompletionSound(startedAt);
     } catch (caught) {
       playTaskCompletionSound(startedAt);
+      clearImportSourceFailureUi();
+      clearImportConflictsUi();
+      setImportProgress(null);
+      setLibraryTransferKind("import");
       const code =
         caught instanceof LibraryOperationError ? caught.code : "";
       if (
@@ -8513,13 +8524,27 @@ function AppInner() {
       setLibraryTransferName("");
       return;
     }
+    const importId = importProgress.importId;
     try {
       const result = await api.cancelLibraryImport({
-        importId: importProgress.importId,
+        importId,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setNotice(t("toast.cancellingImport"));
     } catch (caught) {
+      const code = caught instanceof LibraryOperationError ? caught.code : "";
+      if (
+        shouldSuppressImportContinueError({
+          code,
+          importId,
+          completedImportId: completedImportIdRef.current,
+          isInFlightRequest: true,
+        })
+      ) {
+        setImportProgress(null);
+        setLibraryTransferKind("import");
+        return;
+      }
       setError(toMessage(caught, t("toast.cancelImportFailed"), locale));
     }
   }
