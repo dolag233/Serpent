@@ -20,7 +20,7 @@
 - `npm run lint`：通过。
 - `node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/sqlite-in.test.ts tests/worker/import-planning.test.ts tests/worker/pending-import-lifecycle.test.ts tests/worker/library-export-import.test.ts tests/unit/import-progress-overlay.test.tsx tests/unit/import-progress-copy.test.ts`：6 个测试文件通过，98 项通过，1 项既有跳过。
 - `npm run test:library-availability`：9 个测试文件通过，209 项通过，1 项跳过。
-- `npm test`：534 个测试文件通过、1 个失败、15 个跳过；4,589 项通过、1 项失败、27 项跳过。唯一失败为未被本轮修改触及的 `tests/worker/reconciliation-performance.test.ts` 事件循环性能基准，`p95LagMs=85.27ms` 超过 75ms 门槛（`maxLagMs=333.1ms` 仍低于 1,000ms）。因此全量测试不是全绿，但本轮新增与资源库可用性门禁均通过。
+- `npm test`：534 个测试文件通过、1 个失败、15 个跳过；4,589 项通过、1 项失败、27 项跳过。唯一失败为本轮未覆盖的 `tests/worker/reconciliation-performance.test.ts` 事件循环性能基准，`p95LagMs=85.27ms` 超过 75ms 门槛（`maxLagMs=333.1ms` 仍低于 1,000ms）；当前证据不足以将该宿主机调度波动归因于本轮改动。因此全量测试不是全绿，但本轮新增与资源库可用性门禁均通过。
 
 ## 验收边界
 
@@ -28,4 +28,4 @@
 
 ## 代码审查
 
-待使用 `gpt-5.6-luna`、`high` 对本轮固定差异进行 Standards + Spec 双轴审查，并在此处记录结论。
+已按要求启动 `gpt-5.6-luna`、`high` 的独立 Standards + Spec 双轴审查，并尝试在同一 agent 上收束/恢复；agent 两次超时且未返回可用 findings，随后关闭。故本轮没有可签署的独立审查结论，不将其记为通过；真实 10w+ 库、Windows、packaged 与 Computer Use 仍是验收边界。
