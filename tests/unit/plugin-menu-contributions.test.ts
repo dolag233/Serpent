@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   buildPluginMenuDescriptors,
+  placeMultiAssetPluginMenuItems,
   placePluginMenuItemsAroundHost,
   runPluginMenuCommand,
 } from '../../src/renderer/plugin-menu-contributions';
@@ -103,6 +104,30 @@ describe('plugin menu contribution descriptors', () => {
     expect(placement.anchors.get('asset.rename')?.after.map((item) => item.id))
       .toEqual(['plugin-a', 'plugin-b']);
     expect(placement.outside).toEqual([]);
+  });
+
+  it('maps asset.rename anchor entries into the multi-asset organize section', () => {
+    const items = buildPluginMenuDescriptors([
+      {
+        kind: 'menu',
+        id: 'plugin-batch-rename',
+        pluginId: 'com.example.menu',
+        title: 'Batch Rename',
+        target: 'menus.asset',
+        after: 'asset.rename',
+      },
+    ] as never);
+
+    const placement = placePluginMenuItemsAroundHost(
+      items,
+      { organize: ['asset.rename'] },
+      new Set(['asset.rename']),
+    );
+
+    const multiAssetPlacement = placeMultiAssetPluginMenuItems(placement);
+    expect(multiAssetPlacement.organizeAfter.map((item) => item.id))
+      .toEqual(['plugin-batch-rename']);
+    expect(multiAssetPlacement.organizeBefore).toEqual([]);
   });
 
   it('maps non-inline host anchors into their rendered host group', () => {

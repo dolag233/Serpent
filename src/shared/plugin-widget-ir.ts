@@ -5,7 +5,8 @@ import { z } from 'zod';
  *
  * The plugin process builds this tree with `serpent.ui` helpers. Renderer maps
  * nodes onto Host primitives (`Field`, `Select`, `Switch`, `Slider`, `TextField`,
- * and compact `Toggle`). Closures never cross IPC; only this JSON travels.
+ * compact `Toggle`, standardized groups, and tab navigation). Closures never
+ * cross IPC; only this JSON travels.
  */
 
 export const PLUGIN_WIDGET_MAX_DEPTH = 8;
@@ -67,11 +68,23 @@ const pluginWidgetFieldBase = {
   id: pluginWidgetFieldIdSchema,
   label: z.string().min(1).max(160),
   description: z.string().min(1).max(2_000).optional(),
+  disabled: z.boolean().optional(),
 };
 
 export type PluginWidgetNode =
   | { readonly type: 'column'; readonly children: readonly PluginWidgetNode[] }
   | { readonly type: 'row'; readonly children: readonly PluginWidgetNode[] }
+  | { readonly type: 'group'; readonly title?: string; readonly children: readonly PluginWidgetNode[] }
+  | {
+    readonly type: 'tabs';
+    readonly id: string;
+    readonly value: string;
+    readonly tabs: readonly {
+      readonly id: string;
+      readonly label: string;
+      readonly children: readonly PluginWidgetNode[];
+    }[];
+  }
   | { readonly type: 'note'; readonly text: string }
   | { readonly type: 'heading'; readonly text: string }
   | { readonly type: 'separator' }
@@ -82,6 +95,7 @@ export type PluginWidgetNode =
     readonly label: string;
     readonly value: string;
     readonly description?: string;
+    readonly disabled?: boolean;
   }
   | {
     readonly type: 'number';
@@ -92,6 +106,7 @@ export type PluginWidgetNode =
     readonly max?: number;
     readonly step?: number;
     readonly description?: string;
+    readonly disabled?: boolean;
   }
   | {
     readonly type: 'select';
@@ -100,6 +115,7 @@ export type PluginWidgetNode =
     readonly value: string;
     readonly options: readonly PluginWidgetOption[];
     readonly description?: string;
+    readonly disabled?: boolean;
   }
   | {
     readonly type: 'switch';
@@ -107,6 +123,7 @@ export type PluginWidgetNode =
     readonly label: string;
     readonly value: boolean;
     readonly description?: string;
+    readonly disabled?: boolean;
   }
   | {
     readonly type: 'toggle';
@@ -114,6 +131,7 @@ export type PluginWidgetNode =
     readonly label: string;
     readonly value: boolean;
     readonly description?: string;
+    readonly disabled?: boolean;
   }
   | {
     readonly type: 'slider';
@@ -124,12 +142,38 @@ export type PluginWidgetNode =
     readonly max?: number;
     readonly step?: number;
     readonly description?: string;
+    readonly disabled?: boolean;
   };
 
-export const pluginWidgetNodeSchema: z.ZodType<PluginWidgetNode> = z.lazy(() => z.union([
+// Dispatch before visiting children: an ordinary union recursively validates
+// every group subtree again against the column branch, doubling work per level.
+export const pluginWidgetNodeSchema: z.ZodType<PluginWidgetNode> = z.lazy(() => z.discriminatedUnion('type', [
   z.strictObject({
     type: z.enum(['column', 'row']),
     children: z.array(pluginWidgetNodeSchema).max(PLUGIN_WIDGET_MAX_CHILDREN),
+  }),
+  z.strictObject({
+    type: z.literal('group'),
+    title: z.string().min(1).max(160).optional(),
+    children: z.array(pluginWidgetNodeSchema).max(PLUGIN_WIDGET_MAX_CHILDREN),
+  }),
+  z.strictObject({
+    type: z.literal('tabs'),
+    id: pluginWidgetFieldIdSchema,
+    value: z.string().max(128),
+    tabs: z.array(z.strictObject({
+      id: pluginWidgetFieldIdSchema,
+      label: z.string().min(1).max(160),
+      children: z.array(pluginWidgetNodeSchema).max(PLUGIN_WIDGET_MAX_CHILDREN),
+    })).min(1).max(8),
+  }).superRefine((tabs, context) => {
+    const ids = tabs.tabs.map((tab) => tab.id);
+    if (new Set(ids).size !== ids.length) {
+      context.addIssue({ code: 'custom', path: ['tabs'], message: 'Tab identifiers must be unique within a tabs node.' });
+    }
+    if (!ids.includes(tabs.value)) {
+      context.addIssue({ code: 'custom', path: ['value'], message: 'The selected tab must match one of the tab identifiers.' });
+    }
   }),
   z.strictObject({
     type: z.literal('note'),
@@ -195,8 +239,12 @@ function walkPluginWidgetNodes(
   depth = 1,
 ): void {
   visit(node, depth);
-  if (node.type === 'column' || node.type === 'row') {
+  if (node.type === 'column' || node.type === 'row' || node.type === 'group') {
     for (const child of node.children) walkPluginWidgetNodes(child, visit, depth + 1);
+  } else if (node.type === 'tabs') {
+    for (const tab of node.tabs) {
+      for (const child of tab.children) walkPluginWidgetNodes(child, visit, depth + 1);
+    }
   }
 }
 
@@ -219,7 +267,7 @@ export function pluginWidgetTreeDepth(node: PluginWidgetNode): number {
 export function collectPluginWidgetFieldIds(node: PluginWidgetNode): string[] {
   const ids: string[] = [];
   walkPluginWidgetNodes(node, (current) => {
-    if (current.type === 'text' || current.type === 'number' || current.type === 'select'
+    if (current.type === 'tabs' || current.type === 'text' || current.type === 'number' || current.type === 'select'
       || current.type === 'switch' || current.type === 'toggle' || current.type === 'slider') {
       ids.push(current.id);
     }
@@ -232,6 +280,7 @@ export function collectPluginWidgetValues(
 ): Record<string, PluginWidgetValue> {
   const values: Record<string, PluginWidgetValue> = {};
   walkPluginWidgetNodes(node, (current) => {
+    if (current.type === 'tabs') values[current.id] = current.value;
     if (current.type === 'text' || current.type === 'number' || current.type === 'select'
       || current.type === 'switch' || current.type === 'toggle' || current.type === 'slider') {
       values[current.id] = current.value;

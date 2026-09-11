@@ -88,6 +88,38 @@ describe('plugin widget IR', () => {
     });
     expect(collectPluginWidgetValues(tree)).toEqual({ caseSensitive: true });
   });
+
+  it('accepts standardized groups and tab navigation with nested fields', () => {
+    const tree = parsePluginWidgetTree({
+      type: 'column',
+      children: [
+        {
+          type: 'tabs',
+          id: 'mode',
+          value: 'numbering',
+          tabs: [
+            { id: 'prefix', label: 'Prefix', children: [{ type: 'text', id: 'prefixValue', label: 'Prefix', value: '' }] },
+            { id: 'numbering', label: 'Numbering', children: [{
+              type: 'group',
+              title: 'Auto numbering',
+              children: [{ type: 'number', id: 'start', label: 'Start', value: 1 }],
+            }] },
+          ],
+        },
+      ],
+    });
+    expect(collectPluginWidgetValues(tree)).toEqual({ mode: 'numbering', prefixValue: '', start: 1 });
+    expect(parsePluginWidgetTree({
+      type: 'group',
+      children: [{ type: 'number', id: 'width', label: 'Width', value: 0, disabled: true }],
+    })).toMatchObject({ type: 'group' });
+    expect(() => parsePluginWidgetTree({
+      type: 'tabs',
+      id: 'mode',
+      value: 'missing',
+      tabs: [{ id: 'numbering', label: 'Numbering', children: [] }],
+    })).toThrow(/selected tab/u);
+  });
 });
 
 describe('plugin widget toolkit', () => {
@@ -151,6 +183,40 @@ describe('plugin widget toolkit', () => {
     const next = ui.build(render);
     expect(collectPluginWidgetValues(next).videoCodec).toBe('vp9');
   });
+
+  it('persists the selected tab through a rebuild', () => {
+    const ui = createPluginWidgetToolkit();
+    const render = (toolkit: ReturnType<typeof createPluginWidgetToolkit>) => {
+      const mode = toolkit.state('prefix');
+      return toolkit.tabs({
+        id: 'mode',
+        value: mode.get(),
+        onChange: mode.set,
+        tabs: [
+          { id: 'prefix', label: 'Prefix', children: [toolkit.note('prefix')] },
+          { id: 'numbering', label: 'Numbering', children: [toolkit.note('numbering')] },
+        ],
+      });
+    };
+    ui.build(render);
+    expect(ui.applyChange('mode', 'numbering')).toBe(true);
+    expect(collectPluginWidgetValues(ui.build(render)).mode).toBe('numbering');
+  });
+
+  it('uses controlled state for coupled toggle values', () => {
+    const ui = createPluginWidgetToolkit();
+    const render = (toolkit: ReturnType<typeof createPluginWidgetToolkit>) => {
+      const first = toolkit.state(true);
+      const second = toolkit.state(false);
+      return toolkit.row(
+        toolkit.toggle({ id: 'first', label: 'Aa', value: first.get(), onChange: (value) => { first.set(value); if (value) second.set(false); } }),
+        toolkit.toggle({ id: 'second', label: '.*', value: second.get(), onChange: (value) => { second.set(value); if (value) first.set(false); } }),
+      );
+    };
+    ui.build(render);
+    ui.applyChange('second', true);
+    expect(collectPluginWidgetValues(ui.build(render))).toEqual({ first: false, second: true });
+  });
 });
 
 describe('widget dialog session', () => {
@@ -212,6 +278,8 @@ describe('serpent.ui.openDialog widget wrap', () => {
     );
     expect(PLUGIN_WIDGET_OPEN_DIALOG_WRAP_SOURCE).toContain('type: "list"');
     expect(PLUGIN_WIDGET_OPEN_DIALOG_WRAP_SOURCE).toContain('type: "toggle"');
+    expect(PLUGIN_WIDGET_OPEN_DIALOG_WRAP_SOURCE).toContain('type: "tabs"');
+    expect(PLUGIN_WIDGET_OPEN_DIALOG_WRAP_SOURCE).toContain('type: "group"');
   });
 
   it('still maps dialogId calls onto ui.dialog', async () => {

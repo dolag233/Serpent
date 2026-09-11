@@ -20,6 +20,7 @@ type FieldSpec<T extends PluginWidgetValue> = {
   readonly label: string;
   readonly value: T;
   readonly description?: string;
+  readonly disabled?: boolean;
   readonly onChange?: (value: T) => void;
 };
 
@@ -27,6 +28,18 @@ export type PluginWidgetToolkit = {
   state<T>(initial: T): PluginWidgetState<T>;
   column(...children: PluginWidgetChild[]): PluginWidgetNode;
   row(...children: PluginWidgetChild[]): PluginWidgetNode;
+  group(title: string, ...children: PluginWidgetChild[]): PluginWidgetNode;
+  group(...children: PluginWidgetChild[]): PluginWidgetNode;
+  tabs(spec: {
+    readonly id: string;
+    readonly value: string;
+    readonly tabs: readonly {
+      readonly id: string;
+      readonly label: string;
+      readonly children: readonly PluginWidgetChild[];
+    }[];
+    readonly onChange?: (value: string) => void;
+  }): PluginWidgetNode;
   note(text: string): PluginWidgetNode;
   heading(text: string): PluginWidgetNode;
   separator(): PluginWidgetNode;
@@ -84,7 +97,9 @@ export function createPluginWidgetToolkit(): PluginWidgetToolkit {
   const rememberField = <T extends PluginWidgetValue>(
     spec: FieldSpec<T>,
   ): T => {
-    const value = resolveValue(spec.id, spec.value);
+    // Controlled fields derive their value from plugin state. Uncontrolled
+    // fields (without a listener) keep the Host's last submitted value.
+    const value = spec.onChange === undefined ? resolveValue(spec.id, spec.value) : spec.value;
     values.set(spec.id, value);
     if (spec.onChange === undefined) listeners.delete(spec.id);
     else listeners.set(spec.id, spec.onChange as (value: PluginWidgetValue) => void);
@@ -114,6 +129,36 @@ export function createPluginWidgetToolkit(): PluginWidgetToolkit {
     },
     row(...children) {
       return { type: 'row', children: compactChildren(children) };
+    },
+    group(titleOrChild, ...children) {
+      const hasTitle = typeof titleOrChild === 'string';
+      const content = hasTitle
+        ? children
+        : [titleOrChild as PluginWidgetChild, ...children];
+      return {
+        type: 'group',
+        ...(hasTitle ? { title: String(titleOrChild) } : {}),
+        children: compactChildren(content),
+      };
+    },
+    tabs(spec) {
+      let value = String(spec.onChange === undefined ? resolveValue(spec.id, spec.value) : spec.value);
+      const tabIds = spec.tabs.map((tab) => String(tab.id));
+      if (tabIds.length === 0) throw new Error('Tabs must contain at least one tab.');
+      if (!tabIds.includes(value)) value = tabIds.includes(String(spec.value)) ? String(spec.value) : tabIds[0]!;
+      values.set(spec.id, value);
+      if (spec.onChange === undefined) listeners.delete(spec.id);
+      else listeners.set(spec.id, spec.onChange as (next: PluginWidgetValue) => void);
+      return {
+        type: 'tabs',
+        id: spec.id,
+        value,
+        tabs: spec.tabs.map((tab) => ({
+          id: String(tab.id),
+          label: String(tab.label),
+          children: compactChildren(tab.children),
+        })),
+      };
     },
     note(text) {
       return { type: 'note', text: String(text) };
@@ -146,6 +191,7 @@ export function createPluginWidgetToolkit(): PluginWidgetToolkit {
         id: spec.id,
         label: spec.label,
         value,
+        ...(spec.disabled === undefined ? {} : { disabled: spec.disabled }),
         ...optionalDescription(spec.description),
       };
     },
@@ -159,6 +205,7 @@ export function createPluginWidgetToolkit(): PluginWidgetToolkit {
         ...(spec.min === undefined ? {} : { min: spec.min }),
         ...(spec.max === undefined ? {} : { max: spec.max }),
         ...(spec.step === undefined ? {} : { step: spec.step }),
+        ...(spec.disabled === undefined ? {} : { disabled: spec.disabled }),
         ...optionalDescription(spec.description),
       };
     },
@@ -176,6 +223,7 @@ export function createPluginWidgetToolkit(): PluginWidgetToolkit {
         label: spec.label,
         value,
         options: spec.options.map((option) => ({ value: option.value, label: option.label })),
+        ...(spec.disabled === undefined ? {} : { disabled: spec.disabled }),
         ...optionalDescription(spec.description),
       };
     },
@@ -186,6 +234,7 @@ export function createPluginWidgetToolkit(): PluginWidgetToolkit {
         id: spec.id,
         label: spec.label,
         value,
+        ...(spec.disabled === undefined ? {} : { disabled: spec.disabled }),
         ...optionalDescription(spec.description),
       };
     },
@@ -196,6 +245,7 @@ export function createPluginWidgetToolkit(): PluginWidgetToolkit {
         id: spec.id,
         label: spec.label,
         value,
+        ...(spec.disabled === undefined ? {} : { disabled: spec.disabled }),
         ...optionalDescription(spec.description),
       };
     },
@@ -209,6 +259,7 @@ export function createPluginWidgetToolkit(): PluginWidgetToolkit {
         ...(spec.min === undefined ? {} : { min: spec.min }),
         ...(spec.max === undefined ? {} : { max: spec.max }),
         ...(spec.step === undefined ? {} : { step: spec.step }),
+        ...(spec.disabled === undefined ? {} : { disabled: spec.disabled }),
         ...optionalDescription(spec.description),
       };
     },

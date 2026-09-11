@@ -20,6 +20,7 @@ import { Icon } from './Icons';
 import { iconActionAttrs } from './icon-action-attrs';
 import { pluginRequiresTrustedCssDisclosure } from '../plugins/plugin-themes';
 import { resolvePluginDisplayCopy } from '../plugins/plugin-localized-copy';
+import { PluginUninstallDialog } from './PluginUninstallDialog';
 import { DialogShell } from './ui/patterns';
 import { useLocale, useT } from './i18n';
 
@@ -37,6 +38,14 @@ type PluginSnapshot = Extract<
 >;
 
 type InstallScope = 'user' | 'library';
+
+type PendingPluginUninstall = {
+  readonly pluginId: string;
+  readonly version: string;
+  readonly scope: InstallScope;
+  readonly displayName: string;
+  readonly libraryId: string | undefined;
+};
 
 type RendererShellApi = {
   openExternalUrl(url: string): Promise<{ ok: boolean }>;
@@ -156,6 +165,7 @@ export function PluginSettingsPage({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [installError, setInstallError] = useState<string | undefined>();
+  const [pendingUninstall, setPendingUninstall] = useState<PendingPluginUninstall | null>(null);
 
   useEffect(() => {
     if (api?.onInstallProgress === undefined) return undefined;
@@ -435,6 +445,30 @@ export function PluginSettingsPage({
       : t('settings.pluginScopeUserTip')
   );
 
+  const requestUninstall = useCallback((input: PendingPluginUninstall): void => {
+    setError(undefined);
+    setPendingUninstall(input);
+  }, []);
+
+  const confirmUninstall = useCallback(async (): Promise<void> => {
+    if (pendingUninstall === null) return;
+    const { pluginId, version, scope, libraryId: targetLibraryId } = pendingUninstall;
+    if (scope === 'library' && targetLibraryId !== libraryId) {
+      // The settings surface can outlive a library switch. Never resolve a
+      // captured package against a different open library.
+      setPendingUninstall(null);
+      return;
+    }
+    const completed = await execute({
+      type: 'plugin-manager.uninstall',
+      scope,
+      ...(scope === 'library' && targetLibraryId !== undefined ? { libraryId: targetLibraryId } : {}),
+      pluginId,
+      version,
+    });
+    if (completed) setPendingUninstall(null);
+  }, [execute, libraryId, pendingUninstall]);
+
   const renderInstallCard = (scope: InstallScope): ReactNode => {
     const packages = packagesByScope[scope];
     const scopeDisabled = scope === 'library' && !canUseLibraryScope;
@@ -595,12 +629,12 @@ export function PluginSettingsPage({
                     <button
                       className="plugin-settings-icon-action"
                       disabled={busy || (newest.scope === 'library' && libraryId === undefined)}
-                      onClick={() => void execute({
-                        type: 'plugin-manager.uninstall',
-                        scope: newest.scope,
-                        ...(libraryId === undefined ? {} : { libraryId }),
+                      onClick={() => requestUninstall({
                         pluginId,
                         version: newest.version,
+                        scope: newest.scope,
+                        displayName: copy.name,
+                        libraryId: newest.scope === 'library' ? libraryId : undefined,
                       })}
                       type="button"
                       {...iconActionAttrs(t('settings.pluginUninstall'))}
@@ -1054,6 +1088,25 @@ export function PluginSettingsPage({
           </DialogShell>
         </div>
       ) : null}
+
+      {pendingUninstall === null ? null : (
+        <PluginUninstallDialog
+          busy={busy}
+          error={error}
+          onCancel={() => {
+            if (!busy) {
+              setPendingUninstall(null);
+              setError(undefined);
+            }
+          }}
+          onConfirm={() => void confirmUninstall()}
+          pluginName={pendingUninstall.displayName}
+          scopeLabel={pendingUninstall.scope === 'library'
+            ? t('settings.pluginScopeLibrary')
+            : t('settings.pluginScopeUser')}
+          version={pendingUninstall.version}
+        />
+      )}
     </div>
   );
 }

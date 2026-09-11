@@ -293,6 +293,10 @@ export function ContextMenu({
         position: "fixed",
         left: `max(${gap}px, min(${left}px, calc(100vw - ${rect.width + gap}px)))`,
         top: `max(${gap}px, min(${top}px, calc(100vh - ${rect.height + gap}px)))`,
+        // Keep the viewport constraint on the positioned surface as well as
+        // in CSS so the measured menu remains reachable after a resize.
+        maxWidth: `${Math.max(0, vw - gap * 2)}px`,
+        maxHeight: `${Math.max(0, vh - gap * 2)}px`,
         visibility: "visible",
       });
     };

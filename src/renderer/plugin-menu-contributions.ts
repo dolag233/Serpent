@@ -110,6 +110,11 @@ export type PluginMenuHostPlacement = {
   outside: PluginMenuDescriptor[];
 };
 
+export type MultiAssetPluginMenuPlacement = {
+  organizeBefore: PluginMenuDescriptor[];
+  organizeAfter: PluginMenuDescriptor[];
+};
+
 export type BuildPluginMenuDescriptorsOptions = {
   onPlacementDiagnostic?: (diagnostic: PluginMenuPlacementDiagnostic) => void;
 };
@@ -502,6 +507,31 @@ export function placePluginMenuItemsAroundHost(
 
   const outside = orderPluginMenuDescriptors(outsideItems);
   return { groups: groupSlots, anchors: anchorSlots, outside };
+}
+
+/**
+ * Resolve plugin entries for the multi-asset organize section.
+ *
+ * The multi-asset menu has no native single-asset `asset.rename` row, but
+ * plugins still use that stable anchor to keep rename actions next to the
+ * built-in rename command in the single-asset menu. Preserve that placement
+ * for multi-selection by mapping the anchor edges into the organize section.
+ */
+export function placeMultiAssetPluginMenuItems(
+  placement: PluginMenuHostPlacement,
+): MultiAssetPluginMenuPlacement {
+  const organize = placement.groups.get("organize");
+  const renameAnchor = placement.anchors.get("asset.rename");
+  return {
+    organizeBefore: [
+      ...(organize?.before ?? []),
+      ...(renameAnchor?.before ?? []),
+    ],
+    organizeAfter: [
+      ...(renameAnchor?.after ?? []),
+      ...(organize?.after ?? []),
+    ],
+  };
 }
 
 export function buildPluginMenuDescriptors(

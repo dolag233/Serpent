@@ -55,6 +55,7 @@ import type { SerpentPluginManagerApi } from "../shared/plugin-manager-api";
 import type { PluginContributionContext } from "../plugins/plugin-context";
 import {
   placePluginMenuItemsAroundHost,
+  placeMultiAssetPluginMenuItems,
   runPluginMenuCommand,
   usePluginMenuContributions,
   type PluginMenuHostPlacement,
@@ -1271,6 +1272,9 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               skipReport,
               locale,
             );
+            const multiAssetPluginPlacement = placeMultiAssetPluginMenuItems(
+              pluginAssetMenuPlacement,
+            );
 
             // 0015-C: 静态项的标题/快捷键/可见性/禁用原因由注册表 resolveMenu
             // 求值；此处把每次打开时算出的集合与 props 组装成
@@ -1474,6 +1478,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             )}
             {targetAssetIds.length > 0 && (
             <ContextMenuSection label={t("command.group.organize")}>
+              <PluginMenuItems
+                items={multiAssetPluginPlacement.organizeBefore}
+                onRun={(item) => runPluginCommand(item, { assetIds: targetAssetIds })}
+              />
               <ContextMenuItem
                 icon={<Icon name="collection" size={14} />}
                 label={t("menu.createImageSequence")}
@@ -1574,6 +1582,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   onAction={() => runMultiCommand("assets.move-to-folder")}
                 />
               )}
+              <PluginMenuItems
+                items={multiAssetPluginPlacement.organizeAfter}
+                onRun={(item) => runPluginCommand(item, { assetIds: targetAssetIds })}
+              />
               <ContextMenuItem
                 icon={<Icon name="close" size={14} />}
                 label={t("menu.ignore")}

@@ -391,6 +391,8 @@ widget 树；Host 用已有 primitive（`DialogShell` / `Field` / `Select` / `Sw
 需要展示多列对比或结果时，可使用 `ui.list({ columns, rows, emptyText })`；Host 会以统一的可滚动、交替行背景列表渲染，单元格支持换行。
 列表单元格也可以传入 `{ segments: [{ text, tone: 'match' | 'change' }] }`，用于统一显示匹配和改动标记。需要紧凑的二态选项时使用
 `ui.toggle({ id, label, value, description, onChange })`；控件会使用 Host 的标准按钮样式。
+需要把相关控件放进标准卡片时使用 `ui.group(title, ...children)`；标题可省略以使用无标题卡片。需要在多个功能面板之间切换时使用
+`ui.tabs({ id, value, tabs: [{ id, label, children }], onChange })`；Host 会负责绘制可访问的标签页并只展示当前面板。
 这个路径不使用 HTML/CSS，也不把 Manifest JSON 当作对话框 UI 语言。对于复杂界面或交互、WebGL、第三方页面，HTML/iframe
 对话框 `openDialog({ dialogId, payload })` 是受支持的一等路径，并引用 `contributes.dialogs` 的 local id；它是复杂 UI 的正式能力，
 不是待删除的临时方案。`getBinaryPaths` 需要 `media.binaries`，返回宿主内置（或 `SERPENT_FFMPEG_PATH` 覆盖）的 FFmpeg/ffprobe 绝对路径；

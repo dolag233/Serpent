@@ -3800,8 +3800,14 @@ body.serpent-modal-open .app-shell {
   box-shadow: var(--menu-surface-shadow);
   backdrop-filter: blur(14px) saturate(120%);
   min-width: 180px;
-  max-height: calc(100vh - 12px);
+  /* Keep tall menus inside the renderer viewport and let their content scroll. */
+  max-width: calc(100vw - (2 * var(--ui-space-3)));
+  max-height: calc(100vh - (2 * var(--ui-space-3)));
+  max-height: calc(100dvh - (2 * var(--ui-space-3)));
+  box-sizing: border-box;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   padding: 5px;
 }
 
@@ -12842,6 +12848,9 @@ select.ai-config-input.ai-config-languages {
   width: min(520px, calc(100vw - 48px));
   -webkit-app-region: no-drag;
 }
+.ui-dialog-shell.plugin-ui-dialog--widget {
+  max-height: calc(100dvh - var(--ui-space-6) - var(--ui-space-6));
+}
 .plugin-ui-dialog--widget input,
 .plugin-ui-dialog--widget button {
   -webkit-app-region: no-drag;
@@ -12851,6 +12860,27 @@ select.ai-config-input.ai-config-languages {
      Do not raise z-index: a full-window `--ui-layer-modal` overlay covered
      caption chrome and left Chromium without keyboard until Alt-Tab. */
   -webkit-app-region: no-drag;
+}
+.plugin-ui-dialog--widget .plugin-widget-form {
+  gap: var(--ui-space-2);
+  padding: 0;
+  pointer-events: auto;
+}
+.plugin-ui-dialog--widget .plugin-widget-heading {
+  margin-top: var(--ui-space-2);
+}
+.plugin-ui-dialog--widget .plugin-widget-separator {
+  margin: 0;
+}
+.plugin-ui-dialog--widget .plugin-widget-row:has(.plugin-widget-toggle) {
+  flex-wrap: nowrap;
+}
+.plugin-ui-dialog--widget .plugin-widget-row {
+  align-items: flex-start;
+}
+.plugin-ui-dialog--widget .plugin-widget-row > .plugin-widget-heading {
+  align-self: center;
+  margin: 0;
 }
 .plugin-widget-select-trigger {
   display: flex;
@@ -12878,6 +12908,53 @@ select.ai-config-input.ai-config-languages {
 .plugin-widget-row > * {
   flex: 1 1 10rem;
   min-width: 0;
+}
+.plugin-widget-group {
+  min-width: 0;
+  min-inline-size: 0;
+  margin: 0;
+  color: var(--text);
+}
+.plugin-widget-group__content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--ui-space-2);
+}
+.plugin-widget-tabs {
+  min-width: 0;
+}
+.plugin-widget-tabs__list {
+  display: flex;
+  min-width: 0;
+  gap: var(--ui-space-1);
+  border-bottom: 1px solid var(--border-subtle);
+  overflow-x: auto;
+}
+.plugin-widget-tabs__tab {
+  flex: 0 0 auto;
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: calc(12px * var(--ui-font-scale));
+}
+.plugin-widget-tabs__tab:hover,
+.plugin-widget-tabs__tab:focus-visible {
+  background: var(--menu-item-hover-background);
+  color: var(--text);
+}
+.plugin-widget-tabs__tab.is-active {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+  font-weight: var(--ui-font-weight-medium);
+}
+.plugin-widget-tabs__panel {
+  min-width: 0;
+  padding-top: var(--ui-space-3);
 }
 .plugin-widget-note {
   margin: 0;
@@ -12909,6 +12986,10 @@ select.ai-config-input.ai-config-languages {
   color: var(--text);
   font-size: calc(12px * var(--ui-font-scale));
 }
+.plugin-widget-group:has(.plugin-widget-list) .plugin-widget-list {
+  border: 0;
+  border-radius: 0;
+}
 .plugin-widget-list__header,
 .plugin-widget-list__row {
   display: grid;
@@ -12922,6 +13003,7 @@ select.ai-config-input.ai-config-languages {
   font-weight: 600;
 }
 .plugin-widget-list__body {
+  min-height: 16rem;
   max-height: 20rem;
   overflow: auto;
 }
@@ -12981,4 +13063,11 @@ select.ai-config-input.ai-config-languages {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border-subtle));
   background: var(--accent-soft);
   color: var(--accent);
+}
+.plugin-widget-switch-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-space-3);
 }
