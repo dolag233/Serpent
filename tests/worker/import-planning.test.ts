@@ -1274,6 +1274,49 @@ describe('pending import plans', () => {
     recovered.closeAll();
   });
 
+  it('deletes an applying import destination that has no assets row', () => {
+    const root = temporaryRoot();
+    const setup = new LibraryService();
+    const library = setup.createLibrary({ displayName: 'Applying Orphan', selectedParentPath: root });
+    setup.closeAll();
+
+    const operationId = randomUUID();
+    const operationPath = path.join(library.libraryPath, '.serpent', 'operations', operationId);
+    mkdirSync(path.join(operationPath, 'stage'), { recursive: true });
+    mkdirSync(path.join(operationPath, 'backup'), { recursive: true });
+    const destinationRelativePath = 'orphan-unregistered.png';
+    const destinationPath = path.join(library.libraryPath, 'Assets', destinationRelativePath);
+    writeFileSync(destinationPath, 'orphan bytes');
+    const now = new Date().toISOString();
+    const database = openConfiguredDatabase(path.join(library.libraryPath, '.serpent', 'library.db'));
+    database.prepare(
+      `INSERT INTO file_operations
+         (operation_id, kind, status, manifest_json, error_code, created_at, updated_at)
+       VALUES (?, 'import', 'applying', ?, NULL, ?, ?)`,
+    ).run(operationId, JSON.stringify({
+      version: 1,
+      files: [{
+        backupName: '0',
+        destinationRelativePath,
+        hadDestination: false,
+        stageName: '0',
+      }],
+      directories: [],
+    }), now, now);
+    database.close();
+
+    const recovered = new LibraryService();
+    recovered.openLibrary(library.libraryPath);
+    expect(existsSync(destinationPath)).toBe(false);
+    const recoveredDatabase = openConfiguredDatabase(path.join(library.libraryPath, '.serpent', 'library.db'));
+    expect(recoveredDatabase.prepare(
+      'SELECT status, error_code FROM file_operations WHERE operation_id = ?',
+    ).get(operationId)).toEqual({ status: 'rolled_back', error_code: 'PROCESS_INTERRUPTED' });
+    recoveredDatabase.close();
+    expect(existsSync(operationPath)).toBe(false);
+    recovered.closeAll();
+  });
+
   it.each<ImportFailurePoint>([
     'after-stage',
     'after-backup',

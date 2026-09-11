@@ -67,7 +67,7 @@ afterEach(() => {
 });
 
 describe('pending import lifecycle', () => {
-  it('keeps a decision pending past 15 minutes and expires it after 24 hours by default', () => {
+  it('keeps a parked conflict decision past 24 hours until resolve or close', () => {
     const root = temporaryRoot();
     const source = path.join(root, 'default-ttl.png');
     writeFileSync(source, 'incoming');
@@ -84,35 +84,17 @@ describe('pending import lifecycle', () => {
 
     clock.advance(15 * 60 * 1_000);
     expect(existsSync(operationPath)).toBe(true);
+    clock.advance(24 * 60 * 60 * 1_000);
+    expect(existsSync(operationPath)).toBe(true);
     expect(() => service.resolveImport({
       importId: plan.importId,
       suspectedDuplicate: 'skip',
       nameConflict: 'keep-both',
     })).not.toThrow();
     service.closeAll();
-
-    const secondService = new LibraryService({ importClock: clock });
-    const secondLibrary = secondService.openLibrary(library.libraryPath);
-    const secondPlan = secondService.prepareImport({
-      libraryId: secondLibrary.libraryId,
-      sourceKind: 'files',
-      sourcePaths: [source],
-    });
-    const secondOperationPath = path.join(
-      secondLibrary.libraryPath,
-      '.serpent',
-      'operations',
-      secondPlan.importId,
-    );
-    clock.advance(24 * 60 * 60 * 1_000 - 1);
-    expect(existsSync(secondOperationPath)).toBe(true);
-    clock.advance(1);
-    expect(existsSync(secondOperationPath)).toBe(false);
-    expectCode(() => secondService.abandonImport(secondPlan.importId), 'IMPORT_NOT_FOUND');
-    secondService.closeAll();
   });
 
-  it('expires a pending token at its TTL and removes its staged operation', () => {
+  it('does not expire a parked decision by TTL while the library stays open', () => {
     const root = temporaryRoot();
     const incoming = path.join(root, 'incoming');
     mkdirSync(incoming);
@@ -129,8 +111,12 @@ describe('pending import lifecycle', () => {
     clock.advance(999);
     expect(existsSync(operationPath)).toBe(true);
     clock.advance(1);
-    expect(existsSync(operationPath)).toBe(false);
-    expectCode(() => service.abandonImport(plan.importId), 'IMPORT_NOT_FOUND');
+    expect(existsSync(operationPath)).toBe(true);
+    expect(() => service.resolveImport({
+      importId: plan.importId,
+      suspectedDuplicate: 'skip',
+      nameConflict: 'keep-both',
+    })).not.toThrow();
     service.closeAll();
   });
 
@@ -198,7 +184,7 @@ describe('pending import lifecycle', () => {
     const plan = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
     service.closeAll();
 
-    expect(clock.cancelled).toHaveLength(1);
+    expect(clock.cancelled).toHaveLength(0);
     expect(existsSync(path.join(library.libraryPath, '.serpent', 'operations', plan.importId))).toBe(false);
   });
 

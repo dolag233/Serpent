@@ -64,3 +64,62 @@ export function sqliteRunInChunks<T>(input: {
   }
   return changes;
 }
+
+/**
+ * Build an IN predicate for a single statement. Lists larger than the bind
+ * limit are not inlined — callers must use `withSqliteInPredicate` so the
+ * values live in a TEMP table instead of one giant parameter list.
+ */
+export function sqliteInPredicate(
+  columnSql: string,
+  values: readonly unknown[],
+): { sql: string; params: unknown[] } {
+  if (values.length === 0) return { sql: '0', params: [] };
+  if (values.length > SQLITE_IN_BIND_LIMIT) {
+    throw new RangeError(
+      `SQLite IN lists above ${SQLITE_IN_BIND_LIMIT} values must use withSqliteInPredicate.`,
+    );
+  }
+  return {
+    sql: `${columnSql} IN (${sqliteInPlaceholders(values)})`,
+    params: [...values],
+  };
+}
+
+let sqliteInTableSeq = 0;
+
+function sqliteTempTableName(): string {
+  sqliteInTableSeq += 1;
+  return `_serpent_in_${sqliteInTableSeq}`;
+}
+
+/**
+ * Run a query whose IN list may exceed the per-statement bind limit.
+ * Small lists stay inline; large lists are inserted into a TEMP table.
+ */
+export function withSqliteInPredicate<R>(
+  connection: SqliteConnection,
+  columnSql: string,
+  values: readonly unknown[],
+  execute: (predicateSql: string, params: unknown[]) => R,
+  options?: { forceTable?: boolean },
+): R {
+  if (values.length === 0) return execute('0', []);
+  if (values.length <= SQLITE_IN_BIND_LIMIT && options?.forceTable !== true) {
+    return execute(`${columnSql} IN (${sqliteInPlaceholders(values)})`, [...values]);
+  }
+  const tableName = sqliteTempTableName();
+  connection.prepare(
+    `CREATE TEMP TABLE ${tableName} (id TEXT NOT NULL PRIMARY KEY)`,
+  ).run();
+  try {
+    for (const chunk of sqliteInChunks(values)) {
+      connection.prepare(
+        `INSERT OR IGNORE INTO ${tableName} (id) VALUES ${chunk.map(() => '(?)').join(',')}`,
+      ).run(...chunk);
+    }
+    return execute(`${columnSql} IN (SELECT id FROM ${tableName})`, []);
+  } finally {
+    connection.prepare(`DROP TABLE IF EXISTS ${tableName}`).run();
+  }
+}

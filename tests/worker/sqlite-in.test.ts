@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   sqliteAllInChunks,
   sqliteRunInChunks,
+  withSqliteInPredicate,
 } from '../../src/worker/sqlite-in';
 import { openConfiguredDatabase } from '../../src/worker/library-service';
 import { LibraryService } from '../../src/worker/library-service';
@@ -57,6 +58,40 @@ describe('SQLite IN chunking', () => {
     expect(database.prepare('SELECT COUNT(*) AS count FROM rows').get()).toEqual({ count: 0 });
     expect(sqlParamCounts.length).toBeGreaterThan(1);
     expect(Math.max(...sqlParamCounts)).toBeLessThanOrEqual(900);
+    database.close();
+  });
+
+  it('keeps a single SELECT under the bind limit for 2500 ids via a TEMP table', () => {
+    const root = temporaryRoot();
+    const sqlParamCounts: number[] = [];
+    const database = openConfiguredDatabase(path.join(root, 'predicate.db'), 5_000, {
+      trace: (sql) => {
+        if (sql.includes('FROM rows WHERE')) {
+          sqlParamCounts.push((sql.match(/\?/gu) ?? []).length);
+        }
+      },
+    });
+    database.exec('CREATE TABLE rows (id TEXT PRIMARY KEY, value TEXT NOT NULL)');
+    const insert = database.prepare('INSERT INTO rows (id, value) VALUES (?, ?)');
+    const ids = Array.from({ length: 2_500 }, (_, index) => `id-${index + 1}`);
+    database.transaction(() => {
+      for (const id of ids) insert.run(id, id);
+    })();
+
+    const rows = withSqliteInPredicate(
+      database,
+      'id',
+      ids,
+      (sql, params) =>
+        database.prepare(`SELECT id, value FROM rows WHERE ${sql}`).all(...params) as Array<{
+          id: string;
+          value: string;
+        }>,
+    );
+    expect(rows).toHaveLength(2_500);
+    expect(new Set(rows.map((row) => row.id)).size).toBe(2_500);
+    expect(sqlParamCounts.length).toBeGreaterThan(0);
+    expect(Math.max(...sqlParamCounts)).toBe(0);
     database.close();
   });
 

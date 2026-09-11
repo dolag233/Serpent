@@ -47,6 +47,10 @@ describe('i18n translate', () => {
     expect(en('toast.colorCopied', { color: '#381444' })).toBe(
       'Copied #381444',
     );
+    expect(zh('dialog.conflicts.cancelNotice')).toContain('暂存副本');
+    expect(zh('dialog.conflicts.cancelNotice')).toContain('原始文件夹');
+    expect(en('dialog.conflicts.cancelNotice')).toContain('staged copy');
+    expect(en('dialog.conflicts.cancelNotice')).toContain('original source');
   });
 });
 

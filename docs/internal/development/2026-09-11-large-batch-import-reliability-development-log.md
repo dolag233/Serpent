@@ -29,3 +29,16 @@
 ## 代码审查
 
 独立双轴审查已沉淀：`docs/internal/reviews/2026-09-11-large-batch-import-reliability-review.md`（composer-2.5，Standards 与 Spec 各一次）。Standards 0 hard / 5 judgement，最重是其余动态 `IN` 未分块扫完。Spec 最重是 §5.5「决策期暂停 TTL」未实现，只改了 24h 默认到期。真实 10w+ 库、Windows、packaged 与 Computer Use 仍是验收边界。
+
+## 审查收口（同日续）
+
+- `withSqliteInPredicate`：超过 900 个绑定的 ID 列表改走 TEMP 表，避免把 `OR IN` 拼进同一语句仍超限。`listAssets`、回收站、缩略图映射、标签合并、合集封面等用户规模 `IN` 已接入；编译期小集合（job kind / status）仍内联。
+- §5.5：决策中的 pending import 只取消既有 timer，不再排期到期；关库 / abandon / resolve 仍清理暂存。
+- 补测：`sqlite-in` TEMP 表 2500 ID；`pending-import-lifecycle` 24h 仍可 resolve；`import-planning` applying 无 DB 行孤儿删除；`dialog.conflicts.cancelNotice` 中英单测；`large-batch-import-reliability.test.ts` 默认 50,000 个临时小文件（可用 `SERPENT_LARGE_BATCH_COUNT` 覆盖），测完删除临时目录。
+- 巨型文件拆分记为积压工单 `Serpent-43f6be`（P3），不在本轮执行。
+
+### 本轮命令与结果
+
+- `node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/sqlite-in.test.ts tests/worker/pending-import-lifecycle.test.ts tests/worker/import-planning.test.ts tests/unit/i18n-translate.test.ts`：4 个测试文件通过，73 项通过，1 项跳过。
+- `node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/large-batch-import-reliability.test.ts`：1 个测试文件通过，1 项通过；约 50,000 个 txt 小文件导入后完成标签、合集、回收站与关库重开，耗时 391.33s。未抛 `too many SQL variables`。临时目录已删除。
+- `npm run test:library-availability`：9 个测试文件通过，209 项通过，1 项跳过。

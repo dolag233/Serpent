@@ -25,6 +25,7 @@ import {
   writeFileSync,
   writeSync,
   type BigIntStats,
+  type Dirent,
   type Stats,
 } from 'node:fs';
 import {
@@ -770,6 +771,7 @@ import {
   sqliteInChunks,
   sqliteInPlaceholders,
   sqliteRunInChunks,
+  withSqliteInPredicate,
 } from './sqlite-in';
 
 interface RunResult {
@@ -814,7 +816,6 @@ const REQUIRED_DIRECTORIES = ['Assets'] as const;
 const REGENERABLE_DIRECTORIES = ['previews', 'revisions', 'trash', 'artifacts'] as const;
 const DATABASE_BACKUP_DIRECTORY = 'backups';
 const DATABASE_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1_000;
-const DEFAULT_IMPORT_DECISION_TTL_MS = 24 * 60 * 60 * 1_000;
 const FINALIZED_IMPORT_RETENTION_MS = 10 * 60_000;
 
 const MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024;
@@ -4848,6 +4849,21 @@ function waitForStreamClose(stream: {
   });
 }
 
+function readLibraryTreeChildren(directoryPath: string): Dirent[] {
+  let children;
+  try {
+    children = readdirSync(directoryPath, { withFileTypes: true });
+  } catch (error) {
+    throw new LibraryServiceError('NOT_A_LIBRARY', { cause: error });
+  }
+  for (const child of children) {
+    if (child.isSymbolicLink()) {
+      throw new LibraryServiceError('NOT_A_LIBRARY', { reason: 'SYMBOLIC_LINK_NOT_ALLOWED' });
+    }
+  }
+  return children;
+}
+
 async function copyDirRecursiveCancellable(
   sourcePath: string,
   destPath: string,
@@ -4855,20 +4871,12 @@ async function copyDirRecursiveCancellable(
   onFileCopied?: (byteSize: number) => void,
 ): Promise<void> {
   mkdirSync(destPath, { recursive: true });
-  let children;
-  try {
-    children = readdirSync(sourcePath, { withFileTypes: true });
-  } catch (error) {
-    throw new LibraryServiceError('NOT_A_LIBRARY', { cause: error });
-  }
+  const children = readLibraryTreeChildren(sourcePath);
   for (const child of children) {
     await transferCheckpoint();
     if (cancelState.cancelled) return;
     const childSource = path.join(sourcePath, child.name);
     const childDest = path.join(destPath, child.name);
-    if (child.isSymbolicLink()) {
-      throw new LibraryServiceError('NOT_A_LIBRARY', { reason: 'SYMBOLIC_LINK_NOT_ALLOWED' });
-    }
     if (child.isDirectory()) {
       await copyDirRecursiveCancellable(childSource, childDest, cancelState, onFileCopied);
     } else if (child.isFile()) {
@@ -4888,13 +4896,8 @@ function measureCopyTree(sourcePath: string): { fileCount: number; totalBytes: n
   let fileCount = 0;
   let totalBytes = 0;
   const visit = (directoryPath: string): void => {
-    for (const child of readdirSync(directoryPath, { withFileTypes: true })) {
+    for (const child of readLibraryTreeChildren(directoryPath)) {
       const childPath = path.join(directoryPath, child.name);
-      if (child.isSymbolicLink()) {
-        throw new LibraryServiceError('NOT_A_LIBRARY', {
-          reason: 'SYMBOLIC_LINK_NOT_ALLOWED',
-        });
-      }
       if (child.isDirectory()) {
         visit(childPath);
       } else if (child.isFile()) {
@@ -7438,21 +7441,11 @@ export class LibraryService {
     }
   }
 
-  private scheduleImportExpiry(importId: string, pending: PendingImport): void {
-    const clock = this.options.importClock ?? DEFAULT_IMPORT_EXPIRY_CLOCK;
-    // A large import can legitimately leave the conflict/source-failure
-    // dialog open for longer than the copy itself. Never silently discard its
-    // staged files after the old 15-minute default.
-    const ttlMs = this.options.importTtlMs ?? DEFAULT_IMPORT_DECISION_TTL_MS;
-    const expiresAt = clock.now() + Math.max(0, ttlMs);
-    pending.expiryHandle = clock.schedule(() => {
-      const current = this.pendingImports.get(importId);
-      if (current !== pending) return;
-      this.pendingImports.delete(importId);
-      pending.expiryHandle = undefined;
-      this.updateImportOperation(pending, 'rolled_back', 'IMPORT_EXPIRED');
-      this.removeOperation(pending.operationPath);
-    }, Math.max(0, expiresAt - clock.now()));
+  private scheduleImportExpiry(_importId: string, pending: PendingImport): void {
+    // §5.5: parked conflict / source-failure / sequence decisions stay until
+    // resolve, abandon, or closeLibrary. Do not silently discard staging
+    // while the user is still looking at a dialog.
+    this.cancelImportExpiry(pending);
   }
 
   private parkPendingImportSourceFailure(input: {
@@ -10141,9 +10134,12 @@ export class LibraryService {
         );
       }
       if (affectedIds.length > 0) {
-        openLibrary.connection.prepare(
-          `DELETE FROM collection_assets WHERE collection_id IN (${affectedIds.map(() => '?').join(',')})`,
-        ).run(...affectedIds);
+        sqliteRunInChunks({
+          connection: openLibrary.connection,
+          values: affectedIds,
+          buildSql: (placeholders) =>
+            `DELETE FROM collection_assets WHERE collection_id IN (${placeholders})`,
+        });
       }
       const insertMembership = openLibrary.connection.prepare(
         'INSERT INTO collection_assets (collection_id, asset_id, position) VALUES (?, ?, ?)',
@@ -13921,15 +13917,20 @@ export class LibraryService {
       }) as ManagedFolderRow[];
 
     const folderIds = [folder.folder_id, ...descendantFolders.map((row) => row.folder_id)];
-    const placeholders = folderIds.map(() => '?').join(', ');
-    const assetRows = openLibrary.connection
-      .prepare(
-        `SELECT asset_id FROM assets
-          WHERE location_kind = 'managed'
-            AND deleted_at IS NULL
-            AND managed_folder_id IN (${placeholders})`,
-      )
-      .all(...folderIds) as Array<{ asset_id: string }>;
+    const assetRows = withSqliteInPredicate(
+      openLibrary.connection,
+      'managed_folder_id',
+      folderIds,
+      (sql, params) =>
+        openLibrary.connection
+          .prepare(
+            `SELECT asset_id FROM assets
+              WHERE location_kind = 'managed'
+                AND deleted_at IS NULL
+                AND ${sql}`,
+          )
+          .all(...params) as Array<{ asset_id: string }>,
+    );
 
     return {
       folder,
@@ -14582,14 +14583,19 @@ export class LibraryService {
       .filter((ref) => ref.locationKind === 'managed')
       .map((ref) => ref.folderId);
     if (managedIds.length > 0) {
-      const placeholders = managedIds.map(() => '?').join(', ');
-      const rows = openLibrary.connection
-        .prepare(
-          `SELECT folder_id, parent_folder_id, name, relative_path, path_identity
-             FROM managed_folders
-            WHERE folder_id IN (${placeholders})`,
-        )
-        .all(...managedIds) as ManagedFolderRow[];
+      const rows = withSqliteInPredicate(
+        openLibrary.connection,
+        'folder_id',
+        managedIds,
+        (sql, params) =>
+          openLibrary.connection
+            .prepare(
+              `SELECT folder_id, parent_folder_id, name, relative_path, path_identity
+                 FROM managed_folders
+                WHERE ${sql}`,
+            )
+            .all(...params) as ManagedFolderRow[],
+      );
       const rowById = new Map(rows.map((row) => [row.folder_id, row]));
       const visibleIds = rows
         .filter(
@@ -15095,28 +15101,33 @@ export class LibraryService {
       const hasSequenceFrames = hasTable(connection, 'asset_sequence_frames');
       const hasExplicitIgnore = hasTable(connection, 'explicit_ignored_paths');
       const hasGitignore = hasTable(connection, 'gitignore_ignored_paths');
-      const placeholders = folderIds.map(() => '?').join(', ');
-      const assetRows = openLibrary.connection
-        .prepare(
-          `SELECT managed_folder_id AS folder_id, COUNT(*) AS count
-             FROM assets
-            WHERE managed_folder_id IN (${placeholders})
-              AND deleted_at IS NULL
-              ${hasIgnoreTable
-                ? 'AND NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = assets.asset_id)'
-                : ''}
-              AND ${this.explicitIgnoreSql(connection, 'assets', showIgnored)}
-              ${hasSequenceFrames
-                ? `AND NOT EXISTS (
-                SELECT 1
-                  FROM asset_sequence_frames hidden_sequence_frame
-                 WHERE hidden_sequence_frame.asset_id = assets.asset_id
-                   AND hidden_sequence_frame.position > 0
-              )`
-                : ''}
-            GROUP BY managed_folder_id`,
-        )
-        .all(...folderIds) as Array<{ folder_id: string; count: number }>;
+      const assetRows = withSqliteInPredicate(
+        openLibrary.connection,
+        'managed_folder_id',
+        folderIds,
+        (sql, params) =>
+          openLibrary.connection
+            .prepare(
+              `SELECT managed_folder_id AS folder_id, COUNT(*) AS count
+                 FROM assets
+                WHERE ${sql}
+                  AND deleted_at IS NULL
+                  ${hasIgnoreTable
+                    ? 'AND NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = assets.asset_id)'
+                    : ''}
+                  AND ${this.explicitIgnoreSql(connection, 'assets', showIgnored)}
+                  ${hasSequenceFrames
+                    ? `AND NOT EXISTS (
+                    SELECT 1
+                      FROM asset_sequence_frames hidden_sequence_frame
+                     WHERE hidden_sequence_frame.asset_id = assets.asset_id
+                       AND hidden_sequence_frame.position > 0
+                  )`
+                    : ''}
+                GROUP BY managed_folder_id`,
+            )
+            .all(...params) as Array<{ folder_id: string; count: number }>,
+      );
       for (const row of assetRows) directAssetCounts.set(row.folder_id, row.count);
 
       const folderIgnoreClauses = [
@@ -15238,35 +15249,40 @@ export class LibraryService {
     ) {
       return covers;
     }
-    const placeholders = folderIds.map(() => '?').join(', ');
-    const rows = openLibrary.connection
-      .prepare(
-        `SELECT a.managed_folder_id AS folder_id, ra.artifact_id AS artifact_id
-           FROM assets a
-           JOIN revision_artifacts ra
-             ON ra.revision_id = a.current_revision_id
-            AND ra.invalidated_at IS NULL
-            AND ra.status = 'ready'
-            AND ra.kind = CASE
-              WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
-                OR LOWER(a.relative_file_path) LIKE '%.webm'
-                OR LOWER(a.relative_file_path) LIKE '%.mov'
-                OR LOWER(a.relative_file_path) LIKE '%.avi'
-                OR LOWER(a.relative_file_path) LIKE '%.wmv'
-                OR LOWER(a.relative_file_path) LIKE '%.mkv'
-                OR LOWER(a.relative_file_path) LIKE '%.m4v'
-              THEN 'video_poster'
-              ELSE 'thumbnail'
-            END
-          WHERE a.managed_folder_id IN (${placeholders})
-            AND a.deleted_at IS NULL
-            AND NOT EXISTS (
-              SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id
-            )
-            AND ${this.explicitIgnoreSql(openLibrary.connection, 'a', showIgnored)}
-          ORDER BY a.managed_folder_id, a.relative_file_path`,
-      )
-      .all(...folderIds) as Array<{ folder_id: string; artifact_id: string }>;
+    const rows = withSqliteInPredicate(
+      openLibrary.connection,
+      'a.managed_folder_id',
+      folderIds,
+      (sql, params) =>
+        openLibrary.connection
+          .prepare(
+            `SELECT a.managed_folder_id AS folder_id, ra.artifact_id AS artifact_id
+               FROM assets a
+               JOIN revision_artifacts ra
+                 ON ra.revision_id = a.current_revision_id
+                AND ra.invalidated_at IS NULL
+                AND ra.status = 'ready'
+                AND ra.kind = CASE
+                  WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
+                    OR LOWER(a.relative_file_path) LIKE '%.webm'
+                    OR LOWER(a.relative_file_path) LIKE '%.mov'
+                    OR LOWER(a.relative_file_path) LIKE '%.avi'
+                    OR LOWER(a.relative_file_path) LIKE '%.wmv'
+                    OR LOWER(a.relative_file_path) LIKE '%.mkv'
+                    OR LOWER(a.relative_file_path) LIKE '%.m4v'
+                  THEN 'video_poster'
+                  ELSE 'thumbnail'
+                END
+              WHERE ${sql}
+                AND a.deleted_at IS NULL
+                AND NOT EXISTS (
+                  SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id
+                )
+                AND ${this.explicitIgnoreSql(openLibrary.connection, 'a', showIgnored)}
+              ORDER BY a.managed_folder_id, a.relative_file_path`,
+          )
+          .all(...params) as Array<{ folder_id: string; artifact_id: string }>,
+    );
 
     for (const row of rows) {
       const existing = covers.get(row.folder_id) ?? [];
@@ -15345,35 +15361,40 @@ export class LibraryService {
 
     if (allDescendantFolderIds.length === 0) return;
 
-    const placeholders = allDescendantFolderIds.map(() => '?').join(', ');
-    const rows = openLibrary.connection
-      .prepare(
-        `SELECT a.managed_folder_id AS folder_id, ra.artifact_id AS artifact_id
-           FROM assets a
-           JOIN revision_artifacts ra
-             ON ra.revision_id = a.current_revision_id
-            AND ra.invalidated_at IS NULL
-            AND ra.status = 'ready'
-            AND ra.kind = CASE
-              WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
-                OR LOWER(a.relative_file_path) LIKE '%.webm'
-                OR LOWER(a.relative_file_path) LIKE '%.mov'
-                OR LOWER(a.relative_file_path) LIKE '%.avi'
-                OR LOWER(a.relative_file_path) LIKE '%.wmv'
-                OR LOWER(a.relative_file_path) LIKE '%.mkv'
-                OR LOWER(a.relative_file_path) LIKE '%.m4v'
-              THEN 'video_poster'
-              ELSE 'thumbnail'
-            END
-          WHERE a.managed_folder_id IN (${placeholders})
-            AND a.deleted_at IS NULL
-            AND NOT EXISTS (
-              SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id
-            )
-            AND ${this.explicitIgnoreSql(openLibrary.connection, 'a', showIgnored)}
-          ORDER BY a.managed_folder_id, a.relative_file_path`,
-      )
-      .all(...allDescendantFolderIds) as Array<{ folder_id: string; artifact_id: string }>;
+    const rows = withSqliteInPredicate(
+      openLibrary.connection,
+      'a.managed_folder_id',
+      allDescendantFolderIds,
+      (sql, params) =>
+        openLibrary.connection
+          .prepare(
+            `SELECT a.managed_folder_id AS folder_id, ra.artifact_id AS artifact_id
+               FROM assets a
+               JOIN revision_artifacts ra
+                 ON ra.revision_id = a.current_revision_id
+                AND ra.invalidated_at IS NULL
+                AND ra.status = 'ready'
+                AND ra.kind = CASE
+                  WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
+                    OR LOWER(a.relative_file_path) LIKE '%.webm'
+                    OR LOWER(a.relative_file_path) LIKE '%.mov'
+                    OR LOWER(a.relative_file_path) LIKE '%.avi'
+                    OR LOWER(a.relative_file_path) LIKE '%.wmv'
+                    OR LOWER(a.relative_file_path) LIKE '%.mkv'
+                    OR LOWER(a.relative_file_path) LIKE '%.m4v'
+                  THEN 'video_poster'
+                  ELSE 'thumbnail'
+                END
+              WHERE ${sql}
+                AND a.deleted_at IS NULL
+                AND NOT EXISTS (
+                  SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id
+                )
+                AND ${this.explicitIgnoreSql(openLibrary.connection, 'a', showIgnored)}
+              ORDER BY a.managed_folder_id, a.relative_file_path`,
+          )
+          .all(...params) as Array<{ folder_id: string; artifact_id: string }>,
+    );
 
     const artifactsByParentAndChild = new Map<string, Map<number, string[]>>();
     for (const row of rows) {
@@ -15432,20 +15453,25 @@ export class LibraryService {
     if (!hasTable(openLibrary.connection, 'linked_ignored_assets')) {
       return candidates;
     }
-    const placeholders = folderIds.map(() => '?').join(', ');
-    const rows = openLibrary.connection
-      .prepare(
-        `SELECT a.managed_folder_id AS folder_id, a.asset_id AS asset_id
-           FROM assets a
-          WHERE a.managed_folder_id IN (${placeholders})
-            AND a.deleted_at IS NULL
-            AND NOT EXISTS (
-              SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id
-            )
-            AND ${this.explicitIgnoreSql(openLibrary.connection, 'a', showIgnored)}
-          ORDER BY a.managed_folder_id, a.relative_file_path`,
-      )
-      .all(...folderIds) as Array<{ folder_id: string; asset_id: string }>;
+    const rows = withSqliteInPredicate(
+      openLibrary.connection,
+      'a.managed_folder_id',
+      folderIds,
+      (sql, params) =>
+        openLibrary.connection
+          .prepare(
+            `SELECT a.managed_folder_id AS folder_id, a.asset_id AS asset_id
+               FROM assets a
+              WHERE ${sql}
+                AND a.deleted_at IS NULL
+                AND NOT EXISTS (
+                  SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id
+                )
+                AND ${this.explicitIgnoreSql(openLibrary.connection, 'a', showIgnored)}
+              ORDER BY a.managed_folder_id, a.relative_file_path`,
+          )
+          .all(...params) as Array<{ folder_id: string; asset_id: string }>,
+    );
 
     for (const row of rows) {
       const existing = candidates.get(row.folder_id) ?? [];
@@ -15523,20 +15549,25 @@ export class LibraryService {
 
     if (allDescendantFolderIds.length === 0) return;
 
-    const placeholders = allDescendantFolderIds.map(() => '?').join(', ');
-    const rows = openLibrary.connection
-      .prepare(
-        `SELECT a.managed_folder_id AS folder_id, a.asset_id AS asset_id
-           FROM assets a
-          WHERE a.managed_folder_id IN (${placeholders})
-            AND a.deleted_at IS NULL
-            AND NOT EXISTS (
-              SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id
-            )
-            AND ${this.explicitIgnoreSql(openLibrary.connection, 'a', showIgnored)}
-          ORDER BY a.managed_folder_id, a.relative_file_path`,
-      )
-      .all(...allDescendantFolderIds) as Array<{ folder_id: string; asset_id: string }>;
+    const rows = withSqliteInPredicate(
+      openLibrary.connection,
+      'a.managed_folder_id',
+      allDescendantFolderIds,
+      (sql, params) =>
+        openLibrary.connection
+          .prepare(
+            `SELECT a.managed_folder_id AS folder_id, a.asset_id AS asset_id
+               FROM assets a
+              WHERE ${sql}
+                AND a.deleted_at IS NULL
+                AND NOT EXISTS (
+                  SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id
+                )
+                AND ${this.explicitIgnoreSql(openLibrary.connection, 'a', showIgnored)}
+              ORDER BY a.managed_folder_id, a.relative_file_path`,
+          )
+          .all(...params) as Array<{ folder_id: string; asset_id: string }>,
+    );
 
     const assetsByParentAndChild = new Map<string, Map<number, string[]>>();
     for (const row of rows) {
@@ -16541,16 +16572,24 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const sequenceIds = [...new Set(input.sequenceIds)];
     if (sequenceIds.length === 0) throw new LibraryServiceError('ASSET_NOT_FOUND');
-    const placeholders = sequenceIds.map(() => '?').join(',');
-    const existing = openLibrary.connection
-      .prepare(`SELECT sequence_id FROM asset_sequences WHERE sequence_id IN (${placeholders})`)
-      .all(...sequenceIds) as Array<{ sequence_id: string }>;
+    const existing = withSqliteInPredicate(
+      openLibrary.connection,
+      'sequence_id',
+      sequenceIds,
+      (sql, params) =>
+        openLibrary.connection
+          .prepare(`SELECT sequence_id FROM asset_sequences WHERE ${sql}`)
+          .all(...params) as Array<{ sequence_id: string }>,
+    );
     if (existing.length !== sequenceIds.length) {
       throw new LibraryServiceError('ASSET_NOT_FOUND');
     }
-    openLibrary.connection
-      .prepare(`DELETE FROM asset_sequences WHERE sequence_id IN (${placeholders})`)
-      .run(...sequenceIds);
+    sqliteRunInChunks({
+      connection: openLibrary.connection,
+      values: sequenceIds,
+      buildSql: (placeholders) =>
+        `DELETE FROM asset_sequences WHERE sequence_id IN (${placeholders})`,
+    });
     return { sequenceIds };
   }
 
@@ -16584,7 +16623,7 @@ export class LibraryService {
     assetIds?: readonly string[];
   }): AssetSummary[] {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
-    const idList = [...new Set((input.assetIds ?? []).filter((id) => id.length > 0))].slice(0, 200);
+    const idList = [...new Set((input.assetIds ?? []).filter((id) => id.length > 0))];
     const byIds = idList.length > 0;
     const managedFolder = input.folderId
       ? openLibrary.connection
@@ -16640,47 +16679,47 @@ export class LibraryService {
         ? ['video_meta.duration_ms AS artifact_duration_ms']
         : []),
     ].join(',\n');
-    const rows = connection
-      .prepare(
-        `SELECT ${selectList}
-           FROM assets a
-           LEFT JOIN revisions r ON r.revision_id = a.current_revision_id
-           LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
-           LEFT JOIN revision_artifacts ra
-             ON ra.revision_id = a.current_revision_id
-            AND ra.kind = CASE
-              WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
-                OR LOWER(a.relative_file_path) LIKE '%.webm'
-                OR LOWER(a.relative_file_path) LIKE '%.mov'
-                OR LOWER(a.relative_file_path) LIKE '%.avi'
-                OR LOWER(a.relative_file_path) LIKE '%.wmv'
-                OR LOWER(a.relative_file_path) LIKE '%.mkv'
-                OR LOWER(a.relative_file_path) LIKE '%.m4v'
-              THEN 'video_poster'
-              ELSE 'thumbnail'
-            END
-            AND ra.invalidated_at IS NULL
-           LEFT JOIN revision_artifacts video_meta
-             ON video_meta.revision_id = a.current_revision_id
-            AND video_meta.kind = 'extracted_metadata'
-            ${artifactColumns.has('status') ? "AND video_meta.status = 'ready'" : ''}
-            AND video_meta.invalidated_at IS NULL
-          WHERE ${hasTable(connection, 'linked_ignored_assets')
-            ? 'NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id) AND '
-            : ''}${this.explicitIgnoreSql(connection, 'a', input.showIgnored === true)}${
-            byIds ? ` AND a.asset_id IN (${sqliteInPlaceholders(idList)})` : ''
-          }
-          ORDER BY a.relative_file_path`,
-      )
-      .all(...idList) as Array<AssetSummaryRow & {
-        deleted_at: string | null;
-        trashed_from_relative_path: string | null;
-        thumbnail_status: 'ready' | 'pending' | 'generating' | 'failed' | null;
-        thumbnail_artifact_id: string | null;
-        artifact_width: number | null;
-        artifact_height: number | null;
-        artifact_duration_ms: number | null;
-      }>;
+    const listAssetSql = (idPredicateSql: string): string =>
+      `SELECT ${selectList}
+         FROM assets a
+         LEFT JOIN revisions r ON r.revision_id = a.current_revision_id
+         LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
+         LEFT JOIN revision_artifacts ra
+           ON ra.revision_id = a.current_revision_id
+          AND ra.kind = CASE
+            WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
+              OR LOWER(a.relative_file_path) LIKE '%.webm'
+              OR LOWER(a.relative_file_path) LIKE '%.mov'
+              OR LOWER(a.relative_file_path) LIKE '%.avi'
+              OR LOWER(a.relative_file_path) LIKE '%.wmv'
+              OR LOWER(a.relative_file_path) LIKE '%.mkv'
+              OR LOWER(a.relative_file_path) LIKE '%.m4v'
+            THEN 'video_poster'
+            ELSE 'thumbnail'
+          END
+          AND ra.invalidated_at IS NULL
+         LEFT JOIN revision_artifacts video_meta
+           ON video_meta.revision_id = a.current_revision_id
+          AND video_meta.kind = 'extracted_metadata'
+          ${artifactColumns.has('status') ? "AND video_meta.status = 'ready'" : ''}
+          AND video_meta.invalidated_at IS NULL
+        WHERE ${hasTable(connection, 'linked_ignored_assets')
+          ? 'NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id) AND '
+          : ''}${this.explicitIgnoreSql(connection, 'a', input.showIgnored === true)} AND ${idPredicateSql}
+        ORDER BY a.relative_file_path`;
+    type ListAssetRow = AssetSummaryRow & {
+      deleted_at: string | null;
+      trashed_from_relative_path: string | null;
+      thumbnail_status: 'ready' | 'pending' | 'generating' | 'failed' | null;
+      thumbnail_artifact_id: string | null;
+      artifact_width: number | null;
+      artifact_height: number | null;
+      artifact_duration_ms: number | null;
+    };
+    const rows = byIds
+      ? withSqliteInPredicate(connection, 'a.asset_id', idList, (sql, params) =>
+        connection.prepare(listAssetSql(sql)).all(...params) as ListAssetRow[])
+      : connection.prepare(listAssetSql('1')).all() as ListAssetRow[];
 
     // Serpent-verg.2 — fill degraded defaults for whitelisted columns that
     // an older library does not have (0031 §1.1): the feature degrades
@@ -16737,23 +16776,20 @@ export class LibraryService {
   }
 
   /**
-   * Resolve a large affected-id set without asking listAssets to bind the
-   * whole set at once. listAssets intentionally caps direct-id reads at 200
-   * so this helper is also safe for the sequence-summary query it invokes.
+   * Resolve a large affected-id set through listAssets, which now chunks IN
+   * binds instead of silently truncating after 200 IDs.
    */
   private listAssetSummariesByIds(
     openLibrary: OpenLibrary,
     assetIds: readonly string[],
   ): AssetSummary[] {
     const uniqueIds = [...new Set(assetIds.filter((assetId) => assetId.length > 0))];
-    const assets = sqliteInChunks(uniqueIds, 200).flatMap((chunk) =>
-      this.listAssets({
-        libraryId: openLibrary.summary.libraryId,
-        recursive: true,
-        assetIds: chunk,
-      }),
-    );
-    return assets.sort((left, right) =>
+    if (uniqueIds.length === 0) return [];
+    return this.listAssets({
+      libraryId: openLibrary.summary.libraryId,
+      recursive: true,
+      assetIds: uniqueIds,
+    }).sort((left, right) =>
       left.relativeFilePath.localeCompare(right.relativeFilePath),
     );
   }
@@ -17221,29 +17257,40 @@ export class LibraryService {
       throw new LibraryServiceError('INVALID_FOLDER_NAME');
     }
 
-    const placeholders = sourceTagIds.map(() => '?').join(',');
-    const tagRows = openLibrary.connection
-      .prepare(
-        `SELECT tag_id FROM tags WHERE tag_id IN (${placeholders}) AND library_id = ?`,
-      )
-      .all(...sourceTagIds, openLibrary.summary.libraryId) as Array<{
-      tag_id: string;
-    }>;
+    const tagRows = withSqliteInPredicate(
+      openLibrary.connection,
+      'tag_id',
+      sourceTagIds,
+      (sql, params) =>
+        openLibrary.connection
+          .prepare(
+            `SELECT tag_id FROM tags WHERE ${sql} AND library_id = ?`,
+          )
+          .all(...params, openLibrary.summary.libraryId) as Array<{
+          tag_id: string;
+        }>,
+    );
     if (tagRows.length !== sourceTagIds.length) {
       throw new LibraryServiceError('FOLDER_NOT_FOUND');
     }
 
     const newTagId = randomUUID();
     const now = new Date().toISOString();
-    const affectedAssets = openLibrary.connection
-      .prepare(
-        `SELECT DISTINCT asset_id FROM (
-           SELECT asset_id FROM human_asset_tags WHERE tag_id IN (${placeholders})
-           UNION
-           SELECT asset_id FROM ai_asset_tags WHERE tag_id IN (${placeholders})
-         )`,
-      )
-      .all(...sourceTagIds, ...sourceTagIds) as Array<{ asset_id: string }>;
+    const affectedAssets = withSqliteInPredicate(
+      openLibrary.connection,
+      'tag_id',
+      sourceTagIds,
+      (sql, params) =>
+        openLibrary.connection
+          .prepare(
+            `SELECT DISTINCT asset_id FROM (
+               SELECT asset_id FROM human_asset_tags WHERE ${sql}
+               UNION
+               SELECT asset_id FROM ai_asset_tags WHERE ${sql}
+             )`,
+          )
+          .all(...params, ...params) as Array<{ asset_id: string }>,
+    );
 
     try {
       openLibrary.connection.transaction(() => {
@@ -17260,17 +17307,24 @@ export class LibraryService {
           insertHuman.run(assetId, newTagId);
         }
 
-        openLibrary.connection
-          .prepare(
+        sqliteRunInChunks({
+          connection: openLibrary.connection,
+          values: sourceTagIds,
+          buildSql: (placeholders) =>
             `DELETE FROM human_asset_tags WHERE tag_id IN (${placeholders})`,
-          )
-          .run(...sourceTagIds);
-        openLibrary.connection
-          .prepare(`DELETE FROM ai_asset_tags WHERE tag_id IN (${placeholders})`)
-          .run(...sourceTagIds);
-        openLibrary.connection
-          .prepare(`DELETE FROM tags WHERE tag_id IN (${placeholders})`)
-          .run(...sourceTagIds);
+        });
+        sqliteRunInChunks({
+          connection: openLibrary.connection,
+          values: sourceTagIds,
+          buildSql: (placeholders) =>
+            `DELETE FROM ai_asset_tags WHERE tag_id IN (${placeholders})`,
+        });
+        sqliteRunInChunks({
+          connection: openLibrary.connection,
+          values: sourceTagIds,
+          buildSql: (placeholders) =>
+            `DELETE FROM tags WHERE tag_id IN (${placeholders})`,
+        });
 
         for (const { asset_id: assetId } of affectedAssets) {
           this.syncAssetSearchContent(openLibrary.connection, assetId);
@@ -17351,32 +17405,46 @@ export class LibraryService {
     }
 
     const nodeIds = nodes.map((node) => node.tagId);
-    const placeholders = nodeIds.map(() => '?').join(',');
-    const edgeRows = openLibrary.connection
-      .prepare(
-        `WITH tag_usage AS (
-           SELECT DISTINCT asset_id, tag_id FROM human_asset_tags
-           UNION
-           SELECT DISTINCT asset_id, tag_id FROM ai_asset_tags
-         )
-         SELECT u1.tag_id AS tag_a, u2.tag_id AS tag_b,
-                COUNT(DISTINCT u1.asset_id) AS weight
-           FROM tag_usage u1
-           JOIN tag_usage u2
-             ON u1.asset_id = u2.asset_id
-            AND u1.tag_id < u2.tag_id
-          WHERE u1.tag_id IN (${placeholders})
-            AND u2.tag_id IN (${placeholders})
-          GROUP BY u1.tag_id, u2.tag_id
-         HAVING weight >= ?
-          ORDER BY weight DESC
-          LIMIT ?`,
-      )
-      .all(...nodeIds, ...nodeIds, minWeight, maxEdges) as Array<{
-      tag_a: string;
-      tag_b: string;
-      weight: number;
-    }>;
+    const useTable = nodeIds.length * 2 > SQLITE_IN_BIND_LIMIT;
+    const edgeRows = withSqliteInPredicate(
+      openLibrary.connection,
+      'u1.tag_id',
+      nodeIds,
+      (leftSql, leftParams) =>
+        withSqliteInPredicate(
+          openLibrary.connection,
+          'u2.tag_id',
+          nodeIds,
+          (rightSql, rightParams) =>
+            openLibrary.connection
+              .prepare(
+                `WITH tag_usage AS (
+                   SELECT DISTINCT asset_id, tag_id FROM human_asset_tags
+                   UNION
+                   SELECT DISTINCT asset_id, tag_id FROM ai_asset_tags
+                 )
+                 SELECT u1.tag_id AS tag_a, u2.tag_id AS tag_b,
+                        COUNT(DISTINCT u1.asset_id) AS weight
+                   FROM tag_usage u1
+                   JOIN tag_usage u2
+                     ON u1.asset_id = u2.asset_id
+                    AND u1.tag_id < u2.tag_id
+                  WHERE ${leftSql}
+                    AND ${rightSql}
+                  GROUP BY u1.tag_id, u2.tag_id
+                 HAVING weight >= ?
+                  ORDER BY weight DESC
+                  LIMIT ?`,
+              )
+              .all(...leftParams, ...rightParams, minWeight, maxEdges) as Array<{
+              tag_a: string;
+              tag_b: string;
+              weight: number;
+            }>,
+          { forceTable: useTable },
+        ),
+      { forceTable: useTable },
+    );
 
     const edges = edgeRows.map((row) => ({
       sourceTagId: row.tag_a,
@@ -19405,18 +19473,22 @@ export class LibraryService {
   }): string[] {
     const conn = this.requireOpenLibrary(input.libraryId).connection;
     if (input.assetIds.length === 0) return [];
-    const placeholders = input.assetIds.map(() => '?').join(', ');
-    const rows = conn
-      .prepare(
-        `SELECT asset_id FROM assets
-          WHERE asset_id IN (${placeholders})
-            AND NOT EXISTS (
-              SELECT 1 FROM ai_content
-               WHERE ai_content.asset_id = assets.asset_id
-            )`,
-      )
-      .all(...input.assetIds) as Array<{ asset_id: string }>;
-    return rows.map((r) => r.asset_id);
+    return withSqliteInPredicate(
+      conn,
+      'asset_id',
+      input.assetIds,
+      (sql, params) =>
+        conn
+          .prepare(
+            `SELECT asset_id FROM assets
+              WHERE ${sql}
+                AND NOT EXISTS (
+                  SELECT 1 FROM ai_content
+                   WHERE ai_content.asset_id = assets.asset_id
+                )`,
+          )
+          .all(...params) as Array<{ asset_id: string }>,
+    ).map((r) => r.asset_id);
   }
 
   /** Enqueue image jobs and video jobs whose contact sheet is ready. */
@@ -19598,15 +19670,26 @@ export class LibraryService {
     const conn = openLibrary.connection;
     const libId = openLibrary.summary.libraryId;
     return conn.transaction(() => {
-      const exclusionSql = excludedJobIds.length > 0
-        ? ` AND job_id NOT IN (${excludedJobIds.map(() => '?').join(',')})`
-        : '';
-      const row = conn.prepare(
-        `SELECT job_id, asset_id, kind, attempt_count FROM jobs
-          WHERE library_id = ? AND kind IN ('ai.image.analysis', 'ai.video.analysis')
-            AND status = 'queued'${exclusionSql}
-          ORDER BY priority DESC, created_at ASC, job_id ASC LIMIT 1`,
-      ).get(libId, ...excludedJobIds) as { job_id: string; asset_id: string; kind: 'ai.image.analysis' | 'ai.video.analysis'; attempt_count: number } | undefined;
+      const row = excludedJobIds.length === 0
+        ? conn.prepare(
+          `SELECT job_id, asset_id, kind, attempt_count FROM jobs
+            WHERE library_id = ? AND kind IN ('ai.image.analysis', 'ai.video.analysis')
+              AND status = 'queued'
+            ORDER BY priority DESC, created_at ASC, job_id ASC LIMIT 1`,
+        ).get(libId) as { job_id: string; asset_id: string; kind: 'ai.image.analysis' | 'ai.video.analysis'; attempt_count: number } | undefined
+        : withSqliteInPredicate(
+          conn,
+          'job_id',
+          excludedJobIds,
+          (sql, params) =>
+            conn.prepare(
+              `SELECT job_id, asset_id, kind, attempt_count FROM jobs
+                WHERE library_id = ? AND kind IN ('ai.image.analysis', 'ai.video.analysis')
+                  AND status = 'queued'
+                  AND NOT (${sql})
+                ORDER BY priority DESC, created_at ASC, job_id ASC LIMIT 1`,
+            ).get(libId, ...params) as { job_id: string; asset_id: string; kind: 'ai.image.analysis' | 'ai.video.analysis'; attempt_count: number } | undefined,
+        );
       if (!row) return null;
       const attemptCount = row.attempt_count + 1;
       const result = conn.prepare(
@@ -19873,7 +19956,7 @@ export class LibraryService {
                LEFT JOIN assets a ON a.asset_id = j.asset_id
               WHERE j.library_id = ?
                 AND j.kind IN ('ai.image.analysis', 'ai.video.analysis')
-                AND j.job_id IN (${chunk.map(() => '?').join(',')})`,
+                AND j.job_id IN (${sqliteInPlaceholders(chunk)})`,
           )
           .all(libId, ...chunk) as AiJobRow[]);
       }
@@ -19940,27 +20023,28 @@ export class LibraryService {
     const aiKinds = ['ai.image.analysis', 'ai.video.analysis'];
     const now = new Date().toISOString();
 
-    let query: string;
-    let params: unknown[];
-
     if (jobIds && jobIds.length > 0) {
-      const jobPlaceholders = jobIds.map(() => '?').join(',');
-      query = `UPDATE jobs
-                 SET status = ?, updated_at = ?
-               WHERE library_id = ?
-                 AND kind IN (?, ?)
-                 AND status IN (${statusPlaceholders})
-                 AND job_id IN (${jobPlaceholders})`;
-      params = [toStatus, now, libId, ...aiKinds, ...fromStatuses, ...jobIds];
-    } else {
-      query = `UPDATE jobs
+      return {
+        count: sqliteRunInChunks({
+          connection: conn,
+          values: jobIds,
+          buildSql: (placeholders) =>
+            `UPDATE jobs
+                SET status = ?, updated_at = ?
+              WHERE library_id = ?
+                AND kind IN (?, ?)
+                AND status IN (${statusPlaceholders})
+                AND job_id IN (${placeholders})`,
+          bind: (chunk) => [toStatus, now, libId, ...aiKinds, ...fromStatuses, ...chunk],
+        }),
+      };
+    }
+    const query = `UPDATE jobs
                  SET status = ?, updated_at = ?
                WHERE library_id = ?
                  AND kind IN (?, ?)
                  AND status IN (${statusPlaceholders})`;
-      params = [toStatus, now, libId, ...aiKinds, ...fromStatuses];
-    }
-
+    const params = [toStatus, now, libId, ...aiKinds, ...fromStatuses];
     const result = conn.prepare(query).run(...params);
     return { count: result.changes as number };
   }
@@ -20466,20 +20550,25 @@ export class LibraryService {
   ): Promise<void> {
     const selectedAssetIds = [...new Set(assetIds)];
     if (selectedAssetIds.length === 0) return;
-    const placeholders = selectedAssetIds.map(() => '?').join(', ');
-    const rows = openLibrary.connection
-      .prepare(
-        `SELECT job_id FROM jobs
-          WHERE library_id = ?
-            AND asset_id IN (${placeholders})
-            AND kind IN (${MEDIA_JOB_KINDS.map(() => '?').join(',')})
-            AND status IN ('queued', 'running', 'paused')`,
-      )
-      .all(
-        openLibrary.summary.libraryId,
-        ...selectedAssetIds,
-        ...MEDIA_JOB_KINDS,
-      ) as Array<{ job_id: string }>;
+    const rows = withSqliteInPredicate(
+      openLibrary.connection,
+      'asset_id',
+      selectedAssetIds,
+      (sql, params) =>
+        openLibrary.connection
+          .prepare(
+            `SELECT job_id FROM jobs
+              WHERE library_id = ?
+                AND ${sql}
+                AND kind IN (${MEDIA_JOB_KINDS.map(() => '?').join(',')})
+                AND status IN ('queued', 'running', 'paused')`,
+          )
+          .all(
+            openLibrary.summary.libraryId,
+            ...params,
+            ...MEDIA_JOB_KINDS,
+          ) as Array<{ job_id: string }>,
+    );
     if (rows.length === 0) return;
 
     const jobIds = rows.map((row) => row.job_id);
@@ -24085,7 +24174,7 @@ export class LibraryService {
         .prepare(
           `SELECT a.asset_id
              FROM assets a
-            WHERE a.asset_id IN (${chunk.map(() => '?').join(',')})
+            WHERE a.asset_id IN (${sqliteInPlaceholders(chunk)})
               AND ${ignoreSql}`,
         )
         .all(...chunk) as Array<{ asset_id: string }>;
@@ -26836,7 +26925,7 @@ export class LibraryService {
     }> = [];
     for (let i = 0; i < uniqueIds.length; i += batchSize) {
       const batch = uniqueIds.slice(i, i + batchSize);
-      const placeholders = batch.map(() => '?').join(', ');
+      const placeholders = sqliteInPlaceholders(batch);
       assetRows.push(
         ...(connection
           .prepare(
@@ -26870,7 +26959,7 @@ export class LibraryService {
       ];
       for (let i = 0; i < revisionIds.length; i += batchSize) {
         const batch = revisionIds.slice(i, i + batchSize);
-        const placeholders = batch.map(() => '?').join(', ');
+        const placeholders = sqliteInPlaceholders(batch);
         const rows = connection
           .prepare(
             `SELECT revision_id, file_path
@@ -27238,7 +27327,7 @@ export class LibraryService {
         openLibrary.connection.prepare(
           `UPDATE revision_artifacts
               SET invalidated_at = ?
-            WHERE artifact_id IN (${missingIds.map(() => '?').join(',')})
+            WHERE artifact_id IN (${sqliteInPlaceholders(missingIds)})
               AND invalidated_at IS NULL`,
         ).run(now, ...missingIds);
         invalidated += missingIds.length;
@@ -28272,46 +28361,51 @@ export class LibraryService {
     assetIds: readonly string[],
   ): number {
     if (assetIds.length === 0) return 0;
-    const placeholders = assetIds.map(() => '?').join(',');
-    const rows = openLibrary.connection
-      .prepare(
-        `SELECT a.relative_file_path, ra.artifact_id, ra.kind, ra.generator_version,
-                source_revision.byte_size AS source_byte_size,
-                (SELECT source_metadata.width
-                   FROM revision_artifacts source_metadata
-                  WHERE source_metadata.revision_id = a.current_revision_id
-                    AND source_metadata.kind = 'extracted_metadata'
-                    AND source_metadata.status = 'ready'
-                    AND source_metadata.invalidated_at IS NULL
-                  ORDER BY source_metadata.generated_at DESC
-                  LIMIT 1) AS source_width,
-                (SELECT source_metadata.height
-                   FROM revision_artifacts source_metadata
-                  WHERE source_metadata.revision_id = a.current_revision_id
-                    AND source_metadata.kind = 'extracted_metadata'
-                    AND source_metadata.status = 'ready'
-                    AND source_metadata.invalidated_at IS NULL
-                  ORDER BY source_metadata.generated_at DESC
-                  LIMIT 1) AS source_height
-           FROM assets a
-           JOIN revisions source_revision
-             ON source_revision.revision_id = a.current_revision_id
-           JOIN revision_artifacts ra ON ra.revision_id = a.current_revision_id
-          WHERE a.asset_id IN (${placeholders})
-            AND a.deleted_at IS NULL
-            AND ra.kind IN ('thumbnail', 'video_poster')
-            AND ra.status IN ('ready', 'failed')
-            AND ra.invalidated_at IS NULL`,
-      )
-      .all(...assetIds) as Array<{
-        relative_file_path: string;
-        artifact_id: string;
-        kind: 'thumbnail' | 'video_poster';
-        generator_version: string;
-        source_byte_size: number | null;
-        source_width: number | null;
-        source_height: number | null;
-      }>;
+    const rows = withSqliteInPredicate(
+      openLibrary.connection,
+      'a.asset_id',
+      assetIds,
+      (sql, params) =>
+        openLibrary.connection
+          .prepare(
+            `SELECT a.relative_file_path, ra.artifact_id, ra.kind, ra.generator_version,
+                    source_revision.byte_size AS source_byte_size,
+                    (SELECT source_metadata.width
+                       FROM revision_artifacts source_metadata
+                      WHERE source_metadata.revision_id = a.current_revision_id
+                        AND source_metadata.kind = 'extracted_metadata'
+                        AND source_metadata.status = 'ready'
+                        AND source_metadata.invalidated_at IS NULL
+                      ORDER BY source_metadata.generated_at DESC
+                      LIMIT 1) AS source_width,
+                    (SELECT source_metadata.height
+                       FROM revision_artifacts source_metadata
+                      WHERE source_metadata.revision_id = a.current_revision_id
+                        AND source_metadata.kind = 'extracted_metadata'
+                        AND source_metadata.status = 'ready'
+                        AND source_metadata.invalidated_at IS NULL
+                      ORDER BY source_metadata.generated_at DESC
+                      LIMIT 1) AS source_height
+               FROM assets a
+               JOIN revisions source_revision
+                 ON source_revision.revision_id = a.current_revision_id
+               JOIN revision_artifacts ra ON ra.revision_id = a.current_revision_id
+              WHERE ${sql}
+                AND a.deleted_at IS NULL
+                AND ra.kind IN ('thumbnail', 'video_poster')
+                AND ra.status IN ('ready', 'failed')
+                AND ra.invalidated_at IS NULL`,
+          )
+          .all(...params) as Array<{
+            relative_file_path: string;
+            artifact_id: string;
+            kind: 'thumbnail' | 'video_poster';
+            generator_version: string;
+            source_byte_size: number | null;
+            source_width: number | null;
+            source_height: number | null;
+          }>,
+    );
     const stale = rows.filter((row) => !this.primaryArtifactGeneratorIsCurrent(
       row.relative_file_path,
       row.kind,
@@ -29424,7 +29518,7 @@ export class LibraryService {
       let hasAttemptedClaim = false;
       const flushCompletedJobs = (): void => {
         if (completedJobIds.length === 0) return;
-        const placeholders = completedJobIds.map(() => '?').join(',');
+        const placeholders = sqliteInPlaceholders(completedJobIds);
         openLibrary.connection
           .prepare(
             `UPDATE jobs
@@ -30173,44 +30267,49 @@ export class LibraryService {
       return new Map();
     }
 
-    const placeholders = assetIds.map(() => '?').join(',');
-    const rows = openLibrary.connection
-      .prepare(
-        `SELECT a.asset_id, ra.status AS thumbnail_status,
-                ra.artifact_id AS thumbnail_artifact_id,
-                COALESCE(ra.width, video_meta.width) AS artifact_width,
-                COALESCE(ra.height, video_meta.height) AS artifact_height,
-                video_meta.duration_ms AS artifact_duration_ms
-           FROM assets a
-           LEFT JOIN revision_artifacts ra
-             ON ra.revision_id = a.current_revision_id
-            AND ra.kind = CASE
-              WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
-                OR LOWER(a.relative_file_path) LIKE '%.webm'
-                OR LOWER(a.relative_file_path) LIKE '%.mov'
-                OR LOWER(a.relative_file_path) LIKE '%.avi'
-                OR LOWER(a.relative_file_path) LIKE '%.wmv'
-                OR LOWER(a.relative_file_path) LIKE '%.mkv'
-                OR LOWER(a.relative_file_path) LIKE '%.m4v'
-              THEN 'video_poster'
-              ELSE 'thumbnail'
-            END
-            AND ra.invalidated_at IS NULL
-           LEFT JOIN revision_artifacts video_meta
-             ON video_meta.revision_id = a.current_revision_id
-            AND video_meta.kind = 'extracted_metadata'
-            AND video_meta.status = 'ready'
-            AND video_meta.invalidated_at IS NULL
-          WHERE a.asset_id IN (${placeholders})`,
-      )
-      .all(...assetIds) as Array<{
-        asset_id: string;
-        thumbnail_status: 'ready' | 'pending' | 'generating' | 'failed' | null;
-        thumbnail_artifact_id: string | null;
-        artifact_width: number | null;
-        artifact_height: number | null;
-        artifact_duration_ms: number | null;
-      }>;
+    const rows = withSqliteInPredicate(
+      openLibrary.connection,
+      'a.asset_id',
+      assetIds,
+      (sql, params) =>
+        openLibrary.connection
+          .prepare(
+            `SELECT a.asset_id, ra.status AS thumbnail_status,
+                    ra.artifact_id AS thumbnail_artifact_id,
+                    COALESCE(ra.width, video_meta.width) AS artifact_width,
+                    COALESCE(ra.height, video_meta.height) AS artifact_height,
+                    video_meta.duration_ms AS artifact_duration_ms
+               FROM assets a
+               LEFT JOIN revision_artifacts ra
+                 ON ra.revision_id = a.current_revision_id
+                AND ra.kind = CASE
+                  WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
+                    OR LOWER(a.relative_file_path) LIKE '%.webm'
+                    OR LOWER(a.relative_file_path) LIKE '%.mov'
+                    OR LOWER(a.relative_file_path) LIKE '%.avi'
+                    OR LOWER(a.relative_file_path) LIKE '%.wmv'
+                    OR LOWER(a.relative_file_path) LIKE '%.mkv'
+                    OR LOWER(a.relative_file_path) LIKE '%.m4v'
+                  THEN 'video_poster'
+                  ELSE 'thumbnail'
+                END
+                AND ra.invalidated_at IS NULL
+               LEFT JOIN revision_artifacts video_meta
+                 ON video_meta.revision_id = a.current_revision_id
+                AND video_meta.kind = 'extracted_metadata'
+                AND video_meta.status = 'ready'
+                AND video_meta.invalidated_at IS NULL
+              WHERE ${sql}`,
+          )
+          .all(...params) as Array<{
+            asset_id: string;
+            thumbnail_status: 'ready' | 'pending' | 'generating' | 'failed' | null;
+            thumbnail_artifact_id: string | null;
+            artifact_width: number | null;
+            artifact_height: number | null;
+            artifact_duration_ms: number | null;
+          }>,
+    );
 
     const map = new Map<string, {
       status: 'ready' | 'pending' | 'failed' | null;
@@ -33020,12 +33119,19 @@ export class LibraryService {
       outputAssetIds.set(mapping.sourceAssetId, mapping.newAssetId);
     }
     if (outputAssetIds.size > 0) {
-      const existingOutputIds = openLibrary.connection
-        .prepare(
-          `SELECT asset_id FROM assets
-             WHERE asset_id IN (${[...outputAssetIds.values()].map(() => '?').join(', ')})`,
-        )
-        .all(...outputAssetIds.values()) as Array<{ asset_id: string }>;
+      const outputIds = [...outputAssetIds.values()];
+      const existingOutputIds = withSqliteInPredicate(
+        openLibrary.connection,
+        'asset_id',
+        outputIds,
+        (sql, params) =>
+          openLibrary.connection
+            .prepare(
+              `SELECT asset_id FROM assets
+                 WHERE ${sql}`,
+            )
+            .all(...params) as Array<{ asset_id: string }>,
+      );
       if (existingOutputIds.length > 0) {
         throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
       }
@@ -34106,23 +34212,30 @@ export class LibraryService {
     }
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     this.assertLibraryWritable(openLibrary);
-    const rows = openLibrary.connection.prepare(
-      `SELECT assets.asset_id, assets.location_kind, assets.linked_folder_id, assets.relative_file_path, assets.current_revision_id,
-              revisions.modified_at AS current_modified_at,
-              availability, deleted_at
-         FROM assets
-         LEFT JOIN revisions ON revisions.revision_id = assets.current_revision_id
-        WHERE assets.asset_id IN (${input.items.map(() => '?').join(',')})`,
-    ).all(...input.items.map((item) => item.assetId)) as Array<{
-      asset_id: string;
-      location_kind: 'managed' | 'linked';
-      linked_folder_id: string | null;
-      relative_file_path: string;
-      current_revision_id: string | null;
-      availability: 'available' | 'missing';
-      deleted_at: string | null;
-      current_modified_at: string | null;
-    }>;
+    const itemIds = input.items.map((item) => item.assetId);
+    const rows = withSqliteInPredicate(
+      openLibrary.connection,
+      'assets.asset_id',
+      itemIds,
+      (sql, params) =>
+        openLibrary.connection.prepare(
+          `SELECT assets.asset_id, assets.location_kind, assets.linked_folder_id, assets.relative_file_path, assets.current_revision_id,
+                  revisions.modified_at AS current_modified_at,
+                  availability, deleted_at
+             FROM assets
+             LEFT JOIN revisions ON revisions.revision_id = assets.current_revision_id
+            WHERE ${sql}`,
+        ).all(...params) as Array<{
+          asset_id: string;
+          location_kind: 'managed' | 'linked';
+          linked_folder_id: string | null;
+          relative_file_path: string;
+          current_revision_id: string | null;
+          availability: 'available' | 'missing';
+          deleted_at: string | null;
+          current_modified_at: string | null;
+        }>,
+    );
     const rowById = new Map(rows.map((row) => [row.asset_id, row]));
     for (const item of input.items) {
       const row = rowById.get(item.assetId);
@@ -35121,15 +35234,21 @@ export class LibraryService {
     const independentAssetIds = assetIds.filter((assetId) => !subtreeAssetIds.has(assetId));
     if (independentAssetIds.length > 0) {
       this.assertAssetsNotExplicitlyIgnored(openLibrary, independentAssetIds);
-      const rows = openLibrary.connection.prepare(
-        `SELECT asset_id, location_kind, deleted_at
-           FROM assets
-          WHERE asset_id IN (${independentAssetIds.map(() => '?').join(',')})`,
-      ).all(...independentAssetIds) as Array<{
-        asset_id: string;
-        location_kind: string;
-        deleted_at: string | null;
-      }>;
+      const rows = withSqliteInPredicate(
+        openLibrary.connection,
+        'asset_id',
+        independentAssetIds,
+        (sql, params) =>
+          openLibrary.connection.prepare(
+            `SELECT asset_id, location_kind, deleted_at
+               FROM assets
+              WHERE ${sql}`,
+          ).all(...params) as Array<{
+            asset_id: string;
+            location_kind: string;
+            deleted_at: string | null;
+          }>,
+      );
       const rowById = new Map(rows.map((row) => [row.asset_id, row]));
       for (const assetId of independentAssetIds) {
         const row = rowById.get(assetId);
@@ -36427,14 +36546,19 @@ export class LibraryService {
       if (createdFolderRows.length === 0) return;
 
       const createdFolderIds = createdFolderRows.map((row) => row.folderId);
-      const placeholders = createdFolderIds.map(() => '?').join(', ');
-      const activeAssets = openLibrary.connection
-        .prepare(
-          `SELECT asset_id FROM assets
-             WHERE deleted_at IS NULL
-               AND managed_folder_id IN (${placeholders})`,
-        )
-        .all(...createdFolderIds) as Array<{ asset_id: string }>;
+      const activeAssets = withSqliteInPredicate(
+        openLibrary.connection,
+        'managed_folder_id',
+        createdFolderIds,
+        (sql, params) =>
+          openLibrary.connection
+            .prepare(
+              `SELECT asset_id FROM assets
+                 WHERE deleted_at IS NULL
+                   AND ${sql}`,
+            )
+            .all(...params) as Array<{ asset_id: string }>,
+      );
       if (activeAssets.length > 0) {
         // A partially successful asset restore owns live bytes.  Preserving
         // the folder rows is safer than deleting their parents out from under
@@ -36597,12 +36721,13 @@ export class LibraryService {
     }
 
     if (tombstones.length > 0) {
-      openLibrary.connection
-        .prepare(
+      sqliteRunInChunks({
+        connection: openLibrary.connection,
+        values: tombstones.map((row) => row.tombstone_id),
+        buildSql: (placeholders) =>
           `DELETE FROM trashed_managed_folders
-            WHERE tombstone_id IN (${tombstones.map(() => '?').join(', ')})`,
-        )
-        .run(...tombstones.map((row) => row.tombstone_id));
+            WHERE tombstone_id IN (${placeholders})`,
+      });
     }
 
     return {
@@ -36808,32 +36933,37 @@ export class LibraryService {
   ): Map<string, string[]> {
     const covers = new Map<string, string[]>();
     if (tombstoneIds.length === 0) return covers;
-    const placeholders = tombstoneIds.map(() => '?').join(', ');
-    const rows = openLibrary.connection
-      .prepare(
-        `SELECT a.trashed_from_tombstone_id AS tombstone_id,
-                ra.artifact_id AS artifact_id
-           FROM assets a
-           JOIN revision_artifacts ra
-             ON ra.revision_id = a.current_revision_id
-            AND ra.invalidated_at IS NULL
-            AND ra.status = 'ready'
-            AND ra.kind = CASE
-              WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
-                OR LOWER(a.relative_file_path) LIKE '%.webm'
-                OR LOWER(a.relative_file_path) LIKE '%.mov'
-                OR LOWER(a.relative_file_path) LIKE '%.avi'
-                OR LOWER(a.relative_file_path) LIKE '%.wmv'
-                OR LOWER(a.relative_file_path) LIKE '%.mkv'
-                OR LOWER(a.relative_file_path) LIKE '%.m4v'
-              THEN 'video_poster'
-              ELSE 'thumbnail'
-            END
-          WHERE a.deleted_at IS NOT NULL
-            AND a.trashed_from_tombstone_id IN (${placeholders})
-          ORDER BY a.trashed_from_tombstone_id, a.relative_file_path`,
-      )
-      .all(...tombstoneIds) as Array<{ tombstone_id: string; artifact_id: string }>;
+    const rows = withSqliteInPredicate(
+      openLibrary.connection,
+      'a.trashed_from_tombstone_id',
+      tombstoneIds,
+      (sql, params) =>
+        openLibrary.connection
+          .prepare(
+            `SELECT a.trashed_from_tombstone_id AS tombstone_id,
+                    ra.artifact_id AS artifact_id
+               FROM assets a
+               JOIN revision_artifacts ra
+                 ON ra.revision_id = a.current_revision_id
+                AND ra.invalidated_at IS NULL
+                AND ra.status = 'ready'
+                AND ra.kind = CASE
+                  WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
+                    OR LOWER(a.relative_file_path) LIKE '%.webm'
+                    OR LOWER(a.relative_file_path) LIKE '%.mov'
+                    OR LOWER(a.relative_file_path) LIKE '%.avi'
+                    OR LOWER(a.relative_file_path) LIKE '%.wmv'
+                    OR LOWER(a.relative_file_path) LIKE '%.mkv'
+                    OR LOWER(a.relative_file_path) LIKE '%.m4v'
+                  THEN 'video_poster'
+                  ELSE 'thumbnail'
+                END
+              WHERE a.deleted_at IS NOT NULL
+                AND ${sql}
+              ORDER BY a.trashed_from_tombstone_id, a.relative_file_path`,
+          )
+          .all(...params) as Array<{ tombstone_id: string; artifact_id: string }>,
+    );
 
     for (const row of rows) {
       const existing = covers.get(row.tombstone_id) ?? [];
@@ -36905,19 +37035,25 @@ export class LibraryService {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
     }
 
-    const rows = openLibrary.connection
-      .prepare(
-        `SELECT a.asset_id, a.linked_folder_id, a.relative_file_path
-           FROM assets a
-          WHERE a.asset_id IN (${input.assetIds.map(() => '?').join(',')})
-            AND a.location_kind = 'linked'
-            AND a.deleted_at IS NULL`,
-      )
-      .all(...input.assetIds) as Array<{
-        asset_id: string;
-        linked_folder_id: string;
-        relative_file_path: string;
-      }>;
+    const rows = withSqliteInPredicate(
+      openLibrary.connection,
+      'a.asset_id',
+      input.assetIds,
+      (sql, params) =>
+        openLibrary.connection
+          .prepare(
+            `SELECT a.asset_id, a.linked_folder_id, a.relative_file_path
+               FROM assets a
+              WHERE ${sql}
+                AND a.location_kind = 'linked'
+                AND a.deleted_at IS NULL`,
+          )
+          .all(...params) as Array<{
+            asset_id: string;
+            linked_folder_id: string;
+            relative_file_path: string;
+          }>,
+    );
 
     const foundIds = new Set(rows.map((r) => r.asset_id));
     for (const id of input.assetIds) {
@@ -42410,17 +42546,23 @@ export class LibraryService {
         : [...discovery.linkedEntriesByFolder.keys()];
       const linkedFolderRows = linkedFolderIds.length === 0
         ? []
-        : (openLibrary.connection
-          .prepare(
-            `SELECT folder_id, absolute_root_path, status
-               FROM linked_folders
-              WHERE folder_id IN (${linkedFolderIds.map(() => '?').join(',')})`,
-          )
-          .all(...linkedFolderIds) as Array<{
-            folder_id: string;
-            absolute_root_path: string;
-            status: 'available' | 'offline';
-          }>);
+        : withSqliteInPredicate(
+          openLibrary.connection,
+          'folder_id',
+          linkedFolderIds,
+          (sql, params) =>
+            openLibrary.connection
+              .prepare(
+                `SELECT folder_id, absolute_root_path, status
+                   FROM linked_folders
+                  WHERE ${sql}`,
+              )
+              .all(...params) as Array<{
+                folder_id: string;
+                absolute_root_path: string;
+                status: 'available' | 'offline';
+              }>,
+        );
       for (const folder of linkedFolderRows) {
         if (this.linkedRootIsGone(folder.absolute_root_path)) continue;
 
