@@ -28,4 +28,4 @@
 
 ## 代码审查
 
-已按要求启动 `gpt-5.6-luna`、`high` 的独立 Standards + Spec 双轴审查，并尝试在同一 agent 上收束/恢复；agent 两次超时且未返回可用 findings，随后关闭。故本轮没有可签署的独立审查结论，不将其记为通过；真实 10w+ 库、Windows、packaged 与 Computer Use 仍是验收边界。
+独立双轴审查已沉淀：`docs/internal/reviews/2026-09-11-large-batch-import-reliability-review.md`（composer-2.5，Standards 与 Spec 各一次）。Standards 0 hard / 5 judgement，最重是其余动态 `IN` 未分块扫完。Spec 最重是 §5.5「决策期暂停 TTL」未实现，只改了 24h 默认到期。真实 10w+ 库、Windows、packaged 与 Computer Use 仍是验收边界。
