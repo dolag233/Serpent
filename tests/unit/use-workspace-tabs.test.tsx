@@ -9,6 +9,7 @@ import {
   type UseWorkspaceTabsControllerOptions,
 } from "../../src/renderer/use-workspace-tabs";
 import { createDefaultWorkspaceTabBrowseState } from "../../src/renderer/workspace-tabs";
+import type { WorkspaceRenderSnapshot } from "../../src/renderer/workspace-render-snapshot-cache";
 
 describe("useWorkspaceTabsController", () => {
   let root: Root | undefined;
@@ -43,6 +44,7 @@ describe("useWorkspaceTabsController", () => {
       selectedAssetId: null,
       browseState: createDefaultWorkspaceTabBrowseState(),
       cachedTitle: "All assets",
+      renderSnapshot: null,
     }));
     let controller: ReturnType<typeof useWorkspaceTabsController> | undefined;
 
@@ -85,5 +87,141 @@ describe("useWorkspaceTabsController", () => {
     expect(controller?.state.tabs).toHaveLength(1);
     expect(controller?.state.tabs[0]?.history.current).toEqual({ kind: "all" });
     expect(captureContext).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps active navigation current when only inactive tabs are closed", async () => {
+    let controller: ReturnType<typeof useWorkspaceTabsController> | undefined;
+    function Host() {
+      controller = useWorkspaceTabsController({
+        captureContext: () => ({
+          viewport: { scrollTop: 0, scrollProgress: 0, scrollExtent: 0 },
+          selectedAssetIds: [],
+          selectedAssetId: null,
+          browseState: createDefaultWorkspaceTabBrowseState(),
+          cachedTitle: "All assets",
+          renderSnapshot: null,
+        }),
+        restoreTab: async () => undefined,
+        restoreAll: async () => undefined,
+        beginTransition: () => () => true,
+        getDefaultBrowseState: createDefaultWorkspaceTabBrowseState,
+        onHistoryChanged: () => undefined,
+      });
+      return null;
+    }
+
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(<Host />));
+    const originalTabId = controller!.state.activeTabId;
+    await act(async () => controller?.addTab());
+    const activeTabId = controller!.state.activeTabId;
+    const activeNavigation = controller!.beginNavigation("none");
+
+    await act(async () => controller?.closeTab(originalTabId));
+    expect(controller!.isNavigationCurrent(activeNavigation)).toBe(true);
+
+    await act(async () => controller?.closeOtherTabs(activeTabId));
+    expect(controller!.isNavigationCurrent(activeNavigation)).toBe(true);
+    expect(controller!.state.tabs.map((tab) => tab.id)).toEqual([activeTabId]);
+  });
+
+  it("preserves the cached tab context when a history replay makes capture unsafe", async () => {
+    let pauseCapture = false;
+    const cachedSnapshot: WorkspaceRenderSnapshot = {
+      kind: "browse",
+      location: { kind: "all" },
+      items: [],
+      layout: [],
+      virtualLayout: null,
+      total: 0,
+      snippets: [],
+      pageDescriptor: {
+        sessionId: null,
+        offset: 0,
+        pageSize: 40,
+        scopeKey: "all",
+        queryKey: null,
+      },
+    };
+    const captureContext = vi.fn<UseWorkspaceTabsControllerOptions["captureContext"]>(
+      () => pauseCapture
+        ? null
+        : {
+            viewport: { scrollTop: 0, scrollProgress: 0, scrollExtent: 0 },
+            selectedAssetIds: [],
+            selectedAssetId: null,
+            browseState: createDefaultWorkspaceTabBrowseState(),
+            cachedTitle: "All assets",
+            renderSnapshot: cachedSnapshot,
+          },
+    );
+    let controller: ReturnType<typeof useWorkspaceTabsController> | undefined;
+    function Host() {
+      controller = useWorkspaceTabsController({
+        captureContext,
+        restoreTab: async () => undefined,
+        restoreAll: async () => undefined,
+        beginTransition: () => () => true,
+        getDefaultBrowseState: createDefaultWorkspaceTabBrowseState,
+        onHistoryChanged: () => undefined,
+      });
+      return null;
+    }
+
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(<Host />));
+    await act(async () => controller?.activateRenderSnapshotLibrary("test-library"));
+    await act(async () => controller?.addTab());
+    await act(async () => controller?.addTab());
+    const secondTabId = controller!.state.tabs[1]!.id;
+    const thirdTabId = controller!.state.tabs[2]!.id;
+    await act(async () => controller?.selectTab(secondTabId));
+    expect(controller!.getRenderSnapshot(secondTabId)).not.toBeNull();
+
+    pauseCapture = true;
+    await act(async () => controller?.selectTab(thirdTabId));
+
+    expect(controller!.state.activeTabId).toBe(thirdTabId);
+    expect(controller!.getRenderSnapshot(secondTabId)).not.toBeNull();
+  });
+
+  it("invalidates the old tab request and navigates when the active tab closes", async () => {
+    let controller: ReturnType<typeof useWorkspaceTabsController> | undefined;
+    function Host() {
+      controller = useWorkspaceTabsController({
+        captureContext: () => ({
+          viewport: { scrollTop: 0, scrollProgress: 0, scrollExtent: 0 },
+          selectedAssetIds: [],
+          selectedAssetId: null,
+          browseState: createDefaultWorkspaceTabBrowseState(),
+          cachedTitle: "All assets",
+          renderSnapshot: null,
+        }),
+        restoreTab: async () => undefined,
+        restoreAll: async () => undefined,
+        beginTransition: () => () => true,
+        getDefaultBrowseState: createDefaultWorkspaceTabBrowseState,
+        onHistoryChanged: () => undefined,
+      });
+      return null;
+    }
+
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(<Host />));
+    const firstTabId = controller!.state.activeTabId;
+    await act(async () => controller?.addTab());
+    const closedTabId = controller!.state.activeTabId;
+    const oldRequest = controller!.beginNavigation("push");
+
+    await act(async () => controller?.closeTab(closedTabId));
+
+    expect(controller!.state.activeTabId).toBe(firstTabId);
+    expect(controller!.isNavigationCurrent(oldRequest)).toBe(false);
   });
 });

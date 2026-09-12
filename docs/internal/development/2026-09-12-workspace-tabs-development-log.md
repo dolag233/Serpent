@@ -91,3 +91,43 @@ Luna high 已在隔离 userData 与临时资源库上启动 Computer Use，并�
 显示前恢复 viewport。实现拆为 `Serpent-ea5c9c`、`Serpent-58467e`、
 `Serpent-bb3ce7`、`Serpent-83d71f`，按两项纯模型并行、`App.tsx` 单人集成、E2E
 收口的顺序执行。
+
+## 2026-09-12 业务逻辑实施与复测
+
+- 实现 `workspace-navigation-coordinator.ts`：library epoch、active tab id 与每 tab generation
+  共同限定异步提交资格；关闭非活动标签不推进活动标签 generation。
+- 实现有界 `workspace-render-snapshot-cache.ts`：快照按 library/tab 隔离，按条目和字节
+  上限 LRU 淘汰；拒绝 Blob、typed array、循环对象与超限结构，关闭标签/资源库释放缓存。
+- 在 `use-workspace-tabs.ts` 接入协调器和快照生命周期；活动标签恢复使用串行队列，关闭其他
+  标签保留活动查询资格。
+- 在 `App.tsx` 接入统一 navigation request：异步读取先准备，token 校验后才提交页面、资产、
+  scope、浏览条件和选择；push/replay/none 分别处理历史。移除全局 history suppression；搜索、
+  文件夹、合集、智能合集、回收站、标签管理和插件视图的异步分支都检查当前 token。
+- 标签切换命中缓存时同步画出目标快照再刷新数据；冷切换期间保留上一个已提交画面并用主题
+  遮罩拦截输入。新首屏提交后才恢复视口，extent 稳定后才解除遮罩。历史书签保存每条记录的
+  `scrollTop`、progress 和 extent，布局一致时使用精确偏移，extent 改变时使用进度比例。
+- 扩充 Electron E2E：用带隔离 userData 的真实 Windows 开发态应用覆盖冷启动与缓存标签切换的
+  逐帧无空白、根目录 73%、文件夹 41%、Back/Forward、搜索和选择恢复、延迟 A/B/A 响应后历史
+  仍按预期往返、智能合集查询期间关闭非活动标签，以及文件夹/合集菜单与侧栏定位。
+- 为确定性慢请求测试，在 Preload 的 `SERPENT_E2E=1` 诊断 API 增加一次性 browse session 延迟；
+  普通应用不暴露此 API。Playwright 发现 contextBridge 导出的 `library.openBrowseSession` 是不可
+  重定义的只读接口，已改为通过受限 E2E diagnostics 控制延迟，避免修改生产 API 的可变性。
+- 一次中间 E2E 因 helper 与 contextBridge 不兼容而失败；修正测试 seam 后最终命令通过。直接设定
+  scrollTop 的用例也增加 `aria-busy=false` 等待，避免在应用尚未完成历史视口恢复时让测试脚本位置
+  被后续恢复帧覆盖。
+
+本轮最终证据（2026-09-12）：
+
+- `npm run typecheck`：通过（`tsc --noEmit` 与扩展配置检查）。
+- `npx vitest run --config vitest.config.ts tests/unit/workspace-navigation-coordinator.test.ts tests/unit/workspace-render-snapshot-cache.test.ts tests/unit/use-workspace-tabs.test.tsx tests/unit/workspace-scroll-position.test.ts`：4 文件、20 项通过。
+- `npx eslint src/preload/index.ts tests/e2e/workspace-tabs.test.ts src/renderer/App.tsx src/renderer/use-workspace-tabs.ts src/renderer/workspace-scroll-position.ts src/renderer/workspace-navigation-coordinator.ts src/renderer/workspace-render-snapshot-cache.ts tests/unit/use-workspace-tabs.test.tsx tests/unit/workspace-scroll-position.test.ts tests/unit/workspace-navigation-coordinator.test.ts tests/unit/workspace-render-snapshot-cache.test.ts`：通过。
+- `node scripts/run-e2e-isolated.mjs tests/e2e/workspace-tabs.test.ts`：1 项通过；临时资源库与隔离 userData 在完整应用退出后清理。
+- Computer Use 按用户此前要求交由 Luna；本轮没有把 E2E 证据当作人眼验收。TABS-001 现恢复为“待人类验收”。packaged、macOS Finder 与 2 万资产滚动恢复仍未执行。
+
+## 2026-09-13 Luna High 复审收尾
+
+- Luna High 对 9 月 12 日新增的两项修复做只读复审：缓存命中切换先同步提交目标快照并恢复目标视口，首帧不暴露来源标签的滚动位置；Back/Forward pending 时阻止旧画布位置写进目标历史 entry。两项均通过。
+- 复审另外发现 P2：切入无渲染快照的冷标签后，首屏 browse 尚未完成便切回其他标签，取消恢复时旧画布仍显示；随后保存上下文可能把这份画布误写为冷标签快照。新增 `Serpent-d2bbe3` 跟进，依赖关系设为父工单 `Serpent-738426` 的 blocker。未把该路径计为已实现或已验证。
+- 定向复测：`npm run typecheck` 通过；导航协调器、快照缓存、标签控制器、视口恢复 4 个 Vitest 文件共 21 项通过；改动文件 ESLint 通过；`node scripts/run-e2e-isolated.mjs tests/e2e/workspace-tabs.test.ts` 在隔离 userData 的 Windows 开发态 Electron 中 1 项通过，覆盖缓存首帧位置、73% 后退 / 41% 前进、延迟历史回放期间的新导航、A/B/A、关闭非活动标签和无空白帧。
+- 全量 lint、全量 test、packaged、macOS Finder、2 万资产滚动恢复本轮未执行。Computer Use 一次检查无法枚举应用（`getState()` 返回 `apps: []`，`cua.listApps()` 不存在），不具备人眼验收证据；TABS-001–004 仍待用户验收。
+- 验收文档与算法状态已注明新风险。`Serpent-bb3ce7` 和 `Serpent-83d71f` 的原定实施/测试交付已关闭，父工单保持 `in_progress`，等待 `Serpent-d2bbe3` 与人类验收。

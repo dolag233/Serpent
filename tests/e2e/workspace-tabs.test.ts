@@ -13,7 +13,7 @@ import {
 
 test.describe.configure({ timeout: 120_000 });
 
-function launchApp(temporaryRoot: string, libraryPath: string, importFile: string) {
+function launchApp(temporaryRoot: string, libraryPath: string, importFiles: string) {
   const applicationDirectory =
     process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
   return electron.launch({
@@ -26,8 +26,164 @@ function launchApp(temporaryRoot: string, libraryPath: string, importFile: strin
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
       SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, "user-data"),
-      SERPENT_E2E_IMPORT_FILES: importFile,
+      SERPENT_E2E_IMPORT_FILES: importFiles,
     },
+  });
+}
+
+async function createSmartCollection(window: Page, name: string) {
+  const collectionId = await window.evaluate(async (collectionName) => {
+    type LibraryApi = {
+      listOpen(): Promise<{ ok: boolean; value?: Array<{ libraryId: string }> }>;
+      createSmartCollection(input: {
+        libraryId: string;
+        name: string;
+        queryDefinitionJson: string;
+      }): Promise<{
+        ok: boolean;
+        value?: { collectionId: string };
+        error?: { message?: string };
+      }>;
+    };
+    const library = (
+      globalThis as typeof globalThis & { serpent: { library: LibraryApi } }
+    ).serpent.library;
+    const opened = await library.listOpen();
+    const libraryId = opened.value?.[0]?.libraryId;
+    if (!opened.ok || !libraryId) throw new Error("Expected an open library.");
+    const result = await library.createSmartCollection({
+      libraryId,
+      name: collectionName,
+      queryDefinitionJson: JSON.stringify({
+        filters: [{ field: "format", values: ["txt"], exclude: false }],
+      }),
+    });
+    if (!result.ok || !result.value) {
+      throw new Error(result.error?.message ?? "Could not create smart collection.");
+    }
+    return result.value.collectionId;
+  }, name);
+  const refreshButton = window.getByRole("button", { name: "刷新磁盘变化" });
+  await refreshButton.click();
+  await expect(refreshButton).toBeEnabled({ timeout: 15_000 });
+  return collectionId;
+}
+
+async function delayNextBrowseSession(
+  window: Page,
+  target: { folderId?: string; smartCollectionId?: string },
+  delayMs: number,
+) {
+  await window.evaluate(({ match, delay }) => {
+    type E2eApi = {
+      delayNextBrowseSession(
+        target: { folderId?: string; smartCollectionId?: string },
+        delayMs: number,
+      ): void;
+    };
+    const diagnostics = (
+      globalThis as typeof globalThis & {
+        serpent: { e2e?: E2eApi };
+      }
+    ).serpent.e2e;
+    if (!diagnostics) throw new Error("E2E diagnostics are unavailable.");
+    diagnostics.delayNextBrowseSession(match, delay);
+  }, { match: target, delay: delayMs });
+}
+
+async function startNoBlankFrameProbe(window: Page) {
+  await window.evaluate(() => {
+    let active = true;
+    let blankFrames = 0;
+    const sample = () => {
+      if (!active) return;
+      const host = document.querySelector<HTMLElement>(".workspace-canvas-host");
+      const canvas = host?.querySelector<HTMLElement>(".workspace-canvas");
+      if (host && canvas && getComputedStyle(canvas).visibility !== "hidden") {
+        const covered =
+          host.getAttribute("aria-busy") === "true" ||
+          Boolean(host.querySelector(".workspace-navigation-hold"));
+        const hasView = Boolean(
+          canvas.querySelector(
+            ".asset-card, .folder-card, .folder-card-row, .empty-library, .tag-management-workspace, .plugin-sidebar-view-panel",
+          ),
+        );
+        if (!covered && !hasView) blankFrames += 1;
+      }
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+    Object.defineProperty(window, "__workspaceBlankProbe", {
+      configurable: true,
+      value: {
+        stop: () => {
+          active = false;
+          return blankFrames;
+        },
+      },
+    });
+  });
+}
+
+async function stopNoBlankFrameProbe(window: Page) {
+  return window.evaluate(() => {
+    const probe = (window as typeof window & {
+      __workspaceBlankProbe?: { stop: () => number };
+    }).__workspaceBlankProbe;
+    return probe?.stop() ?? -1;
+  });
+}
+
+async function startCachedViewportProbe(window: Page) {
+  await window.evaluate(() => {
+    let active = true;
+    let targetFrames = 0;
+    let firstTargetProgress: number | null = null;
+    const sample = () => {
+      if (!active) return;
+      const host = document.querySelector<HTMLElement>(".workspace-canvas-host");
+      const canvas = host?.querySelector<HTMLElement>(".workspace-canvas");
+      const currentScope = document.querySelector<HTMLElement>(
+        ".scope-crumb-label.is-current",
+      )?.textContent?.trim();
+      const hasCachedFolderAssets = [
+        ...(canvas?.querySelectorAll<HTMLElement>(".asset-card") ?? []),
+      ].some((card) => card.getAttribute("title")?.startsWith("folder-view-") === true);
+      if (
+        host?.getAttribute("aria-busy") === "true" &&
+        canvas &&
+        currentScope === "角色原画" &&
+        hasCachedFolderAssets
+      ) {
+        targetFrames += 1;
+        if (firstTargetProgress === null) {
+          const extent = Math.max(0, canvas.scrollHeight - canvas.clientHeight);
+          firstTargetProgress = extent > 0 ? canvas.scrollTop / extent : 0;
+        }
+      }
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+    Object.defineProperty(window, "__workspaceCachedViewportProbe", {
+      configurable: true,
+      value: {
+        stop: () => {
+          active = false;
+          return { targetFrames, firstTargetProgress };
+        },
+      },
+    });
+  });
+}
+
+async function stopCachedViewportProbe(window: Page) {
+  return window.evaluate(() => {
+    const probe = (window as typeof window & {
+      __workspaceCachedViewportProbe?: {
+        stop: () => { targetFrames: number; firstTargetProgress: number | null };
+      };
+    }).__workspaceCachedViewportProbe;
+    return probe?.stop() ?? { targetFrames: -1, firstTargetProgress: null };
   });
 }
 
@@ -106,13 +262,30 @@ async function createScrollableRoot(window: Page, count: number) {
   await window.getByRole("button", { name: "刷新磁盘变化" }).click();
 }
 
+async function waitForWorkspaceNavigation(window: Page) {
+  await expect(window.locator(".workspace-canvas-host")).toHaveAttribute(
+    "aria-busy",
+    "false",
+  );
+}
+
 test("keeps navigation inside explicit tabs and exposes contextual tab actions", async () => {
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), "serpent-workspace-tabs-"));
   const libraryName = "标签页验收库";
-  const libraryPath = path.join(temporaryRoot, libraryName);
+    const libraryPath = path.join(temporaryRoot, libraryName);
   const sourceAsset = path.join(temporaryRoot, "blue metal.txt");
+  const folderAssets = Array.from({ length: 42 }, (_, index) =>
+    path.join(temporaryRoot, `folder-view-${String(index + 1).padStart(2, "0")}.txt`),
+  );
   writeFileSync(sourceAsset, "workspace tab selection fixture", "utf8");
-  const application = await launchApp(temporaryRoot, libraryPath, sourceAsset);
+  for (const [index, sourcePath] of folderAssets.entries()) {
+    writeFileSync(sourcePath, `folder scroll fixture ${index + 1}`, "utf8");
+  }
+  const application = await launchApp(
+    temporaryRoot,
+    libraryPath,
+    [sourceAsset, ...folderAssets].join(path.delimiter),
+  );
   const childProcess = application.process();
 
   try {
@@ -120,23 +293,34 @@ test("keeps navigation inside explicit tabs and exposes contextual tab actions",
     await createLibrary(window, libraryName);
     await createFolder(window, "角色原画");
     await importFilesThroughBridge(window, "角色原画");
+    await createFolder(window, "并发目标");
     const searchedAsset = window.locator('.asset-card[title="blue metal.txt"]');
     await expect(searchedAsset).toBeVisible({ timeout: 15_000 });
     await createCollection(window, "灵感合集");
+    const smartCollectionId = await createSmartCollection(window, "慢速智能合集");
     await createScrollableRoot(window, 36);
-
-    await window
-      .locator(".navigation-pane button.nav-row")
-      .filter({ hasText: "所有资产" })
-      .first()
-      .click();
+    await folderRow(window, "角色原画").click();
+    await waitForWorkspaceNavigation(window);
 
     const tablist = window.getByRole("tablist", { name: "工作区标签页" });
     const tabs = tablist.getByRole("tab");
     await expect(tabs).toHaveCount(1);
+    const initialTabName = await tabs.first().getAttribute("aria-label");
+    expect(initialTabName).toBeTruthy();
+    await startNoBlankFrameProbe(window);
+    await window.getByRole("button", { name: "新建标签页" }).click();
+    await expect(tabs).toHaveCount(2);
+    await expect(tabs.nth(1)).toHaveAccessibleName("所有资产");
+    await waitForWorkspaceNavigation(window);
+    await window
+      .getByRole("button", { name: `关闭标签页：${initialTabName}` })
+      .click();
+    await expect(tabs).toHaveCount(1);
     await expect(tabs.first()).toHaveAccessibleName("所有资产");
+    expect(await stopNoBlankFrameProbe(window)).toBe(0);
 
     await window.getByRole("button", { name: "资源库根目录", exact: true }).click();
+    await waitForWorkspaceNavigation(window);
     const canvas = window.locator(".workspace-canvas");
     await expect.poll(() => canvas.evaluate(
       (element) => element.scrollHeight - element.clientHeight,
@@ -152,6 +336,7 @@ test("keeps navigation inside explicit tabs and exposes contextual tab actions",
 
     await window.getByRole("button", { name: "新建标签页" }).click();
     await tabs.first().click();
+    await waitForWorkspaceNavigation(window);
     await expect.poll(() => canvas.evaluate((element) => {
       const extent = element.scrollHeight - element.clientHeight;
       return extent > 0 ? element.scrollTop / extent : 0;
@@ -162,14 +347,115 @@ test("keeps navigation inside explicit tabs and exposes contextual tab actions",
     await folderRow(window, "角色原画").click();
     await expect(tabs).toHaveCount(1);
     await expect(tabs.first()).toHaveAccessibleName("角色原画");
+    await waitForWorkspaceNavigation(window);
+    const folderId = await folderRow(window, "角色原画").getAttribute("data-nav-folder-id");
+    expect(folderId).toBeTruthy();
+    await expect.poll(() => canvas.evaluate(
+      (element) => element.scrollHeight - element.clientHeight,
+    )).toBeGreaterThan(0);
+    await canvas.evaluate((element) => {
+      const extent = element.scrollHeight - element.clientHeight;
+      element.scrollTop = extent * 0.41;
+    });
+    await expect.poll(() => canvas.evaluate((element) => {
+      const extent = element.scrollHeight - element.clientHeight;
+      return extent > 0 ? element.scrollTop / extent : 0;
+    })).toBeCloseTo(0.41, 2);
+
+    await window.getByRole("button", { name: "新建标签页" }).click();
+    await expect(tabs).toHaveCount(2);
+    await waitForWorkspaceNavigation(window);
+    await window.getByRole("button", { name: "资源库根目录", exact: true }).click();
+    await waitForWorkspaceNavigation(window);
+    await expect.poll(() => canvas.evaluate(
+      (element) => element.scrollHeight - element.clientHeight,
+    )).toBeGreaterThan(0);
+    await canvas.evaluate((element) => {
+      const extent = element.scrollHeight - element.clientHeight;
+      element.scrollTop = extent * 0.89;
+    });
+    await expect.poll(() => canvas.evaluate((element) => {
+      const extent = element.scrollHeight - element.clientHeight;
+      return extent > 0 ? element.scrollTop / extent : 0;
+    })).toBeCloseTo(0.89, 2);
+    await delayNextBrowseSession(window, { folderId: folderId! }, 900);
+    await startCachedViewportProbe(window);
+    await tabs.first().click();
+    await expect(window.locator(".workspace-canvas-host")).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    await expect(window.locator('.asset-card[title^="folder-view-"]').first()).toBeVisible();
+    const cachedViewportProbe = await stopCachedViewportProbe(window);
+    expect(cachedViewportProbe.targetFrames).toBeGreaterThan(0);
+    expect(cachedViewportProbe.firstTargetProgress).not.toBeNull();
+    expect(cachedViewportProbe.firstTargetProgress!).toBeCloseTo(0.41, 2);
+    await waitForWorkspaceNavigation(window);
+    await tabs.nth(1).click();
+    await waitForWorkspaceNavigation(window);
+    await window.getByRole("button", { name: "关闭标签页：资源库根目录" }).click();
+    await expect(tabs).toHaveCount(1);
+    await expect(tabs.first()).toHaveAccessibleName("角色原画");
+
     await window.getByRole("button", { name: "后退" }).click();
     await expect(tabs.first()).toHaveAccessibleName("资源库根目录");
     await expect.poll(() => canvas.evaluate((element) => {
       const extent = element.scrollHeight - element.clientHeight;
       return extent > 0 ? element.scrollTop / extent : 0;
     })).toBeCloseTo(0.73, 2);
+    await waitForWorkspaceNavigation(window);
     await window.getByRole("button", { name: "前进" }).click();
     await expect(tabs.first()).toHaveAccessibleName("角色原画");
+    await expect.poll(() => canvas.evaluate((element) => {
+      const extent = element.scrollHeight - element.clientHeight;
+      return extent > 0 ? element.scrollTop / extent : 0;
+    })).toBeCloseTo(0.41, 2);
+    await waitForWorkspaceNavigation(window);
+
+    await window.getByRole("button", { name: "资源库根目录", exact: true }).click();
+    await waitForWorkspaceNavigation(window);
+    await canvas.evaluate((element) => {
+      const extent = element.scrollHeight - element.clientHeight;
+      element.scrollTop = extent * 0.73;
+    });
+    await expect.poll(() => canvas.evaluate((element) => {
+      const extent = element.scrollHeight - element.clientHeight;
+      return extent > 0 ? element.scrollTop / extent : 0;
+    })).toBeCloseTo(0.73, 2);
+    await delayNextBrowseSession(window, { folderId: folderId! }, 1_500);
+    await window.getByRole("button", { name: "后退" }).click();
+    await expect(window.locator(".workspace-canvas-host")).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    await folderRow(window, "并发目标").click();
+    await waitForWorkspaceNavigation(window);
+    await expect(tabs.first()).toHaveAccessibleName("并发目标");
+    await window.getByRole("button", { name: "后退" }).click();
+    await expect(tabs.first()).toHaveAccessibleName("角色原画");
+    await waitForWorkspaceNavigation(window);
+    await expect.poll(() => canvas.evaluate((element) => {
+      const extent = element.scrollHeight - element.clientHeight;
+      return extent > 0 ? element.scrollTop / extent : 0;
+    })).toBeCloseTo(0.41, 2);
+
+    await delayNextBrowseSession(window, { folderId: folderId! }, 900);
+    await folderRow(window, "角色原画").click();
+    await window.getByRole("button", { name: "资源库根目录", exact: true }).click();
+    await expect(tabs.first()).toHaveAccessibleName("资源库根目录");
+    await folderRow(window, "角色原画").click();
+    await expect(searchedAsset).toBeVisible({ timeout: 15_000 });
+    await searchedAsset.click();
+    await expect(searchedAsset).toHaveClass(/is-selected/);
+    await window.waitForTimeout(1_000);
+    await expect(tabs.first()).toHaveAccessibleName("角色原画");
+    await expect(searchedAsset).toHaveClass(/is-selected/);
+    await window.getByRole("button", { name: "后退" }).click();
+    await expect(tabs.first()).toHaveAccessibleName("资源库根目录");
+    await waitForWorkspaceNavigation(window);
+    await window.getByRole("button", { name: "前进" }).click();
+    await expect(tabs.first()).toHaveAccessibleName("角色原画");
+    await waitForWorkspaceNavigation(window);
     await window.getByRole("searchbox", { name: "搜索资源库" }).fill("blue metal");
     await expect(searchedAsset).toBeVisible({ timeout: 15_000 });
     await searchedAsset.click();
@@ -194,9 +480,15 @@ test("keeps navigation inside explicit tabs and exposes contextual tab actions",
     await expect(window.getByRole("searchbox", { name: "搜索资源库" })).toHaveValue("blue metal");
     await expect(searchedAsset).toHaveClass(/is-selected/, { timeout: 15_000 });
 
+    await startNoBlankFrameProbe(window);
     await tabs.nth(1).click();
     await expect(window.locator(".scope-crumb-label.is-current")).toContainText("灵感合集");
     await expect(window.getByRole("searchbox", { name: "搜索资源库" })).toHaveValue("");
+    await tabs.first().click();
+    await expect(window.locator(".scope-crumb-label.is-current")).toHaveText("角色原画");
+    await tabs.nth(1).click();
+    await expect(window.locator(".scope-crumb-label.is-current")).toContainText("灵感合集");
+    expect(await stopNoBlankFrameProbe(window)).toBe(0);
 
     await tabs.first().click({ button: "right" });
     const folderMenu = window.getByRole("menu", { name: "角色原画" });
@@ -228,9 +520,34 @@ test("keeps navigation inside explicit tabs and exposes contextual tab actions",
     await expect(tabs).toHaveCount(1);
     await expect(tabs.first()).toHaveAccessibleName("所有资产");
     await expect(window.getByRole("searchbox", { name: "搜索资源库" })).toHaveValue("");
+
+    await window.getByRole("button", { name: "新建标签页" }).click();
+    await expect(tabs).toHaveCount(2);
+    const smartCollectionRow = window
+      .locator(".navigation-pane button.nav-row")
+      .filter({ hasText: "慢速智能合集" });
+    await expect(smartCollectionRow).toBeVisible();
+    await delayNextBrowseSession(window, { smartCollectionId }, 900);
+    await smartCollectionRow.click();
+    await tablist.locator(".workspace-tab").first()
+      .getByRole("button", { name: "关闭标签页：所有资产" }).click();
+    await expect(tabs).toHaveCount(1);
+    await expect(window.locator('.asset-card[title="blue metal.txt"]')).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(window.locator(".scope-crumb-label.is-current")).toContainText("慢速智能合集");
+    await window.waitForTimeout(1_000);
+    await expect(window.locator('.asset-card[title="blue metal.txt"]')).toBeVisible();
+    await expect(window.locator(".scope-crumb-label.is-current")).toContainText("慢速智能合集");
   } finally {
     if (childProcess.exitCode === null) {
-      await application.evaluate(({ app }) => app.quit());
+      try {
+        await application.evaluate(({ app }) => app.quit());
+      } catch {
+        // The Electron process can close its Playwright transport before the
+        // child-process exit event arrives; still wait for exit and clean its
+        // isolated userData/library directory below.
+      }
       await once(childProcess, "exit");
     }
     await rm(temporaryRoot, {

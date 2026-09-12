@@ -8968,6 +8968,14 @@ select.ai-config-input.ai-config-languages {
   min-height: 0;
 }
 
+.workspace-navigation-hold {
+  position: absolute;
+  inset: 0;
+  z-index: var(--ui-layer-popover);
+  background: color-mix(in srgb, var(--canvas) 18%, transparent);
+  cursor: progress;
+}
+
 .workspace-canvas-host > .activity-strip {
   position: absolute;
   z-index: 20;

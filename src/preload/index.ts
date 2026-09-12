@@ -214,6 +214,14 @@ const EMPTY_FBX_CONVERSION_STATS: FbxConversionStats = {
 };
 
 const e2eEnabled = process.env.SERPENT_E2E === '1';
+type E2eBrowseSessionDelayTarget = {
+  folderId?: string;
+  smartCollectionId?: string;
+};
+let e2eBrowseSessionDelay: {
+  target: E2eBrowseSessionDelayTarget;
+  delayMs: number;
+} | null = null;
 if (e2eEnabled) {
   const e2eLocale = process.env.SERPENT_E2E_LOCALE === 'en' ? 'en' : 'zh-CN';
   (globalThis as { __SERPENT_E2E_LOCALE__?: string }).__SERPENT_E2E_LOCALE__ =
@@ -1320,6 +1328,17 @@ const library: SerpentLibraryApi = Object.freeze({
   },
 
   async openBrowseSession({ libraryId, query, filters, scope, sort, smartCollectionId, limit, showIgnored }: { libraryId: string; query: SearchQuery | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'long_edge' | 'duration' | 'rating' | 'color' | 'author'; order: 'asc' | 'desc' }; smartCollectionId?: string; limit?: number; showIgnored?: boolean }) {
+    const delayedBrowse = e2eBrowseSessionDelay;
+    const shouldDelay = delayedBrowse && (
+      delayedBrowse.target.folderId !== undefined
+        ? scope?.kind === 'folder' && scope.folderId === delayedBrowse.target.folderId
+        : delayedBrowse.target.smartCollectionId !== undefined &&
+          smartCollectionId === delayedBrowse.target.smartCollectionId
+    );
+    if (shouldDelay && delayedBrowse) {
+      e2eBrowseSessionDelay = null;
+      await new Promise((resolve) => setTimeout(resolve, delayedBrowse.delayMs));
+    }
     const result = await request({ type: 'browse.session.open.request', libraryId, query, filters, scope, sort, smartCollectionId, limit, showIgnored });
     if (!result.ok) return failure(result);
     if (result.type !== 'browse.session.opened') throw new Error('Unexpected open-browse-session response.');
@@ -2476,6 +2495,22 @@ async function importRequest(
 const e2eDiagnostics = Object.freeze({
   getRequestCount(type: RendererRequest['type']): number {
     return requestCounts.get(type) ?? 0;
+  },
+  delayNextBrowseSession(
+    target: E2eBrowseSessionDelayTarget,
+    delayMs: number,
+  ): void {
+    if (
+      !e2eEnabled ||
+      !Number.isInteger(delayMs) ||
+      delayMs < 0 ||
+      delayMs > 5_000 ||
+      (target.folderId === undefined) ===
+        (target.smartCollectionId === undefined)
+    ) {
+      throw new Error('Invalid E2E browse-session delay.');
+    }
+    e2eBrowseSessionDelay = { target: { ...target }, delayMs };
   },
 });
 

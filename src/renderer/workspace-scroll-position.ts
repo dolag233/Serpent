@@ -36,6 +36,7 @@ export function restoreWorkspaceNavViewport(
   element: HTMLElement,
   viewport: WorkspaceNavViewport,
   isCurrent: () => boolean,
+  onComplete?: () => void,
 ): () => void {
   let frame: number | undefined;
   let attempts = 0;
@@ -50,6 +51,7 @@ export function restoreWorkspaceNavViewport(
     element.removeEventListener("wheel", stop);
     element.removeEventListener("pointerdown", stop);
     element.removeEventListener("touchstart", stop);
+    onComplete?.();
   };
   element.addEventListener("wheel", stop, { passive: true });
   element.addEventListener("pointerdown", stop);
@@ -57,7 +59,11 @@ export function restoreWorkspaceNavViewport(
 
   const apply = () => {
     frame = undefined;
-    if (cancelled || !isCurrent()) return;
+    if (cancelled) return;
+    if (!isCurrent()) {
+      stop();
+      return;
+    }
     const extent = Math.max(0, element.scrollHeight - element.clientHeight);
     const target = resolveWorkspaceScrollTop(viewport, extent);
     element.scrollTo({ top: target, left: 0 });

@@ -5,7 +5,7 @@
 > 父工单：`Serpent-738426`
 >
 > 基线：`83ee70f8`
-> 状态：设计冻结，等待分步实现
+> 状态：主体已实施；缓存首帧与回放期间位置保护经 Luna High 复审、定向自动化通过。冷标签恢复取消时的旧画布缓存风险跟进于 `Serpent-d2bbe3`；父工单仍待该项和人类验收
 
 ## 1. 要解决的问题
 
@@ -22,6 +22,10 @@
 
 本设计把“用户要去哪里”“异步读取”“何时提交画面”“历史如何变化”分开，所有
 可见导航统一走同一条事务管线。
+
+2026-09-13 Luna High 最终复审通过本轮缓存首帧与历史回放修复；同时指出冷标签无快照
+恢复被另一标签切换取消时，保存上下文可能将旧画布缓存到冷标签。该额外路径尚未修复，
+由 `Serpent-d2bbe3` 跟进并阻塞父工单，不计为当前验收通过。
 
 ## 2. 不变量
 
@@ -225,12 +229,13 @@ interface WorkspaceViewTransitionState {
 切换算法：
 
 1. 点击标签时立即更新活动标签样式和 `aria-selected`。
-2. 若目标有 `renderSnapshot`，在同一 reducer action 中把快照变成新的
-   `visibleView`；首帧直接显示目标旧内容，再后台 reconcile。
+2. 若目标有 `renderSnapshot`，同步提交目标快照并将画布滚到其保存位置后，才允许
+   浏览器绘制；首帧直接显示处于正确位置的目标旧内容，再后台 reconcile。半透明
+   等待层不得暴露仍带离开标签滚动位置的目标快照。
 3. 若目标没有快照，保持原 `visibleView`，设置 `aria-busy=true` 并用透明的输入
    拦截层阻止用户操作旧内容。不能清空数组或改成白色占位。
-4. 首屏数据返回后一次性替换 `visibleView`。`useLayoutEffect` 在浏览区域重新显示前
-   完成 scroll restore；虚拟布局未给出稳定 extent 时继续保持旧画面。
+4. 首屏数据返回后一次性替换 `visibleView`，并再次按目标历史视口恢复。虚拟布局未给出
+   稳定 extent 时继续保持等待层，不能先显示顶部再跳到目标位置。
 5. 连续两帧 extent 不再变化，或目标锚点已可定位时，设置最终 scrollTop 并清除
    `pendingView`。用户在等待期间发生 wheel、touch、pointer 或导航键输入时取消自动
    恢复，以用户输入为准。
@@ -253,6 +258,9 @@ stateDiagram-v2
 - direct A → B：保存 A 视口，截断 A 后方分支，push B，B 初始视口为 0。
 - Back B → A：保存 B 视口，index - 1，读取 A，恢复 A 自己的书签。
 - Forward A → B：保存 A 当前视口，index + 1，读取 B，恢复 B 自己的书签。
+- Back/Forward 读取期间用户发起新导航时，旧画布不属于已经移动到的目标 entry：不能
+  把旧画布视口写入目标 entry。发生新 push 前应保留该 entry 已存的视口；切标签时也不能
+  用正在回放的旧画布覆盖其缓存上下文。
 - 标签 X → Y → X：只保存 X 当前条目并激活 Y；X 的 index、entries 和每条 viewport
   均不变化。
 - 打开查看器：push `preview(assetId)`；查看器内切资产 replace 当前 preview。
@@ -293,6 +301,9 @@ stateDiagram-v2
 - 人工延迟目标读取，切标签后旧请求不能改目标标签 scope、items、selection、history。
 - 在活动智能合集读取期间关闭非活动标签，结果仍能正常提交。
 - 目标有缓存时，点击到首个 requestAnimationFrame 之间始终有目标卡片。
+- 两标签位置分别为根目录 89%、文件夹 41% 时延迟文件夹 refresh；第一个 busy 目标卡片
+  帧仍须处于 41%，不可继承根目录的 scrollTop。
+- Back 回放目标 A 延迟期间导航到 B；等 B 完成再 Back 到 A，A 仍恢复自己的 41% 位置。
 - 目标无缓存时保留旧画面并拦截输入，首屏 ready 后一次替换。
 - 防抖搜索提交后仍恢复目标标签的 selected asset。
 

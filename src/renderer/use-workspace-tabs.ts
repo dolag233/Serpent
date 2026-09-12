@@ -14,6 +14,15 @@ import {
   type WorkspaceTabsState,
 } from "./workspace-tabs";
 import type { WorkspaceNavHistory } from "./workspace-nav-history";
+import {
+  createWorkspaceNavigationCoordinator,
+  type WorkspaceNavigationHistoryMode,
+  type WorkspaceNavigationToken,
+} from "./workspace-navigation-coordinator";
+import {
+  createWorkspaceRenderSnapshotCache,
+  type WorkspaceRenderSnapshot,
+} from "./workspace-render-snapshot-cache";
 
 export interface WorkspaceTabCapturedContext {
   viewport: WorkspaceTabSession["history"]["currentViewport"];
@@ -21,10 +30,11 @@ export interface WorkspaceTabCapturedContext {
   selectedAssetId: string | null;
   browseState: WorkspaceTabBrowseState;
   cachedTitle: string;
+  renderSnapshot: WorkspaceRenderSnapshot | null;
 }
 
 export interface UseWorkspaceTabsControllerOptions {
-  captureContext: () => WorkspaceTabCapturedContext;
+  captureContext: () => WorkspaceTabCapturedContext | null;
   restoreTab: (
     tab: WorkspaceTabSession,
     isCurrent: () => boolean,
@@ -43,6 +53,10 @@ export function useWorkspaceTabsController(options: UseWorkspaceTabsControllerOp
   const callbacksRef = useRef(options);
   const transitionQueueRef = useRef<Promise<void>>(Promise.resolve());
   const transitionEpochRef = useRef(0);
+  const [navigation] = useState(() =>
+    createWorkspaceNavigationCoordinator(state.activeTabId),
+  );
+  const [renderSnapshotCache] = useState(createWorkspaceRenderSnapshotCache);
   useLayoutEffect(() => {
     callbacksRef.current = options;
   }, [options]);
@@ -60,12 +74,18 @@ export function useWorkspaceTabsController(options: UseWorkspaceTabsControllerOp
     const active = getWorkspaceTab(current, current.activeTabId);
     if (!active) return current;
     const captured = callbacksRef.current.captureContext();
+    if (!captured) return current;
     active.history.saveCurrentViewport(captured.viewport);
+    if (captured.renderSnapshot) {
+      renderSnapshotCache.set(active.id, captured.renderSnapshot);
+    } else {
+      renderSnapshotCache.delete(active.id);
+    }
     let next = updateWorkspaceTabContext(current, active.id, captured);
     next = updateWorkspaceTabBrowseState(next, active.id, captured.browseState);
     stateRef.current = next;
     return next;
-  }, []);
+  }, [renderSnapshotCache]);
 
   const enqueueTransition = useCallback(
     (operation: (epoch: number, isRequestCurrent: () => boolean) => Promise<void>) => {
@@ -90,6 +110,7 @@ export function useWorkspaceTabsController(options: UseWorkspaceTabsControllerOp
     next: WorkspaceTabsState,
     epoch: number,
     isRequestCurrent: () => boolean,
+    navigationToken?: WorkspaceNavigationToken,
   ) => {
     const tab = getWorkspaceTab(next, next.activeTabId);
     if (!tab) return;
@@ -100,9 +121,11 @@ export function useWorkspaceTabsController(options: UseWorkspaceTabsControllerOp
       () =>
         epoch === transitionEpochRef.current &&
         stateRef.current.activeTabId === tab.id &&
-        isRequestCurrent(),
+        isRequestCurrent() &&
+        (navigationToken === undefined ||
+          navigation.isCurrent(navigationToken)),
     );
-  }, []);
+  }, [navigation]);
 
   const selectTab = useCallback(
     (tabId: string) => enqueueTransition(async (epoch, isRequestCurrent) => {
@@ -110,10 +133,12 @@ export function useWorkspaceTabsController(options: UseWorkspaceTabsControllerOp
       if (current.activeTabId === tabId || !getWorkspaceTab(current, tabId)) return;
       const saved = saveActiveContext();
       const next = selectWorkspaceTab(saved, tabId);
+      navigation.activateTab(tabId);
+      const navigationToken = navigation.begin(tabId, "none");
       commit(next);
-      await restoreActive(next, epoch, isRequestCurrent);
+      await restoreActive(next, epoch, isRequestCurrent, navigationToken);
     }),
-    [commit, enqueueTransition, restoreActive, saveActiveContext],
+    [commit, enqueueTransition, navigation, restoreActive, saveActiveContext],
   );
 
   const addTab = useCallback(
@@ -125,18 +150,36 @@ export function useWorkspaceTabsController(options: UseWorkspaceTabsControllerOp
         next.activeTabId,
         callbacksRef.current.getDefaultBrowseState(),
       );
+      navigation.activateTab(next.activeTabId);
+      const navigationToken = navigation.begin(next.activeTabId, "none");
       commit(next);
-      await restoreActive(next, epoch, isRequestCurrent);
+      await restoreActive(next, epoch, isRequestCurrent, navigationToken);
     }),
-    [commit, enqueueTransition, restoreActive, saveActiveContext],
+    [commit, enqueueTransition, navigation, restoreActive, saveActiveContext],
   );
 
   const closeTab = useCallback(
-    (tabId: string) => enqueueTransition(async (epoch, isRequestCurrent) => {
+    (tabId: string) => {
+      const immediateState = stateRef.current;
+      if (immediateState.activeTabId !== tabId) {
+        const result = closeWorkspaceTab(immediateState, tabId);
+        if (result.state === immediateState) return Promise.resolve();
+        navigation.closeTab(tabId);
+        for (const removedTabId of result.removedTabIds) {
+          renderSnapshotCache.delete(removedTabId);
+        }
+        commit(result.state);
+        return Promise.resolve();
+      }
+      return enqueueTransition(async (epoch, isRequestCurrent) => {
       const current = stateRef.current;
       const saved = current.activeTabId === tabId ? saveActiveContext() : current;
       const result = closeWorkspaceTab(saved, tabId);
       if (result.state === saved) return;
+      for (const removedTabId of result.removedTabIds) {
+        navigation.closeTab(removedTabId);
+        renderSnapshotCache.delete(removedTabId);
+      }
       let next = result.state;
       if (result.shouldNavigateToAll && result.removedTabIds.length === 0) {
         next = updateWorkspaceTabBrowseState(
@@ -145,6 +188,13 @@ export function useWorkspaceTabsController(options: UseWorkspaceTabsControllerOp
           callbacksRef.current.getDefaultBrowseState(),
         );
       }
+      let navigationToken: WorkspaceNavigationToken | undefined;
+      if (result.shouldNavigateToAll) {
+        if (result.removedTabIds.length > 0) {
+          navigation.activateTab(next.activeTabId);
+        }
+        navigationToken = navigation.begin(next.activeTabId, "none");
+      }
       commit(next);
       if (result.shouldNavigateToAll) {
         if (result.removedTabIds.length === 0) {
@@ -152,35 +202,86 @@ export function useWorkspaceTabsController(options: UseWorkspaceTabsControllerOp
             () =>
               epoch === transitionEpochRef.current &&
               stateRef.current.activeTabId === next.activeTabId &&
-              isRequestCurrent(),
+              isRequestCurrent() &&
+              (navigationToken === undefined ||
+                navigation.isCurrent(navigationToken)),
           );
         } else {
-          await restoreActive(next, epoch, isRequestCurrent);
+          await restoreActive(next, epoch, isRequestCurrent, navigationToken);
         }
       }
-    }),
-    [commit, enqueueTransition, restoreActive, saveActiveContext],
+      });
+    },
+    [commit, enqueueTransition, navigation, renderSnapshotCache, restoreActive, saveActiveContext],
   );
 
   const closeOtherTabs = useCallback(
-    (tabId: string) => enqueueTransition(async (epoch, isRequestCurrent) => {
+    (tabId: string) => {
+      const immediateState = stateRef.current;
+      if (immediateState.activeTabId === tabId) {
+        const result = closeWorkspaceTabsExcept(immediateState, tabId);
+        if (result.state === immediateState) return Promise.resolve();
+        for (const removedTabId of result.removedTabIds) {
+          navigation.closeTab(removedTabId);
+          renderSnapshotCache.delete(removedTabId);
+        }
+        commit(result.state);
+        return Promise.resolve();
+      }
+      return enqueueTransition(async (epoch, isRequestCurrent) => {
       const saved = saveActiveContext();
       const result = closeWorkspaceTabsExcept(saved, tabId);
       if (result.state === saved) return;
+      for (const removedTabId of result.removedTabIds) {
+        navigation.closeTab(removedTabId);
+        renderSnapshotCache.delete(removedTabId);
+      }
+      navigation.activateTab(tabId);
+      const navigationToken = navigation.begin(tabId, "none");
       commit(result.state);
       if (result.shouldNavigateToAll) {
-        await restoreActive(result.state, epoch, isRequestCurrent);
+        await restoreActive(result.state, epoch, isRequestCurrent, navigationToken);
       }
-    }),
-    [commit, enqueueTransition, restoreActive, saveActiveContext],
+      });
+    },
+    [commit, enqueueTransition, navigation, renderSnapshotCache, restoreActive, saveActiveContext],
   );
 
   const resetTabs = useCallback(() => {
     transitionEpochRef.current += 1;
     callbacksRef.current.beginTransition();
     const next = createWorkspaceTabs();
+    navigation.invalidateLibrary();
+    navigation.activateTab(next.activeTabId);
+    renderSnapshotCache.clear();
     commit(next);
-  }, [commit]);
+  }, [commit, navigation, renderSnapshotCache]);
+
+  const beginNavigation = useCallback(
+    (historyMode: WorkspaceNavigationHistoryMode = "push") => {
+      transitionEpochRef.current += 1;
+      callbacksRef.current.beginTransition();
+      return navigation.begin(
+        stateRef.current.activeTabId,
+        historyMode,
+      );
+    },
+    [navigation],
+  );
+  const isNavigationCurrent = useCallback(
+    (token: WorkspaceNavigationToken) =>
+      navigation.isCurrent(token),
+    [navigation],
+  );
+  const activateRenderSnapshotLibrary = useCallback((libraryId: string | null) => {
+    renderSnapshotCache.activateLibrary(libraryId);
+  }, [renderSnapshotCache]);
+  const getRenderSnapshot = useCallback((tabId: string) =>
+    renderSnapshotCache.get(tabId),
+  [renderSnapshotCache]);
+  const clearRenderSnapshots = useCallback(() => {
+    renderSnapshotCache.clear();
+  }, [renderSnapshotCache]);
 
   return {
     state,
@@ -193,5 +294,10 @@ export function useWorkspaceTabsController(options: UseWorkspaceTabsControllerOp
     closeOtherTabs,
     resetTabs,
     saveActiveContext,
+    beginNavigation,
+    isNavigationCurrent,
+    activateRenderSnapshotLibrary,
+    getRenderSnapshot,
+    clearRenderSnapshots,
   };
 }
