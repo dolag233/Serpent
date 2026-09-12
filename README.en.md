@@ -72,7 +72,7 @@ npm run package          # package to out/Serpent-<platform>-<arch>/
 npm run make             # build platform installers (macOS dmg / Windows zip; Windows setup via Inno Setup)
 ```
 
-The full build, packaging and release flow is in the [developer docs](https://github.com/dolag233/Serpent/blob/dev/docs/developer/build-packaging.en.md).
+The full build, packaging and release flow is in the [developer docs](docs/developer/build-packaging.en.md).
 
 ## Documentation
 
@@ -80,7 +80,7 @@ The full build, packaging and release flow is in the [developer docs](https://gi
 | --- | --- |
 | [User guide](docs/user-guide/README.en.md) | Install, import, browse, search, tags, collections, 3D viewer, troubleshooting |
 | [Online docs](https://serpent.dolag.work/docs/user-guide/) | The latest user guide in your browser |
-| [Developer docs](https://github.com/dolag233/Serpent/blob/dev/docs/developer/README.en.md) | Setup, build & packaging, architecture, testing |
+| [Developer docs](docs/developer/README.en.md) | Setup, build & packaging, architecture, testing |
 | [Extension author manual](docs/manual/README.md) | Plugins / scripts / MCP |
 | [Product brief](docs/product-brief.md) | Product vision and MVP scope |
 

@@ -7,7 +7,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [使用手册](user-guide/README.md) | 安装、导入、浏览、搜索与过滤、标签/合集、查看器、AI 分析、插件/MCP、故障排查（中英双语） |
-| [开发者文档](https://github.com/dolag233/Serpent/blob/dev/docs/developer/README.md) | 软件开发（架构、构建、测试）与扩展开发（插件/脚本/MCP）（中英双语） |
+| [开发者文档](developer/README.md) | 软件开发（架构、构建、测试）与扩展开发（插件/脚本/MCP）（中英双语） |
 | [扩展作者手册](manual/README.md) | 插件、脚本、MCP 开发指南与 API 参考 |
 | [产品简报](product-brief.md) | 产品愿景与 MVP 边界 |
 | [术语表](glossary.md) | 领域术语 |

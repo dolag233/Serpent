@@ -70,7 +70,7 @@ npm run package          # 打包到 out/Serpent-<platform>-<arch>/
 npm run make             # 按平台生成安装包（macOS dmg / Windows zip；Windows 安装器用 Inno Setup 构建）
 ```
 
-完整的构建、打包、发布流程见[开发者文档](https://github.com/dolag233/Serpent/blob/dev/docs/developer/build-packaging.md)。
+完整的构建、打包、发布流程见[开发者文档](docs/developer/build-packaging.md)。
 
 ## 文档
 
@@ -78,7 +78,7 @@ npm run make             # 按平台生成安装包（macOS dmg / Windows zip；
 | --- | --- |
 | [使用手册](docs/user-guide/README.md) | 安装、导入、浏览、搜索、标签、合集、3D 查看、故障排查 |
 | [在线文档](https://serpent.dolag.work/docs/user-guide/) | 浏览器中阅读最新使用手册 |
-| [开发者文档](https://github.com/dolag233/Serpent/blob/dev/docs/developer/README.md) | 环境搭建、构建打包、架构、测试 |
+| [开发者文档](docs/developer/README.md) | 环境搭建、构建打包、架构、测试 |
 | [扩展作者手册](docs/manual/README.md) | 插件 / 脚本 / MCP |
 | [产品简报](docs/product-brief.md) | 产品愿景与 MVP 边界 |
 
