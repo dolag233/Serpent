@@ -4216,13 +4216,13 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       if (request.autoAnalyzeEnabled && !request.disclaimerAccepted) {
         return {
           ok: false,
-          error: createPublicError("INVALID_IMPORT_DECISION"),
+          error: createPublicError("AI_ANALYSIS_FAILED", "AI_NOT_CONFIGURED"),
         } satisfies RendererResult;
       }
       if (!request.apiKey && !currentConfig.hasKey) {
         return {
           ok: false,
-          error: createPublicError("INVALID_IMPORT_DECISION"),
+          error: createPublicError("AI_ANALYSIS_FAILED", "AI_NOT_CONFIGURED"),
         } satisfies RendererResult;
       }
       const savedConfig: AiConfig = {
@@ -4664,7 +4664,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       if (decision.sourcePaths.length === 0) {
         return {
           ok: false,
-          error: createPublicError("INVALID_IMPORT_DECISION"),
+          error: createPublicError("INVALID_SELECTION"),
         } satisfies RendererResult;
       }
       command = {

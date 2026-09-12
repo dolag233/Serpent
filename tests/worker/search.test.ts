@@ -1933,7 +1933,7 @@ describe('smart collections v6', () => {
 
     expectServiceCode(
       () => service.createSmartCollection({ libraryId, name: 'Bad', queryDefinitionJson: 'not-json' }),
-      'INVALID_IMPORT_DECISION',
+      'INVALID_SMART_COLLECTION_QUERY',
     );
 
     service.closeAll();
@@ -1948,7 +1948,7 @@ describe('smart collections v6', () => {
         name: 'Bad shape',
         queryDefinitionJson: '{"search":"hero","absolutePath":"/private/tmp/secret"}',
       }),
-      'INVALID_IMPORT_DECISION',
+      'INVALID_SMART_COLLECTION_QUERY',
     );
 
     service.closeAll();

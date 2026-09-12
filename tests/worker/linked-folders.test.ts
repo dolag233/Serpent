@@ -606,8 +606,38 @@ describe('Linked folder import', () => {
     service.closeAll();
   });
 
-  it('copies managed assets into the real linked root without moving their managed source', () => {
+  // Serpent-50c466 audit §5.2: an unusable rule pattern is a bad name, not an
+  // import decision — the dialog lets the user type any text.
+  it('rejects an unusable linked-folder rule pattern with a name error', () => {
     const root = temporaryRoot();
+    const sourceRoot = path.join(root, 'rules-source');
+    mkdirSync(sourceRoot);
+    writeFileSync(path.join(sourceRoot, 'a.png'), 'a');
+    const service = newService();
+    const library = service.createLibrary({ displayName: 'RulePattern', selectedParentPath: root });
+    const linked = service.importFolderAsLinked({ libraryId: library.libraryId, sourceRootPath: sourceRoot });
+
+    const rejection = (pattern: string, target: 'path' | 'filename' | 'extension') => {
+      try {
+        service.setLinkedFolderRules({
+          libraryId: library.libraryId,
+          folderId: linked.folderId,
+          rules: [{ ruleId: 'probe', action: 'exclude', target, pattern, enabled: true }],
+        });
+      } catch (error) {
+        return error;
+      }
+      return undefined;
+    };
+
+    // Empty pattern, a path separator in a filename rule, and an escaping path.
+    expect(rejection('   ', 'filename')).toMatchObject({ code: 'INVALID_FOLDER_NAME' });
+    expect(rejection('sub/dir', 'filename')).toMatchObject({ code: 'INVALID_FOLDER_NAME' });
+    expect(rejection('../escape', 'path')).toMatchObject({ code: 'INVALID_FOLDER_NAME' });
+    service.closeAll();
+  });
+
+  it('copies managed assets into the real linked root without moving their managed source', () => {    const root = temporaryRoot();
     const linkedRoot = path.join(root, 'linked');
     const importRoot = path.join(root, 'incoming');
     mkdirSync(linkedRoot);

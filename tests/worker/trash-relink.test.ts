@@ -1200,7 +1200,7 @@ describe('restoreAssets', () => {
 
     expectServiceError(
       () => service.restoreAssets({ libraryId: created.libraryId, assetIds: [asset.assetId, asset.assetId] }),
-      'INVALID_STATE_TRANSITION',
+      'INVALID_SELECTION',
     );
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
     expect((database.prepare("SELECT COUNT(*) AS count FROM file_operations WHERE kind = 'restore'").get() as { count: number }).count).toBe(0);
@@ -1294,7 +1294,7 @@ describe('deleteAssetsPermanent', () => {
         libraryId: created.libraryId,
         assetIds: [trashed.assetId, trashed.assetId],
       }),
-      'INVALID_STATE_TRANSITION',
+      'INVALID_SELECTION',
     );
     expect(existsSync(trashPath)).toBe(true);
     expect(service.listTrash(created.libraryId).map((asset) => asset.assetId)).toContain(trashed.assetId);
@@ -1774,7 +1774,7 @@ describe('deleteLinkedAssets', () => {
       libraryId: created.libraryId,
       assetIds: [asset!.assetId, asset!.assetId],
       deleteSourceFile: false,
-    })).rejects.toMatchObject({ code: 'INVALID_STATE_TRANSITION' });
+    })).rejects.toMatchObject({ code: 'INVALID_SELECTION' });
     expect(service.listAssets({ libraryId: created.libraryId, recursive: true })).toHaveLength(1);
     service.closeAll();
   });
@@ -1929,7 +1929,7 @@ describe('deleteLinkedAssets', () => {
       libraryId: created.libraryId,
       assetIds: [r.assets[0]!.assetId],
       deleteSourceFile: false,
-    })).rejects.toMatchObject({ code: 'INVALID_STATE_TRANSITION' });
+    })).rejects.toMatchObject({ code: 'ASSET_NOT_MANAGED' });
     service.closeAll();
   });
 });

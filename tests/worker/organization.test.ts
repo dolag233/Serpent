@@ -1633,7 +1633,7 @@ describe('smart collections', () => {
     expectServiceCode(
       () =>
         service.createSmartCollection({ libraryId, name: 'Bad', queryDefinitionJson: 'not json' }),
-      'INVALID_IMPORT_DECISION',
+      'INVALID_SMART_COLLECTION_QUERY',
     );
     service.closeAll();
   });

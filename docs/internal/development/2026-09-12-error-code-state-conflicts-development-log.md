@@ -73,7 +73,49 @@ tsc --noEmit / eslint → exit 0
 
 另有一项**行为层面**的改进来自同一份审查报告，本单未做（需要产品口径）：永久删除/回收站对"已完成"的批次改为**幂等成功**而不是报错。现在重复点仍会得到上面的专用码提示。若要改成静默幂等，请单独开单确认交互。
 
-## 6. 未验证 / 边界
+## 6. 自主核查：独立子代理审计后的修正（2026-09-12 同日）
+
+`Serpent-50c466` 的另一条轨道派了一个独立子代理（deepseek-v4.1-flash，只读）做全量复核，产出 [`docs/internal/reviews/2026-09-12-error-code-misuse-audit.md`](../reviews/2026-09-12-error-code-misuse-audit.md)（77 处基线调用点、逐处 file:line + 所属方法 + 可达性判定）。它的结论直接纠正了本次 §3 的一处失误：
+
+**§3 的失误**：把 23 处**参数/选择守卫**（空数组、重复 id、`.length !== .length`、跨文件夹选择、批次里混了类型不符的项）也写成了 `INVALID_STATE_TRANSITION`，而它的文案是「资源库当前的状态不支持这一步（可能有另一个窗口或后台任务刚改过它）。请刷新磁盘变化后重试。」——对"选择为空/重复"这类输入，原因归错了、解法（刷新磁盘变化）永远不会好。已按审计建议新增：
+
+| 新码 / reason | zh-CN |
+| --- | --- |
+| `INVALID_SELECTION` | 所选内容不适用于这项操作。请重新选择，或刷新列表后重试。 |
+| `ASSET_STATE_CONFLICT` | 该资产的当前状态不支持这项操作（可能已在别处删除、恢复或修改）。请刷新列表后重试。 |
+| reason `IMAGE_SEQUENCE_SELECTION` | 创建序列图需要同一文件夹内、文件名按编号连续的一组图片（至少 3 张）。 |
+
+修正后 `INVALID_STATE_TRANSITION` 只保留给**真正的状态竞争**（查询结果与请求批次不一致等 6 处）；23 处守卫改判为 `INVALID_SELECTION`（其中链接目录路径非法的 2 处→`INVALID_FOLDER_NAME`、"不是链接资产"的 1 处→`ASSET_NOT_MANAGED`）。
+
+同时按审计 §5.2 完成其余用户可见点（全部复用既有码，除上面两个新码）：
+
+| 场景 | 站点 | 新码 |
+| --- | --- | --- |
+| 跨文件夹/不构成序列的建序列图 | 16580/16599/16602 | `INVALID_SELECTION`（后两处带 `IMAGE_SEQUENCE_SELECTION`） |
+| 选中帧状态变化（如某帧已进回收站） | 16596 | `ASSET_STATE_CONFLICT` |
+| 智能合集查询 JSON 非法 | 31807/31935/32036 | `INVALID_SMART_COLLECTION_QUERY`（含形参联合类型） |
+| 链接规则模式非法（自由文本） | 38222/38228/38232/38237 | `INVALID_FOLDER_NAME` |
+| 重定位落点被占用 | 32300/32360 | `ASSET_FILE_NAME_CONFLICT` + reason `SOURCE_CHANGED` |
+| 回收站第一阶段 lstat 失败 | 35350 | `LIBRARY_IO_ERROR` + reason `IO_ERROR` |
+| AI 设置缺失（Main） | main/index.ts:4219/4225 | `AI_ANALYSIS_FAILED` + `AI_NOT_CONFIGURED`（与同文件 4066/4074 一致） |
+| 自动化帧区间无文件（Main） | main/index.ts:4667 | `INVALID_SELECTION` |
+| 清空 AI 内容缺 folderId / 自动化预览缺 folder | 19512 / 11130 | `FOLDER_NOT_FOUND` |
+
+测试同步：`trash-relink` 4 条断言（重复 id / 非链接资产）改判；`search.test.ts` 2 条与 `organization.test.ts` 1 条改为 `INVALID_SMART_COLLECTION_QUERY`；新增 `image-sequence` 2 条（跨文件夹 → `INVALID_SELECTION`+reason、帧进回收站 → `ASSET_STATE_CONFLICT`）与 `linked-folders` 1 条（规则模式非法 → `INVALID_FOLDER_NAME`）；`error-state-transition-copy` 扩到 21 条，覆盖 6 个状态/选择码 + 6 个复用码的中英文案，并断言 `INVALID_SELECTION` 的文案里**没有**"另一个窗口"、`INVALID_STATE_TRANSITION` 有。
+
+## 7. Phase 2（本次未做，剩余 33 处 + 审计 §4 的同类问题）
+
+- 输入/模式/格式校验类调用点（审计报告 §5.2 第 20–21 行之外的 33 处）：智能合集解析其余分支、忽略规则/路径、文本资产读写、图片序列其余守卫、插件/缩略图/模型伴随、`placeManagedRelinkFile` 等。
+- 审计 §4.2–§4.9 发现的**同一类"文案与场景不符"**（已另行开单，见工单 `Serpent-3c71f3`）：
+  - `FOLDER_ALREADY_EXISTS` 的**恢复专用文案**被用在文件夹/合集/智能合集**创建**路径（用户建重名文件夹会被告知"无法恢复到原路径"）
+  - `FOLDER_NOT_FOUND` 的"磁盘可能已断开"文案被用于标签/合集/智能合集不存在
+  - `VERSION_CONFLICT` 的"元数据被改过"文案被用于自动化计划过期
+  - 协议 `Error.message`（英文原文）被直接渲染进中文界面（`App.tsx:6244/6276/6292/6306`、`TextViewerControls.tsx:114/216`）
+  - 7 个公开码在两个 catalog 都缺文案（含 `FOLDER_NOT_EMPTY`，删除非空文件夹时用户可见）
+  - `worker/index.ts:1480-1489` 硬编码中文缩略图失败文案，英文界面也显示中文
+- 行为层面（需产品口径）：永久删除/回收站对已完成批次改幂等。
+
+## 8. 未验证 / 边界
 
 - packaged / Windows 打包态：未执行（Windows 开发态由 worker 测试覆盖）。
 - 人类验收：见清单 `ERROR-STATE-001`（连续 trash、对活跃资产 restore/永久删除、链接资产 trash 四种情况的文案）。

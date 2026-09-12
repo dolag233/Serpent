@@ -69,6 +69,14 @@ export const PUBLIC_ERROR_MESSAGES = {
     'That file lives in a linked folder, outside the library’s own storage. Serpent leaves those files where they are — handle it in your file manager.',
   INVALID_STATE_TRANSITION:
     'That action is not valid in the library’s current state, which another window or background task may have changed. Refresh disk changes and try again.',
+  // Serpent-50c466 audit (2026-09-12): argument/selection guards are a different
+  // failure from a state race — telling the user "another window changed the
+  // library, refresh disk changes" is a false cause for an empty or duplicated
+  // selection.
+  INVALID_SELECTION:
+    'The selected items cannot be used for this action. Reselect them, or refresh the list and try again.',
+  ASSET_STATE_CONFLICT:
+    'This asset is not in a state that supports this action — it may have been deleted, restored, or changed elsewhere. Refresh the list and try again.',
   INVALID_ASSET_FILE_NAME: 'Choose a file name that is safe on macOS and Windows.',
   ASSET_FILE_NAME_CONFLICT: 'A file with this name already exists in the asset folder.',
   INVALID_ASSET_METADATA: 'Choose valid asset metadata values, including six-digit hex colors and an HTTP(S) source page URL.',
@@ -170,6 +178,8 @@ export const publicErrorReasonSchema = z.enum([
   'LINKED_SOURCE_INSIDE_LIBRARY',
   'LINKED_SOURCE_ALREADY_LINKED',
   'LINKED_SOURCE_INSIDE_LINKED_FOLDER',
+  /** Serpent-50c466 audit: image-sequence selection does not form one series. */
+  'IMAGE_SEQUENCE_SELECTION',
 ]);
 
 export type PublicErrorReason = z.infer<typeof publicErrorReasonSchema>;

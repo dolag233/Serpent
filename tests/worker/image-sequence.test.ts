@@ -62,6 +62,32 @@ async function writePngFrames(
   );
 }
 
+/** Distinct-byte PNG frames, so separate imports are never duplicate suspects. */
+async function writeDistinctFrames(
+  directory: string,
+  names: readonly string[],
+  size: { width: number; height: number },
+  seed = 0,
+): Promise<string[]> {
+  mkdirSync(directory, { recursive: true });
+  return Promise.all(
+    names.map(async (name, index) => {
+      const filePath = path.join(directory, name);
+      await sharp({
+        create: {
+          background: { b: 32, g: 96, r: 190 + seed + index },
+          channels: 3,
+          height: size.height,
+          width: size.width,
+        },
+      })
+        .png()
+        .toFile(filePath);
+      return filePath;
+    }),
+  );
+}
+
 afterEach(() => {
   for (const service of services.splice(0)) service.closeAll();
   for (const root of roots.splice(0)) {
@@ -604,5 +630,90 @@ describe("image sequence persistence", () => {
     const trash = service.listTrash(library.libraryId);
     expect(trash).toHaveLength(1);
     expect(trash[0]!.sequence?.frameCount).toBe(3);
+  });
+
+  // Serpent-50c466 audit §5.2/§5.3: the sequence guards used to report an
+  // "invalid import decision"; they are selection/state problems, not imports.
+  it("reports a selection error when the frames span folders", async () => {
+    const { library, root, service } = fixture();
+    const folderA = service.createManagedFolder({ libraryId: library.libraryId, name: "A" });
+    const folderB = service.createManagedFolder({ libraryId: library.libraryId, name: "B" });
+    const plan: Array<{ file: string; targetFolderId: string }> = [];
+    for (const [index, name] of ["alpha.png", "beta.png"].entries()) {
+      const directory = path.join(root, `spread-a-${index}`);
+      const [file] = await writeDistinctFrames(directory, [name], { width: 2, height: 2 }, index);
+      plan.push({ file: file!, targetFolderId: folderA.folderId });
+    }
+    {
+      const directory = path.join(root, "spread-b");
+      const [file] = await writeDistinctFrames(directory, ["gamma.png"], { width: 2, height: 2 }, 9);
+      plan.push({ file: file!, targetFolderId: folderB.folderId });
+    }
+    for (const entry of plan) {
+      const result = service.prepareOrExecuteImport({
+        libraryId: library.libraryId,
+        sourceKind: "files",
+        sourcePaths: [entry.file],
+        targetFolderId: entry.targetFolderId,
+        // Keep them ungrouped so the manual create path runs its own checks.
+        expandImageSequences: false,
+      });
+      expect("importId" in result).toBe(false);
+    }
+    const assets = service.listAssets({ libraryId: library.libraryId, recursive: true });
+    expect(assets).toHaveLength(3);
+
+    let caught: unknown;
+    try {
+      service.createImageSequence({
+        libraryId: library.libraryId,
+        assetIds: assets.map((asset) => asset.assetId),
+        fps: 12,
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(LibraryServiceError);
+    expect(caught).toMatchObject({
+      code: "INVALID_SELECTION",
+      reason: "IMAGE_SEQUENCE_SELECTION",
+    });
+  });
+
+  it("reports an asset state conflict when a selected frame is in the trash", async () => {
+    const { library, root, service } = fixture();
+    const frames = await writeDistinctFrames(path.join(root, "state"), [
+      // Non-series names: they stay three separate assets so the manual create
+      // path runs its own state check (a numbered run would group on import).
+      "one.png",
+      "two.png",
+      "three.png",
+    ], { width: 2, height: 2 });
+    const completion = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: "files",
+      sourcePaths: frames,
+      expandImageSequences: false,
+    });
+    expect("importId" in completion).toBe(false);
+    const assets = service.listAssets({ libraryId: library.libraryId, recursive: true });
+    expect(assets).toHaveLength(3);
+
+    service.trashAssets({
+      libraryId: library.libraryId,
+      assetIds: [assets[0]!.assetId],
+    });
+
+    let caught: unknown;
+    try {
+      service.createImageSequence({
+        libraryId: library.libraryId,
+        assetIds: assets.map((asset) => asset.assetId),
+        fps: 12,
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({ code: "ASSET_STATE_CONFLICT" });
   });
 });
