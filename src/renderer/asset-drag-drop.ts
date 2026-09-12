@@ -207,3 +207,22 @@ export function resolveTrashDrop(
     skippedCount: assets.length - eligible.length,
   };
 }
+
+/**
+ * Serpent-374266: which of the dropped assets are not members of the collection
+ * yet. Dropping an asset into a collection it already belongs to changes
+ * nothing, so the caller stays silent instead of reporting an add that did not
+ * happen.
+ */
+export function resolveNewCollectionMembers(
+  assetIds: readonly string[],
+  memberships: readonly { assetId: string; collectionId: string }[],
+  collectionId: string,
+): string[] {
+  const existing = new Set(
+    memberships
+      .filter((entry) => entry.collectionId === collectionId)
+      .map((entry) => entry.assetId),
+  );
+  return assetIds.filter((assetId) => !existing.has(assetId));
+}

@@ -298,6 +298,8 @@ interface AssetContextMenuProps {
   onEditCollectionDetails: (collectionId: string) => void;
   onDeleteOrganization: (id: string, name: string) => void;
   onCreateSubfolder: (folderId: string) => void;
+  /** Serpent-316493: 导入链接文件夹 as a child of this managed folder. */
+  onImportLinkedFolderInto: (folderId: string) => void;
   onSetIgnore: (args: {
     locationKind: "managed" | "linked";
     linkedFolderId?: string | null;
@@ -403,6 +405,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onEditCollectionDetails,
     onDeleteOrganization,
     onCreateSubfolder,
+    onImportLinkedFolderInto,
     onSetIgnore,
     onRenameFolder,
     onOpenFolderInFileManager,
@@ -818,6 +821,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             actions: {
               openFolderInFileManager: onOpenFolderInFileManager,
               createSubfolder: onCreateSubfolder,
+              importLinkedFolderInto: onImportLinkedFolderInto,
               renameFolder: onRenameFolder,
               openLinkedRules: onOpenLinkedRules,
               copyFolderPath: onCopyFolderPath,
@@ -909,6 +913,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             actions: {
               openFolderInFileManager: onOpenFolderInFileManager,
               createSubfolder: onCreateSubfolder,
+              importLinkedFolderInto: onImportLinkedFolderInto,
               renameFolder: onRenameFolder,
               openLinkedRules: onOpenLinkedRules,
               copyFolderPath: onCopyFolderPath,
@@ -1034,9 +1039,11 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             linkedFolder,
             isLinkedRoot: desc.locationKind === "linked" ? !isLinkedChild : undefined,
             linkedRelativePath: desc.linkedRelativePath,
+            isLibraryRoot: desc.isLibraryRoot === true,
             actions: {
               openFolderInFileManager: onOpenFolderInFileManager,
               createSubfolder: onCreateSubfolder,
+              importLinkedFolderInto: onImportLinkedFolderInto,
               renameFolder: onRenameFolder,
               openLinkedRules: onOpenLinkedRules,
               copyFolderPath: onCopyFolderPath,
@@ -1079,6 +1086,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           const createSubfolderItem = resolvedById.get(
             "folder.create-subfolder",
           );
+          const importLinkedItem = resolvedById.get("folder.import-linked");
           const renameItem = resolvedById.get("folder.rename");
           const linkedRulesItem = resolvedById.get("folder.linked-rules");
           const copyPathItem = resolvedById.get("folder.copy-path");
@@ -1092,11 +1100,30 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           const removeFromLibraryItem = resolvedById.get(
             "folder.remove-from-library",
           );
+          // Serpent-316493 follow-up: the library root has no managed_folders
+          // row, so plugin folder commands (which receive a folder id) are not
+          // offered for the blank-area menu.
+          const folderPluginItems = (
+            group: "open" | "organize" | "delete",
+            placement: "before" | "after",
+          ) =>
+            desc.isLibraryRoot
+              ? []
+              : pluginItemsForHostGroup(pluginFolderMenuPlacement, group, placement);
           return (
             <>
+              {/* Serpent-a6c516: name the subject — the root has no row of its
+                  own in the menu, so the panel's blank area / root row menu
+                  starts by saying what it acts on. Quiet caption weight: the
+                  shared summary class is the emphasized multi-select style. */}
+              {desc.isLibraryRoot && (
+                <div className="context-menu-selection-summary context-menu-subject">
+                  {t("menu.libraryRoot")}
+                </div>
+              )}
               <ContextMenuSection label={t("command.group.open")}>
                 <PluginMenuItems
-                  items={pluginItemsForHostGroup(pluginFolderMenuPlacement, "open", "before")}
+                  items={folderPluginItems("open", "before")}
                   onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
                 />
                 {openInFileManagerItem && (
@@ -1113,13 +1140,13 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   />
                 )}
                 <PluginMenuItems
-                  items={pluginItemsForHostGroup(pluginFolderMenuPlacement, "open", "after")}
+                  items={folderPluginItems("open", "after")}
                   onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
                 />
               </ContextMenuSection>
               <ContextMenuSection label={t("command.group.folders")}>
                 <PluginMenuItems
-                  items={pluginItemsForHostGroup(pluginFolderMenuPlacement, "organize", "before")}
+                  items={folderPluginItems("organize", "before")}
                   onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
                 />
                 {createSubfolderItem && (
@@ -1130,6 +1157,13 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     onAction={() =>
                       runSidebarCommand("folder.create-subfolder")
                     }
+                  />
+                )}
+                {importLinkedItem && (
+                  <ContextMenuItem
+                    icon={<Icon name="link" size={14} />}
+                    label={importLinkedItem.label}
+                    onAction={() => runSidebarCommand("folder.import-linked")}
                   />
                 )}
                 {renameItem && (
@@ -1192,37 +1226,42 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   />
                 )}
                 <PluginMenuItems
-                  items={pluginItemsForHostGroup(pluginFolderMenuPlacement, "organize", "after")}
+                  items={folderPluginItems("organize", "after")}
                   onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
                 />
-                <ContextMenuItem
-                  icon={<Icon name="close" size={14} />}
-                  label={t("menu.ignoreFolder")}
-                  onAction={() => {
-                    const managed = desc.locationKind === "managed"
-                      ? managedFolders.find((folder) => folder.folderId === desc.folderId)
-                      : undefined;
-                    onSetIgnore({
-                      locationKind: desc.locationKind,
-                      linkedFolderId: desc.locationKind === "linked" ? desc.folderId : null,
-                      relativePath: desc.locationKind === "linked"
-                        ? desc.linkedRelativePath ?? ""
-                        : managed?.relativePath ?? desc.name,
-                      pathKind: "folder",
-                      ignored: true,
-                      name: desc.name,
-                    });
-                  }}
-                />
+                {/* Serpent-a6c516: the library root cannot be ignored — it has
+                    no managed folder row, so this entry would build an ignore
+                    rule from the menu's own label instead of a real path. */}
+                {!desc.isLibraryRoot && (
+                  <ContextMenuItem
+                    icon={<Icon name="close" size={14} />}
+                    label={t("menu.ignoreFolder")}
+                    onAction={() => {
+                      const managed = desc.locationKind === "managed"
+                        ? managedFolders.find((folder) => folder.folderId === desc.folderId)
+                        : undefined;
+                      onSetIgnore({
+                        locationKind: desc.locationKind,
+                        linkedFolderId: desc.locationKind === "linked" ? desc.folderId : null,
+                        relativePath: desc.locationKind === "linked"
+                          ? desc.linkedRelativePath ?? ""
+                          : managed?.relativePath ?? desc.name,
+                        pathKind: "folder",
+                        ignored: true,
+                        name: desc.name,
+                      });
+                    }}
+                  />
+                )}
               </ContextMenuSection>
               {(trashItem
                 || deleteFromDiskItem
                 || removeFromLibraryItem
-                || pluginItemsForHostGroup(pluginFolderMenuPlacement, "delete", "before").length > 0
-                || pluginItemsForHostGroup(pluginFolderMenuPlacement, "delete", "after").length > 0) && (
+                || folderPluginItems("delete", "before").length > 0
+                || folderPluginItems("delete", "after").length > 0) && (
                 <ContextMenuSection label={t("command.group.delete")}>
                   <PluginMenuItems
-                    items={pluginItemsForHostGroup(pluginFolderMenuPlacement, "delete", "before")}
+                    items={folderPluginItems("delete", "before")}
                     onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
                   />
                   {trashItem && (
@@ -1262,7 +1301,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     />
                   )}
                   <PluginMenuItems
-                    items={pluginItemsForHostGroup(pluginFolderMenuPlacement, "delete", "after")}
+                    items={folderPluginItems("delete", "after")}
                     onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
                   />
                 </ContextMenuSection>

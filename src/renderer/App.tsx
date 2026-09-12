@@ -414,6 +414,7 @@ import type {
   TrashedFolderSummary,
 } from "../shared/asset-types";
 import type { LibraryNavigationSummary } from "../shared/library-navigation";
+import { LIBRARY_ROOT_FOLDER_ID, isLibraryRootFolderId } from "../shared/library-root-folder";
 import { hasMeaningfulSmartCollectionCondition } from "../shared/smart-collection-query";
 import { expandFormatFilterTokens } from "../shared/text-media";
 import type {
@@ -2154,6 +2155,29 @@ function AppInner() {
         : null,
     [],
   );
+  // Serpent-374266: the same snapshot for managed-folder drags started from the
+  // browse canvas. The sidebar needs it to tell whether a folder drop target
+  // would change anything; the HTML5 payload itself cannot be read during
+  // dragover (protected mode).
+  const managedFolderDragIdsRef = useRef<readonly string[] | null>(null);
+  const getManagedFolderDragIds = useCallback(
+    () =>
+      managedFolderDragIdsRef.current
+        ? [...managedFolderDragIdsRef.current]
+        : null,
+    [],
+  );
+  useEffect(() => {
+    const clearManagedFolderDragIds = () => {
+      managedFolderDragIdsRef.current = null;
+    };
+    window.addEventListener("dragend", clearManagedFolderDragIds);
+    window.addEventListener("drop", clearManagedFolderDragIds);
+    return () => {
+      window.removeEventListener("dragend", clearManagedFolderDragIds);
+      window.removeEventListener("drop", clearManagedFolderDragIds);
+    };
+  }, []);
   // Escape cancels the renderer-side drag session immediately. Native OS
   // drags are cancelled by Electron/the operating system; this also clears
   // the custom ghost and internal selection fallback so a cancelled gesture
@@ -7004,7 +7028,7 @@ function AppInner() {
     if (!result.ok) {
       setImageSequenceDialog((current) =>
         current
-          ? { ...current, submitting: false, error: result.error.message }
+          ? { ...current, submitting: false, error: messageForPublicError(result.error, locale) }
           : current,
       );
       return;
@@ -7036,7 +7060,7 @@ function AppInner() {
     if (!result.ok) {
       setImageSequenceDialog((current) =>
         current
-          ? { ...current, submitting: false, error: result.error.message }
+          ? { ...current, submitting: false, error: messageForPublicError(result.error, locale) }
           : current,
       );
       return;
@@ -7052,7 +7076,7 @@ function AppInner() {
       sequenceId,
     });
     if (!result.ok) {
-      setError(result.error.message);
+      setError(messageForPublicError(result.error, locale));
       return;
     }
     clearAssetSelection();
@@ -7066,7 +7090,7 @@ function AppInner() {
       sequenceIds,
     });
     if (!result.ok) {
-      setError(result.error.message);
+      setError(messageForPublicError(result.error, locale));
       return;
     }
     clearAssetSelection();
@@ -8255,7 +8279,7 @@ function AppInner() {
     }
   }
 
-  async function importFolderAsLinked() {
+  async function importFolderAsLinked(parentFolderId: string | null = null) {
     if (!api || !library) return;
     const startedAt = Date.now();
     setUiState("importing");
@@ -8265,6 +8289,9 @@ function AppInner() {
       const result = await api.importFolderAsLinked({
         libraryId: library.libraryId,
         displayName: undefined,
+        // Serpent-316493: null = library root (folder-section link button);
+        // a managed folder id hangs the link under that folder.
+        parentFolderId,
       });
       if (!result.ok) {
         if (result.error.code === "CANCELLED") return;
@@ -11433,6 +11460,8 @@ function AppInner() {
               entry.folderId,
               selectedFolderIds,
             );
+            // Serpent-374266: let the sidebar validate drop targets with it.
+            managedFolderDragIdsRef.current = [...folderIds];
             event.dataTransfer.setData(
               MANAGED_FOLDERS_DRAG_TYPE,
               JSON.stringify(folderIds),
@@ -11854,6 +11883,22 @@ function AppInner() {
           handleTargetExternalDrop(event, targetFolderId, targetCollectionId)
         }
         getManagedAssetDragIds={getManagedAssetDragIds}
+        getManagedFolderDragIds={getManagedFolderDragIds}
+        onOpenRootFolderContextMenu={({ x, y }) =>
+          // Serpent-a6c516: the folder panel's blank area and the 「资源库根目录」
+          // row are both the library root, so they share this menu.
+          openContextMenu(
+            {
+              type: "folder",
+              folderId: LIBRARY_ROOT_FOLDER_ID,
+              // Shown in the menu's leading line and its accessible name.
+              name: t("menu.libraryRoot"),
+              locationKind: "managed",
+              isLibraryRoot: true,
+            },
+            { x, y },
+          )
+        }
         onResolveManagedAssetDrop={resolveManagedAssetDrop}
         onAssetsDroppedOnFolder={(folderId, assetIds, mode) =>
           handleAssetsDroppedOnFolder(folderId, assetIds, mode)
@@ -11906,7 +11951,10 @@ function AppInner() {
               setLinkedFolderHintActive(false);
             }, 8000);
           }
-          openInlineFolderCreate(selectedFolderId ?? null);
+          // Serpent-186547: the folder-section 「+」 always creates at the
+          // library root, independent of the folder currently in scope.
+          // Subfolders are created from the folder's context menu (新建子文件夹).
+          openInlineFolderCreate(null);
         }}
         onAddSmartCollection={() => {
           cancelInlineFolderEdit();
@@ -14037,7 +14085,14 @@ function AppInner() {
         }}
         onCreateSubfolder={(folderId) => {
           cancelInlineSmartCollectionEdit();
-          openInlineFolderCreate(folderId);
+          openInlineFolderCreate(isLibraryRootFolderId(folderId) ? null : folderId);
+        }}
+        onImportLinkedFolderInto={(folderId) => {
+          // Serpent-316493: 导入链接文件夹 under the right-clicked folder (or at
+          // the library root when the folder panel's blank area was clicked).
+          void importFolderAsLinked(
+            isLibraryRootFolderId(folderId) ? null : folderId,
+          );
         }}
         onSetIgnore={({ locationKind, linkedFolderId, relativePath, pathKind, ignored, name }) => {
           void setIgnoreState({ locationKind, linkedFolderId, relativePath, pathKind, ignored, name });
@@ -14056,7 +14111,9 @@ function AppInner() {
           void handleCopyFolder(folderId);
         }}
         onPasteIntoFolder={(folderId) => {
-          dispatchClipboardPaste(folderId);
+          // Serpent-316493 follow-up: the root sentinel means "the library
+          // root", which paste/import APIs express as null.
+          dispatchClipboardPaste(isLibraryRootFolderId(folderId) ? null : folderId);
         }}
         onCloneFolder={(folderId) => {
           void cloneFolder(folderId);

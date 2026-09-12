@@ -150,6 +150,67 @@ describe("buildUnifiedDirectoryNavEntries", () => {
     ]);
   });
 
+  // Serpent-316493: a linked root imported into a managed folder hangs under it.
+  it("nests a linked root under its managed parent and shifts its children", () => {
+    const folders = [
+      managed({ folderId: "p", name: "Parent", relativePath: "Parent" }),
+    ];
+    const entries = buildUnifiedDirectoryNavEntries(folders, [
+      linked({
+        folderId: "link",
+        displayName: "Link",
+        assetCount: 3,
+        linkedFolderId: "link",
+        relativePath: "",
+        parentFolderId: "p",
+      }),
+      linked({
+        folderId: "lfv:link/notes",
+        displayName: "notes",
+        assetCount: 1,
+        linkedFolderId: "link",
+        relativePath: "notes",
+        parentFolderId: "link",
+      }),
+    ]);
+
+    expect(entries.map((entry) => [entry.folderId, entry.depth, entry.parentFolderId]))
+      .toEqual([
+        ["p", 1, null],
+        ["link", 2, "p"],
+        ["lfv:link/notes", 3, "link"],
+      ]);
+  });
+
+  // Serpent-316493: a parent that is gone (trashed / deleted from disk) must not
+  // hide the link — it falls back to the library root and re-nests on restore.
+  it("falls back to the library root when the managed parent is not visible", () => {
+    const entries = buildUnifiedDirectoryNavEntries([], [
+      linked({
+        folderId: "link",
+        displayName: "Link",
+        assetCount: 1,
+        linkedFolderId: "link",
+        relativePath: "",
+        parentFolderId: "gone-folder",
+      }),
+      linked({
+        folderId: "lfv:link/notes",
+        displayName: "notes",
+        assetCount: 1,
+        linkedFolderId: "link",
+        relativePath: "notes",
+        parentFolderId: "link",
+      }),
+    ]);
+
+    expect(entries.map((entry) => [entry.folderId, entry.depth, entry.parentFolderId]))
+      .toEqual([
+        ["link", 1, null],
+        ["lfv:link/notes", 2, "link"],
+      ]);
+  });
+
   it("keeps linked-only roots at depth 1", () => {
     expect(
       buildUnifiedDirectoryNavEntries(
@@ -228,6 +289,43 @@ describe("sortManagedTreeEntries", () => {
 
   const ids = (entries: ReturnType<typeof buildUnifiedDirectoryNavEntries>) =>
     entries.map((entry) => entry.folderId);
+
+  // Serpent-316493: a linked root under a managed folder is emitted after that
+  // folder's own subtree, followed by its virtual children.
+  it("emits a nested linked root after its managed parent's subtree", () => {
+    const nested = linked({
+      folderId: "l2",
+      displayName: "Nested link",
+      assetCount: 2,
+      linkedFolderId: "l2",
+      relativePath: "",
+      parentFolderId: "apple",
+    });
+    const nestedChild = linked({
+      folderId: "lfv:l2/notes",
+      displayName: "notes",
+      assetCount: 1,
+      linkedFolderId: "l2",
+      relativePath: "notes",
+      parentFolderId: "l2",
+    });
+    const entries = buildUnifiedDirectoryNavEntries(treeFolders, [
+      linkedRoot,
+      nested,
+      nestedChild,
+    ]);
+    expect(ids(sortManagedTreeEntries(entries, "name", "asc"))).toEqual([
+      "apple",
+      "apple/grape",
+      "apple/kiwi",
+      "l2",
+      "lfv:l2/notes",
+      "banana",
+      "banana/fig",
+      "cherry",
+      "l1",
+    ]);
+  });
 
   it("sorts managed siblings by name ascending at every depth, keeping linked appended", () => {
     const entries = buildUnifiedDirectoryNavEntries(treeFolders, [linkedRoot]);

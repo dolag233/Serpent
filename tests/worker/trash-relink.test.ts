@@ -386,7 +386,7 @@ describe('trashAssets (soft delete)', () => {
 
     expectServiceError(
       () => service.trashAssets({ libraryId: created.libraryId, assetIds: [linkedAsset!.assetId] }),
-      'INVALID_IMPORT_DECISION',
+      'ASSET_NOT_MANAGED',
     );
     service.closeAll();
   });
@@ -424,7 +424,7 @@ describe('trashAssets (soft delete)', () => {
 
     expectServiceError(
       () => service.trashAssets({ libraryId: created.libraryId, assetIds: [r.assets[0]!.assetId] }),
-      'INVALID_IMPORT_DECISION',
+      'ASSET_ALREADY_TRASHED',
     );
     service.closeAll();
   });
@@ -1185,7 +1185,7 @@ describe('restoreAssets', () => {
 
     expectServiceError(
       () => service.restoreAssets({ libraryId: created.libraryId, assetIds: [r.assets[0]!.assetId] }),
-      'INVALID_IMPORT_DECISION',
+      'ASSET_NOT_TRASHED',
     );
     service.closeAll();
   });
@@ -1200,7 +1200,7 @@ describe('restoreAssets', () => {
 
     expectServiceError(
       () => service.restoreAssets({ libraryId: created.libraryId, assetIds: [asset.assetId, asset.assetId] }),
-      'INVALID_IMPORT_DECISION',
+      'INVALID_SELECTION',
     );
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
     expect((database.prepare("SELECT COUNT(*) AS count FROM file_operations WHERE kind = 'restore'").get() as { count: number }).count).toBe(0);
@@ -1266,7 +1266,7 @@ describe('deleteAssetsPermanent', () => {
 
     expectServiceError(
       () => service.deleteAssetsPermanent({ libraryId: created.libraryId, assetIds: [r.assets[0]!.assetId] }),
-      'INVALID_IMPORT_DECISION',
+      'ASSET_NOT_TRASHED',
     );
     service.closeAll();
   });
@@ -1287,14 +1287,14 @@ describe('deleteAssetsPermanent', () => {
         libraryId: created.libraryId,
         assetIds: [trashed.assetId, active.assetId],
       }),
-      'INVALID_IMPORT_DECISION',
+      'ASSET_NOT_TRASHED',
     );
     expectServiceError(
       () => service.deleteAssetsPermanent({
         libraryId: created.libraryId,
         assetIds: [trashed.assetId, trashed.assetId],
       }),
-      'INVALID_IMPORT_DECISION',
+      'INVALID_SELECTION',
     );
     expect(existsSync(trashPath)).toBe(true);
     expect(service.listTrash(created.libraryId).map((asset) => asset.assetId)).toContain(trashed.assetId);
@@ -1774,7 +1774,7 @@ describe('deleteLinkedAssets', () => {
       libraryId: created.libraryId,
       assetIds: [asset!.assetId, asset!.assetId],
       deleteSourceFile: false,
-    })).rejects.toMatchObject({ code: 'INVALID_IMPORT_DECISION' });
+    })).rejects.toMatchObject({ code: 'INVALID_SELECTION' });
     expect(service.listAssets({ libraryId: created.libraryId, recursive: true })).toHaveLength(1);
     service.closeAll();
   });
@@ -1929,7 +1929,7 @@ describe('deleteLinkedAssets', () => {
       libraryId: created.libraryId,
       assetIds: [r.assets[0]!.assetId],
       deleteSourceFile: false,
-    })).rejects.toMatchObject({ code: 'INVALID_IMPORT_DECISION' });
+    })).rejects.toMatchObject({ code: 'INVALID_SELECTION' });
     service.closeAll();
   });
 });
@@ -2041,7 +2041,7 @@ describe('relinkAsset (single missing asset)', () => {
     writeFileSync(path.join(root, 'new-avail.jpg'), 'new');
     expectServiceError(
       () => service.relinkAsset({ libraryId: created.libraryId, assetId: r.assets[0]!.assetId, newAbsolutePath: path.join(root, 'new-avail.jpg') }),
-      'INVALID_IMPORT_DECISION',
+      'INVALID_STATE_TRANSITION',
     );
     service.closeAll();
   });
@@ -2097,7 +2097,7 @@ describe('relinkAsset (single missing asset)', () => {
 
     expectServiceError(
       () => service.relinkAsset({ libraryId: created.libraryId, assetId, newAbsolutePath: path.join(root, 'any.jpg') }),
-      'INVALID_IMPORT_DECISION',
+      'ASSET_ALREADY_TRASHED',
     );
     service.closeAll();
   });

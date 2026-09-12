@@ -6,6 +6,7 @@ import type { RendererLibrarySummary } from "../shared/protocol/responses";
 import {
   resolveCollectionDrop,
   resolveFolderDrop,
+  resolveNewCollectionMembers,
   resolveTrashDrop,
   type DragAssetFact,
   type DragDropMode,
@@ -75,10 +76,11 @@ export function useAssetDragDropHandlers({
       });
       if (resolution.kind === "reject") {
         if (resolution.reason === "same-folder") {
-          setNotice(t("toast.alreadyInFolder"));
-        } else {
-          setNotice(t("toast.noMovableAssets"));
+          // Serpent-374266: the asset is already in that folder — nothing
+          // changed, so the drop stays silent instead of explaining a no-op.
+          return;
         }
+        setNotice(t("toast.noMovableAssets"));
         return;
       }
       void (async () => {
@@ -198,6 +200,23 @@ export function useAssetDragDropHandlers({
       }
       void (async () => {
         try {
+          // Serpent-374266: dropping an asset into a collection it already
+          // belongs to changes nothing. Check membership first so the drop is
+          // absorbed silently instead of reporting an add that did not happen
+          // (and so no meaningless history entry is created).
+          const memberships = await api.listAssetCollectionMemberships({
+            libraryId: library.libraryId,
+            assetIds: resolution.assetIds,
+          });
+          const newMemberIds = memberships.ok
+            ? resolveNewCollectionMembers(
+                resolution.assetIds,
+                memberships.value,
+                collectionId,
+              )
+            : resolution.assetIds;
+          if (memberships.ok && newMemberIds.length === 0) return;
+
           const result = await api.addCollectionAssets({
             libraryId: library.libraryId,
             collectionId,
@@ -210,7 +229,7 @@ export function useAssetDragDropHandlers({
           if (collectionResult.ok) setCollections(collectionResult.value);
           setNotice(
             t("toast.addedToCollectionCount", {
-              count: resolution.assetIds.length,
+              count: newMemberIds.length,
             }) +
               (resolution.skippedCount
                 ? t("toast.unavailableSkippedSuffix", {

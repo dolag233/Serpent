@@ -46,13 +46,16 @@ export function buildUnifiedDirectoryNavEntries(
     directAssetCount: folder.directAssetCount,
     createdAt: folder.createdAt,
   }));
+  const managedDepthById = new Map(
+    managedEntries.map((entry) => [entry.folderId, entry.depth]),
+  );
 
   const linkedRootName = new Map(
     linked
       .filter((folder) => (folder.relativePath ?? "") === "")
       .map((folder) => [folder.linkedFolderId ?? folder.folderId, folder.displayName]),
   );
-  const linkedEntries: UnifiedDirectoryNavEntry[] = [...linked]
+  const sortedLinked = [...linked]
     .sort((left, right) => {
       const leftPath = left.relativePath ?? "";
       const rightPath = right.relativePath ?? "";
@@ -64,22 +67,45 @@ export function buildUnifiedDirectoryNavEntries(
         return leftName.localeCompare(rightName);
       }
       return leftPath.localeCompare(rightPath);
-    })
-    .map((folder) => {
-      const relativePath = folder.relativePath ?? "";
-      const linkedFolderId = folder.linkedFolderId ?? folder.folderId;
-      return {
-        kind: "linked" as const,
-        folderId: folder.folderId,
-        name: folder.displayName,
-        depth: linkedFolderDepth(relativePath),
-        parentFolderId: folder.parentFolderId ?? null,
-        status: folder.status,
-        assetCount: folder.assetCount,
-        linkedFolderId,
-        relativePath,
-      };
     });
+
+  /**
+   * Serpent-316493: a linked root can hang under a managed folder (folder
+   * context menu → 导入链接文件夹). Its depth follows that parent; a parent
+   * that is no longer visible (trashed, or deleted from disk) falls back to the
+   * library root so the link never disappears from the tree — a restore puts it
+   * back under the parent automatically.
+   */
+  const linkedRootDepthById = new Map<string, number>();
+  const linkedEntries: UnifiedDirectoryNavEntry[] = [];
+  for (const folder of sortedLinked) {
+    const relativePath = folder.relativePath ?? "";
+    const linkedFolderId = folder.linkedFolderId ?? folder.folderId;
+    const parentFolderId = folder.parentFolderId ?? null;
+    const parentDepth =
+      parentFolderId === null
+        ? undefined
+        : managedDepthById.get(parentFolderId);
+    const nested = parentFolderId !== null && parentDepth !== undefined;
+    const depth = nested
+      ? parentDepth + 1
+      : linkedRootDepthById.get(linkedFolderId) !== undefined
+        ? linkedRootDepthById.get(linkedFolderId)! + linkedFolderDepth(relativePath) - 1
+        : linkedFolderDepth(relativePath);
+    if (relativePath === "") linkedRootDepthById.set(linkedFolderId, depth);
+    linkedEntries.push({
+      kind: "linked" as const,
+      folderId: folder.folderId,
+      name: folder.displayName,
+      depth,
+      parentFolderId:
+        relativePath === "" ? (nested ? parentFolderId : null) : parentFolderId,
+      status: folder.status,
+      assetCount: folder.assetCount,
+      linkedFolderId,
+      relativePath,
+    });
+  }
 
   return [...managedEntries, ...linkedEntries];
 }
@@ -213,14 +239,41 @@ export function sortManagedTreeEntries(
     group.sort(compare);
   }
 
+  // Serpent-316493: a linked root that hangs under a managed folder is emitted
+  // after that folder's own subtree (linked rows carry no creation time, and the
+  // tree already sends un-comparable siblings to the end of their level), each
+  // followed by its virtual subdirectories. Linked rows without a visible parent
+  // keep today's behaviour and stay at the end of the list.
+  const managedIds = new Set(managed.map((entry) => entry.folderId));
+  const linkedIds = new Set(linked.map((entry) => entry.folderId));
+  const linkedByParent = new Map<string, UnifiedDirectoryNavEntry[]>();
+  const rootLinked: UnifiedDirectoryNavEntry[] = [];
+  for (const entry of linked) {
+    const parentId = entry.parentFolderId;
+    if (parentId !== null && (managedIds.has(parentId) || linkedIds.has(parentId))) {
+      const group = linkedByParent.get(parentId) ?? [];
+      group.push(entry);
+      linkedByParent.set(parentId, group);
+    } else {
+      rootLinked.push(entry);
+    }
+  }
+
   const sorted: UnifiedDirectoryNavEntry[] = [];
+  const emitLinked = (parentId: string) => {
+    for (const child of linkedByParent.get(parentId) ?? []) {
+      sorted.push(child);
+      emitLinked(child.folderId);
+    }
+  };
   const visit = (parentId: string | null) => {
     for (const child of childrenByParent.get(parentId) ?? []) {
       sorted.push(child);
       visit(child.folderId);
+      emitLinked(child.folderId);
     }
   };
   visit(null);
 
-  return [...sorted, ...linked];
+  return [...sorted, ...rootLinked];
 }

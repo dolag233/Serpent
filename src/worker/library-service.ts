@@ -159,6 +159,7 @@ import {
 } from '../shared/content-replace';
 import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type BrowseLayoutEntry, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type IgnoredPath, type LinkedFolderDirectoryMutation, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchQuery, type SearchScope, type SortDefinition, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagCooccurrenceGraph, type TagSummary, type TrashedFolderSummary } from '../shared/asset-types';
 import type { LibraryNavigationSummary } from '../shared/library-navigation';
+import { isLibraryRootFolderId } from '../shared/library-root-folder';
 import { BROWSE_SCOPE_MAX_ASSETS } from '../shared/browse-scope';
 import {
   createAutomationFilePlanHash,
@@ -2639,6 +2640,26 @@ const LINKED_SOURCE_IDENTITY_SCHEMA_CHECKSUM = createHash('sha256')
   .update(LINKED_SOURCE_IDENTITY_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v49 (Serpent-316493): a linked root can be attached under a managed
+// folder ("导入链接文件夹" from the folder context menu). Deliberately no
+// REFERENCES clause: trashing a managed folder DELETEs its managed_folders row,
+// and a cascading SET NULL would silently reset the nesting — the id is kept so
+// a restore re-nests the link, while the renderer falls back to showing the
+// link at the library root whenever the parent is not visible.
+const LINKED_FOLDER_PARENT_SCHEMA_SQL = `
+  ALTER TABLE linked_folders ADD COLUMN parent_folder_id TEXT;
+`;
+const LINKED_FOLDER_PARENT_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(LINKED_FOLDER_PARENT_SCHEMA_SQL)
+  .digest('hex');
+
+function ensureLinkedFolderParentSchema(connection: DatabaseConnection): void {
+  const columns = columnsFor(connection, 'linked_folders');
+  if (!columns.has('parent_folder_id')) {
+    connection.exec('ALTER TABLE linked_folders ADD COLUMN parent_folder_id TEXT');
+  }
+}
+
 function ensureLinkedSourceIdentitySchema(connection: DatabaseConnection): void {
   const columns = columnsFor(connection, 'assets');
   if (!columns.has('source_device')) {
@@ -3254,6 +3275,11 @@ export const MIGRATIONS = [
     version: 48,
     sql: LINKED_SOURCE_IDENTITY_SCHEMA_SQL,
     checksum: LINKED_SOURCE_IDENTITY_SCHEMA_CHECKSUM,
+  },
+  {
+    version: 49,
+    sql: LINKED_FOLDER_PARENT_SCHEMA_SQL,
+    checksum: LINKED_FOLDER_PARENT_SCHEMA_CHECKSUM,
   },
 ] as const;
 export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
@@ -5333,6 +5359,7 @@ function migrateLegacyPluginMigrationHistory(connection: DatabaseConnection): vo
     connection.exec(ARTIFACT_IDENTITY_SCHEMA_SQL);
   }
   ensureContentFingerprintColumn(connection);
+  ensureLinkedFolderParentSchema(connection);
   const historyObjects = [
     'operation_history',
     'operation_history_steps',
@@ -6065,6 +6092,8 @@ function migrateDatabaseUnserialized(connection: DatabaseConnection, allowFresh:
           ensureSyncSchema(connection);
         } else if (migration.version === 48) {
           ensureLinkedSourceIdentitySchema(connection);
+        } else if (migration.version === 49) {
+          ensureLinkedFolderParentSchema(connection);
         } else {
           connection.exec(migration.sql);
         }
@@ -11090,7 +11119,7 @@ export class LibraryService {
   } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
     if (input.operation === 'move') {
       // Validate target folder exists when moving into a non-root folder.
@@ -11098,7 +11127,7 @@ export class LibraryService {
         const folder = openLibrary.connection.prepare(
           'SELECT folder_id FROM managed_folders WHERE folder_id = ?',
         ).get(input.targetFolderId);
-        if (!folder) throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+        if (!folder) throw new LibraryServiceError('INVALID_SELECTION');
       }
     }
     const rows = sqliteAllInChunks<string, {
@@ -12659,7 +12688,7 @@ export class LibraryService {
       input.folderIds.length === 0 ||
       new Set(input.folderIds).size !== input.folderIds.length
     ) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
     const strategy = input.conflictStrategy ?? 'keep-both';
     const targetParent =
@@ -13486,7 +13515,7 @@ export class LibraryService {
       try {
         relativePath = normalizeRelativeAssetPath(input.relativePath);
       } catch (error) {
-        throw new LibraryServiceError('INVALID_IMPORT_DECISION', { cause: error });
+        throw new LibraryServiceError('INVALID_FOLDER_NAME', { cause: error });
       }
     }
 
@@ -13616,7 +13645,7 @@ export class LibraryService {
         ? ''
         : normalizeRelativeAssetPath(relativePath);
     } catch (error) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', { cause: error });
+      throw new LibraryServiceError('INVALID_FOLDER_NAME', { cause: error });
     }
     const linked = openLibrary.connection
       .prepare(
@@ -14036,7 +14065,7 @@ export class LibraryService {
     });
 
     if (rows.length !== assetIds.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_STATE_TRANSITION');
     }
 
     for (let index = 0; index < rows.length; index += 1) {
@@ -14119,7 +14148,7 @@ export class LibraryService {
     });
 
     if (rows.length !== assetIds.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_STATE_TRANSITION');
     }
 
     const deletedFromDiskIds: string[] = [];
@@ -14168,7 +14197,7 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     this.assertLibraryWritable(openLibrary);
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
     const logicalCount = this.countLogicalAssetUnits(
       openLibrary,
@@ -14191,14 +14220,19 @@ export class LibraryService {
       for (const id of assetIds) {
         const row = rows.find((candidate) => candidate.asset_id === id);
         if (!row) throw new LibraryServiceError('ASSET_NOT_FOUND');
-        if (row.location_kind !== 'managed' || row.deleted_at !== null) {
-          throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+        if (row.location_kind !== 'managed') {
+          throw new LibraryServiceError('ASSET_NOT_MANAGED');
+        }
+        if (row.deleted_at !== null) {
+          throw new LibraryServiceError('ASSET_ALREADY_TRASHED');
         }
       }
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
     }
-    if (rows.some((row) => row.location_kind !== 'managed' || row.deleted_at !== null)) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    if (rows.some((row) => row.location_kind !== 'managed')) {
+      throw new LibraryServiceError('ASSET_NOT_MANAGED');
+    }
+    if (rows.some((row) => row.deleted_at !== null)) {
+      throw new LibraryServiceError('ASSET_ALREADY_TRASHED');
     }
     await this.cancelMediaJobsForAssets(openLibrary, assetIds);
     await this.deleteActiveManagedAssetsFromDiskWithProgress(
@@ -15718,13 +15752,15 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const rows = openLibrary.connection
       .prepare(
-        'SELECT folder_id, display_name, status, absolute_root_path FROM linked_folders WHERE library_id = ? ORDER BY display_name',
+        `SELECT folder_id, display_name, status, absolute_root_path, parent_folder_id
+           FROM linked_folders WHERE library_id = ? ORDER BY display_name`,
       )
       .all(libraryId) as Array<{
         folder_id: string;
         display_name: string;
         status: 'available' | 'offline';
         absolute_root_path: string;
+        parent_folder_id: string | null;
       }>;
     return rows
       .filter((row) => !this.explicitFolderIgnored(openLibrary, 'linked', row.folder_id, ''))
@@ -15748,7 +15784,8 @@ export class LibraryService {
           absoluteRootPath: row.absolute_root_path,
           linkedFolderId: row.folder_id,
           relativePath: '',
-          parentFolderId: null,
+          // Serpent-316493: a linked root may hang under a managed folder.
+          parentFolderId: row.parent_folder_id ?? null,
         };
         const children = prefixes
           .filter((prefix) => !this.explicitFolderIgnored(openLibrary, 'linked', row.folder_id, prefix))
@@ -15805,7 +15842,7 @@ export class LibraryService {
     ).get(input.folderId, input.libraryId);
     if (!folder) throw new LibraryServiceError('FOLDER_NOT_FOUND');
     if (input.rules.length > 200 || new Set(input.rules.map((rule) => rule.ruleId)).size !== input.rules.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
     const rules = input.rules.map((rule) => this.normalizeLinkedFolderRule(rule));
     let hiddenCount = 0;
@@ -15993,7 +16030,7 @@ export class LibraryService {
     this.assertLibraryWritable(openLibrary);
     this.assertAssetsNotExplicitlyIgnored(openLibrary, input.assetIds);
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
     const rows = sqliteAllInChunks<string, {
       asset_id: string;
@@ -16535,11 +16572,11 @@ export class LibraryService {
   }): AssetSummary {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (!Number.isFinite(input.fps) || input.fps < 1 || input.fps > 240) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INTERNAL_ERROR');
     }
     const uniqueIds = [...new Set(input.assetIds)];
     if (uniqueIds.length < 3 || uniqueIds.length !== input.assetIds.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
     const rows = sqliteAllInChunks<string, { asset_id: string; relative_file_path: string }>({
       connection: openLibrary.connection,
@@ -16555,13 +16592,13 @@ export class LibraryService {
             )`,
     });
     if (rows.length !== uniqueIds.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('ASSET_STATE_CONFLICT');
     }
     const directories = new Set(rows.map((row) => path.posix.dirname(row.relative_file_path)));
-    if (directories.size !== 1) throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    if (directories.size !== 1) throw new LibraryServiceError('INVALID_SELECTION', { reason: 'IMAGE_SEQUENCE_SELECTION' });
     const candidate = detectImageSequences(rows.map((row) => row.relative_file_path))
       .find((item) => item.frames.length === rows.length);
-    if (!candidate) throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    if (!candidate) throw new LibraryServiceError('INVALID_SELECTION', { reason: 'IMAGE_SEQUENCE_SELECTION' });
     const byPath = new Map(rows.map((row) => [row.relative_file_path, row.asset_id]));
     const frames = candidate.frames.map((frame) => ({
       assetId: byPath.get(frame.value)!,
@@ -16622,7 +16659,7 @@ export class LibraryService {
   }): { sequenceId: string; fps: number } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (!Number.isFinite(input.fps) || input.fps < 1 || input.fps > 240) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INTERNAL_ERROR');
     }
     const result = openLibrary.connection
       .prepare(
@@ -16820,6 +16857,8 @@ export class LibraryService {
     libraryId: string;
     sourceRootPath: string;
     displayName?: string;
+    /** Serpent-316493: managed folder to hang the linked root under. */
+    parentFolderId?: string | null;
   }): LinkedFolderSummary {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     let sourceRoot: string;
@@ -16827,6 +16866,19 @@ export class LibraryService {
       sourceRoot = normalizeAbsolutePath(input.sourceRootPath);
     } catch (error) {
       throw serviceError(error, 'INVALID_IMPORT_SOURCE');
+    }
+
+    // Serpent-316493: the parent must be an active managed folder of this
+    // library. Linked ids never match, so "link under a linked folder" is
+    // rejected here rather than silently accepted.
+    const parentFolderId = input.parentFolderId ?? null;
+    if (parentFolderId !== null) {
+      // managed_folders has no library_id column: the library is the database
+      // file itself.
+      const parent = openLibrary.connection
+        .prepare('SELECT folder_id FROM managed_folders WHERE folder_id = ?')
+        .get(parentFolderId);
+      if (!parent) throw new LibraryServiceError('FOLDER_NOT_FOUND');
     }
 
     let rootStat: BigIntStats;
@@ -16859,10 +16911,41 @@ export class LibraryService {
     // helper rejects absolute paths; the linked root is device-specific anyway.
     const pathIdentity = canonicalRoot;
 
+    // Serpent-316493 rejection rules: the library's own tree is managed by
+    // Serpent, and a folder already covered by a linked root would be indexed
+    // twice. Both are reported with a specific reason so the UI can explain.
+    let canonicalLibraryPath = openLibrary.summary.libraryPath;
+    try {
+      canonicalLibraryPath = realpathSync(canonicalLibraryPath);
+    } catch {
+      // Unresolvable library path: fall back to the configured one.
+    }
+    if (pathIsWithin(canonicalLibraryPath, canonicalRoot)) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+        reason: 'LINKED_SOURCE_INSIDE_LIBRARY',
+      });
+    }
+    const linkedRoots = openLibrary.connection
+      .prepare('SELECT absolute_root_path FROM linked_folders WHERE library_id = ?')
+      .all(input.libraryId) as Array<{ absolute_root_path: string }>;
+    for (const linkedRoot of linkedRoots) {
+      if (!pathIsWithin(linkedRoot.absolute_root_path, canonicalRoot)) continue;
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+        reason:
+          linkedRoot.absolute_root_path === canonicalRoot
+            ? 'LINKED_SOURCE_ALREADY_LINKED'
+            : 'LINKED_SOURCE_INSIDE_LINKED_FOLDER',
+      });
+    }
+
     const existing = openLibrary.connection
       .prepare('SELECT folder_id FROM linked_folders WHERE path_identity = ?')
       .get(pathIdentity);
-    if (existing) throw new LibraryServiceError('FOLDER_ALREADY_EXISTS');
+    if (existing) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+        reason: 'LINKED_SOURCE_ALREADY_LINKED',
+      });
+    }
 
     const folderId = randomUUID();
     const defaultRules = DEFAULT_LINKED_FOLDER_RULES.map((rule) => ({ ...rule, ruleId: randomUUID() }));
@@ -16875,8 +16958,8 @@ export class LibraryService {
         .prepare(
           `INSERT INTO linked_folders
              (folder_id, library_id, display_name, absolute_root_path, source_device_hint,
-              status, path_identity, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, 'available', ?, ?, ?)`,
+              status, path_identity, parent_folder_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'available', ?, ?, ?, ?)`,
         )
         .run(
           folderId,
@@ -16885,6 +16968,7 @@ export class LibraryService {
           canonicalRoot,
           sourceDeviceHintValue,
           pathIdentity,
+          parentFolderId,
           now,
           now,
         );
@@ -16948,7 +17032,8 @@ export class LibraryService {
       absoluteRootPath: canonicalRoot,
       linkedFolderId: folderId,
       relativePath: '',
-      parentFolderId: null,
+      // Serpent-316493: echo the requested parent (null = library root).
+      parentFolderId,
     };
   }
 
@@ -19407,9 +19492,7 @@ export class LibraryService {
       (input.scope.kind === 'library' || input.scope.kind === 'folder') &&
       !input.confirm
     ) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
-        reason: 'PERMISSION_DENIED',
-      });
+      throw new LibraryServiceError('CONFIRMATION_REQUIRED');
     }
 
     const conn = openLibrary.connection;
@@ -19423,9 +19506,7 @@ export class LibraryService {
         break;
       case 'folder': {
         if (!input.scope.folderId) {
-          throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
-            reason: 'SOURCE_NOT_FOUND',
-          });
+          throw new LibraryServiceError('INVALID_SELECTION');
         }
         // Recursive: get all assets under this folder (assets.managed_folder_id).
         const folderRows = conn
@@ -20825,6 +20906,13 @@ export class LibraryService {
    */
   resolveFolderPath(libraryId: string, folderId: string): string {
     const openLibrary = this.requireOpenLibrary(libraryId);
+    // Serpent-316493: the folder panel's blank area is the library root — its
+    // context menu resolves to the Assets directory that holds top-level files.
+    if (isLibraryRootFolderId(folderId)) {
+      const assetsPath = path.join(openLibrary.summary.libraryPath, 'Assets');
+      if (!directoryExists(assetsPath)) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+      return assetsPath;
+    }
     const managed = openLibrary.connection
       .prepare('SELECT relative_path FROM managed_folders WHERE folder_id = ?')
       .get(folderId) as { relative_path: string } | undefined;
@@ -21004,9 +21092,7 @@ export class LibraryService {
     const imageDecoder = imageDecoderForExtension(ext);
     const viewerDecoder = imageViewerDecoderForExtension(ext);
     if (mediaType === 'other' || (mediaType === 'image' && !imageDecoder)) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
-        reason: 'UNSUPPORTED_FORMAT',
-      });
+      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE');
     }
 
     // Model assets have no sharp/OIIO/FFmpeg generator in the Worker; their
@@ -26828,9 +26914,7 @@ export class LibraryService {
       throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
     }
     if (!isSupportedModelExtension(asset.relative_file_path)) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
-        reason: 'UNSUPPORTED_FORMAT',
-      });
+      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE');
     }
     return queryModelCompanionAssets(openLibrary.connection, asset.relative_file_path);
   }
@@ -26874,7 +26958,7 @@ export class LibraryService {
         ? 'audio_proxy'
         : 'thumbnail';
     if (input.kind !== expectedKind) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', { reason: 'UNSUPPORTED_FORMAT' });
+      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE');
     }
     const jobKind = input.kind === 'webm_proxy'
       ? 'generate_webm_proxy'
@@ -31769,7 +31853,7 @@ export class LibraryService {
     // change the query still assert via updateSmartCollection.
     const definition = this.parseSmartCollectionDefinition(
       input.queryDefinitionJson,
-      'INVALID_IMPORT_DECISION',
+      'INVALID_SMART_COLLECTION_QUERY',
     );
 
     const collectionId = randomUUID();
@@ -31897,7 +31981,7 @@ export class LibraryService {
     if (input.queryDefinitionJson !== undefined) {
       definition = this.parseSmartCollectionDefinition(
         input.queryDefinitionJson,
-        'INVALID_IMPORT_DECISION',
+        'INVALID_SMART_COLLECTION_QUERY',
       );
       this.assertMeaningfulSmartCollectionDefinition(definition);
     }
@@ -31998,7 +32082,7 @@ export class LibraryService {
 
   private parseSmartCollectionDefinition(
     value: string,
-    errorCode: 'INVALID_IMPORT_DECISION' | 'LIBRARY_CORRUPT',
+    errorCode: 'INVALID_SMART_COLLECTION_QUERY' | 'LIBRARY_CORRUPT',
   ): SmartCollectionQueryDefinition {
     if (value.length > 65_536) throw new LibraryServiceError(errorCode);
     try {
@@ -32262,9 +32346,7 @@ export class LibraryService {
   } {
     const destinationPath = this.folderPath(openLibrary, destinationRelativePath);
     if (existsSync(destinationPath)) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
-        reason: 'SOURCE_CHANGED',
-      });
+      throw new LibraryServiceError('ASSET_FILE_NAME_CONFLICT');
     }
 
     let sourceStat: BigIntStats;
@@ -32322,9 +32404,7 @@ export class LibraryService {
         throw new LibraryServiceError('INVALID_LIBRARY_PATH');
       }
       if (existsSync(destinationPath)) {
-        throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
-          reason: 'SOURCE_CHANGED',
-        });
+        throw new LibraryServiceError('ASSET_FILE_NAME_CONFLICT');
       }
       renameSync(stagedPath, destinationPath);
       placed = true;
@@ -33070,7 +33150,7 @@ export class LibraryService {
     this.assertLibraryWritable(openLibrary);
     this.assertAssetsNotExplicitlyIgnored(openLibrary, input.assetIds);
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
     // 目标是链接文件夹（链接根或其虚拟子目录）：把 managed 资产复制进链接
     // 外部目录并注册为链接资产，再永久删除已复制的 managed 源——对用户而言
@@ -33089,7 +33169,7 @@ export class LibraryService {
       }).reduce((total, row) => total + row.count, 0);
       if (managedSourceCount !== input.assetIds.length) {
         // 链接资产移动到链接文件夹是另一场景，此处仅支持 managed → linked。
-        throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+        throw new LibraryServiceError('INVALID_SELECTION');
       }
       const strategy = input.conflictStrategy ?? 'keep-both';
       const copy = this.copyAssetsToLinkedFolder({
@@ -33299,7 +33379,7 @@ export class LibraryService {
     this.assertLibraryWritable(openLibrary);
     this.assertAssetsNotExplicitlyIgnored(openLibrary, input.assetIds);
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
     // 目标是链接文件夹（链接根或其虚拟子目录）：与 moveAssets 的链接分支对称，
     // 复制进链接外部目录并注册为链接资产（copyAssetsToLinkedFolder 支持 managed
@@ -33340,7 +33420,7 @@ export class LibraryService {
         locationRows.length !== input.assetIds.length ||
         locationRows.some((row) => row.location_kind !== 'linked')
       ) {
-        throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+        throw new LibraryServiceError('INVALID_SELECTION');
       }
       const linkedCopy = this.copyLinkedAssetsToManagedFolder({
         libraryId: input.libraryId,
@@ -33895,7 +33975,7 @@ export class LibraryService {
       throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
     }
     if (LibraryService.detectMediaType(row.relative_file_path) !== 'text') {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', { reason: 'UNSUPPORTED_FORMAT' });
+      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE');
     }
 
     const absolutePath = isTrashed
@@ -33937,7 +34017,7 @@ export class LibraryService {
     }
 
     if (buffer.includes(0)) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', { reason: 'UNSUPPORTED_FORMAT' });
+      throw new LibraryServiceError('ASSET_CONTENT_INVALID');
     }
 
     const truncated = buffer.length > maxBytes;
@@ -34000,7 +34080,7 @@ export class LibraryService {
       throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
     }
     if (LibraryService.detectMediaType(row.relative_file_path) !== 'text') {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', { reason: 'UNSUPPORTED_FORMAT' });
+      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE');
     }
     if (
       input.expectedRevisionId &&
@@ -35137,7 +35217,7 @@ export class LibraryService {
     assets: AssetSummary[];
   } {
     if (input.items.length === 0 || new Set(input.items.map((item) => item.assetId)).size !== input.items.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
     const assets: AssetSummary[] = [];
     const skipped: Array<{
@@ -35240,7 +35320,7 @@ export class LibraryService {
       this.assertAssetsNotExplicitlyIgnored(openLibrary, input.assetIds);
     }
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
     const logicalCount = this.countLogicalAssetUnits(
       openLibrary,
@@ -35251,7 +35331,7 @@ export class LibraryService {
       input.assetIds,
     );
     if (assetIds.length === 0 || new Set(assetIds).size !== assetIds.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
 
     // Validate all assets are managed, active, and exist.
@@ -35277,8 +35357,8 @@ export class LibraryService {
           .prepare('SELECT location_kind, deleted_at FROM assets WHERE asset_id = ?')
           .get(id) as { location_kind: string; deleted_at: string | null } | undefined;
         if (!exists) throw new LibraryServiceError('ASSET_NOT_FOUND');
-        if (exists.location_kind !== 'managed') throw new LibraryServiceError('INVALID_IMPORT_DECISION');
-        if (exists.deleted_at !== null) throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+        if (exists.location_kind !== 'managed') throw new LibraryServiceError('ASSET_NOT_MANAGED');
+        if (exists.deleted_at !== null) throw new LibraryServiceError('ASSET_ALREADY_TRASHED');
       }
     }
 
@@ -35312,7 +35392,7 @@ export class LibraryService {
           sourceExists = sourceStat.isFile() && !sourceStat.isSymbolicLink();
         } catch (error) {
           if (!isUnreadablePathError(error)) {
-            throw new LibraryServiceError('IMPORT_APPLY_FAILED', { cause: error });
+            throw new LibraryServiceError('LIBRARY_IO_ERROR', { reason: 'IO_ERROR', cause: error });
           }
         }
         if (!sourceExists) {
@@ -35452,7 +35532,7 @@ export class LibraryService {
     const assetIds = [...input.assetIds];
     const folderIds = [...input.folderIds];
     if (assetIds.length === 0 && folderIds.length === 0) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
     if (
       new Set(assetIds).size !== assetIds.length
@@ -35460,7 +35540,7 @@ export class LibraryService {
       || assetIds.length > 10_000
       || folderIds.length > 10_000
     ) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
 
     // Resolve and collapse folders before touching either the filesystem or
@@ -35522,8 +35602,11 @@ export class LibraryService {
       for (const assetId of independentAssetIds) {
         const row = rowById.get(assetId);
         if (!row) throw new LibraryServiceError('ASSET_NOT_FOUND');
-        if (row.location_kind !== 'managed' || row.deleted_at !== null) {
-          throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+        if (row.location_kind !== 'managed') {
+          throw new LibraryServiceError('ASSET_NOT_MANAGED');
+        }
+        if (row.deleted_at !== null) {
+          throw new LibraryServiceError('ASSET_ALREADY_TRASHED');
         }
       }
     }
@@ -35666,7 +35749,7 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const assetIds = input.assetIds;
     if (assetIds.length === 0 || new Set(assetIds).size !== assetIds.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
 
     const rows = sqliteAllInChunks<string, {
@@ -35693,7 +35776,7 @@ export class LibraryService {
           .prepare('SELECT asset_id FROM assets WHERE asset_id = ?')
           .get(id);
         if (!exists) throw new LibraryServiceError('ASSET_NOT_FOUND');
-        throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+        throw new LibraryServiceError('ASSET_NOT_TRASHED');
       }
     }
 
@@ -35750,14 +35833,14 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     this.assertLibraryWritable(openLibrary);
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
     const assetIds = this.expandAssetIdsToSequenceMembers(
       openLibrary,
       input.assetIds,
     );
     if (assetIds.length === 0 || new Set(assetIds).size !== assetIds.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
 
     // Validate all assets are trashed (deleted_at IS NOT NULL).
@@ -35792,7 +35875,7 @@ export class LibraryService {
           .prepare('SELECT asset_id FROM assets WHERE asset_id = ?')
           .get(id);
         if (!exists) throw new LibraryServiceError('ASSET_NOT_FOUND');
-        throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+        throw new LibraryServiceError('ASSET_NOT_TRASHED');
       }
     }
 
@@ -36246,11 +36329,11 @@ export class LibraryService {
   } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
     const assetIds = this.expandAssetIdsToSequenceMembers(openLibrary, input.assetIds);
     if (assetIds.length === 0 || new Set(assetIds).size !== assetIds.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
     const rows = sqliteAllInChunks<string, {
       asset_id: string;
@@ -36273,7 +36356,7 @@ export class LibraryService {
       if (rowById.has(assetId)) continue;
       const existing = openLibrary.connection.prepare('SELECT asset_id FROM assets WHERE asset_id = ?').get(assetId);
       if (!existing) throw new LibraryServiceError('ASSET_NOT_FOUND');
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('ASSET_NOT_TRASHED');
     }
 
     const accepted: string[] = [];
@@ -36360,7 +36443,7 @@ export class LibraryService {
     this.assertLibraryWritable(openLibrary);
     this.assertAssetsNotExplicitlyIgnored(openLibrary, input.assetIds);
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
     const logicalCount = this.countLogicalAssetUnits(
       openLibrary,
@@ -36392,11 +36475,13 @@ export class LibraryService {
           | { asset_id: string; location_kind: string; deleted_at: string | null }
           | undefined;
         if (!exists) throw new LibraryServiceError('ASSET_NOT_FOUND');
-        if (exists.location_kind !== 'managed' || exists.deleted_at !== null) {
-          throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+        if (exists.location_kind !== 'managed') {
+          throw new LibraryServiceError('ASSET_NOT_MANAGED');
+        }
+        if (exists.deleted_at !== null) {
+          throw new LibraryServiceError('ASSET_ALREADY_TRASHED');
         }
       }
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
     }
 
     const operationId = randomUUID();
@@ -36458,7 +36543,7 @@ export class LibraryService {
     this.assertLibraryWritable(openLibrary);
     this.assertAssetsNotExplicitlyIgnored(openLibrary, input.assetIds);
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
     const logicalInputCount = this.countLogicalAssetUnits(
       openLibrary,
@@ -36488,9 +36573,10 @@ export class LibraryService {
           .prepare('SELECT asset_id, deleted_at FROM assets WHERE asset_id = ?')
           .get(id) as { asset_id: string; deleted_at: string | null } | undefined;
         if (!exists) throw new LibraryServiceError('ASSET_NOT_FOUND');
-        if (exists.deleted_at === null) throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+        if (exists.deleted_at === null) {
+          throw new LibraryServiceError('ASSET_NOT_TRASHED', { reason: 'PERMANENT_DELETE_NEEDS_TRASH' });
+        }
       }
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
     }
 
     let deletedCount = 0;
@@ -37298,10 +37384,10 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     this.assertAssetsNotExplicitlyIgnored(openLibrary, input.assetIds);
     if (input.assetIds.length === 0 || input.assetIds.length > 20) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
     if (new Set(input.assetIds).size !== input.assetIds.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
 
     const rows = withSqliteInPredicate(
@@ -37328,10 +37414,14 @@ export class LibraryService {
     for (const id of input.assetIds) {
       if (!foundIds.has(id)) {
         const exists = openLibrary.connection
-          .prepare('SELECT location_kind FROM assets WHERE asset_id = ?')
-          .get(id) as { location_kind: string } | undefined;
+          .prepare('SELECT location_kind, deleted_at FROM assets WHERE asset_id = ?')
+          .get(id) as { location_kind: string; deleted_at: string | null } | undefined;
         if (!exists) throw new LibraryServiceError('ASSET_NOT_FOUND');
-        throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+        if (exists.deleted_at !== null) {
+          throw new LibraryServiceError('ASSET_ALREADY_TRASHED');
+        }
+        // A managed asset cannot be handled by the linked-asset delete path.
+        throw new LibraryServiceError('INVALID_SELECTION');
       }
     }
 
@@ -37553,8 +37643,8 @@ export class LibraryService {
         deleted_at: string | null;
       } | undefined;
     if (!assetRow) throw new LibraryServiceError('ASSET_NOT_FOUND');
-    if (assetRow.deleted_at !== null) throw new LibraryServiceError('INVALID_IMPORT_DECISION');
-    if (assetRow.availability !== 'missing') throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    if (assetRow.deleted_at !== null) throw new LibraryServiceError('ASSET_ALREADY_TRASHED');
+    if (assetRow.availability !== 'missing') throw new LibraryServiceError('INVALID_STATE_TRANSITION');
 
     const batchFollowUpRoot = inferRelinkBatchRoot(
       assetRow.relative_file_path,
@@ -38178,22 +38268,22 @@ export class LibraryService {
   private normalizeLinkedFolderRule(rule: LinkedFolderRule): LinkedFolderRule {
     const pattern = rule.pattern.trim().normalize('NFC');
     if (pattern.length === 0 || pattern.length > 512 || pattern.includes('\0')) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_FOLDER_NAME');
     }
     if (rule.target === 'path') {
       try {
         return { ...rule, pattern: normalizeRelativeAssetPath(pattern) };
       } catch (error) {
-        throw new LibraryServiceError('INVALID_IMPORT_DECISION', { cause: error });
+        throw new LibraryServiceError('INVALID_FOLDER_NAME', { cause: error });
       }
     }
     if (pattern.includes('/') || pattern.includes('\\') || pattern === '.' || pattern === '..') {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_FOLDER_NAME');
     }
     const normalizedPattern = rule.target === 'extension'
       ? pattern.replace(/^\.+/u, '').toLowerCase()
       : pattern;
-    if (normalizedPattern.length === 0) throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    if (normalizedPattern.length === 0) throw new LibraryServiceError('INVALID_FOLDER_NAME');
     return { ...rule, pattern: normalizedPattern };
   }
 
@@ -38203,7 +38293,7 @@ export class LibraryService {
     try {
       return normalizeRelativeAssetPath(trimmed);
     } catch (error) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', { cause: error });
+      throw new LibraryServiceError('INVALID_FOLDER_NAME', { cause: error });
     }
   }
 
@@ -38550,7 +38640,7 @@ export class LibraryService {
         input.locationKind === 'linked' && input.pathKind === 'folder',
       );
     if (input.pathKind === 'extension' && (relativePath.length === 0 || relativePath.includes('/') || relativePath.includes('\\'))) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_FOLDER_NAME');
     }
     if (input.locationKind === 'linked' && !linkedFolderId) {
       throw new LibraryServiceError('FOLDER_NOT_FOUND');
@@ -39485,9 +39575,7 @@ export class LibraryService {
     if (this.linkedFolderRowForImport(openLibrary, input.targetFolderId)) {
       // Linked imports skip the managed staging pipeline; callers should use
       // prepareOrExecuteImport. Surface a clear error if prepareImport is used alone.
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
-        reason: 'SOURCE_NOT_FOUND',
-      });
+      throw new LibraryServiceError('AUTOMATION_FILE_PLAN_INVALID');
     }
     const targetFolder = this.targetFolder(openLibrary, input.targetFolderId);
     const enumerated = input.sourceEntries
@@ -41052,7 +41140,7 @@ export class LibraryService {
     const pending = this.pendingImports.get(input.importId);
     if (!pending) throw new LibraryServiceError('IMPORT_NOT_FOUND');
     if (pending.awaitingSourceFailureDecision) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('IMPORT_AWAITING_DECISION');
     }
     this.pendingImports.delete(input.importId);
     this.cancelImportExpiry(pending);

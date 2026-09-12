@@ -58,13 +58,12 @@ export function useFolderDragDropHandlers({
         folders: folderFacts(),
       });
       if (resolution.kind === 'reject') {
-        if (resolution.reason === 'same-parent') {
-          setNotice(t('toast.folderAlreadyThere'));
-        } else if (resolution.reason === 'into-self') {
-          setNotice(t('toast.folderMoveIntoSelf'));
-        } else if (resolution.reason === 'into-descendant') {
-          setNotice(t('toast.folderMoveIntoDescendant'));
-        }
+        // Serpent-374266: a drop that leaves the tree unchanged must stay silent.
+        // Dropping a folder onto itself, onto its current parent, or onto its own
+        // descendant changes nothing the user can see, and the sidebar does not
+        // highlight those targets either, so the gesture is simply absorbed
+        // instead of answering with a notice. (用户 2026-09-12：拖回原位时提示
+        // 「不能将文件夹移动到自身。」属冗余提示。)
         return;
       }
       void (async () => {

@@ -379,3 +379,154 @@ test('applies default ignore rules — .git and node_modules are not registered 
     rmSync(temporaryRoot, { force: true, recursive: true });
   }
 });
+
+// Serpent-316493: 文件夹右键 →「导入链接文件夹」把磁盘目录链接为该文件夹的子级。
+// The import itself is driven through the typed bridge so the assertion is not
+// coupled to the native folder picker; the menu entry itself is asserted
+// separately (managed only, never on a linked folder).
+test('imports a linked folder as a child of a managed folder', async () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-linked-child-e2e-'));
+  const sourceRoot = path.join(temporaryRoot, 'source');
+  const libraryName = '链接子文件夹验收';
+  const libraryPath = path.join(temporaryRoot, libraryName);
+  mkdirSync(sourceRoot);
+  writeFileSync(path.join(sourceRoot, 'a.png'), Buffer.from('aaa'));
+  mkdirSync(path.join(sourceRoot, 'sub'));
+  writeFileSync(path.join(sourceRoot, 'sub', 'b.png'), Buffer.from('bbb'));
+
+  const executablePath = resolveElectronExecutablePath();
+  const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  const application = await electron.launch({
+    args: [applicationDirectory],
+    cwd: applicationDirectory,
+    executablePath,
+    env: {
+      ...process.env,
+      SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
+      SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
+      SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
+      SERPENT_E2E_LINKED_SOURCE: sourceRoot,
+    },
+  });
+
+  try {
+    const window = await application.firstWindow();
+    await window.getByRole('button', { name: '创建资源库' }).click();
+    await window.getByRole('textbox', { name: '名称' }).fill(libraryName);
+    await window.getByRole('button', { name: '创建', exact: true }).click();
+    await waitForLibraryLoadingToFinish(window);
+
+    await window.waitForTimeout(2500);
+    await window.getByRole('button', { name: '添加文件夹' }).click();
+    const folderInput = window.locator('.nav-inline-edit input');
+    await expect(folderInput).toBeVisible();
+    await folderInput.fill('Alpha');
+    await folderInput.press('Enter');
+    const alphaRow = window.locator(
+      '.navigation-pane button.nav-row[data-nav-folder-kind="managed"][title="Alpha"]',
+    );
+    await expect(alphaRow).toBeVisible({ timeout: 10_000 });
+    const alphaId = await alphaRow.getAttribute('data-nav-folder-id');
+    expect(alphaId).toBeTruthy();
+
+    // The real user path: right-click the managed folder → 导入链接文件夹.
+    await alphaRow.click({ button: 'right' });
+    const alphaMenu = window.getByRole('menu', { name: '文件夹操作：Alpha', exact: true });
+    await expect(alphaMenu).toBeVisible();
+    await alphaMenu.getByRole('menuitem', { name: '导入链接文件夹' }).click();
+
+    // The sidebar renders the link under Alpha (one level deeper than Alpha).
+    // Linked rows carry the absolute path in `title`, so match the row label.
+    const linkedRow = window
+      .locator('.navigation-pane button.nav-row[data-nav-folder-kind="linked"]')
+      .filter({ has: window.locator('.nav-row-label', { hasText: /^source$/ }) });
+    await expect(linkedRow).toBeVisible({ timeout: 15_000 });
+
+    // …and the worker stored the parent relationship.
+    expect(
+      await window.evaluate(async (parentId) => {
+        const api = (
+          globalThis as typeof globalThis & {
+            serpent: {
+              library: {
+                listOpen(): Promise<{ ok: boolean; value?: Array<{ libraryId: string }> }>;
+                listLinkedFolders(input: { libraryId: string }): Promise<{
+                  ok: boolean;
+                  value?: Array<{ relativePath?: string; parentFolderId?: string | null }>;
+                }>;
+              };
+            };
+          }
+        ).serpent.library;
+        const open = await api.listOpen();
+        const libraryId = open.value?.[0]?.libraryId;
+        if (!libraryId) return null;
+        const listed = await api.listLinkedFolders({ libraryId });
+        const roots = (listed.value ?? []).filter((folder) => (folder.relativePath ?? '') === '');
+        return roots.length === 1 && roots[0]?.parentFolderId === parentId;
+      }, alphaId),
+    ).toBe(true);
+    const depth = await window.evaluate(() => {
+      const paddingForLabel = (kind: string, label: string) => {
+        const rows = [
+          ...document.querySelectorAll<HTMLElement>(
+            `.navigation-pane button.nav-row[data-nav-folder-kind="${kind}"]`,
+          ),
+        ];
+        const row = rows.find(
+          (candidate) =>
+            candidate.querySelector('.nav-row-label')?.textContent?.trim() === label,
+        );
+        return row?.closest<HTMLElement>('.nav-tree-row')?.style.paddingLeft ?? null;
+      };
+      return {
+        alpha: paddingForLabel('managed', 'Alpha'),
+        linked: paddingForLabel('linked', 'source'),
+      };
+    });
+    expect(depth).toEqual({ alpha: '14px', linked: '28px' });
+
+    // The menu entry is offered on a managed folder…
+    await alphaRow.click({ button: 'right' });
+    const menu = window.getByRole('menu', { name: '文件夹操作：Alpha', exact: true });
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole('menuitem', { name: '导入链接文件夹' })).toBeVisible();
+    await window.keyboard.press('Escape');
+
+    // …and never on a linked folder (linked-in-linked stays unsupported).
+    await linkedRow.click({ button: 'right' });
+    const linkedMenu = window.getByRole('menu', { name: '文件夹操作：source', exact: true });
+    await expect(linkedMenu).toBeVisible();
+    await expect(linkedMenu.getByRole('menuitem', { name: '导入链接文件夹' })).toHaveCount(0);
+    await window.keyboard.press('Escape');
+
+    // The same directory again is rejected with the dedicated reason.
+    const rejection = await window.evaluate(async () => {
+      const api = (
+        globalThis as typeof globalThis & {
+          serpent: {
+            library: {
+              listOpen(): Promise<{ ok: boolean; value?: Array<{ libraryId: string }> }>;
+              importFolderAsLinked(input: {
+                libraryId: string;
+              }): Promise<{ ok: boolean; error?: { code: string; reason?: string } }>;
+            };
+          };
+        }
+      ).serpent.library;
+      const open = await api.listOpen();
+      const libraryId = open.value?.[0]?.libraryId;
+      if (!libraryId) return null;
+      const result = await api.importFolderAsLinked({ libraryId });
+      return result.ok ? null : { code: result.error?.code, reason: result.error?.reason };
+    });
+    expect(rejection).toEqual({
+      code: 'INVALID_IMPORT_SOURCE',
+      reason: 'LINKED_SOURCE_ALREADY_LINKED',
+    });
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});

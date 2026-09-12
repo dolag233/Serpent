@@ -2833,6 +2833,7 @@ async function commandFor(
             libraryId: request.libraryId,
             displayName: request.displayName,
             sourceRootPath,
+            parentFolderId: request.parentFolderId,
           }
         : undefined;
     }
@@ -4215,13 +4216,13 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       if (request.autoAnalyzeEnabled && !request.disclaimerAccepted) {
         return {
           ok: false,
-          error: createPublicError("INVALID_IMPORT_DECISION"),
+          error: createPublicError("CONFIRMATION_REQUIRED"),
         } satisfies RendererResult;
       }
       if (!request.apiKey && !currentConfig.hasKey) {
         return {
           ok: false,
-          error: createPublicError("INVALID_IMPORT_DECISION"),
+          error: createPublicError("AI_SETTINGS_INCOMPLETE"),
         } satisfies RendererResult;
       }
       const savedConfig: AiConfig = {
@@ -4648,7 +4649,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       if (sequenceIndex !== pending.nextSequenceIndex) {
         return {
           ok: false,
-          error: createPublicError("INVALID_IMPORT_DECISION"),
+          error: createPublicError("IMPORT_NOT_FOUND"),
         } satisfies RendererResult;
       }
       const sequence = stored.sequences[sequenceIndex];
@@ -4663,7 +4664,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       if (decision.sourcePaths.length === 0) {
         return {
           ok: false,
-          error: createPublicError("INVALID_IMPORT_DECISION"),
+          error: createPublicError("INVALID_SELECTION"),
         } satisfies RendererResult;
       }
       command = {
