@@ -8864,7 +8864,8 @@ function AppInner() {
                 }),
               );
             }
-            // source === 'client' / 'content-replace' (or omitted): silent canvas refresh only.
+            // source === 'client' / 'content-replace' / 'sync' (or omitted): silent
+            // canvas + folder-tree refresh. `sync` is WebDAV replay; do not toast.
           } catch (caught) {
             if (isEffectLibraryCurrent()) {
               setError(toMessage(caught, t("toast.diskChangedRefreshFailed"), locale));

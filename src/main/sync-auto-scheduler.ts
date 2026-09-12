@@ -89,6 +89,8 @@ export class SyncAutoScheduler {
   start(): void {
     if (this.#pollTimer !== undefined) return;
     this.#unsubscribeAssetsChanged = this.#options.workerClient.onAssetsChanged((event) => {
+      // 同步回放写入也会广播 asset.changed（source=sync），只用于刷新 UI。
+      if (event.source === 'sync') return;
       this.#scheduleLocalSync(event.libraryId);
     });
     // 内部 tick 驱动每库独立间隔：轮询到期检查放在 tick 里，

@@ -385,8 +385,10 @@ export const assetChangeEventSchema = z.strictObject({
    * `watcher` = external disk reconciliation (only this shows the disk-sync toast).
    * `text-save` / `client` / `content-replace` = in-app mutations; UI should use
    * operation-specific copy or silent canvas refresh.
+   * `sync` = WebDAV 回放写入的本地库（文件夹/资产/元数据）。Renderer 静默刷新
+   * 导航与画布；自动同步调度器必须忽略，避免回放后再 `sync.run`。
    */
-  source: z.enum(['watcher', 'text-save', 'client', 'content-replace']).optional(),
+  source: z.enum(['watcher', 'text-save', 'client', 'content-replace', 'sync']).optional(),
 });
 
 export type AssetChangeEvent = z.infer<typeof assetChangeEventSchema>;

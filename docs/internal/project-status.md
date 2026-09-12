@@ -3,6 +3,8 @@
 > 更新时间：2026-09-11
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
+- **2026-09-12 同步后文件夹栏不刷新**：对端新建子文件夹（内有资产）后，本机自动同步已写入 `managed_folders`，但回放不发或误发 `client` 的 `asset.changed`，侧栏仍停在旧树。已改为回放发 `source=sync`，Renderer 静默重拉导航，调度器忽略以免死循环。工单 `Serpent-7043e1`，清单 `SYNC-UI-001`。空文件夹仍按文件布局不同步。
+
 - **2026-09-12 本地立即同步**：轮询间隔只查云端；本地 `asset.changed` 默认 5 秒防抖后 `sync.run`，进行中的变更尾随一次。工单 `Serpent-7ddcaf`。同步状态条后续做。
 
 - **2026-09-12 改标签不同步提示**：只改 sidecar 时 `sync.progress` 的 `filesTotal` 一直为 0，toast 被当成空跑。已按动作数起步汇报进度；重命名/删除/合并已用标签发 `asset.changed`。工单 `Serpent-8fa7b3`。清单 `SYNC-META-002`。

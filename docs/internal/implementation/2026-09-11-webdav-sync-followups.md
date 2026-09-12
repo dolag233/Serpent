@@ -35,7 +35,7 @@
 
 1. **交换格式仍是文件 + manifest，SQLite 永不上传。**
 2. **空文件夹仍可不出现在远端**（按文件布局；没有资产条目就不 MKCOL）。
-3. **同步会话产生的本地搬移不得再触发一轮自动同步死循环。** `applySyncRelocate` → `applyManagedMoveOperation` 若发 `asset.changed`，debounce 后会再 `sync.run`。用户手势才发事件；同步回放保持静默，或 `source: 'sync'` 且调度器忽略。
+3. **同步会话产生的本地搬移不得再触发一轮自动同步死循环。** `applySyncRelocate` → `applyManagedMoveOperation` 若发 `source: 'client'` 的 `asset.changed`，debounce 后会再 `sync.run`。用户手势发 `client`；同步回放发 `source: 'sync'`，Renderer 据此刷新文件夹树/画布，调度器忽略。不得为了防循环而让对端 UI 停在旧导航快照。
 4. **远端已有 `libraryId` 后，后写入设备不得用本机 UUID 覆盖。** `displayName` 以远端已有值为准，直到产品另做「重命名库并传播」。
 5. **一次同步不得因单个资产 HTTP 409 让整库停在 CONFLICT 循环。** 失败要落到该资产，其余动作继续，会话能写回一致的 manifest。
 6. **已进回收站或永久删除的资产，缺 artifact 不得把浏览界面打穿。**
@@ -130,7 +130,8 @@
 
 ## 7. 测试
 
-- 调度器：`moveAssets` 后在 debounce 内出现 `local-change` 同步请求；`applySyncRelocate` 不叠加第二次。
+- 调度器：`moveAssets` 后在 debounce 内出现 `local-change` 同步请求；`source=sync` 的回放事件不叠加第二次 `sync.run`。
+- 回放刷新：下载嵌套路径或 `applySyncRelocate` 后 `listManagedFolders` 含新目录，且 `asset.changed.source === 'sync'`。
 - plan/runner：回收站 → delete-remote 成功或 404 视为成功；单条 409 不抛翻整次 `syncOnce`。
 - engine：远端已有 libraryId 时写出仍为该 ID；空 entries 不得覆盖非空远端。
 - 元数据：A 写标签与描述（含 AI 自动打标）后 sidecar 存在且 `metadataVersion` > 1；B 打开同步库后本地人字段与 AI 层均非空。
@@ -146,3 +147,4 @@
 - `SYNC-TRASH-001`：已同步照片进回收站，同步结束不整库 CONFLICT；浏览界面仍可点；缺缩略图会重建而不是卡死。
 - `SYNC-ID-001`：第二台电脑「打开同步资源库」后，远端 `manifest.json` 的 `libraryId`/`displayName` 仍是第一台写入的值。
 - `SYNC-META-001`：第一台打标签（人手或 AI）、写描述或等 AI 简介并等同步；第二台打开同步库后能看到同一标签和描述。合集成员本轮不同步。
+- `SYNC-UI-001`：第二台自动同步完成后，侧栏文件夹树与当前画布无需手动刷新即可看到对端新建的子文件夹（该文件夹里已有资产）。空文件夹仍可不出现。

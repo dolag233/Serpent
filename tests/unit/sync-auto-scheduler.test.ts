@@ -13,11 +13,11 @@ interface PostedCommand {
 
 class FakeWorkerClient {
   readonly posts: PostedCommand[] = [];
-  readonly listeners = new Set<(event: { libraryId: string }) => void>();
+  readonly listeners = new Set<(event: { libraryId: string; source?: string }) => void>();
   /** type → 响应;未配置时返回 ok。 */
   responses = new Map<string, { ok: boolean; type?: string; changed?: boolean; error?: { code: string } }>();
 
-  onAssetsChanged(listener: (event: { libraryId: string }) => void): () => void {
+  onAssetsChanged(listener: (event: { libraryId: string; source?: string }) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
@@ -216,6 +216,19 @@ describe('SyncAutoScheduler (Serpent-bfsb 后续)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('does not schedule local sync for source=sync replay events', async () => {
+    const { options, client } = makeOptions({ localChangeDebounceMs: 5 });
+    const scheduler = new SyncAutoScheduler(options);
+    scheduler.start();
+    client.posts.length = 0;
+    for (const listener of [...client.listeners]) {
+      listener({ libraryId: 'lib-enabled', source: 'sync' });
+    }
+    await settle();
+    scheduler.stop();
+    expect(client.posts.filter((post) => post.type === 'sync.run')).toHaveLength(0);
   });
 
   it('respects a per-binding pollIntervalMs override (user setting)', async () => {

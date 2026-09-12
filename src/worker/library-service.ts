@@ -4442,7 +4442,7 @@ export interface AssetsChangedEvent {
   changedCount: number;
   libraryId: string;
   missingCount: number;
-  source?: 'watcher' | 'text-save' | 'content-replace' | 'client';
+  source?: 'watcher' | 'text-save' | 'content-replace' | 'client' | 'sync';
   type: 'asset.changed';
 }
 
@@ -6425,13 +6425,25 @@ export class LibraryService {
   }
 
   private emitClientAssetsChanged(libraryId: string, changedCount: number): void {
-    if (changedCount <= 0 || this.syncReplayDepth > 0) return;
+    this.emitAssetsChanged(libraryId, changedCount, 'client');
+  }
+
+  /**
+   * 用户手势发 `client`；同步回放中的 `client` 改成 `sync`，让 Renderer
+   * 刷新文件夹树/画布，同时让自动同步调度器忽略，避免回放死循环。
+   */
+  private emitAssetsChanged(
+    libraryId: string,
+    changedCount: number,
+    source: NonNullable<AssetsChangedEvent['source']>,
+  ): void {
+    if (changedCount <= 0) return;
     this.options.onAssetsChanged?.({
       type: 'asset.changed',
       libraryId,
       changedCount,
       missingCount: 0,
-      source: 'client',
+      source: this.syncReplayDepth > 0 && source === 'client' ? 'sync' : source,
     });
   }
 
@@ -22837,67 +22849,70 @@ export class LibraryService {
     }
 
     // 已存在：覆盖文件 + 新 revision。
-    const absolutePath = existing.location_kind === 'linked'
-      ? this.linkedAssetPath(openLibrary, existing.linked_folder_id, existing.relative_file_path)
-      : this.folderPath(openLibrary, existing.relative_file_path);
-    mkdirSync(path.dirname(absolutePath), { recursive: true });
-    writeFileSync(absolutePath, body);
-    const stat = statSync(absolutePath);
-    const now = new Date().toISOString();
-    const fingerprint = sha256FileAtPath(absolutePath);
-    const revisionId = randomUUID();
-    openLibrary.connection
-      .prepare(
-        `INSERT INTO revisions
-           (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
-            original_filename, origin, accepted_at, content_fingerprint)
-         VALUES (?, ?, ?, ?, ?, ?, 'external_change', ?, ?)`,
-      )
-      .run(
-        revisionId,
-        existing.asset_id,
-        existing.current_revision_id,
-        stat.size,
-        stat.mtime.toISOString(),
-        path.posix.basename(existing.relative_file_path),
-        now,
-        fingerprint,
-      );
-    openLibrary.connection
-      .prepare(
-        `UPDATE assets
-            SET current_revision_id = ?, availability = 'available', updated_at = ?
-          WHERE asset_id = ?`,
-      )
-      .run(revisionId, now, existing.asset_id);
-    openLibrary.connection
-      .prepare(
-        `UPDATE revision_artifacts
-            SET invalidated_at = ?
-          WHERE revision_id = ? AND invalidated_at IS NULL`,
-      )
-      .run(now, existing.current_revision_id);
-    if (
-      LibraryService.supportsThumbnail(existing.relative_file_path)
-      && !this.isExplicitlyIgnored(
-        openLibrary,
-        existing.location_kind,
-        existing.linked_folder_id,
-        existing.relative_file_path,
-        'asset',
-      )
-    ) {
+    return this.withSyncReplay(() => {
+      const absolutePath = existing.location_kind === 'linked'
+        ? this.linkedAssetPath(openLibrary, existing.linked_folder_id, existing.relative_file_path)
+        : this.folderPath(openLibrary, existing.relative_file_path);
+      mkdirSync(path.dirname(absolutePath), { recursive: true });
+      writeFileSync(absolutePath, body);
+      const stat = statSync(absolutePath);
+      const now = new Date().toISOString();
+      const fingerprint = sha256FileAtPath(absolutePath);
+      const revisionId = randomUUID();
       openLibrary.connection
         .prepare(
-          `INSERT OR IGNORE INTO jobs
-             (job_id, library_id, asset_id, revision_id, kind, status, priority,
-              progress, attempt_count, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', 300, 0.0, 0, ?, ?)`,
+          `INSERT INTO revisions
+             (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
+              original_filename, origin, accepted_at, content_fingerprint)
+           VALUES (?, ?, ?, ?, ?, ?, 'external_change', ?, ?)`,
         )
-        .run(randomUUID(), libraryId, existing.asset_id, revisionId, now, now);
-    }
-    this.syncAssetSearchContent(openLibrary.connection, existing.asset_id);
-    return { assetId: existing.asset_id, created: false };
+        .run(
+          revisionId,
+          existing.asset_id,
+          existing.current_revision_id,
+          stat.size,
+          stat.mtime.toISOString(),
+          path.posix.basename(existing.relative_file_path),
+          now,
+          fingerprint,
+        );
+      openLibrary.connection
+        .prepare(
+          `UPDATE assets
+              SET current_revision_id = ?, availability = 'available', updated_at = ?
+            WHERE asset_id = ?`,
+        )
+        .run(revisionId, now, existing.asset_id);
+      openLibrary.connection
+        .prepare(
+          `UPDATE revision_artifacts
+              SET invalidated_at = ?
+            WHERE revision_id = ? AND invalidated_at IS NULL`,
+        )
+        .run(now, existing.current_revision_id);
+      if (
+        LibraryService.supportsThumbnail(existing.relative_file_path)
+        && !this.isExplicitlyIgnored(
+          openLibrary,
+          existing.location_kind,
+          existing.linked_folder_id,
+          existing.relative_file_path,
+          'asset',
+        )
+      ) {
+        openLibrary.connection
+          .prepare(
+            `INSERT OR IGNORE INTO jobs
+               (job_id, library_id, asset_id, revision_id, kind, status, priority,
+                progress, attempt_count, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', 300, 0.0, 0, ?, ?)`,
+          )
+          .run(randomUUID(), libraryId, existing.asset_id, revisionId, now, now);
+      }
+      this.syncAssetSearchContent(openLibrary.connection, existing.asset_id);
+      this.emitClientAssetsChanged(libraryId, 1);
+      return { assetId: existing.asset_id, created: false };
+    });
   }
 
   /**
@@ -22928,31 +22943,34 @@ export class LibraryService {
       throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
     }
     if (portablePathIdentity(existing.relative_file_path) === portablePathIdentity(relativePath)) return;
-    const destDir = path.posix.dirname(relativePath);
-    const destinationFolderId = destDir === '.' ? null : this.ensureManagedFolderIdForRelativeDir(
-      openLibrary,
-      libraryId,
-      destDir,
-    );
-    const operationId = randomUUID();
-    if (this.managedMoveConflict(openLibrary, operationId, '0', relativePath, existing.asset_id)) {
-      throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
-    }
-    this.applyManagedMoveOperation(openLibrary, operationId, {
-      files: [{
-        assetId: existing.asset_id,
-        destinationConflict: null,
-        destinationFolderId,
-        destinationRelativePath: relativePath,
-        restoreConflict: null,
-        sourceFolderId: existing.managed_folder_id,
-        sourceRelativePath: existing.relative_file_path,
-      }],
-      kind: 'managed-move',
-      originalOperationId: null,
-      version: 4,
+    this.withSyncReplay(() => {
+      const destDir = path.posix.dirname(relativePath);
+      const destinationFolderId = destDir === '.' ? null : this.ensureManagedFolderIdForRelativeDir(
+        openLibrary,
+        libraryId,
+        destDir,
+      );
+      const operationId = randomUUID();
+      if (this.managedMoveConflict(openLibrary, operationId, '0', relativePath, existing.asset_id)) {
+        throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
+      }
+      this.applyManagedMoveOperation(openLibrary, operationId, {
+        files: [{
+          assetId: existing.asset_id,
+          destinationConflict: null,
+          destinationFolderId,
+          destinationRelativePath: relativePath,
+          restoreConflict: null,
+          sourceFolderId: existing.managed_folder_id,
+          sourceRelativePath: existing.relative_file_path,
+        }],
+        kind: 'managed-move',
+        originalOperationId: null,
+        version: 4,
+      });
+      this.noteClientFilesystemMutation();
+      this.emitClientAssetsChanged(libraryId, 1);
     });
-    this.noteClientFilesystemMutation();
   }
 
   /** 按 posix 相对路径逐级确保托管文件夹存在，返回最内层 folder_id。 */
@@ -23002,7 +23020,9 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const row = this.assetRowBySyncId(openLibrary, syncId);
     if (!row) return;
-    this.trashAssets({ libraryId, assetIds: [row.asset_id] });
+    this.withSyncReplay(() => {
+      this.trashAssets({ libraryId, assetIds: [row.asset_id] });
+    });
   }
 
   /**
@@ -35239,13 +35259,7 @@ export class LibraryService {
       // Soft-delete is a library mutation, not only a local UI action. Emit
       // after the filesystem move and DB transaction both succeed so other
       // renderer windows, plugins, and automation refresh their trash count.
-      this.options.onAssetsChanged?.({
-        type: 'asset.changed',
-        libraryId: input.libraryId,
-        changedCount: assetIds.length,
-        missingCount: 0,
-        source: 'client',
-      });
+      this.emitClientAssetsChanged(input.libraryId, assetIds.length);
 
       this.emitDeleteProgress({
         operationId,
@@ -41581,13 +41595,7 @@ export class LibraryService {
           }
           if (!bulkCommit) this.noteClientFilesystemMutation();
           if (!pending.suppressAssetChangeEvents) {
-            this.options.onAssetsChanged?.({
-              type: 'asset.changed',
-              libraryId: pending.libraryId,
-              changedCount: 1,
-              missingCount: 0,
-              source: 'client',
-            });
+            this.emitClientAssetsChanged(pending.libraryId, 1);
           }
         }
       }

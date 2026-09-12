@@ -256,7 +256,7 @@ describe('managed asset move and one-shot undo', () => {
     recovered.closeAll();
   });
 
-  it('broadcasts asset.changed after a user move, not after sync relocate', () => {
+  it('broadcasts client asset.changed after a user move, and sync after relocate replay', () => {
     const events: Array<{ type: string; source?: string; changedCount: number }> = [];
     const temp = root();
     const service = new LibraryService({
@@ -282,7 +282,8 @@ describe('managed asset move and one-shot undo', () => {
     events.length = 0;
 
     service.applySyncRelocate(library.libraryId, syncId!, 'Source/sync-move.png');
-    expect(events).toEqual([]);
+    expect(events.some((event) => event.source === 'client')).toBe(false);
+    expect(events.some((event) => event.type === 'asset.changed' && event.source === 'sync' && event.changedCount >= 1)).toBe(true);
     service.closeAll();
   });
 });

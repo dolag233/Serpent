@@ -2483,6 +2483,19 @@ describe('background asset change events', () => {
       missingCount: 0,
       source: 'content-replace',
     });
+    expect(parseAssetChangeEvent({
+      type: 'asset.changed',
+      libraryId: 'library-01',
+      changedCount: 1,
+      missingCount: 0,
+      source: 'sync',
+    })).toEqual({
+      type: 'asset.changed',
+      libraryId: 'library-01',
+      changedCount: 1,
+      missingCount: 0,
+      source: 'sync',
+    });
     expect(() => parseAssetChangeEvent({
       type: 'asset.changed',
       libraryId: 'library-01',

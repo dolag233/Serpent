@@ -166,6 +166,7 @@ describe('two-device sync over a shared WebDAV server (Serpent-xffq)', () => {
 
     const downloaded = serviceB.listAssets({ libraryId, recursive: true });
     expect(downloaded.map((asset) => asset.relativeFilePath)).toEqual(['2D/alpha.txt']);
+    expect(serviceB.listManagedFolders(libraryId).map((folder) => folder.relativePath)).toEqual(['2D']);
 
     serviceA.closeAll();
     serviceB.closeAll();

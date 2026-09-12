@@ -117,6 +117,36 @@ describe('library sync integration (Serpent-xffq)', () => {
     service.closeAll();
   });
 
+  it('emits source=sync so the UI can refresh nested folders without another auto-sync (Serpent-7043e1)', () => {
+    const events: Array<{ source?: string; changedCount: number }> = [];
+    const service = new LibraryService({
+      onAssetsChanged: (event) => events.push(event),
+    });
+    const { libraryId, assetId } = createLibraryWithAsset(service, '回放刷新库');
+    events.length = 0;
+
+    service.applySyncContentUpdate(
+      libraryId,
+      'remote-nested-refresh',
+      'K/L/alpha.txt',
+      Buffer.from('nested-refresh'),
+    );
+    expect(events.some((event) => event.source === 'sync' && event.changedCount >= 1)).toBe(true);
+    expect(events.some((event) => event.source === 'client')).toBe(false);
+    expect(service.listManagedFolders(libraryId).map((folder) => folder.relativePath).sort()).toEqual(['K', 'K/L']);
+
+    events.length = 0;
+    const syncId = service.syncSnapshot(libraryId).assets.find((entry) => entry.assetId === assetId)!.syncId;
+    service.applySyncRelocate(libraryId, syncId, 'K/L/source.txt');
+    expect(events.some((event) => event.source === 'sync' && event.changedCount >= 1)).toBe(true);
+    expect(events.some((event) => event.source === 'client')).toBe(false);
+    expect(service.listAssets({ libraryId, recursive: true }).map((asset) => asset.relativeFilePath).sort()).toEqual([
+      'K/L/alpha.txt',
+      'K/L/source.txt',
+    ]);
+    service.closeAll();
+  });
+
   it('recycles a local asset when a remote tombstone propagates', () => {
     const service = new LibraryService();
     const { libraryId, assetId } = createLibraryWithAsset(service, '墓碑库');
