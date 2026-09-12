@@ -3,6 +3,8 @@
 > 更新时间：2026-09-12
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
+- **2026-09-12 文件夹创建层级收口**：侧栏「+」与「链接」按钮改为**始终在资源库根目录**创建（`Serpent-186547` / `FOLDER-CREATE-001`），不再跟随当前选中文件夹；子级创建统一由右键承担（普通子文件夹已有，链接子级见 `Serpent-316493`）。见 [开发日志](development/2026-09-12-folder-create-at-root-development-log.md)。E2E `nav-pane-background` 2 passed，待人验。
+
 - **2026-09-12 拖放无变化不再提示**：按用户反馈清扫冗余提示（`Serpent-374266` / `TOAST-006`）——文件夹拖到自身 / 当前父级 / 自己的子文件夹，资产拖到当前所在文件夹，以及资产拖到已经是成员的合集，都不再出现任何 toast，无效目标也不再显示可放置高亮（dragover 不接收这次 drop）；合集投放改为先查成员关系，只报告**实际新增**数，无新增则不调用也不提示。删除 4 个已无用的 i18n 键。保留「没有符合条件的资产」（已删除/缺失/链接目录）这类说明性提示。见 [开发日志](development/2026-09-12-dnd-noop-notices-development-log.md)。packaged/Windows 与资产两条真机旅程未执行，待人验。
 
 - **2026-09-12 文件夹栏空白区域**：「文件夹」栏行左侧的**缩进槽**成为真目标——点击回到资源库根目录（`Serpent-6e3b10` / `NAV-FOLDER-ROOT-001`），拖放管理的文件夹到空白处移动到根目录（`Serpent-b29bc4` / `DND-FOLDER-ROOT-001`，复用 `resolveFolderOntoFolderDrop(targetFolderId: null)` 与 `moveFolders`）。作用域按用户标注截图收敛：合集 / 智能合集区域与面板其余部分**不**触发；高亮框为 6px 圆角（`--ui-radius-surface`，与文件夹行一致）；按用户要求不额外插入空白条，文件夹栏间距保持原样。三次返工：首版只认容器自身（点击被合集标题与「尚无合集」空状态吞掉）→ 二版扩到整块面板（越界）→ 三版收敛到 `.nav-folder-list` 并去掉了多加的 24px 空白条。真实 Electron E2E `tests/e2e/nav-pane-background.test.ts` 已进 `test:e2e` 清单并通过。关联新单：`Serpent-186547`（+ / 链接按钮改为根目录创建）、`Serpent-316493`（右键创建子链接文件夹，语义待定）。见 [开发日志](development/2026-09-12-folder-pane-background-root-development-log.md)。两条均待人验；本机 Node v26 会遮蔽 happy-dom 的 `localStorage`，该测试文件 4 条既有用例需在 Node 24 下复跑。

@@ -59,10 +59,12 @@ async function createLibrary(window: Page, name: string) {
  * Folder mutations are rejected while the library transition is still running
  * ("A library transition is already in progress."), so retry until the row
  * exists instead of assuming the first attempt landed.
+ *
+ * Serpent-186547: the folder-section 「+」 always creates at the library root,
+ * so a nested folder is created from its parent's context menu.
  */
-async function createFolder(window: Page, name: string, parentName?: string) {
+async function createFolder(window: Page, name: string) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    if (parentName) await folderRow(window, parentName).click();
     await window.getByRole("button", { name: "添加文件夹" }).click();
     const input = window.locator(".nav-inline-edit input");
     try {
@@ -81,6 +83,21 @@ async function createFolder(window: Page, name: string, parentName?: string) {
     }
   }
   throw new Error(`folder ${name} was not created`);
+}
+
+async function createSubfolder(window: Page, parentName: string, name: string) {
+  await folderRow(window, parentName).click({ button: "right" });
+  const menu = window.getByRole("menu", {
+    name: `文件夹操作：${parentName}`,
+    exact: true,
+  });
+  await expect(menu).toBeVisible();
+  await menu.getByRole("menuitem", { name: "新建子文件夹" }).click();
+  const input = window.locator(".nav-inline-edit input");
+  await expect(input).toBeVisible();
+  await input.fill(name);
+  await input.press("Enter");
+  await expect(folderRow(window, name)).toBeVisible({ timeout: 5_000 });
 }
 
 async function currentCrumb(window: Page): Promise<string> {
@@ -110,6 +127,79 @@ async function elementClassAt(window: Page, point: Point): Promise<string> {
   );
 }
 
+// Serpent-186547: the folder-section 「+」 is a library-root action; a
+// subfolder is created from the folder's context menu instead.
+test("folder-section + creates at the library root while a subfolder is in scope", async () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), "serpent-nav-plus-"));
+  const libraryName = "Nav Plus";
+  const libraryPath = path.join(temporaryRoot, libraryName);
+  const application = await launchApp(temporaryRoot, libraryPath);
+
+  try {
+    const window = await application.firstWindow();
+    await createLibrary(window, libraryName);
+    await createFolder(window, "Alpha");
+    await createSubfolder(window, "Alpha", "Beta");
+
+    // Enter the subfolder so a folder is plainly in scope, then use 「+」.
+    await folderRow(window, "Beta").click();
+    await expect.poll(() => currentCrumb(window)).toContain("Beta");
+    await createFolder(window, "Created");
+
+    await expect
+      .poll(
+        () =>
+          window.evaluate(async () => {
+            const api = (
+              globalThis as typeof globalThis & {
+                serpent: {
+                  library: {
+                    listOpen(): Promise<{
+                      ok: boolean;
+                      value?: Array<{ libraryId: string }>;
+                    }>;
+                    listFolders(input: { libraryId: string }): Promise<{
+                      ok: boolean;
+                      value?: Array<{
+                        name: string;
+                        parentFolderId: string | null;
+                      }>;
+                    }>;
+                  };
+                };
+              }
+            ).serpent.library;
+            const open = await api.listOpen();
+            const libraryId = open.value?.[0]?.libraryId;
+            if (!libraryId) return null;
+            const result = await api.listFolders({ libraryId });
+            const created = (result.value ?? []).find(
+              (item) => item.name === "Created",
+            );
+            return created ? created.parentFolderId : "missing";
+          }),
+        { message: "the new folder is a library-root folder" },
+      )
+      .toBe(null);
+
+    // Same level as Alpha (both top-level), i.e. it did not land inside Beta.
+    expect(
+      await window.evaluate(() => {
+        const depthOf = (name: string) => {
+          const row = document.querySelector<HTMLElement>(
+            `.navigation-pane button.nav-row[data-nav-folder-kind="managed"][title="${name}"]`,
+          );
+          return row?.closest<HTMLElement>(".nav-tree-row")?.style.paddingLeft ?? null;
+        };
+        return `${depthOf("Alpha")}|${depthOf("Created")}|${depthOf("Beta")}`;
+      }),
+    ).toBe("14px|14px|28px");
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
 test("folder-section blank area returns to the root and accepts folder drops", async () => {
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), "serpent-nav-bg-"));
   const libraryName = "Nav Background";
@@ -120,7 +210,7 @@ test("folder-section blank area returns to the root and accepts folder drops", a
     const window = await application.firstWindow();
     await createLibrary(window, libraryName);
     await createFolder(window, "Alpha");
-    await createFolder(window, "Beta", "Alpha");
+    await createSubfolder(window, "Alpha", "Beta");
 
     const betaRowBox = await folderRow(window, "Beta").boundingBox();
     const betaGutterBox = await window

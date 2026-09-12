@@ -11078,7 +11078,10 @@ function AppInner() {
               setLinkedFolderHintActive(false);
             }, 8000);
           }
-          openInlineFolderCreate(selectedFolderId ?? null);
+          // Serpent-186547: the folder-section 「+」 always creates at the
+          // library root, independent of the folder currently in scope.
+          // Subfolders are created from the folder's context menu (新建子文件夹).
+          openInlineFolderCreate(null);
         }}
         onAddSmartCollection={() => {
           cancelInlineFolderEdit();
