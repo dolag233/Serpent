@@ -3,6 +3,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -35,7 +36,9 @@ import {
   MANAGED_FOLDERS_DRAG_TYPE,
   parseManagedFolderDrag,
   resolveDraggedFolderIds,
+  resolveFolderOntoFolderDrop,
   supportsManagedFolderDrag,
+  type FolderDragFact,
 } from "./folder-drag-drop";
 import {
   externalImportPayload,
@@ -786,6 +789,12 @@ export interface NavigationSidebarProps {
   ) => void;
   /** Renderer-only fallback for a native drag whose custom payload was lost. */
   getManagedAssetDragIds?: () => readonly string[] | null;
+  /**
+   * Serpent-374266: dragged managed-folder ids from the browse canvas (sidebar
+   * rows record their own). Used to decide whether a folder drop target would
+   * actually change anything; the HTML5 payload cannot be read during dragover.
+   */
+  getManagedFolderDragIds?: () => readonly string[] | null;
   /** Resolve an Electron native file drop back to managed asset ids. */
   onResolveManagedAssetDrop?: (files: File[]) => Promise<string[]>;
 
@@ -920,6 +929,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onExternalDragOver,
     onExternalDrop,
     getManagedAssetDragIds,
+    getManagedFolderDragIds,
     onResolveManagedAssetDrop,
     onAssetsDroppedOnFolder,
     onFoldersDroppedOnFolder,
@@ -975,6 +985,18 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
   // Serpent-b29bc4: a managed-folder drag hovering the folder section's blank
   // area (indentation gutter / space below the last row) targets the root.
   const [folderListDropActive, setFolderListDropActive] = useState(false);
+  // Serpent-374266: ids of the folder drag started from this sidebar. The HTML5
+  // payload is unreadable during dragover, so the drop-target validity check
+  // needs its own copy (cleared on every dragend/drop).
+  const draggedFolderIdsRef = useRef<string[] | null>(null);
+  const folderDragFacts = useMemo<FolderDragFact[]>(
+    () =>
+      folders.map((folder) => ({
+        folderId: folder.folderId,
+        parentFolderId: folder.parentFolderId,
+      })),
+    [folders],
+  );
   const [navTreePrefs, setNavTreePrefs] = useState<NavTreePreferences>(() =>
     loadNavTreePreferences(),
   );
@@ -999,6 +1021,21 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
       window.removeEventListener("drop", clear);
     };
   }, [assetDropTarget, folderListDropActive]);
+
+  // Serpent-374266: the folder-drag snapshot must not outlive its gesture, even
+  // when the drag ends without ever highlighting a target (e.g. dropped back on
+  // its own row).
+  useEffect(() => {
+    const clearDraggedFolders = () => {
+      draggedFolderIdsRef.current = null;
+    };
+    window.addEventListener("dragend", clearDraggedFolders);
+    window.addEventListener("drop", clearDraggedFolders);
+    return () => {
+      window.removeEventListener("dragend", clearDraggedFolders);
+      window.removeEventListener("drop", clearDraggedFolders);
+    };
+  }, []);
 
   const persistedCollapsedFolderIds = new Set(navTreePrefs.collapsedFolderIds);
   const collapsedFolderIds = new Set(persistedCollapsedFolderIds);
@@ -1091,12 +1128,41 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     );
   }
 
+  /**
+   * Serpent-374266: a folder drop that would not change the tree is not a
+   * target — no highlight, no accept, no drop, no notice. The dragged ids come
+   * from this component's own dragstart (browse folder cards report theirs via
+   * `getManagedFolderDragIds`). When neither knows, fail open so drag sources
+   * the sidebar cannot see keep the existing highlight behaviour.
+   *
+   * The payload itself cannot be read here: HTML5 puts the drag data store in
+   * protected mode during dragenter/dragover, so `getData` returns "".
+   */
+  const acceptsFolderDrop = useCallback(
+    (targetFolderId: string | null): boolean => {
+      const draggedIds =
+        draggedFolderIdsRef.current ??
+        (getManagedFolderDragIds
+          ? [...(getManagedFolderDragIds() ?? [])]
+          : null);
+      if (!draggedIds || draggedIds.length === 0) return true;
+      return (
+        resolveFolderOntoFolderDrop({
+          targetFolderId,
+          draggedFolderIds: draggedIds,
+          folders: folderDragFacts,
+        }).kind === "move"
+      );
+    },
+    [folderDragFacts, getManagedFolderDragIds],
+  );
+
   function assetFolderDropHandlers(key: string, folderId: string | null) {
     return {
       dropActive: assetDropTarget === key,
       onDragEnter: (event: React.DragEvent<HTMLButtonElement>) => {
         if (supportsManagedFolderDrag(event.dataTransfer)) {
-          setAssetDropTarget(key);
+          if (acceptsFolderDrop(folderId)) setAssetDropTarget(key);
           return;
         }
         if (
@@ -1113,6 +1179,9 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
       },
       onDragOver: (event: React.DragEvent<HTMLButtonElement>) => {
         if (supportsManagedFolderDrag(event.dataTransfer)) {
+          // Not a valid target (own row / current parent / own descendant):
+          // leave the event alone so the drop is not accepted at all.
+          if (!acceptsFolderDrop(folderId)) return;
           event.preventDefault();
           event.dataTransfer.dropEffect = "move";
           return;
@@ -1231,7 +1300,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     inlineSmartCollectionEdit !== null ||
     showCollectionInput;
 
-  /** Handlers for the folder section's blank area (gutter + trailing strip). */
+  /** Handlers for the folder section's blank area (the indentation gutter). */
   function folderListBlankHandlers() {
     return {
       onClick: (event: React.MouseEvent<HTMLElement>) => {
@@ -1242,13 +1311,16 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
       onDragEnter: (event: React.DragEvent<HTMLElement>) => {
         if (!library || !supportsManagedFolderDrag(event.dataTransfer)) return;
         if (!isFolderListBlankTarget(event)) return;
+        // Serpent-374266: folders already at the root would not move anywhere.
+        if (!acceptsFolderDrop(null)) return;
         setFolderListDropActive(true);
       },
       onDragOver: (event: React.DragEvent<HTMLElement>) => {
         if (!library || !supportsManagedFolderDrag(event.dataTransfer)) return;
-        if (!isFolderListBlankTarget(event)) {
-          // A row took over under the pointer: drop the blank-area highlight so
-          // only the row the drag hovers stays highlighted.
+        if (!isFolderListBlankTarget(event) || !acceptsFolderDrop(null)) {
+          // A row took over under the pointer, or the drop would change
+          // nothing: drop the blank-area highlight so only a real target stays
+          // highlighted.
           setFolderListDropActive(false);
           return;
         }
@@ -1350,6 +1422,9 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                 entry.folderId,
                 selectedFolderIds,
               );
+              // Serpent-374266: remember the ids for drop-target validation
+              // (the payload is unreadable during dragover).
+              draggedFolderIdsRef.current = [...ids];
               event.dataTransfer.setData(
                 MANAGED_FOLDERS_DRAG_TYPE,
                 JSON.stringify(ids),

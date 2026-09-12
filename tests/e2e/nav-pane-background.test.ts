@@ -13,6 +13,9 @@ test.describe.configure({ timeout: 180_000 });
  * the indentation gutter left of the rows — returns to the library root on
  * click and accepts managed-folder drops. The collections / smart-collections
  * sections below are not blank space, and neither is the rest of the pane.
+ * Serpent-374266 adds the counterpart rule: a folder dropped back where it
+ * already is (its own row) changes nothing, so it neither highlights nor
+ * reports anything.
  *
  * The first implementation targeted the whole `.navigation-scroll`, and the spot
  * the user actually aims at (right under the tree) was covered by the next
@@ -259,6 +262,92 @@ test("folder-section blank area returns to the root and accepts folder drops", a
         }),
       )
       .toBe("14px|14px");
+    // Serpent-374266: dropping a folder back onto its own row changes nothing,
+    // so it must not highlight and must not answer with a notice.
+    const noticeText = () =>
+      window
+        .locator(".workspace-notice")
+        .textContent()
+        .catch(() => "");
+    const noticeBeforeNoop = await noticeText();
+    const betaSelfBox = await folderRow(window, "Beta").boundingBox();
+    expect(betaSelfBox).not.toBeNull();
+    const betaCentre = centreOf(betaSelfBox!);
+    await window.mouse.move(betaCentre.x, betaCentre.y);
+    await window.mouse.down();
+    await window.mouse.move(betaCentre.x + 30, betaCentre.y, { steps: 6 });
+    await window.waitForTimeout(300);
+    const rowHighlights = await window.evaluate(
+      () => document.querySelectorAll(".nav-row.is-drop-target").length,
+    );
+    await window.mouse.up();
+    await window.waitForTimeout(800);
+    expect(rowHighlights, "own row is not a drop target").toBe(0);
+    expect(await noticeText(), "no notice for a no-op drop").toBe(
+      noticeBeforeNoop,
+    );
+
+    // Counterpart: a real reparent still works and still reports.
+    const alphaBox = await folderRow(window, "Alpha").boundingBox();
+    const alphaId = await folderRow(window, "Alpha").getAttribute(
+      "data-nav-folder-id",
+    );
+    expect(alphaBox).not.toBeNull();
+    expect(alphaId).toBeTruthy();
+    await window.mouse.move(betaCentre.x, betaCentre.y);
+    await window.mouse.down();
+    await window.mouse.move(
+      alphaBox!.x + alphaBox!.width / 2,
+      alphaBox!.y + alphaBox!.height / 2,
+      { steps: 12 },
+    );
+    await expect
+      .poll(
+        () =>
+          window.evaluate(
+            () => document.querySelectorAll(".nav-row.is-drop-target").length,
+          ),
+        { message: "the parent row accepts the drag" },
+      )
+      .toBe(1);
+    await window.mouse.up();
+    await expect
+      .poll(
+        () =>
+          window.evaluate(async (targetId) => {
+            const api = (
+              globalThis as typeof globalThis & {
+                serpent: {
+                  library: {
+                    listOpen(): Promise<{
+                      ok: boolean;
+                      value?: Array<{ libraryId: string }>;
+                    }>;
+                    listFolders(input: { libraryId: string }): Promise<{
+                      ok: boolean;
+                      value?: Array<{
+                        name: string;
+                        parentFolderId: string | null;
+                      }>;
+                    }>;
+                  };
+                };
+              }
+            ).serpent.library;
+            const open = await api.listOpen();
+            const libraryId = open.value?.[0]?.libraryId;
+            if (!libraryId) return null;
+            const result = await api.listFolders({ libraryId });
+            const beta = (result.value ?? []).find((item) => item.name === "Beta");
+            return beta ? beta.parentFolderId === targetId : null;
+          }, alphaId),
+        { message: "Beta is reparented under Alpha again" },
+      )
+      .toBe(true);
+    await expect(window.locator(".workspace-notice")).toContainText(
+      "已移动 1 个文件夹",
+      { timeout: 10_000 },
+    );
   } finally {
     await application.close();
     rmSync(temporaryRoot, { recursive: true, force: true });

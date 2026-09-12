@@ -2058,6 +2058,29 @@ function AppInner() {
         : null,
     [],
   );
+  // Serpent-374266: the same snapshot for managed-folder drags started from the
+  // browse canvas. The sidebar needs it to tell whether a folder drop target
+  // would change anything; the HTML5 payload itself cannot be read during
+  // dragover (protected mode).
+  const managedFolderDragIdsRef = useRef<readonly string[] | null>(null);
+  const getManagedFolderDragIds = useCallback(
+    () =>
+      managedFolderDragIdsRef.current
+        ? [...managedFolderDragIdsRef.current]
+        : null,
+    [],
+  );
+  useEffect(() => {
+    const clearManagedFolderDragIds = () => {
+      managedFolderDragIdsRef.current = null;
+    };
+    window.addEventListener("dragend", clearManagedFolderDragIds);
+    window.addEventListener("drop", clearManagedFolderDragIds);
+    return () => {
+      window.removeEventListener("dragend", clearManagedFolderDragIds);
+      window.removeEventListener("drop", clearManagedFolderDragIds);
+    };
+  }, []);
   // Escape cancels the renderer-side drag session immediately. Native OS
   // drags are cancelled by Electron/the operating system; this also clears
   // the custom ghost and internal selection fallback so a cancelled gesture
@@ -10565,6 +10588,8 @@ function AppInner() {
               entry.folderId,
               selectedFolderIds,
             );
+            // Serpent-374266: let the sidebar validate drop targets with it.
+            managedFolderDragIdsRef.current = [...folderIds];
             event.dataTransfer.setData(
               MANAGED_FOLDERS_DRAG_TYPE,
               JSON.stringify(folderIds),
@@ -11000,6 +11025,7 @@ function AppInner() {
           handleTargetExternalDrop(event, targetFolderId, targetCollectionId)
         }
         getManagedAssetDragIds={getManagedAssetDragIds}
+        getManagedFolderDragIds={getManagedFolderDragIds}
         onResolveManagedAssetDrop={resolveManagedAssetDrop}
         onAssetsDroppedOnFolder={(folderId, assetIds, mode) =>
           handleAssetsDroppedOnFolder(folderId, assetIds, mode)

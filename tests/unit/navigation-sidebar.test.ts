@@ -37,7 +37,7 @@ function createFolderDragTransfer(folderIds: string[]): DataTransfer {
 
 function dispatchDragEvent(
   element: Element,
-  type: "dragenter" | "dragover",
+  type: "dragenter" | "dragover" | "dragstart",
   dataTransfer: DataTransfer,
 ): Event {
   const event = new Event(type, { bubbles: true, cancelable: true });
@@ -585,12 +585,21 @@ describe("NavigationSidebar folder-section blank area", () => {
     directAssetCount: 5,
     childFolderCount: 0,
   };
+  /** Another root-level folder: a drop here really does change the parent. */
+  const siblingFolder = {
+    folderId: "folder-sibling",
+    parentFolderId: null,
+    name: "Sibling",
+    relativePath: "sibling",
+    directAssetCount: 1,
+    childFolderCount: 0,
+  };
 
   async function renderSidebar(
     overrides: Partial<NavigationSidebarProps> = {},
   ): Promise<HTMLElement> {
     const props = createNavigationProps({
-      folders: [parentFolder, childFolder],
+      folders: [parentFolder, childFolder, siblingFolder],
       ...overrides,
     });
     container = document.createElement("div");
@@ -842,9 +851,66 @@ describe("NavigationSidebar folder-section blank area", () => {
     expect(row.classList.contains("is-drop-target")).toBe(true);
   });
 
+  // Serpent-374266: a target that would change nothing is not a target — it must
+  // not highlight (and therefore never shows the "cannot move" notice).
+  it("does not highlight folder targets that would change nothing", async () => {
+    const nav = await renderSidebar();
+    const childRow = folderRow(nav, childFolder.folderId);
+    const parentRow = folderRow(nav, parentFolder.folderId);
+    const transfer = createFolderDragTransfer([childFolder.folderId]);
+
+    // The drag payload is unreadable during dragover (protected mode), so the
+    // sidebar records the ids at dragstart; replay that here.
+    await act(async () => {
+      dispatchDragEvent(childRow, "dragstart", transfer);
+    });
+
+    await act(async () => {
+      // Its current parent, and its own row.
+      dispatchDragEvent(parentRow, "dragenter", transfer);
+      dispatchDragEvent(parentRow, "dragover", transfer);
+      dispatchDragEvent(childRow, "dragenter", transfer);
+      dispatchDragEvent(childRow, "dragover", transfer);
+    });
+
+    expect(parentRow.classList.contains("is-drop-target")).toBe(false);
+    expect(childRow.classList.contains("is-drop-target")).toBe(false);
+  });
+
+  // Serpent-374266 — the counterpart: a real reparent still highlights.
+  it("still highlights a folder target that would change the parent", async () => {
+    const nav = await renderSidebar();
+    const childRow = folderRow(nav, childFolder.folderId);
+    const siblingRow = folderRow(nav, siblingFolder.folderId);
+    const transfer = createFolderDragTransfer([childFolder.folderId]);
+
+    await act(async () => {
+      dispatchDragEvent(childRow, "dragstart", transfer);
+      dispatchDragEvent(siblingRow, "dragenter", transfer);
+      dispatchDragEvent(siblingRow, "dragover", transfer);
+    });
+
+    expect(siblingRow.classList.contains("is-drop-target")).toBe(true);
+  });
+
+  // Serpent-374266 — folders that already live at the root have nowhere to go.
+  it("does not highlight the blank area for folders already at the root", async () => {
+    const nav = await renderSidebar();
+    const parentRow = folderRow(nav, parentFolder.folderId);
+    const list = folderList(nav);
+    const transfer = createFolderDragTransfer([parentFolder.folderId]);
+
+    await act(async () => {
+      dispatchDragEvent(parentRow, "dragstart", transfer);
+      dispatchDragEvent(list, "dragenter", transfer);
+      dispatchDragEvent(list, "dragover", transfer);
+    });
+
+    expect(list.classList.contains("is-root-drop-target")).toBe(false);
+  });
+
   // Serpent-b29bc4 — one more time: no folder drag, no root move.
-  it("moves nothing when a folder is dropped outside the folder section", async () => {
-    const onFoldersDroppedOnFolder = vi.fn();
+  it("moves nothing when a folder is dropped outside the folder section", async () => {    const onFoldersDroppedOnFolder = vi.fn();
     const nav = await renderSidebar({ onFoldersDroppedOnFolder });
     const collectionsHeading = [
       ...nav.querySelectorAll<HTMLElement>(".nav-section-heading > span"),

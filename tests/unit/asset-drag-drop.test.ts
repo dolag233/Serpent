@@ -9,6 +9,7 @@ import {
   resolveDraggedAssetIds,
   resolveFolderDrop,
   resolveManagedDropEffect,
+  resolveNewCollectionMembers,
   resolveTrashDrop,
   supportsManagedAssetDrag,
   type DragAssetFact,
@@ -171,5 +172,35 @@ describe('resolveTrashDrop (REQ-DND-002)', () => {
       { assetId: 'd', locationKind: 'managed', availability: 'available', deletedAt: 'x' },
     ];
     expect(resolveTrashDrop(assets)).toEqual({ assetIds: ['a', 'b'], skippedCount: 2 });
+  });
+});
+
+// Serpent-374266: dropping into a collection the assets already belong to
+// changes nothing, so the caller must not report an add that did not happen.
+describe('resolveNewCollectionMembers', () => {
+  it('keeps only the assets that are not members of that collection yet', () => {
+    expect(
+      resolveNewCollectionMembers(
+        ['a', 'b', 'c'],
+        [
+          { assetId: 'a', collectionId: 'target' },
+          { assetId: 'c', collectionId: 'other' },
+        ],
+        'target',
+      ),
+    ).toEqual(['b', 'c']);
+  });
+
+  it('returns nothing when every asset is already a member', () => {
+    expect(
+      resolveNewCollectionMembers(
+        ['a', 'b'],
+        [
+          { assetId: 'a', collectionId: 'target' },
+          { assetId: 'b', collectionId: 'target' },
+        ],
+        'target',
+      ),
+    ).toEqual([]);
   });
 });

@@ -42,6 +42,12 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-09-12 拖放无变化时不提示（冗余提示清扫）
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| TOAST-006 / `Serpent-374266` | 拖放没有改变任何东西时不出现任何提示 | 待人类验收 | ① 把某个文件夹拖回它自己所在的行（或拖到它当前的父文件夹、拖到它自己的子文件夹）后松手。② 把子文件夹拖到另一个文件夹行、再拖到「文件夹」栏空白处（应当有提示）作对比。③ 把资产卡片拖到它当前所在文件夹行后松手。④ 把资产卡片拖到它已经是成员的合集行后松手。 | ①②③④ 这几种「位置没变」的拖动都不出现任何 toast，无效目标行也不出现可放置高亮；对比项（真正换了父级 / 移到根目录）仍出现「已移动 N 个…」。拖入回收站/文件夹/合集时若资产本就不可移动（已删除/缺失/链接目录），仍保留说明性提示。 | [开发日志](../development/2026-09-12-dnd-noop-notices-development-log.md) / `use-folder-drag-drop-handlers.ts` / `use-asset-drag-drop-handlers.ts`、`asset-drag-drop.ts` `resolveNewCollectionMembers` / `NavigationSidebar.tsx` `acceptsFolderDrop` / `tests/unit/*`、`tests/e2e/nav-pane-background.test.ts` | 自动化：单测 42 passed（asset-drag-drop 15 / folder-drag-drop 10 / navigation-sidebar 17）；真实 Electron E2E `nav-pane-background` 1 passed（拖到自身行 0 高亮且 toast 文本未变；拖到父文件夹仍高亮并改父级）。③④ 两条目前只有纯函数单测，未做真实旅程。packaged / Windows 未执行。 |
+
 ### 2026-09-12 文件夹栏空白区域（回到根目录）
 
 > 单测环境提示（2026-09-12 实测）：Node v26 自带 `localStorage` 全局会遮蔽 happy-dom 注入的 web storage，`NavigationSidebar` 中 4 条既有用例在 v26 下挂载即失败（`LocalePreferences: no storage provided and globalThis.localStorage is not available.`）。项目要求 Node 24.x（`.nvmrc` = 24.15.0），请在 Node 24 下复跑该文件。
