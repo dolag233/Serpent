@@ -64,17 +64,18 @@ tsc --noEmit / eslint → exit 0
 
 ## 6. 追加：空白处右键 = 根目录右键（`Serpent-a6c516` / `NAV-FOLDER-ROOT-002`）
 
-用户补充：「把文件夹面板的空白处的语义理解为根目录，因此如果在空白处右键就相当于在根目录右键」，需要支持在文件浏览器中打开、添加文件夹等入口。
+用户补充：「把文件夹面板的空白处的语义理解为根目录，因此如果在空白处右键就相当于在根目录右键」，需要支持在文件浏览器中打开、添加文件夹等入口。随后再补两点：**「资源库根目录」那一行也要能右键**，以及**菜单开头要显示「根目录」**。
 
 实现：
 
 - 新增共享 sentinel `LIBRARY_ROOT_FOLDER_ID = 'serpent:library-root'`（`src/shared/library-root-folder.ts`）：根目录没有 `managed_folders` 行，用显式 sentinel 跨 Renderer → Main → Worker 传递，且**不复用**渲染层的浏览 scope 字符串 `'root'`。
-- `NavigationSidebar`：空白区新增 `onContextMenu`（同样用 `isFolderListBlankTarget` 判定，行/控件上的右键仍走各自菜单）→ 新 prop `onOpenRootFolderContextMenu`。
-- `App`：以 `{type:'folder', folderId: sentinel, name: 资源库根目录, locationKind:'managed', isLibraryRoot:true}` 打开文件夹菜单；创建 / 导入链接文件夹 / 粘贴把 sentinel 映射为 `null`（根级）。
+- `NavigationSidebar`：**两个入口共用同一条回调** —— 文件夹栏空白区的 `onContextMenu`（同样用 `isFolderListBlankTarget` 判定）与「资源库根目录」那一行的 `onContextMenu`，都调用新 prop `onOpenRootFolderContextMenu`；行与控件上的右键仍走各自菜单。
+- `App`：以 `{type:'folder', folderId: sentinel, name: t('menu.libraryRoot')='根目录', locationKind:'managed', isLibraryRoot:true}` 打开文件夹菜单（菜单可访问名随之变成「文件夹操作：根目录」）；创建 / 导入链接文件夹 / 粘贴把 sentinel 映射为 `null`（根级）。
 - `commands/sidebar-commands.ts`：上下文新增 `isLibraryRoot`。库根菜单只保留 **在文件浏览器中打开 / 新建文件夹（根级文案，不再是"新建子文件夹"）/ 导入链接文件夹 / 粘贴 / 复制文件夹路径**；重命名、复制文件夹、克隆、移动、移入回收站、从硬盘删除、从资源库移除都不出现。插件文件夹命令也隐藏（它们按文件夹 id 分发，根没有真实 id）。
+- `AssetContextMenu`：库根菜单**首行**用既有的 `.context-menu-selection-summary` 样式显示「根目录」，说明这个菜单作用于谁（其余文件夹菜单沿用"没有表头"的现状）。
 - `use-shell-file-actions` 的路径动作不需要改：`folder.get-path` 已支持根 sentinel，`LibraryService.resolveFolderPath` 对 sentinel 返回库的 `Assets` 目录（Main 用它 shell.openPath / 写剪贴板，路径不回到 Renderer）。
 
-证据：E2E `nav-pane-background` 新增用例——在缩进槽右键弹出「文件夹操作：资源库根目录」，菜单含在文件浏览器中打开/新建文件夹/导入链接文件夹/复制文件夹路径，不含重命名/移入回收站/删除；点「新建文件夹」后新文件夹 `parentFolderId=null`（根级）。单测：`sidebar-commands` 50 passed（含库根可见性、根级文案、命令透传 3 条）、`navigation-sidebar` 23 条中 19 passed（4 条为既有 Node v26 环境失败），含空白处右键触发根菜单、行上右键不触发。
+证据：E2E `nav-pane-background` 3 passed —— 缩进槽右键弹出「文件夹操作：根目录」且首行是「根目录」，菜单含在文件浏览器中打开/新建文件夹/导入链接文件夹/复制文件夹路径，不含重命名/移入回收站/删除；点「新建文件夹」后新文件夹 `parentFolderId=null`（根级）；「资源库根目录」行右键弹出同一菜单。单测：`sidebar-commands` 50 passed（含库根可见性、根级文案、命令透传 3 条）、`navigation-sidebar` 24 条（空白处右键 / 根目录行右键触发根菜单、文件夹行右键不触发；4 条为既有 Node v26 环境失败）。
 
 ## 7. 未验证项
 

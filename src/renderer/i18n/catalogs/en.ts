@@ -610,6 +610,8 @@ export const en = {
     assetOps: "Asset actions: {name}",
     collectionOps: "Collection actions: {name}",
     folderOps: "Folder actions: {name}",
+    /** Serpent-a6c516: subject name for the folder panel's blank area / root row. */
+    libraryRoot: "Library root",
     restoreTrashedFolder: "Restore folder",
     smartCollectionOps: "Smart collection actions: {name}",
     skipReportLine: "{action}: process {process} / skip {skip} ({reasons})",

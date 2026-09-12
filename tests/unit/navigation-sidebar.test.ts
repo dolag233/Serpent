@@ -750,6 +750,29 @@ describe("NavigationSidebar folder-section blank area", () => {
     expect(onOpenRootFolderContextMenu).not.toHaveBeenCalled();
   });
 
+  // Serpent-a6c516: the 「资源库根目录」 row is the same subject as the blank area.
+  it("opens the root context menu from the library root row", async () => {
+    const onOpenRootFolderContextMenu = vi.fn();
+    const nav = await renderSidebar({ onOpenRootFolderContextMenu });
+    const rootRow = [
+      ...nav.querySelectorAll<HTMLButtonElement>(".nav-row"),
+    ].find((row) => row.textContent?.includes("资源库根目录"));
+    expect(rootRow).toBeDefined();
+
+    await act(async () => {
+      rootRow!.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 7,
+          clientY: 9,
+        }),
+      );
+    });
+
+    expect(onOpenRootFolderContextMenu).toHaveBeenCalledWith({ x: 7, y: 9 });
+  });
+
   // Serpent-6e3b10
   it("keeps a folder row click on that folder and never falls back to the root", async () => {
     const onChooseFolder = vi.fn();

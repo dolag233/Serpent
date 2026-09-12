@@ -1046,6 +1046,14 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               : pluginItemsForHostGroup(pluginFolderMenuPlacement, group, placement);
           return (
             <>
+              {/* Serpent-a6c516: name the subject — the root has no row of its
+                  own in the menu, so the panel's blank area / root row menu
+                  starts by saying what it acts on. */}
+              {desc.isLibraryRoot && (
+                <div className="context-menu-selection-summary">
+                  {t("menu.libraryRoot")}
+                </div>
+              )}
               <ContextMenuSection label={t("command.group.open")}>
                 <PluginMenuItems
                   items={folderPluginItems("open", "before")}

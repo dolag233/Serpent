@@ -1918,6 +1918,13 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           icon="folder"
           label={t("scope.rootFolder")}
           onClick={() => void onChooseFolder("root")}
+          // Serpent-a6c516: the root row opens the same library-root menu as the
+          // folder panel's blank area.
+          onContextMenu={(event) => {
+            if (!library) return;
+            event.preventDefault();
+            onOpenRootFolderContextMenu?.({ x: event.clientX, y: event.clientY });
+          }}
           {...(library
             ? assetFolderDropHandlers("root-assets", null)
             : {

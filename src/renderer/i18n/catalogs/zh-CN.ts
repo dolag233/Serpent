@@ -598,6 +598,8 @@ export const zhCN = {
     assetOps: "资产操作：{name}",
     collectionOps: "合集操作：{name}",
     folderOps: "文件夹操作：{name}",
+    /** Serpent-a6c516: 文件夹面板空白处 / 根目录行的右键主体名。 */
+    libraryRoot: "根目录",
     restoreTrashedFolder: "恢复文件夹",
     smartCollectionOps: "智能合集操作：{name}",
     skipReportLine: "{action}：将处理 {process} / 跳过 {skip}（{reasons}）",

@@ -11031,13 +11031,14 @@ function AppInner() {
         getManagedAssetDragIds={getManagedAssetDragIds}
         getManagedFolderDragIds={getManagedFolderDragIds}
         onOpenRootFolderContextMenu={({ x, y }) =>
-          // Serpent-316493 follow-up: the folder panel's blank area is the
-          // library root, so its context menu acts on the root folder.
+          // Serpent-a6c516: the folder panel's blank area and the 「资源库根目录」
+          // row are both the library root, so they share this menu.
           openContextMenu(
             {
               type: "folder",
               folderId: LIBRARY_ROOT_FOLDER_ID,
-              name: t("scope.rootFolder"),
+              // Shown in the menu's leading line and its accessible name.
+              name: t("menu.libraryRoot"),
               locationKind: "managed",
               isLibraryRoot: true,
             },

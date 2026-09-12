@@ -225,10 +225,14 @@ test("right-clicking the blank area opens the library-root folder menu", async (
     );
 
     const menu = window.getByRole("menu", {
-      name: "文件夹操作：资源库根目录",
+      name: "文件夹操作：根目录",
       exact: true,
     });
     await expect(menu).toBeVisible();
+    // Serpent-a6c516: the menu starts by naming its subject.
+    await expect(
+      menu.locator(".context-menu-selection-summary", { hasText: /^根目录$/u }),
+    ).toBeVisible();
 
     // Root-appropriate entries…
     await expect(
@@ -277,6 +281,27 @@ test("right-clicking the blank area opens the library-root folder menu", async (
         return created ? (created.parentFolderId ?? "root") : "missing";
       }),
     ).toBe("root");
+
+    // Serpent-a6c516: the 「资源库根目录」 row opens the very same menu.
+    await window
+      .getByRole("button", { name: "资源库根目录", exact: true })
+      .click({ button: "right" });
+    const rowMenu = window.getByRole("menu", {
+      name: "文件夹操作：根目录",
+      exact: true,
+    });
+    await expect(rowMenu).toBeVisible();
+    await expect(
+      rowMenu.locator(".context-menu-selection-summary", { hasText: /^根目录$/u }),
+    ).toBeVisible();
+    await expect(
+      rowMenu.getByRole("menuitem", { name: "在文件浏览器中打开" }),
+    ).toBeVisible();
+    await expect(
+      rowMenu.getByRole("menuitem", { name: "新建文件夹" }),
+    ).toBeVisible();
+    await expect(rowMenu.getByRole("menuitem", { name: "重命名…" })).toHaveCount(0);
+    await window.keyboard.press("Escape");
   } finally {
     await application.close();
     rmSync(temporaryRoot, { recursive: true, force: true });
