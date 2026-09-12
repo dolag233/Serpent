@@ -10,6 +10,7 @@ import {
   type NavigationSidebarProps,
 } from "../../src/renderer/NavigationSidebar";
 import { LocaleProvider } from "../../src/renderer/i18n";
+import { NAV_TREE_PREF_KEY } from "../../src/renderer/nav-tree-preferences";
 
 function createDragTransfer(types: string[]): DataTransfer {
   return {
@@ -127,6 +128,7 @@ describe("NavigationSidebar virtual library root", () => {
     root = undefined;
     container?.remove();
     container = undefined;
+    localStorage.removeItem(NAV_TREE_PREF_KEY);
   });
 
   it("renders one selectable root row with its direct-asset count", async () => {
@@ -154,6 +156,65 @@ describe("NavigationSidebar virtual library root", () => {
 
     await act(async () => rootRows[0]?.click());
     expect(onChooseFolder).toHaveBeenCalledWith("root");
+  });
+
+  it("expands ancestors and focuses a folder revealed from a workspace tab", async () => {
+    const parent = {
+      folderId: "folder-parent",
+      parentFolderId: null,
+      name: "Parent",
+      relativePath: "Parent",
+      directAssetCount: 0,
+      childFolderCount: 1,
+    };
+    const child = {
+      folderId: "folder-child",
+      parentFolderId: parent.folderId,
+      name: "Child",
+      relativePath: "Parent/Child",
+      directAssetCount: 0,
+      childFolderCount: 0,
+    };
+    localStorage.setItem(NAV_TREE_PREF_KEY, JSON.stringify({
+      version: 1,
+      collapsedFolderIds: [parent.folderId],
+      collapsedCollectionIds: [],
+    }));
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(createElement(
+        LocaleProvider,
+        null,
+        createElement(NavigationSidebar, createNavigationProps({
+          folders: [parent, child],
+          revealTarget: { kind: "folder", id: child.folderId, requestId: 1 },
+        })),
+      ));
+      await new Promise((resolveFrame) => requestAnimationFrame(resolveFrame));
+      await new Promise((resolveFrame) => requestAnimationFrame(resolveFrame));
+    });
+
+    const childRow = container.querySelector<HTMLButtonElement>(
+      `[data-nav-folder-id="${child.folderId}"]`,
+    );
+    expect(childRow).not.toBeNull();
+    expect(document.activeElement).toBe(childRow);
+
+    const parentRow = container.querySelector<HTMLButtonElement>(
+      `[data-nav-folder-id="${parent.folderId}"]`,
+    );
+    const collapseParent =
+      parentRow?.parentElement?.querySelector<HTMLButtonElement>(".nav-disclosure");
+    await act(async () => {
+      collapseParent?.click();
+      await new Promise((resolveFrame) => requestAnimationFrame(resolveFrame));
+    });
+    expect(container.querySelector(
+      `[data-nav-folder-id="${child.folderId}"]`,
+    )).toBeNull();
   });
 
   it("keeps nested folder and collection rows aligned with long labels and counts", async () => {

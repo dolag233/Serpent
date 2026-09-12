@@ -11,13 +11,24 @@ export type WorkspaceNavLocation =
    * next/prev 用 replaceCurrent 原地更新 assetId，不新增历史条目。
    */
   | { kind: "preview"; assetId: string }
-  | { kind: "tag-management" };
+  | { kind: "tag-management" }
+  | { kind: "plugin-sidebar"; viewId: string };
+
+export interface WorkspaceNavViewport {
+  /** Exact scroll offset, used when the restored extent is unchanged. */
+  scrollTop: number;
+  /** Relative position keeps a location stable when its virtual extent changes. */
+  scrollProgress: number;
+  scrollExtent: number;
+}
 
 export type WorkspaceNavHistory = {
   current: WorkspaceNavLocation;
+  currentViewport: WorkspaceNavViewport;
   canBack: boolean;
   canForward: boolean;
   push: (location: WorkspaceNavLocation) => void;
+  saveCurrentViewport: (viewport: WorkspaceNavViewport) => void;
   /** 原地替换当前条目（查看器内切资产用），不清空 forward 分支。 */
   replaceCurrent: (location: WorkspaceNavLocation) => void;
   /** 移除当前条目并回退到前一条（X/Esc 主动关闭查看器用），无 forward 残留。 */
@@ -26,9 +37,15 @@ export type WorkspaceNavHistory = {
   forward: () => WorkspaceNavLocation | null;
   clear: (initial?: WorkspaceNavLocation) => void;
   peek: (delta: number) => WorkspaceNavLocation | null;
+  peekViewport: (delta: number) => WorkspaceNavViewport | null;
 };
 
 const DEFAULT_LOCATION: WorkspaceNavLocation = { kind: "all" };
+const DEFAULT_VIEWPORT: WorkspaceNavViewport = {
+  scrollTop: 0,
+  scrollProgress: 0,
+  scrollExtent: 0,
+};
 
 export function workspaceNavLocationsEqual(
   a: WorkspaceNavLocation,
@@ -64,6 +81,8 @@ export function workspaceNavLocationsEqual(
       return a.assetId === (b as Extract<WorkspaceNavLocation, { kind: "preview" }>).assetId;
     case "tag-management":
       return true;
+    case "plugin-sidebar":
+      return a.viewId === (b as Extract<WorkspaceNavLocation, { kind: "plugin-sidebar" }>).viewId;
   }
 }
 
@@ -85,27 +104,46 @@ export function seedRestoreLeafLocation(
 export function createWorkspaceNavHistory(
   initial: WorkspaceNavLocation = DEFAULT_LOCATION,
 ): WorkspaceNavHistory {
-  const stack: WorkspaceNavLocation[] = [initial];
+  const stack: Array<{
+    location: WorkspaceNavLocation;
+    viewport: WorkspaceNavViewport;
+  }> = [{ location: initial, viewport: { ...DEFAULT_VIEWPORT } }];
   let index = 0;
+
+  const syncCurrent = () => {
+    history.current = stack[index]!.location;
+    history.currentViewport = stack[index]!.viewport;
+    history.canBack = index > 0;
+    history.canForward = index < stack.length - 1;
+  };
 
   const history: WorkspaceNavHistory = {
     current: initial,
+    currentViewport: { ...DEFAULT_VIEWPORT },
     canBack: false,
     canForward: false,
     push(location) {
       if (workspaceNavLocationsEqual(history.current, location)) {
+        stack[index]!.viewport = { ...DEFAULT_VIEWPORT };
+        syncCurrent();
         return;
       }
       stack.length = index + 1;
-      stack.push(location);
+      stack.push({ location, viewport: { ...DEFAULT_VIEWPORT } });
       index = stack.length - 1;
-      history.current = location;
-      history.canBack = index > 0;
-      history.canForward = false;
+      syncCurrent();
+    },
+    saveCurrentViewport(viewport) {
+      stack[index]!.viewport = {
+        scrollTop: Math.max(0, viewport.scrollTop),
+        scrollProgress: Math.min(1, Math.max(0, viewport.scrollProgress)),
+        scrollExtent: Math.max(0, viewport.scrollExtent),
+      };
+      syncCurrent();
     },
     replaceCurrent(location) {
-      stack[index] = location;
-      history.current = location;
+      stack[index]!.location = location;
+      syncCurrent();
     },
     dismissCurrent() {
       if (index <= 0) {
@@ -113,18 +151,14 @@ export function createWorkspaceNavHistory(
       }
       stack.splice(index, 1);
       index -= 1;
-      history.current = stack[index]!;
-      history.canBack = index > 0;
-      history.canForward = false;
+      syncCurrent();
     },
     back() {
       if (index <= 0) {
         return null;
       }
       index -= 1;
-      history.current = stack[index]!;
-      history.canBack = index > 0;
-      history.canForward = index < stack.length - 1;
+      syncCurrent();
       return history.current;
     },
     forward() {
@@ -132,25 +166,28 @@ export function createWorkspaceNavHistory(
         return null;
       }
       index += 1;
-      history.current = stack[index]!;
-      history.canBack = index > 0;
-      history.canForward = index < stack.length - 1;
+      syncCurrent();
       return history.current;
     },
     clear(nextInitial = DEFAULT_LOCATION) {
       stack.length = 0;
-      stack.push(nextInitial);
+      stack.push({ location: nextInitial, viewport: { ...DEFAULT_VIEWPORT } });
       index = 0;
-      history.current = nextInitial;
-      history.canBack = false;
-      history.canForward = false;
+      syncCurrent();
     },
     peek(delta) {
       const target = index + delta;
       if (target < 0 || target >= stack.length) {
         return null;
       }
-      return stack[target]!;
+      return stack[target]!.location;
+    },
+    peekViewport(delta) {
+      const target = index + delta;
+      if (target < 0 || target >= stack.length) {
+        return null;
+      }
+      return stack[target]!.viewport;
     },
   };
 

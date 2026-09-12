@@ -90,7 +90,7 @@ test("persists organization and metadata across restart and surfaces optimistic-
       if (!created.ok) throw new Error("Could not create tag fixture.");
     });
     await window.getByRole("button", { name: "刷新磁盘变化" }).click();
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "所有资产", exact: true }).click();
 
     await window.getByRole("button", { name: "添加合集" }).click();
     await window
@@ -112,7 +112,7 @@ test("persists organization and metadata across restart and surfaces optimistic-
     await expect(
       collectionRow(window, "持久子合集"),
     ).toBeVisible();
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "所有资产", exact: true }).click();
 
     await assetCard.click({ button: "right" });
     await window.getByRole("menuitem", { name: "添加标签…" }).click();

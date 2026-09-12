@@ -350,7 +350,7 @@ test("ordinary browsing continuously appends every asset without page controls",
     // sidebar exposes the library-wide scope as "所有资产"; the managed root
     // is an internal destination used by move/restore flows, not a separate
     // navigation row.
-    const allAssetsRow = window.getByRole("button", { name: /所有资产/ });
+    const allAssetsRow = window.getByRole("button", { name: "所有资产", exact: true });
     await allAssetsRow.click();
     await loadEveryAssetInCurrentScope();
     await expect(allAssetsRow).toHaveClass(/is-active/);
@@ -488,7 +488,7 @@ test("ordinary browsing continuously appends every asset without page controls",
     // asserting the newly-created organization entries. 筛选面板现在是外部
     // 点击即关的浮层：刷新后填写前重新展开。
     await window.getByRole("button", { name: "刷新磁盘变化" }).click();
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "所有资产", exact: true }).click();
     await window.getByRole("button", { name: "格式", exact: true }).click();
     await window.getByLabel("格式过滤").fill("png");
     await expect(window.locator(".asset-card")).toHaveCount(0);
@@ -553,7 +553,7 @@ test("ordinary browsing continuously appends every asset without page controls",
       return serpent.library.trashAssets({ libraryId, assetIds });
     }, setup);
     expect(trashed.ok).toBe(true);
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "所有资产", exact: true }).click();
     await expect(window.locator(".asset-card")).toHaveCount(0);
     await window.getByRole("button", { name: "回收站", exact: true }).click();
     // Trash cards render a different DOM shape (tombstone chrome), so the
@@ -568,7 +568,7 @@ test("ordinary browsing continuously appends every asset without page controls",
       .locator(".workspace-canvas")
       .evaluate((element) => element.scrollTo(0, element.scrollHeight));
     await expect(window.locator(".asset-card").first()).toBeVisible();
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "所有资产", exact: true }).click();
     await expect(window.locator(".asset-card")).toHaveCount(0);
   } finally {
     await application.close();

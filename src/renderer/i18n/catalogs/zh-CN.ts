@@ -15,6 +15,19 @@ import type { MessageTree } from '../types';
  *   call-site migration should compose with placeholders rather than one mega-template.
  */
 export const zhCN = {
+  tabs: {
+    label: "工作区标签页",
+    add: "新建标签页",
+    close: "关闭标签页",
+    closeNamed: "关闭标签页：{name}",
+    revealFolder: "在文件夹中显示",
+    revealCollection: "在合集中显示",
+    closeOthers: "关闭其他标签页",
+    copyName: "复制名称",
+    copyPath: "复制路径",
+    copyNameDone: "已复制名称",
+    copyNameFailed: "无法复制名称",
+  },
   common: {
     cancel: "取消",
     save: "保存",

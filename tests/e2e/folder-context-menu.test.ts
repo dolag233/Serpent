@@ -312,7 +312,7 @@ test("renames a folder inline from the context menu and keeps its assets visible
     expect(existsSync(path.join(libraryPath, "Assets", "原画"))).toBe(false);
 
     // The asset is still listed from the all-assets (DB) view as well.
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "所有资产", exact: true }).click();
     await expect(assetCard).toBeVisible({ timeout: 10_000 });
   } finally {
     await application.close();
@@ -338,7 +338,7 @@ test("keeps the inline rename row open with an inline conflict error and allows 
     await createLibrary(window, libraryName);
     await createFolderViaSidebar(window, "素材甲");
     // 创建后自动进入新文件夹（产品行为）——回根再建第二个，保证两者同父级。
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "所有资产", exact: true }).click();
     await createFolderViaSidebar(window, "素材乙");
 
     const input = await openFolderRenameInline(window, "素材甲");

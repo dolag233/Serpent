@@ -177,7 +177,7 @@ test("capture primary UI surfaces for the wave-3 UX audit", async () => {
     await shot(window, "10-trash-view");
 
     // Viewer page (from the remaining assets).
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "所有资产", exact: true }).click();
     await expect(window.locator(".asset-card")).toHaveCount(5, { timeout: 10_000 });
     await window.locator(".asset-card").first().dblclick();
     await window.waitForTimeout(1_800);

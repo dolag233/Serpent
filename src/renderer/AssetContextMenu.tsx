@@ -272,6 +272,8 @@ function descriptorKey(descriptor: ContextMenuDescriptor): string {
       return `trashed-folder:${descriptor.tombstoneId}`;
     case "workspace":
       return `workspace:${(descriptor.assetIds ?? []).join(",")}`;
+    case "workspace-tab":
+      return `workspace-tab:${descriptor.tabId}`;
   }
 }
 
@@ -376,6 +378,12 @@ interface AssetContextMenuProps {
   trashedFolderCount: number;
   onRestoreTrashedFolder: (tombstoneId: string, name: string) => void;
   onEmptyTrash: () => void;
+  onCloseWorkspaceTab: (tabId: string) => void;
+  onCloseOtherWorkspaceTabs: (tabId: string) => void;
+  onRevealWorkspaceTabEntity: (
+    entity: { kind: "folder" | "collection"; id: string },
+  ) => void;
+  onCopyWorkspaceTabName: (name: string) => void;
 }
 
 export function AssetContextMenu(props: AssetContextMenuProps) {
@@ -641,6 +649,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               })
             : activeContextMenu.descriptor.type === "workspace"
               ? t("scope.workspace")
+            : activeContextMenu.descriptor.type === "workspace-tab"
+              ? activeContextMenu.descriptor.name
             : activeContextMenu.descriptor.type === "trash"
               ? t("scope.trash")
               : activeContextMenu.descriptor.type === "trashed-folder"
@@ -697,6 +707,62 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   : { assetIds: [...assetIds] },
               )}
             />
+          );
+        })()}
+        {activeContextMenu.descriptor.type === "workspace-tab" && (() => {
+          const desc = activeContextMenu.descriptor;
+          if (desc.type !== "workspace-tab") return null;
+          return (
+            <>
+              <ContextMenuSection>
+                <ContextMenuItem
+                  icon={<Icon name="close" size={14} />}
+                  label={t("tabs.close")}
+                  onAction={() => props.onCloseWorkspaceTab(desc.tabId)}
+                />
+                <ContextMenuItem
+                  disabled={!desc.canCloseOthers}
+                  label={t("tabs.closeOthers")}
+                  onAction={() => props.onCloseOtherWorkspaceTabs(desc.tabId)}
+                />
+              </ContextMenuSection>
+              {desc.entity ? (
+                <ContextMenuSection>
+                  <ContextMenuItem
+                    icon={<Icon name={desc.entity.kind === "folder" ? "folder-tree" : "collection"} size={14} />}
+                    label={
+                      desc.entity.kind === "folder"
+                        ? t("tabs.revealFolder")
+                        : t("tabs.revealCollection")
+                    }
+                    onAction={() => props.onRevealWorkspaceTabEntity(desc.entity!)}
+                  />
+                  <ContextMenuItem
+                    icon={<Icon name="copy" size={14} />}
+                    label={t("tabs.copyName")}
+                    onAction={() => props.onCopyWorkspaceTabName(desc.name)}
+                  />
+                  {desc.entity.kind === "folder" ? (
+                    <>
+                      <ContextMenuItem
+                        icon={<Icon name="copy" size={14} />}
+                        label={t("tabs.copyPath")}
+                        onAction={() => onCopyFolderPath(desc.entity!.id)}
+                      />
+                      <ContextMenuItem
+                        icon={<Icon name="external-link" size={14} />}
+                        label={
+                          isMac
+                            ? t("command.folder.revealInFinder")
+                            : t("command.folder.revealInExplorer")
+                        }
+                        onAction={() => onOpenFolderInFileManager(desc.entity!.id)}
+                      />
+                    </>
+                  ) : null}
+                </ContextMenuSection>
+              ) : null}
+            </>
           );
         })()}
         {activeContextMenu.descriptor.type === "trash" && (

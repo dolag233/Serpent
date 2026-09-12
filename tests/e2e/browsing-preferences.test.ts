@@ -954,7 +954,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     // The current sidebar exposes the library-wide scope as 所有资产; the
     // managed root is an internal destination rather than a separate row.
     // Remain on the same scope before creating organization fixtures.
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "所有资产", exact: true }).click();
     await assertToggleStates("true", "false", "false", "true");
     await assertHiddenFieldPresentation(true);
 
@@ -1000,7 +1000,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     await expect(window.locator('[data-testid="tag-management-workspace"]'))
       .toBeVisible();
     await expect(window.getByText("偏好测试标签", { exact: true })).toBeVisible();
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "所有资产", exact: true }).click();
     await assertHiddenFieldPresentation(true);
 
     // Assign the tag via right-click context menu
@@ -1025,7 +1025,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     await assertHiddenFieldPresentation(true);
 
     // Return to 所有资产
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "所有资产", exact: true }).click();
     await assertHiddenFieldPresentation(true);
 
     // REQ-FILTER-020 / Serpent-77c919: the default picker keeps recently
@@ -1074,7 +1074,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
 
     // Creating a collection intentionally enters the new collection scope.
     // Return to the library-wide scope before adding the existing asset.
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "所有资产", exact: true }).click();
     await expect(cardById).toBeVisible();
 
     await cardById.click({ button: "right" });
@@ -1088,7 +1088,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     await assertHiddenFieldPresentation(true);
 
     // Return to 所有资产
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "所有资产", exact: true }).click();
     await assertHiddenFieldPresentation(true);
 
     // Get the library ID for direct API calls
@@ -1134,7 +1134,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     expect(smartCollectionCreated.ok).toBe(true);
 
     // Re-entering the normal scope refreshes organization summaries in the sidebar.
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "所有资产", exact: true }).click();
     await window
       .getByRole("button", { name: /偏好测试智能合集/ })
       .click();
@@ -1172,7 +1172,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     await assertHiddenFieldPresentation(false, false);
 
     // Navigate back to "所有资产"
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "所有资产", exact: true }).click();
     // Confirm we're back with content
     await expect(
       window.getByRole("button", { name: "automatic-b-sample.png", exact: true }),

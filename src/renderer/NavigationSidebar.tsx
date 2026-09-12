@@ -743,6 +743,11 @@ export interface NavigationSidebarProps {
   activeSmartCollectionId: string | null;
   showIgnoredItems: boolean;
   onToggleShowIgnoredItems: () => void;
+  revealTarget?: {
+    kind: "folder" | "collection";
+    id: string;
+    requestId: number;
+  } | null;
 
   // --- Data ---
   allAssetCount: number;
@@ -895,6 +900,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     activeSmartCollectionId,
     showIgnoredItems,
     onToggleShowIgnoredItems,
+    revealTarget = null,
     allAssetCount,
     rootAssetCount,
     trashedAssetCount,
@@ -975,6 +981,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
   const [navTreePrefs, setNavTreePrefs] = useState<NavTreePreferences>(() =>
     loadNavTreePreferences(),
   );
+  const handledRevealRequestRef = useRef<number | null>(null);
   const [folderSortPrefs, setFolderSortPrefs] = useState<FolderSortPreferences>(
     () => loadFolderSortPreferences(),
   );
@@ -1037,6 +1044,66 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     setNavTreePrefs(next);
     saveNavTreePreferences(next);
   }
+
+  useEffect(() => {
+    if (!revealTarget) return;
+    if (handledRevealRequestRef.current === revealTarget.requestId) return;
+    const collapsed = revealTarget.kind === "folder"
+      ? navTreePrefs.collapsedFolderIds
+      : (navTreePrefs.collapsedCollectionIds ?? []);
+    const ancestors: string[] = [];
+    const seen = new Set<string>();
+    if (revealTarget.kind === "folder") {
+      const byId = new Map<string, { parentId: string | null }>();
+      for (const folder of folders) {
+        byId.set(folder.folderId, { parentId: folder.parentFolderId });
+      }
+      for (const folder of linkedFolders) {
+        byId.set(folder.folderId, { parentId: folder.parentFolderId ?? null });
+      }
+      let cursor = byId.get(revealTarget.id);
+      while (cursor?.parentId) {
+        if (seen.has(cursor.parentId)) break;
+        seen.add(cursor.parentId);
+        ancestors.push(cursor.parentId);
+        cursor = byId.get(cursor.parentId);
+      }
+    } else {
+      const byId = new Map(
+        collections.map((collection) => [collection.collectionId, collection]),
+      );
+      let cursor = byId.get(revealTarget.id);
+      while (cursor?.parentId) {
+        if (seen.has(cursor.parentId)) break;
+        seen.add(cursor.parentId);
+        ancestors.push(cursor.parentId);
+        cursor = byId.get(cursor.parentId);
+      }
+    }
+    const nextCollapsed = collapsed.filter((id) => !ancestors.includes(id));
+    if (nextCollapsed.length !== collapsed.length) {
+      const next = revealTarget.kind === "folder"
+        ? withCollapsedFolderIds(navTreePrefs, nextCollapsed)
+        : withCollapsedCollectionIds(navTreePrefs, nextCollapsed);
+      const frame = window.requestAnimationFrame(() => {
+        setNavTreePrefs(next);
+        saveNavTreePreferences(next);
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }
+    const attribute = revealTarget.kind === "folder"
+      ? "data-nav-folder-id"
+      : "data-nav-collection-id";
+    const selector = `[${attribute}="${CSS.escape(revealTarget.id)}"]`;
+    const frame = window.requestAnimationFrame(() => {
+      const row = document.querySelector<HTMLButtonElement>(selector);
+      if (!row) return;
+      row.scrollIntoView({ block: "nearest" });
+      row.focus({ preventScroll: true });
+      handledRevealRequestRef.current = revealTarget.requestId;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [collections, folders, linkedFolders, navTreePrefs, revealTarget]);
 
   function revealCreatedFolderParent(
     _folderId: string,

@@ -201,7 +201,7 @@ test("drops an asset into a nested collection and persists membership", async ()
     await createLibrary(window, libraryName);
     await createCollection(window, "合集A");
     await createCollection(window, "子合集B", "合集A");
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "所有资产", exact: true }).click();
     await window.getByRole("button", { name: "导入文件", exact: true }).first().click();
     const sourceAsset = window.locator(
       '.asset-card[title="nested-drop.txt"]',

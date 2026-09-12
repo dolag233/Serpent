@@ -130,6 +130,34 @@ describe("createWorkspaceNavHistory", () => {
     expect(history.forward()).toBeNull();
   });
 
+  it("keeps an exact viewport on every back and forward entry", () => {
+    const history = createWorkspaceNavHistory();
+    history.saveCurrentViewport({
+      scrollTop: 730,
+      scrollProgress: 0.73,
+      scrollExtent: 1_000,
+    });
+    history.push({ kind: "folder", folderId: "b" });
+    history.saveCurrentViewport({
+      scrollTop: 120,
+      scrollProgress: 0.2,
+      scrollExtent: 600,
+    });
+
+    expect(history.back()).toEqual({ kind: "all" });
+    expect(history.currentViewport).toEqual({
+      scrollTop: 730,
+      scrollProgress: 0.73,
+      scrollExtent: 1_000,
+    });
+    expect(history.forward()).toEqual({ kind: "folder", folderId: "b" });
+    expect(history.currentViewport).toEqual({
+      scrollTop: 120,
+      scrollProgress: 0.2,
+      scrollExtent: 600,
+    });
+  });
+
   it("peek reads relative entries without moving", () => {
     const history = createWorkspaceNavHistory();
     history.push({ kind: "folder", folderId: "a" });

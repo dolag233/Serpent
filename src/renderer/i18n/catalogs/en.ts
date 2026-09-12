@@ -24,6 +24,19 @@ type CatalogMessages<T> = {
 
  */
 export const en = {
+  tabs: {
+    label: "Workspace tabs",
+    add: "New tab",
+    close: "Close tab",
+    closeNamed: "Close tab: {name}",
+    revealFolder: "Show in folders",
+    revealCollection: "Show in collections",
+    closeOthers: "Close other tabs",
+    copyName: "Copy name",
+    copyPath: "Copy path",
+    copyNameDone: "Name copied",
+    copyNameFailed: "Could not copy name",
+  },
   common: {
     cancel: "Cancel",
     save: "Save",

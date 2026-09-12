@@ -74,6 +74,17 @@ export type ContextMenuDescriptor =
       assetIds?: string[];
     }
   | {
+      /** Browser-style workspace tab. Entity data enables contextual actions. */
+      type: "workspace-tab";
+      tabId: string;
+      name: string;
+      entity:
+        | { kind: "folder"; id: string }
+        | { kind: "collection"; id: string }
+        | null;
+      canCloseOthers: boolean;
+    }
+  | {
       /** Sidebar trash row context menu (Serpent-gaoi). */
       type: "trash";
     }

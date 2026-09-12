@@ -175,7 +175,7 @@ test("context menu clamps at viewport edges", async () => {
 
     // Collection creation enters the new empty scope; the asset-menu check
     // below is intentionally back in the library-wide scope.
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "所有资产", exact: true }).click();
     await expect(assetCard).toBeVisible();
 
     // Open organization context menu on the collection
@@ -196,7 +196,7 @@ test("context menu clamps at viewport edges", async () => {
     await window.keyboard.press("Escape");
     // 创建合集后 scope 自动进入合集（新行为）——回到「所有资产」再验证
     // 资产菜单仍然可用。
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "所有资产", exact: true }).click();
     await assetCard.click({ button: "right" });
     await expect(window.getByRole("menu")).toBeVisible({ timeout: 5_000 });
     await expect(window.getByRole("menuitem", { name: "用默认应用打开" })).toBeVisible();
@@ -245,12 +245,12 @@ test("single-menu enforcement — opening new context menu closes existing one",
 
     // Collection creation enters the new empty scope; both asset-menu steps
     // intentionally operate from the library-wide scope.
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "所有资产", exact: true }).click();
     await expect(assetCard).toBeVisible();
 
     // Step 1: Open context menu on the asset card
     // 创建合集后 scope 自动进入合集——回到「所有资产」再右键资产卡片。
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "所有资产", exact: true }).click();
     await assetCard.click({ button: "right" });
     await expect(window.getByRole("menu")).toBeVisible({ timeout: 5_000 });
     await expect(window.getByRole("menuitem", { name: "用默认应用打开" })).toBeVisible();
@@ -484,7 +484,7 @@ test("scope change closes the context menu", async () => {
     await expect(window.getByRole("menuitem", { name: "用默认应用打开" })).toBeVisible();
 
     // Click a sidebar nav item (scope change) — should close the menu
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "所有资产", exact: true }).click();
     await expect(window.getByRole("menu")).not.toBeVisible({ timeout: 5_000 });
   } finally {
     await application.close();
@@ -717,7 +717,7 @@ test("tag picker searches, survives in-menu scroll, has no back button, and clos
       }
     });
     await window.getByRole("button", { name: "刷新磁盘变化" }).click();
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByRole("button", { name: "所有资产", exact: true }).click();
 
     // Enter the tag picker from the asset context menu
     await assetCard.click({ button: "right" });

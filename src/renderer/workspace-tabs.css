@@ -1,0 +1,225 @@
+/* Folder tabs live in the toolbar row. The list uses overflow-x, so a
+   non-visible overflow on one axis makes the other axis clip as well —
+   negative margins and a 1px cover shadow cannot escape that clip. The
+   toolbar rule and elevation shadow are the seam; drop them in this column
+   and keep a hairline only on the side panes. */
+
+.app-shell:has(.workspace-tabs) .app-toolbar {
+  border-bottom: none;
+  box-shadow: none;
+}
+
+.app-shell:has(.workspace-tabs) .navigation-pane::before,
+.app-shell:has(.workspace-tabs) .inspector-pane::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 1;
+  height: 1px;
+  pointer-events: none;
+  background: var(--divider-soft);
+}
+
+.toolbar-workspace-main:has(.workspace-tabs) {
+  align-items: center;
+  height: 100%;
+}
+
+.workspace-tabs {
+  display: flex;
+  flex: 0 1 auto;
+  align-self: stretch;
+  align-items: stretch;
+  min-width: 0;
+  max-width: 100%;
+  gap: var(--ui-space-1);
+  height: auto;
+  --workspace-tab-curve: calc(var(--ui-space-4) - 2px);
+}
+
+.workspace-tabs-list {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  align-items: stretch;
+  min-width: 0;
+  height: auto;
+  padding-inline: var(--workspace-tab-curve);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+  -webkit-app-region: no-drag;
+}
+
+.workspace-tabs-list::-webkit-scrollbar { display: none; }
+
+.workspace-tab {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  position: relative;
+  min-width: 132px;
+  max-width: 220px;
+  height: auto;
+  margin-top: var(--ui-space-1);
+  padding-top: var(--ui-space-1);
+  padding-right: var(--ui-space-2);
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: var(--workspace-tab-curve) var(--workspace-tab-curve) 0 0;
+  color: var(--secondary);
+  -webkit-app-region: no-drag;
+}
+
+.workspace-tab:not(.is-active)::after {
+  content: "";
+  position: absolute;
+  top: var(--ui-space-2);
+  right: 0;
+  bottom: var(--ui-space-2);
+  width: 1px;
+  background: var(--divider-soft);
+}
+
+.workspace-tab:not(.is-active):hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.workspace-tab.is-active {
+  z-index: 1;
+  background: var(--canvas);
+  border-color: var(--divider-soft);
+  color: var(--text);
+}
+
+.workspace-tab.is-active::before,
+.workspace-tab.is-active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  width: var(--workspace-tab-curve);
+  height: var(--workspace-tab-curve);
+  pointer-events: none;
+}
+
+.workspace-tab.is-active::before {
+  right: 100%;
+  background: radial-gradient(
+    circle at 0 0,
+    transparent var(--workspace-tab-curve),
+    var(--canvas) calc(var(--workspace-tab-curve) + 1px)
+  );
+}
+
+.workspace-tab.is-active::after {
+  left: 100%;
+  background: radial-gradient(
+    circle at 100% 0,
+    transparent var(--workspace-tab-curve),
+    var(--canvas) calc(var(--workspace-tab-curve) + 1px)
+  );
+}
+
+.workspace-tab-select,
+.workspace-tab-close,
+.workspace-tab-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  line-height: 1;
+  -webkit-app-region: no-drag;
+}
+
+.workspace-tab-select {
+  flex: 1 1 auto;
+  justify-content: flex-start;
+  align-self: flex-start;
+  min-width: 0;
+  height: var(--shell-control-height);
+  gap: var(--ui-space-2);
+  padding: 0 var(--ui-space-2) 0 var(--ui-space-3);
+  border-radius: inherit;
+  font-size: calc(12.5px * var(--ui-font-scale));
+  font-weight: 560;
+}
+
+.workspace-tab-select > .icon {
+  flex-shrink: 0;
+  /* Folder/file strokes sit low in the 24 viewBox; HarmonyOS CJK sits high.
+     The close glyph is already on the title midline — lift the tab icon to it. */
+  translate: 0 -2px;
+}
+.workspace-tab.is-active .workspace-tab-select > .icon { color: var(--accent-soft-fg); }
+
+.workspace-tab-title {
+  overflow: hidden;
+  min-width: 0;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-tab-close {
+  align-self: flex-start;
+  width: var(--shell-chip-height);
+  height: var(--shell-chip-height);
+  margin-top: calc((var(--shell-control-height) - var(--shell-chip-height)) / 2);
+  border-radius: var(--ui-radius-surface);
+  color: var(--secondary);
+}
+
+.workspace-tab-add {
+  flex: 0 0 auto;
+  align-self: center;
+  width: var(--shell-control-height);
+  height: var(--shell-control-height);
+  border-radius: var(--ui-radius-surface);
+  color: var(--secondary);
+}
+
+.workspace-tab-close:hover,
+.workspace-tab-add:hover:not(:disabled) {
+  background: var(--menu-item-hover-background);
+  color: var(--text);
+}
+
+.workspace-tab-add:disabled,
+.workspace-tab-select:disabled,
+.workspace-tab-close:disabled {
+  color: var(--tertiary);
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.workspace-tab-select:focus-visible,
+.workspace-tab-close:focus-visible,
+.workspace-tab-add:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: -2px;
+}
+
+/* Keep a usable tab and the add action visible beside the search field. */
+.toolbar-workspace-cluster:has(.workspace-tabs) .toolbar-workspace-search {
+  flex: 0 1 240px;
+  min-width: 132px;
+}
+
+.toolbar-workspace-cluster:has(.workspace-tabs) .search-control-wrap {
+  width: 100%;
+  min-width: 132px;
+}
+
+.toolbar-workspace-main:has(.workspace-tabs) .library-switcher {
+  flex: 0 1 150px;
+}

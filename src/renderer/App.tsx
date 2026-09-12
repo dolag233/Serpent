@@ -100,6 +100,7 @@ import {
 } from "./main-menu-items";
 import { CanvasToolbarControls } from "./CanvasToolbarControls";
 import { ScopeHistoryButtons } from "./ScopeHistoryButtons";
+import { WorkspaceTabs } from "./WorkspaceTabs";
 import {
   ScopeBreadcrumbs,
   buildScopeBreadcrumbSegments,
@@ -155,9 +156,22 @@ import type { HistoryStatus } from "../shared/protocol/responses";
 import { isEditableTextTarget } from "../shared/edit-context-menu";
 import type { SearchQuery } from "../shared/asset-types";
 import {
-  createWorkspaceNavHistory,
   type WorkspaceNavLocation,
+  type WorkspaceNavViewport,
 } from "./workspace-nav-history";
+import {
+  createDefaultWorkspaceTabBrowseState,
+  workspaceTabBrowseStateHasDiscoveryInput,
+  type WorkspaceTabBrowseState,
+  type WorkspaceTabSession,
+} from "./workspace-tabs";
+import { useWorkspaceTabsController } from "./use-workspace-tabs";
+import { presentWorkspaceTab } from "./workspace-tab-presentation";
+import {
+  captureWorkspaceNavViewport,
+  resolveWorkspaceScrollTop,
+  restoreWorkspaceNavViewport,
+} from "./workspace-scroll-position";
 import { mergeAssetSummaries } from "./merge-asset-summaries";
 import {
   RelinkPreview,
@@ -592,6 +606,11 @@ type QueryFilterSnapshot = {
 // inline in the directory tree (use-inline-folder-edit), not in a dialog.
 type DialogKind = "library" | "tag" | "collection" | null;
 type AssetScope = "all" | "root" | string;
+type WorkspaceNavigationRequest = Readonly<{
+  isCurrent: () => boolean;
+  recordHistory: boolean;
+  saveViewport: boolean;
+}>;
 type OrganizationKind = "collection" | "smart";
 type OrganizationRenameTarget = {
   kind: OrganizationKind;
@@ -941,8 +960,11 @@ function AppInner() {
     },
     onResizeEnd: () => panelResizeReleaseRef.current(),
   });
-  const navHistoryRef = useRef(createWorkspaceNavHistory());
+  const workspaceHistoryReplayQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const workspaceHistoryReplayEpochRef = useRef(0);
+  /** Tab restore / replay must not push duplicate history entries. */
   const suppressNavHistoryRef = useRef(false);
+  const workspaceTabTransitionRef = useRef(0);
   const [navHistoryUi, setNavHistoryUi] = useState({
     canBack: false,
     canForward: false,
@@ -1510,6 +1532,45 @@ function AppInner() {
   const syncRunNotifiedRef = useRef(false);
   const syncRunStartedAtRef = useRef<number | null>(null);
   const [showIgnoredItems, setShowIgnoredItems] = useState(false);
+  const [workspaceTabRevealTarget, setWorkspaceTabRevealTarget] = useState<{
+    kind: "folder" | "collection";
+    id: string;
+    requestId: number;
+  } | null>(null);
+  const workspaceTabRevealRequestRef = useRef(0);
+  const pendingWorkspacePreviewRef = useRef<{
+    assetId: string;
+    viewport: WorkspaceNavViewport;
+    isCurrent: () => boolean;
+  } | null>(null);
+  const pendingWorkspaceTabSelectionRef = useRef<{
+    selectedAssetIds: string[];
+    selectedAssetId: string | null;
+    isCurrent: () => boolean;
+  } | null>(null);
+  const cancelWorkspaceViewportRestoreRef = useRef<(() => void) | null>(null);
+  const {
+    state: workspaceTabsState,
+    historyRef: navHistoryRef,
+    selectTab: selectWorkspaceTab,
+    addTab: addWorkspaceTab,
+    closeTab: closeWorkspaceTab,
+    closeOtherTabs: closeOtherWorkspaceTabs,
+    resetTabs: resetWorkspaceTabs,
+  } = useWorkspaceTabsController({
+    beginTransition: beginWorkspaceNavigation,
+    captureContext: captureWorkspaceTabContext,
+    restoreTab: restoreWorkspaceTabSession,
+    restoreAll: restoreAllAssetsWorkspaceTab,
+    getDefaultBrowseState: () =>
+      createDefaultWorkspaceTabBrowseState(sortField, sortOrder),
+    onHistoryChanged: (history) => {
+      setNavHistoryUi({
+        canBack: history.canBack,
+        canForward: history.canForward,
+      });
+    },
+  });
   const [appLogEntries, setAppLogEntries] = useState<AppLogEntry[]>([]);
   const [appLogLoading, setAppLogLoading] = useState(false);
   const [appLogAutomationCorrelationId, setAppLogAutomationCorrelationId] = useState("");
@@ -2241,6 +2302,18 @@ function AppInner() {
     trashedAssets,
     trashedFolders,
   ]);
+  const workspaceTabPresentations = workspaceTabsState.tabs.map((tab) =>
+    presentWorkspaceTab(tab, {
+      folders,
+      linkedFolders,
+      collections,
+      smartCollections,
+      tags,
+      assets: [...visibleAssets, ...assets],
+      pluginViews: pluginSidebarViews,
+      t,
+    }),
+  );
 
   // Serpent-b963a9: masonry/justified canvases use the full-scope layout index
   // for geometry, so shuffling only the loaded summaries leaves the cards in
@@ -2577,6 +2650,34 @@ function AppInner() {
           )
         : [],
     [showTrash, t, trashBrowseTombstoneId, trashedFolders],
+  );
+  const scopeBreadcrumbSegments = buildScopeBreadcrumbSegments(
+    {
+      showTrash,
+      trashBreadcrumbHops,
+      activeTagLabel: activeTagId
+        ? (tags.find((tag) => tag.tagId === activeTagId)?.name ?? null)
+        : null,
+      activeCollectionLabel: activeCollectionId
+        ? (collections.find(
+            (collection) => collection.collectionId === activeCollectionId,
+          )?.name ?? null)
+        : null,
+      activeSmartCollectionLabel: activeSmartCollectionId
+        ? (smartCollections.find(
+            (collection) => collection.collectionId === activeSmartCollectionId,
+          )?.name ?? null)
+        : null,
+      assetScope,
+      folderTrail:
+        assetScope !== "all" && assetScope !== "root"
+          ? buildManagedFolderBreadcrumbTrail(folders, assetScope).length > 0
+            ? buildManagedFolderBreadcrumbTrail(folders, assetScope)
+            : buildLinkedFolderBreadcrumbTrail(linkedFolders, assetScope)
+          : [],
+      linkedFolderLabel: null,
+    },
+    t,
   );
   const browseCanvasBodyLayout = resolveBrowseCanvasBodyLayout(
     visibleAssets.length,
@@ -3209,8 +3310,25 @@ function AppInner() {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [assetCardSize, previewAsset, resizeAssetCards]);
 
-  const openAssetPreview = useCallback((asset: AssetSummary) => {
+  const saveCurrentWorkspaceHistoryViewport = useCallback(() => {
+    cancelWorkspaceViewportRestoreRef.current?.();
+    cancelWorkspaceViewportRestoreRef.current = null;
+    navHistoryRef.current.saveCurrentViewport(
+      captureWorkspaceNavViewport(workspaceCanvasRef.current),
+    );
+  }, [navHistoryRef]);
+
+  const openAssetPreview = useCallback((
+    asset: AssetSummary,
+    options?: { recordHistory?: boolean },
+  ) => {
     if (asset.availability !== "available" || asset.deletedAt) return;
+    if (
+      options?.recordHistory !== false &&
+      navHistoryRef.current.current.kind !== "preview"
+    ) {
+      saveCurrentWorkspaceHistoryViewport();
+    }
     // Serpent-ayf: entering the viewer always shows chrome, regardless of
     // whatever idle state accumulated while browsing; only opening (not
     // navigateAssetPreview) wakes it.
@@ -3259,7 +3377,7 @@ function AppInner() {
     setPreviewAsset(asset);
     // Serpent-b7e173：打开查看器注册一个历史状态。已是 preview（重复打开）则
     // 原地替换，避免叠层 preview；applyWorkspaceLocation 回放时 suppress 不重复记。
-    if (!suppressNavHistoryRef.current) {
+    if (options?.recordHistory !== false) {
       const previewLocation: WorkspaceNavLocation = {
         kind: "preview",
         assetId: asset.assetId,
@@ -3274,7 +3392,7 @@ function AppInner() {
         canForward: navHistoryRef.current.canForward,
       });
     }
-  }, [navHistoryRef, selectionAnchorRef, setNavHistoryUi, suppressNavHistoryRef, wakeViewerChrome]);
+  }, [navHistoryRef, saveCurrentWorkspaceHistoryViewport, selectionAnchorRef, setNavHistoryUi, wakeViewerChrome]);
 
   const persistAssetColorSpace = useCallback(async (assetId: string, colorSpace: string | null) => {
     if (!api || !library) return;
@@ -3290,14 +3408,17 @@ function AppInner() {
     setNotice(t("toast.colorSpaceSaved"));
   }, [api, library, setError, setNotice, t]);
 
-  const navigateAssetPreview = useCallback((asset: AssetSummary) => {
+  const navigateAssetPreview = useCallback((
+    asset: AssetSummary,
+    options?: { recordHistory?: boolean },
+  ) => {
     setSelectedAssetIds([asset.assetId]);
     setSelectedAssetId(asset.assetId);
     selectionAnchorRef.current = asset.assetId;
     previewFocusReturnRef.current = asset.assetId;
     setPreviewAsset(asset);
     // Serpent-b7e173：查看器内切资产只更新当前 preview 条目的 assetId，不新增历史。
-    if (!suppressNavHistoryRef.current) {
+    if (options?.recordHistory !== false) {
       navHistoryRef.current.replaceCurrent({
         kind: "preview",
         assetId: asset.assetId,
@@ -3307,9 +3428,35 @@ function AppInner() {
         canForward: navHistoryRef.current.canForward,
       });
     }
-  }, [navHistoryRef, selectionAnchorRef, setNavHistoryUi, suppressNavHistoryRef]);
+  }, [navHistoryRef, selectionAnchorRef, setNavHistoryUi]);
 
-  const closeAssetPreview = useCallback(async (restoreBrowsePosition = true) => {
+  useEffect(() => {
+    const pendingPreview = pendingWorkspacePreviewRef.current;
+    if (!pendingPreview) return;
+    if (!pendingPreview.isCurrent()) {
+      pendingWorkspacePreviewRef.current = null;
+      return;
+    }
+    const target = [...visibleAssets, ...assets].find(
+      (asset) => asset.assetId === pendingPreview.assetId,
+    );
+    if (!target) return;
+    const canvas = workspaceCanvasRef.current;
+    if (canvas) {
+      const extent = Math.max(0, canvas.scrollHeight - canvas.clientHeight);
+      canvas.scrollTo({
+        top: resolveWorkspaceScrollTop(pendingPreview.viewport, extent),
+        left: 0,
+      });
+    }
+    pendingWorkspacePreviewRef.current = null;
+    openAssetPreview(target, { recordHistory: false });
+  }, [assets, openAssetPreview, visibleAssets]);
+
+  const closeAssetPreview = useCallback(async (
+    restoreBrowsePosition = true,
+    updateHistory = true,
+  ) => {
     // A scope transition can arrive after React has already cleared
     // `previewAsset` but before the two-frame browse restoration runs. Cancel
     // that stale restoration even when there is no longer an asset to close,
@@ -3325,7 +3472,7 @@ function AppInner() {
     // 历史条目仍是 preview 则硬移除——否则「从预览导航到别处」会残留一个已关闭
     // 的 preview，导致 back 回到它。back()/forward() 已移 index（当前非 preview）
     // 或导航 push 会截断，不在此重复处理。
-    if (navHistoryRef.current.current.kind === "preview") {
+    if (updateHistory && navHistoryRef.current.current.kind === "preview") {
       navHistoryRef.current.dismissCurrent();
       setNavHistoryUi({
         canBack: navHistoryRef.current.canBack,
@@ -3968,7 +4115,7 @@ function AppInner() {
     library?.libraryId,
     locale,
     refreshRecentLibraries,
-    resetNavHistory,
+    resetWorkspaceTabs,
     scriptSandboxPreviewOpen,
     libraryTransitionLock,
     setError,
@@ -4257,9 +4404,163 @@ function AppInner() {
     });
   }
 
-  function resetNavHistory(initial: WorkspaceNavLocation = { kind: "all" }) {
-    navHistoryRef.current.clear(initial);
-    syncNavHistoryUi();
+  function captureWorkspaceTabBrowseState(): WorkspaceTabBrowseState {
+    return {
+      searchValue,
+      filters: {
+        formatFilter,
+        excludeFormatFilter,
+        colorFilter,
+        excludeColorFilter,
+        tagFilter,
+        excludeTagFilter,
+        includeAiTagFilter,
+        tagFilterMatch,
+        ratingFilter,
+        excludeRatingFilter,
+        includeAiRatingFilter,
+        favoriteFilter,
+        sourceUrlFilter,
+        availabilityFilter,
+        excludeAvailabilityFilter,
+        widthRange,
+        heightRange,
+        aspectRatioRange,
+        aspectRatioRanges,
+        longEdgeRange,
+        durationRange,
+      },
+      sortField,
+      sortOrder,
+      shuffleSeed,
+      folderRecursive,
+      collectionRecursive,
+      showIgnoredItems,
+    };
+  }
+
+  function beginWorkspaceNavigation(): () => boolean {
+    const token = (workspaceTabTransitionRef.current += 1);
+    workspaceHistoryReplayEpochRef.current += 1;
+    return () => workspaceTabTransitionRef.current === token;
+  }
+
+  function captureWorkspaceTabContext() {
+    workspaceHistoryReplayEpochRef.current += 1;
+    return {
+      viewport: captureWorkspaceNavViewport(workspaceCanvasRef.current),
+      selectedAssetIds,
+      selectedAssetId: selectedAssetId ?? null,
+      browseState: captureWorkspaceTabBrowseState(),
+      cachedTitle:
+        workspaceTabPresentations.find(
+          (tab) => tab.id === workspaceTabsState.activeTabId,
+        )?.title ?? workspaceTitle(),
+    };
+  }
+
+  function restoreCurrentWorkspaceHistoryViewport(
+    viewport: WorkspaceNavViewport,
+    isCurrent: () => boolean,
+  ) {
+    cancelWorkspaceViewportRestoreRef.current?.();
+    const canvas = workspaceCanvasRef.current;
+    if (!canvas) return;
+    cancelWorkspaceViewportRestoreRef.current = restoreWorkspaceNavViewport(
+      canvas,
+      viewport,
+      isCurrent,
+    );
+  }
+
+  function applyWorkspaceTabBrowseState(state: WorkspaceTabBrowseState) {
+    setSearchValue(state.searchValue);
+    setFormatFilter(state.filters.formatFilter);
+    setExcludeFormatFilter(state.filters.excludeFormatFilter);
+    setColorFilter(state.filters.colorFilter);
+    setExcludeColorFilter(state.filters.excludeColorFilter);
+    setTagFilter(state.filters.tagFilter);
+    setExcludeTagFilter(state.filters.excludeTagFilter);
+    setIncludeAiTagFilter(state.filters.includeAiTagFilter);
+    setTagFilterMatch(state.filters.tagFilterMatch);
+    setRatingFilter(state.filters.ratingFilter);
+    setExcludeRatingFilter(state.filters.excludeRatingFilter);
+    setIncludeAiRatingFilter(state.filters.includeAiRatingFilter);
+    setFavoriteFilter(state.filters.favoriteFilter);
+    setSourceUrlFilter(state.filters.sourceUrlFilter);
+    setAvailabilityFilter(state.filters.availabilityFilter);
+    setExcludeAvailabilityFilter(state.filters.excludeAvailabilityFilter);
+    setWidthRange({ ...state.filters.widthRange });
+    setHeightRange({ ...state.filters.heightRange });
+    setAspectRatioRange({ ...state.filters.aspectRatioRange });
+    setAspectRatioRanges(state.filters.aspectRatioRanges.map((range) => ({ ...range })));
+    setLongEdgeRange({ ...state.filters.longEdgeRange });
+    setDurationRange({ ...state.filters.durationRange });
+    setSortField(state.sortField);
+    setSortOrder(state.sortOrder);
+    setShuffleSeed(state.shuffleSeed);
+    folderRecursiveRef.current = state.folderRecursive;
+    setFolderRecursive(state.folderRecursive);
+    collectionRecursiveRef.current = state.collectionRecursive;
+    setCollectionRecursive(state.collectionRecursive);
+    setShowIgnoredItems(state.showIgnoredItems);
+  }
+
+  async function restoreAllAssetsWorkspaceTab() {
+    suppressNavHistoryRef.current = true;
+    try {
+      await chooseFolder("all");
+    } finally {
+      suppressNavHistoryRef.current = false;
+    }
+  }
+
+  async function restoreWorkspaceTabSession(
+    tab: WorkspaceTabSession,
+    isCurrent: () => boolean,
+  ) {
+    const current = tab.history.current;
+    const firstLocation =
+      current.kind === "preview"
+        ? (tab.history.peek(-1) ?? { kind: "all" as const })
+        : current;
+    const targetViewport =
+      current.kind === "preview"
+        ? (tab.history.peekViewport(-1) ?? tab.history.currentViewport)
+        : tab.history.currentViewport;
+    const pendingSelection = tab.browseState &&
+      workspaceTabBrowseStateHasDiscoveryInput(tab.browseState)
+      ? {
+          selectedAssetIds: [...tab.selectedAssetIds],
+          selectedAssetId: tab.selectedAssetId,
+          isCurrent,
+        }
+      : null;
+    pendingWorkspaceTabSelectionRef.current = pendingSelection;
+    pendingWorkspacePreviewRef.current =
+      current.kind === "preview"
+        ? { assetId: current.assetId, viewport: targetViewport, isCurrent }
+        : null;
+    suppressNavHistoryRef.current = true;
+    try {
+      await applyWorkspaceLocation(firstLocation);
+    } finally {
+      suppressNavHistoryRef.current = false;
+    }
+    if (!isCurrent()) {
+      const pending = pendingWorkspacePreviewRef.current;
+      if (current.kind === "preview" && pending?.assetId === current.assetId) {
+        pendingWorkspacePreviewRef.current = null;
+      }
+      if (pendingWorkspaceTabSelectionRef.current === pendingSelection) {
+        pendingWorkspaceTabSelectionRef.current = null;
+      }
+      return;
+    }
+    if (tab.browseState) applyWorkspaceTabBrowseState(tab.browseState);
+    setSelectedAssetIds([...tab.selectedAssetIds]);
+    setSelectedAssetId(tab.selectedAssetId ?? undefined);
+    restoreCurrentWorkspaceHistoryViewport(targetViewport, isCurrent);
   }
 
   function recordNavigation(location: WorkspaceNavLocation) {
@@ -4310,41 +4611,86 @@ function AppInner() {
       case "tag-management":
         await enterTagManagement();
         return;
+      case "plugin-sidebar":
+        await enterPluginSidebarView(location.viewId);
+        return;
     }
   }
 
-  async function goWorkspaceBack() {
-    const location = navHistoryRef.current.back();
-    if (!location) return;
-    syncNavHistoryUi();
-    if (previewAsset) {
-      // Serpent-b7e173：查看器是从当前浏览 scope 打开的，back() 已把 index 移出
-      // preview。浏览界面本就显示在查看器下层，直接关查看器恢复滚动位置即可，
-      // 不要走 applyWorkspaceLocation → chooseFolder 的全量重载（会把滚动归零）。
-      await closeAssetPreview();
-      return;
-    }
-    suppressNavHistoryRef.current = true;
-    try {
-      await applyWorkspaceLocation(location);
-    } finally {
-      suppressNavHistoryRef.current = false;
-    }
+  function enqueueWorkspaceHistoryReplay(operation: () => Promise<void>) {
+    const requestedEpoch = workspaceHistoryReplayEpochRef.current;
+    const pending = workspaceHistoryReplayQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (requestedEpoch !== workspaceHistoryReplayEpochRef.current) return;
+        await operation();
+      });
+    workspaceHistoryReplayQueueRef.current = pending.catch(() => undefined);
+    return pending;
   }
 
-  async function goWorkspaceForward() {
-    // 前进只走历史（Serpent-b7e173）。查看器开着时 preview 必在栈顶，
-    // forward() 返回 null；能前进时查看器必然已关（back 或导航已离开），
-    // 故前进无需任何 preview 特判；前进到 preview 由 applyWorkspaceLocation 重开查看器。
-    const location = navHistoryRef.current.forward();
-    if (!location) return;
-    syncNavHistoryUi();
-    suppressNavHistoryRef.current = true;
-    try {
-      await applyWorkspaceLocation(location);
-    } finally {
-      suppressNavHistoryRef.current = false;
-    }
+  function goWorkspaceBack() {
+    return enqueueWorkspaceHistoryReplay(async () => {
+      cancelWorkspaceViewportRestoreRef.current?.();
+      cancelWorkspaceViewportRestoreRef.current = null;
+      navHistoryRef.current.saveCurrentViewport(
+        captureWorkspaceNavViewport(workspaceCanvasRef.current),
+      );
+      const location = navHistoryRef.current.back();
+      if (!location) return;
+      const targetHistory = navHistoryRef.current;
+      const replayEpoch = workspaceHistoryReplayEpochRef.current;
+      syncNavHistoryUi();
+      if (previewAsset) {
+        await closeAssetPreview();
+        restoreCurrentWorkspaceHistoryViewport(
+          targetHistory.currentViewport,
+          () =>
+            navHistoryRef.current === targetHistory &&
+            workspaceHistoryReplayEpochRef.current === replayEpoch,
+        );
+        return;
+      }
+      suppressNavHistoryRef.current = true;
+      try {
+        await applyWorkspaceLocation(location);
+      } finally {
+        suppressNavHistoryRef.current = false;
+      }
+      restoreCurrentWorkspaceHistoryViewport(
+        targetHistory.currentViewport,
+        () =>
+          navHistoryRef.current === targetHistory &&
+          workspaceHistoryReplayEpochRef.current === replayEpoch,
+      );
+    });
+  }
+
+  function goWorkspaceForward() {
+    return enqueueWorkspaceHistoryReplay(async () => {
+      cancelWorkspaceViewportRestoreRef.current?.();
+      cancelWorkspaceViewportRestoreRef.current = null;
+      navHistoryRef.current.saveCurrentViewport(
+        captureWorkspaceNavViewport(workspaceCanvasRef.current),
+      );
+      const location = navHistoryRef.current.forward();
+      if (!location) return;
+      const targetHistory = navHistoryRef.current;
+      const replayEpoch = workspaceHistoryReplayEpochRef.current;
+      syncNavHistoryUi();
+      suppressNavHistoryRef.current = true;
+      try {
+        await applyWorkspaceLocation(location);
+      } finally {
+        suppressNavHistoryRef.current = false;
+      }
+      restoreCurrentWorkspaceHistoryViewport(
+        targetHistory.currentViewport,
+        () =>
+          navHistoryRef.current === targetHistory &&
+          workspaceHistoryReplayEpochRef.current === replayEpoch,
+      );
+    });
   }
 
   async function refreshRecentLibraries(currentLibraryPath?: string | null) {
@@ -4755,6 +5101,7 @@ function AppInner() {
     options?: { refreshSidebar?: boolean; blockingNavigation?: boolean },
   ) {
     if (!library) return;
+    saveCurrentWorkspaceHistoryViewport();
     const targetLibraryId = library.libraryId;
     const viewSession = ensureLibraryView(targetLibraryId);
     if (!viewSession) return;
@@ -4840,6 +5187,7 @@ function AppInner() {
 
   async function enterTrashAt(tombstoneId: string | null) {
     if (!library) return;
+    saveCurrentWorkspaceHistoryViewport();
     const targetLibraryId = library.libraryId;
     const viewSession = ensureLibraryView(targetLibraryId);
     if (!viewSession) return;
@@ -4892,6 +5240,7 @@ function AppInner() {
 
   async function enterTagManagement() {
     if (!library) return;
+    saveCurrentWorkspaceHistoryViewport();
     const targetLibraryId = library.libraryId;
     const viewSession = ensureLibraryView(targetLibraryId);
     if (!viewSession) return;
@@ -4932,6 +5281,7 @@ function AppInner() {
 
   async function enterPluginSidebarView(viewId: string) {
     if (!library) return;
+    saveCurrentWorkspaceHistoryViewport();
     const targetLibraryId = library.libraryId;
     const viewSession = ensureLibraryView(targetLibraryId);
     if (!viewSession) return;
@@ -4952,6 +5302,7 @@ function AppInner() {
     setSearchTotal(null);
     setSearchSnippets(new Map());
     api?.setActiveContext(targetLibraryId);
+    recordNavigation({ kind: "plugin-sidebar", viewId });
   }
 
   async function handleCreateTagInManagement(name: string): Promise<boolean> {
@@ -5122,6 +5473,7 @@ function AppInner() {
 
   async function chooseTag(tagId: string) {
     if (!api || !library) return;
+    saveCurrentWorkspaceHistoryViewport();
     const targetLibraryId = library.libraryId;
     const viewSession = ensureLibraryView(targetLibraryId);
     if (!viewSession) return;
@@ -5632,6 +5984,7 @@ function AppInner() {
     recursive = collectionRecursive,
   ) {
     if (!api || !library) return;
+    saveCurrentWorkspaceHistoryViewport();
     const targetLibraryId = library.libraryId;
     const viewSession = ensureLibraryView(targetLibraryId);
     if (!viewSession) return;
@@ -6727,8 +7080,17 @@ function AppInner() {
     setActivePluginSidebarViewId(null);
     if (!tagFilter.trim()) setActiveTagId(null);
     setActiveSmartCollectionId(null);
-    if (!pendingRevealRef.current) {
-      clearAssetSelection({ preserveFolders: true });
+    const pendingTabSelection = pendingWorkspaceTabSelectionRef.current;
+    if (pendingTabSelection?.isCurrent()) {
+      setSelectedAssetIds([...pendingTabSelection.selectedAssetIds]);
+      setSelectedAssetId(pendingTabSelection.selectedAssetId ?? undefined);
+      selectionAnchorRef.current = pendingTabSelection.selectedAssetId;
+      pendingWorkspaceTabSelectionRef.current = null;
+    } else {
+      if (pendingTabSelection) pendingWorkspaceTabSelectionRef.current = null;
+      if (!pendingRevealRef.current) {
+        clearAssetSelection({ preserveFolders: true });
+      }
     }
     applySearchResult(result.value);
     // Serpent-ws4k: subsequent pages must reuse the same query/scope/sort.
@@ -6847,6 +7209,7 @@ function AppInner() {
 
   async function chooseSmartCollection(collectionId: string) {
     if (!api || !library) return;
+    saveCurrentWorkspaceHistoryViewport();
     const targetLibraryId = library.libraryId;
     const viewSession = ensureLibraryView(targetLibraryId);
     if (!viewSession) return;
@@ -7667,7 +8030,8 @@ function AppInner() {
     setImageSequenceImportError(null);
     setBatchRelinkPreview(null);
     resetBrowsePagination();
-    resetNavHistory({ kind: "all" });
+    workspaceHistoryReplayEpochRef.current += 1;
+    resetWorkspaceTabs();
   }
 
   function applyClosedLibraryUi() {
@@ -10842,46 +11206,29 @@ function AppInner() {
               onForgetRecent={(path) => void forgetRecentLibrary(path)}
               recentLibraries={recentLibraries}
             />
-            <ScopeBreadcrumbs
-              onNavigateFolder={(folderId) => void chooseFolder(folderId)}
-              onNavigateTrashTombstone={(tombstoneId) => {
-                void enterTrashAt(tombstoneId);
+            <WorkspaceTabs
+              activeTabId={workspaceTabsState.activeTabId}
+              disabled={!library || busy}
+              tabs={workspaceTabPresentations}
+              onAdd={() => void addWorkspaceTab()}
+              onClose={(tabId) => void closeWorkspaceTab(tabId)}
+              onSelect={(tabId) => void selectWorkspaceTab(tabId)}
+              onContextMenu={(tabId, position) => {
+                const tab = workspaceTabPresentations.find(
+                  (candidate) => candidate.id === tabId,
+                );
+                if (!tab) return;
+                openContextMenu(
+                  {
+                    type: "workspace-tab",
+                    tabId,
+                    name: tab.title,
+                    entity: tab.entity,
+                    canCloseOthers: workspaceTabPresentations.length > 1,
+                  },
+                  position,
+                );
               }}
-              segments={buildScopeBreadcrumbSegments(
-                {
-                  showTrash,
-                  trashBreadcrumbHops,
-                  activeTagLabel: activeTagId
-                    ? (tags.find((tag) => tag.tagId === activeTagId)?.name ??
-                      null)
-                    : null,
-                  activeCollectionLabel: activeCollectionId
-                    ? (collections.find(
-                        (collection) =>
-                          collection.collectionId === activeCollectionId,
-                      )?.name ?? null)
-                    : null,
-                  activeSmartCollectionLabel: activeSmartCollectionId
-                    ? (smartCollections.find(
-                        (collection) =>
-                          collection.collectionId === activeSmartCollectionId,
-                      )?.name ?? null)
-                    : null,
-                  assetScope,
-                  folderTrail:
-                    assetScope !== "all" && assetScope !== "root"
-                      ? buildManagedFolderBreadcrumbTrail(folders, assetScope)
-                          .length > 0
-                        ? buildManagedFolderBreadcrumbTrail(folders, assetScope)
-                        : buildLinkedFolderBreadcrumbTrail(
-                            linkedFolders,
-                            assetScope,
-                          )
-                      : [],
-                  linkedFolderLabel: null,
-                },
-                t,
-              )}
             />
           </div>
           <form
@@ -10953,6 +11300,7 @@ function AppInner() {
         activeCollectionId={activeCollectionId}
         activeSmartCollectionId={activeSmartCollectionId}
         showIgnoredItems={showIgnoredItems}
+        revealTarget={workspaceTabRevealTarget}
         onToggleShowIgnoredItems={() => {
           const next = !showIgnoredItems;
           setShowIgnoredItems(next);
@@ -11196,7 +11544,17 @@ function AppInner() {
                   <Icon name="folders" size={14} />
                 </button>
               )}
-            <span>{workspaceTitle()}</span>
+            {showTagManagement || showPluginSidebarView ? (
+              <span>{workspaceTitle()}</span>
+            ) : (
+              <ScopeBreadcrumbs
+                onNavigateFolder={(folderId) => void chooseFolder(folderId)}
+                onNavigateTrashTombstone={(tombstoneId) => {
+                  void enterTrashAt(tombstoneId);
+                }}
+                segments={scopeBreadcrumbSegments}
+              />
+            )}
             <span className="item-count">
               {library
                 ? showTagManagement
@@ -13122,6 +13480,23 @@ function AppInner() {
         managedFolders={folders}
         activeCollectionId={activeCollectionId}
         assets={visibleAssets}
+        onCloseWorkspaceTab={(tabId) => void closeWorkspaceTab(tabId)}
+        onCloseOtherWorkspaceTabs={(tabId) =>
+          void closeOtherWorkspaceTabs(tabId)
+        }
+        onRevealWorkspaceTabEntity={(entity) => {
+          setLeftOpen(true);
+          setWorkspaceTabRevealTarget({
+            ...entity,
+            requestId: ++workspaceTabRevealRequestRef.current,
+          });
+        }}
+        onCopyWorkspaceTabName={(name) => {
+          void navigator.clipboard.writeText(name).then(
+            () => setNotice(t("tabs.copyNameDone")),
+            () => setError(t("tabs.copyNameFailed")),
+          );
+        }}
         onRenameSmartCollection={(id, name) => setRenameTarget({ kind: "smart", id, name })}
         onUpdateSmartCollection={(id) => { void updateSmartCollectionQuery(id); }}
         onDeleteSmartCollection={(id) => { void deleteSmartCollection(id); }}

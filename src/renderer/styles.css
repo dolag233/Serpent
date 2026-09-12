@@ -489,7 +489,17 @@ summary:focus-visible {
   align-items: center;
   min-width: 0;
   height: 100%;
+}
+
+.scope-trace {
   line-height: 1.35;
+}
+
+/* 28px chrome must sit on the geometric midline of the 44px bar. A cluster
+   line-height > 1 adds an inline strut that lifts icon buttons and the
+   library name above the search field. */
+.toolbar-cluster {
+  line-height: 1;
 }
 
 .toolbar-nav-cluster {
@@ -523,7 +533,9 @@ body.platform-darwin .toolbar-nav-cluster {
 .toolbar-workspace-search {
   display: flex;
   flex: 0 0 auto;
+  align-self: center;
   align-items: center;
+  height: var(--shell-control-height);
   margin-left: auto;
   -webkit-app-region: no-drag;
 }
@@ -1146,6 +1158,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   display: inline-grid;
   width: var(--shell-control-height);
   height: var(--shell-control-height);
+  align-self: center;
   padding: 0;
   place-items: center;
   border: 1px solid transparent;
@@ -1153,6 +1166,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   background: transparent;
   color: var(--secondary);
   cursor: pointer;
+  line-height: 1;
 }
 
 .tool-button:hover:not(:disabled) {
@@ -1207,9 +1221,13 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
      inside this box (Serpent-7fy: clipping made the menu look “completely wrong”).
      Ellipsis belongs on .library-switcher-name only. */
   position: relative;
+  display: flex;
   flex: 0 1 auto;
+  align-self: center;
+  align-items: center;
   min-width: 0;
   max-width: 220px;
+  height: var(--shell-control-height);
   overflow: visible;
 }
 
@@ -1229,6 +1247,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   font-size: calc(12.5px * var(--ui-font-scale));
   font-weight: 620;
   letter-spacing: 0.02em;
+  line-height: 1;
 }
 
 .library-switcher-trigger:hover:not(:disabled),
@@ -1433,6 +1452,9 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 .scope-history {
   display: inline-flex;
   flex: 0 0 auto;
+  align-self: center;
+  align-items: center;
+  height: var(--shell-control-height);
   gap: 2px;
 }
 
@@ -1449,6 +1471,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   background: transparent;
   color: var(--secondary);
   cursor: pointer;
+  line-height: 1;
 }
 
 .scope-history-button:hover:not(:disabled) {
@@ -1525,11 +1548,13 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   width: min(360px, 100%);
   min-width: 200px;
   height: var(--shell-control-height);
+  align-self: center;
   align-items: center;
   border: 1px solid var(--divider);
   border-radius: 6px;
   background: var(--canvas);
   color: var(--tertiary);
+  line-height: 1;
   transition:
     border-color 120ms ease,
     box-shadow 120ms ease;
@@ -2214,6 +2239,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 .main-menu {
   position: relative;
   flex: 0 0 auto;
+  align-self: center;
   width: var(--shell-control-height);
   height: var(--shell-control-height);
   overflow: visible;
@@ -2230,6 +2256,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   background: transparent;
   color: var(--secondary);
   cursor: pointer;
+  line-height: 1;
 }
 
 .main-menu-trigger:hover:not(:disabled),
@@ -6690,6 +6717,7 @@ select.ai-config-input.ai-config-languages {
   width: var(--shell-control-height);
   height: var(--shell-control-height);
   flex: 0 0 auto;
+  align-self: center;
   place-items: center;
   padding: 0;
   border: 1px solid transparent;
@@ -6697,6 +6725,7 @@ select.ai-config-input.ai-config-languages {
   background: transparent;
   color: var(--secondary);
   cursor: pointer;
+  line-height: 1;
 }
 
 .app-settings-entry:hover:not(:disabled) {

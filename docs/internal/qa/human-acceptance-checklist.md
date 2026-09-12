@@ -42,6 +42,15 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-09-12 工作区标签页
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| TABS-001 / `Serpent-738426` | 显式新建、独立页面状态与关闭 | 待人类验收 | ① 打开资源库，依次点文件夹、合集、回收站，确认仍只有一个标签。② 点加号，确认新增一个“所有资产”标签。③ 在 A 页滚到约 73%，切到另一标签再返回；再从 A 导航到 B，用前进/后退往返。④ 两个标签分别输入不同搜索并选择资产。⑤ 分别用关闭按钮、右键“关闭标签页”“关闭其他标签页”；最后关闭仅剩标签。 | 只有加号增加标签；普通导航只改当前标签；标签切换与前进/后退都恢复每条历史自己的精确滚动位置；各标签恢复页面、搜索/筛选和选择；最后一个标签复位为“所有资产”。 | [实施规格](../implementation/2026-09-12-workspace-tabs.md) / [开发日志](../development/2026-09-12-workspace-tabs-development-log.md) / [QA](2026-09-12-workspace-tabs-qa.md) / `tests/unit/workspace-tabs.test.ts` / `tests/unit/workspace-scroll-position.test.ts` / `tests/e2e/workspace-tabs.test.ts` | 定向单测 8 文件 46 项通过；Windows 开发态 Electron E2E 1 项通过并验证 73% 标签切换及前进/后退恢复，以及防抖搜索提交后的选择恢复；独立 Computer Use 因目标窗口无法再次激活而未完成，packaged 未执行。 |
+| TABS-002 / `Serpent-738426` | 文件夹与合集标签的对应右键操作 | 待人类验收 | ① 在深层文件夹标签上右键，依次试“在文件夹中显示”“复制名称”“复制路径”“在 Finder/文件浏览器中打开”。② 在合集标签上右键，试“在合集中显示”“复制名称”。③ 从非活动标签执行一次侧栏定位。 | 侧栏展开父级并聚焦目标，但不切换活动标签；复制内容正确；文件夹在系统文件浏览器中打开；合集不出现路径动作。 | [QA](2026-09-12-workspace-tabs-qa.md) / `workspace-tab-presentation.test.ts` / `navigation-sidebar.test.ts` / `workspace-tabs.test.ts` E2E | Windows 开发态 Electron 已验证菜单结构与侧栏焦点；自动化未实际打开外部程序，macOS Finder 未执行。 |
+| TABS-003 / `Serpent-738426` | 文件夹式标签栏、加号贴末标签、顶栏空白可拖窗口 | 待人类验收 | 在亮/暗主题、中英文和窄窗口创建多个标签；确认仍是接入内容区的文件夹页签；顶部与窗口边缘留空隙、上角更圆；活动页签与下方范围栏之间不要再夹一条缝。页签内图标与标题应在同一条垂直中线上。前进/后退、设置、资源库切换、搜索框应与页签标题落在顶栏同一条垂直中线上。加号应紧贴最右侧那一个标签。在标签与搜索框之间的空白处拖动，应移动整个窗口。再用 ArrowLeft/ArrowRight、Home/End、Delete、Shift+F10；缩放窗口。 | 文件夹页签顶部留空隙、圆角肩部接入工作区；页签图标与标题垂直对齐；顶栏 28px 控件垂直居中且与页签文字对齐；加号跟在最后一个标签旁；顶栏空白可拖窗口；标题省略可读；横向溢出时活动标签仍可见，加号始终可用；键盘与鼠标结果一致。 | [开发日志](../development/2026-09-12-workspace-tabs-development-log.md) / `tests/unit/workspace-tabs-ui.test.tsx` | 2026-09-12：用户指出页签偏小，且与下方范围栏之间有一条隔断。根因是工具栏 `align-items: center` 把页签箍在 28px。已拉高到工具栏全高。同日再报：活动页签下仍有一条缝；前进/后退、设置、资源库、搜索框未垂直居中。缝的根因是页签列表 `overflow-y: hidden` 裁掉负 margin，顶栏 `border-bottom` 即使透明仍占 1px 并把 `--pane` 露出来，加上 elevation 阴影落在工作区顶。已去掉该底边和阴影（侧栏改用顶发丝线），并把 cluster `line-height` 改为 1、28px 控件 `align-self: center`。同日再报：页签图标与标题竖直未齐。标题行高锁成 16px 与图标同高，图标上移 1px。后又报图标相对标题和关闭按钮仍偏低；去掉标题 16px 行高锁，图标上移 2px，选择区与关闭按钮同一 flex-start 行。Computer Use、packaged、DPI 未执行。 |
+| TABS-004 / `Serpent-738426` | 多标签时滚轮与触控板横向滑动标签条 | 待人类验收 | ① 打开足够多的标签让标题被裁切、加号仍在右侧。② 指针放在标签条上，用鼠标滚轮上下拨动。③ 若在 macOS，再用触控板两指左右滑、两指上下滑。④ 滚到最左/最右后再继续滑。 | 标签条左右移动，画布不跟着滚；加号不随列表移走。Windows 滚轮和 macOS 两指手势都能看完所有标签。pinch / Ctrl+滚轮不带动标签条。 | [开发日志](../development/2026-09-12-workspace-tabs-development-log.md) / `tests/unit/workspace-tab-strip-scroll.test.ts` / `tests/unit/workspace-tabs-ui.test.tsx` | 列表已有 `overflow-x: auto`，但纵向滚轮不会带动横向条。已把纵向 delta 映射为 `scrollLeft`；横向两指滑动走 deltaX；Ctrl/Cmd+wheel 交给系统（Chromium 把横向轻扫标成 ctrlKey 的情况复用 `isPrimarilyHorizontalWheel`）。macOS 真机手势、packaged 未执行。 |
+
 ### 2026-09-10 本地插件 ZIP / 文件夹安装（GitHub #19）
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

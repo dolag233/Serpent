@@ -105,7 +105,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
       }
     });
     await window.getByRole('button', { name: '刷新磁盘变化' }).click();
-    await window.getByRole('button', { name: /所有资产/ }).click();
+    await window.getByRole('button', { name: '所有资产', exact: true }).click();
 
     await window.getByRole('button', { name: '添加合集' }).click();
     await expect(window.getByPlaceholder('新建合集')).toBeFocused();
@@ -115,7 +115,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
 
     // Creating a collection enters the new empty scope; return to all assets
     // before organizing the imported asset into it.
-    await window.getByRole('button', { name: /所有资产/ }).click();
+    await window.getByRole('button', { name: '所有资产', exact: true }).click();
     await expect(assetCard).toBeVisible();
 
     await assetCard.click({ button: 'right' });
@@ -142,7 +142,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     // Close the tag dimension before continuing with other discovery controls.
     await window.getByRole('button', { name: '标签', exact: true }).click();
 
-    await window.getByRole('button', { name: /所有资产/ }).click();
+    await window.getByRole('button', { name: '所有资产', exact: true }).click();
     await locateAssetCard(window, 'hero.png').click({ button: 'right' });
     await window.getByRole('menuitem', { name: '添加到合集' }).hover();
     await window.getByRole('option', { name: '精选' }).click();
@@ -291,7 +291,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await window.getByRole('dialog').getByRole('button', { name: '保存名称' }).click();
     await expect(sidebarSmartCollectionRow(window, '英雄筛选')).toBeVisible();
 
-    await window.getByRole('button', { name: /所有资产/ }).click();
+    await window.getByRole('button', { name: '所有资产', exact: true }).click();
     await expect(locateAssetCard(window, 'hero.png')).toBeVisible();
     // Let the smart-collection toast fade so the trash toast below is the
     // current .workspace-notice (the banner is a single reused element).
@@ -321,7 +321,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
       await restoreDialog.getByRole('button', { name: '确认恢复' }).click();
     }
     await expect(window.locator('.workspace-notice')).toContainText('已恢复 1 项资产');
-    await window.getByRole('button', { name: /所有资产/ }).click();
+    await window.getByRole('button', { name: '所有资产', exact: true }).click();
     await expect(locateAssetCard(window, 'hero.png')).toBeVisible();
   } finally {
     await application.close();
@@ -373,7 +373,7 @@ test('multi-select performs batch organization, trash, restore, and permanent de
       if (!created.ok) throw new Error('Could not create tag 批量标签');
     });
     await window.getByRole('button', { name: '刷新磁盘变化' }).click();
-    await window.getByRole('button', { name: /所有资产/ }).click();
+    await window.getByRole('button', { name: '所有资产', exact: true }).click();
     // Refreshing the library can briefly replace the current result set while
     // the worker reconciles the imported files. Wait for both cards before
     // creating a new scope so the following navigation does not race the
@@ -385,7 +385,7 @@ test('multi-select performs batch organization, trash, restore, and permanent de
 
     // Creating a collection enters the new empty scope; return to all assets
     // before the batch selection.
-    await window.getByRole('button', { name: /所有资产/ }).click();
+    await window.getByRole('button', { name: '所有资产', exact: true }).click();
     await expect(window.locator('.asset-card')).toHaveCount(2, { timeout: 15_000 });
     await expect(locateAssetCard(window, 'first.txt')).toBeVisible();
     await expect(locateAssetCard(window, 'second.txt')).toBeVisible();
@@ -486,7 +486,7 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     await window.keyboard.press(process.platform === 'darwin' ? 'Meta+Backspace' : 'Delete');
     await expect(window.locator('.workspace-notice')).toContainText('已将 1 项资产移出合集');
     await expect(locateAssetCard(window, 'first.txt')).toHaveCount(0);
-    await window.getByRole('button', { name: /所有资产/ }).click();
+    await window.getByRole('button', { name: '所有资产', exact: true }).click();
     await expect(locateAssetCard(window, 'first.txt')).toBeVisible();
     const postDeleteCollectionCount = await window.evaluate(async () => {
       const api = (globalThis as typeof globalThis & { serpent: { library: {
@@ -529,7 +529,7 @@ test('multi-select performs batch organization, trash, restore, and permanent de
       await batchRestoreDialog.getByRole('button', { name: '确认恢复' }).click();
     }
     await expect(window.locator('.workspace-notice')).toContainText('已恢复 2 项资产');
-    await window.getByRole('button', { name: /所有资产/ }).click();
+    await window.getByRole('button', { name: '所有资产', exact: true }).click();
     await expect(window.locator('.asset-card')).toHaveCount(2);
 
     await window.locator('.asset-card').first().click();
@@ -666,13 +666,13 @@ test('collection recursion toggle immediately refreshes the visible collection s
     await expect(parentCollectionRow.locator('.nav-count')).toHaveText('0');
     await expect(parentCollectionRow.locator('.nav-child-count')).toHaveCount(0);
 
-    await window.getByRole('button', { name: /所有资产/ }).click();
+    await window.getByRole('button', { name: '所有资产', exact: true }).click();
     await window.getByRole('button', { name: '添加合集' }).click();
     await window.getByPlaceholder('新建合集').fill('空合集');
     await window.getByPlaceholder('新建合集').press('Enter');
     // Creating a collection enters the new empty scope; return to all assets
     // before assigning both members.
-    await window.getByRole('button', { name: /所有资产/ }).click();
+    await window.getByRole('button', { name: '所有资产', exact: true }).click();
     await expect(locateAssetCard(window, 'child-only.txt')).toBeVisible();
     await expect(locateAssetCard(window, 'direct-only.txt')).toBeVisible();
     // Import auto-selects every imported asset (reveal), so right-clicking one
@@ -736,7 +736,7 @@ test('collection recursion toggle immediately refreshes the visible collection s
     await expect(window.getByRole('option', { name: '子合集' })).toBeVisible();
     await window.keyboard.press('Escape');
 
-    await window.getByRole('button', { name: /所有资产/ }).click();
+    await window.getByRole('button', { name: '所有资产', exact: true }).click();
     // CU-B4: empty collection → add only; remove hidden for non-members.
     await locateAssetCard(window, 'direct-only.txt').click({ button: 'right' });
     await expect(window.getByRole('menuitem', { name: '添加到合集' })).toBeVisible();

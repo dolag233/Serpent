@@ -38,7 +38,7 @@ test('moves a managed asset to a real folder and exposes one visible undo', asyn
     await window.keyboard.press('Enter');
     // 创建后自动进入新文件夹——回根再导入，让资产落在 Assets 根（测试
     // 断言 move-me.png 在根目录），且 Target 的计数保持 0。
-    await window.getByRole('button', { name: /所有资产/ }).click();
+    await window.getByRole('button', { name: '所有资产', exact: true }).click();
     await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
 
     const asset = assetCard(window, 'move-me.png');
