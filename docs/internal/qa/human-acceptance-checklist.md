@@ -42,6 +42,12 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-09-12 非法状态错误码：不再显示「导入冲突处理选项无效」（ERROR-STATE-001）
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| ERROR-STATE-001 / `Serpent-50c466` | 回收站/恢复/永久删除/删盘/移动等非法状态给出对应原因 | 待人类验收 | ① 把同一个资产连续「移入回收站」两次（第二次应被拦下）。② 对**不在回收站**的资产执行「恢复」。③ 对**不在回收站**的资产执行「永久删除」。④ 把**链接文件夹里**的文件拖/移到回收站。⑤ 每次记录提示文案。 | ① 已在回收站：请从回收站恢复或永久删除；②③ 不在回收站：请先移入回收站；④ 链接文件夹文件由 Serpent 之外的位置管理，请在文件管理器处理；状态不一致时：刷新磁盘变化后重试。**四种情况都不再出现「导入冲突处理选项无效。」** | [开发日志](../development/2026-09-12-error-code-state-conflicts-development-log.md) / `shared/protocol/errors.ts` 四个新码 / `i18n/catalogs/{zh-CN,en}.ts` / `worker/library-service.ts`（40 处替换 + 4 处混合条件拆分）/ `tests/unit/error-state-transition-copy.test.ts`、`tests/worker/trash-relink.test.ts` | 自动化：`trash-relink` 88 passed（11 条断言改为新码）、`error-state-transition-copy` 9 passed（中英文案 + messageForCode + 文案不含「导入」）、`npm run test:library-availability` 9 files / 211 passed、tsc/eslint exit 0。Phase 2（其余 33 处输入/格式校验类）见开发日志 §5。packaged / Windows 打包态未执行。 |
+
 | NAV-FOLDER-ROOT-002 / `Serpent-a6c516` | 文件夹面板空白处 / 「资源库根目录」行右键 = 根目录菜单 | 待人类验收 | ① 打开资源库。② 在「文件夹」栏行左侧的缩进槽、或没有文件夹时的提示文字上点右键。③ 看菜单第一行与条目。④ 再在左上方「资源库根目录」那一行上点右键，对比是否同一个菜单。⑤ 点「新建文件夹」，输入名字回车。⑥ 再在某个文件夹行上点右键对比。 | 两种位置弹出的都是同一个「文件夹操作：根目录」菜单，**菜单第一行显示「根目录」（普通字重、次要色，不是强调标题）**；含在文件浏览器中打开 / 新建文件夹 / 导入链接文件夹 / 粘贴 / 复制文件夹路径；**不含重命名、移入回收站、删除、克隆、忽略此文件夹**（这些需要真实的文件夹行；根目录不可忽略）；点「新建文件夹」建出的是**库根**的文件夹（与已有顶层文件夹同层）；文件夹行上右键仍是该文件夹自己的菜单（仍有「忽略此文件夹」）。 | [开发日志](../development/2026-09-12-nested-linked-folders-development-log.md) §6 / `shared/library-root-folder.ts` / `NavigationSidebar.tsx` `onOpenRootFolderContextMenu`（空白区 + 根目录行）/ `commands/sidebar-commands.ts` `isLibraryRoot` / `styles.css` `.context-menu-subject` / `tests/e2e/nav-pane-background.test.ts`、`tests/unit/sidebar-commands.test.ts`、`tests/unit/navigation-sidebar.test.ts` | 自动化：E2E `nav-pane-background` 3 passed（空白处右键 → 菜单首行「根目录」（并断言计算字重为 400）+ 条目断言（含**不含「忽略此文件夹」**）+ 「新建文件夹」落根级；「资源库根目录」行右键 → 同一菜单；对照：Alpha 行右键仍有「忽略此文件夹」）；单测 `sidebar-commands` 50 passed、`navigation-sidebar` 空白处右键 / 根目录行右键触发根菜单、文件夹行右键不触发通过。在文件浏览器中打开未在自动化里点击（会弹出真实窗口），留人工验收。packaged / Windows 未执行。 |
 
 ### 2026-09-12 文件夹右键「导入链接文件夹」到子级（LINKED-FOLDER-NEST-001）

@@ -59,6 +59,16 @@ export const PUBLIC_ERROR_MESSAGES = {
     'Creating the library failed, and leftover temporary files could not be removed automatically. Delete any `.serpent-create-*.partial` folder next to the chosen location, then retry with a writable folder.',
   LIBRARY_NOT_OPEN: 'That library is not open in this window. Open it again, then retry the action.',
   ASSET_NOT_FOUND: 'The requested asset could not be found.',
+  // Serpent-50c466: trash / restore / delete state conflicts had no code of
+  // their own and fell back to INVALID_IMPORT_DECISION ("invalid import
+  // conflict decision"), which told the user nothing about what happened.
+  ASSET_ALREADY_TRASHED:
+    'That asset is already in the trash. Restore it, or delete it permanently from the trash.',
+  ASSET_NOT_TRASHED: 'That asset is not in the trash. Move it to the trash first.',
+  ASSET_NOT_MANAGED:
+    'That file lives in a linked folder, outside the library’s own storage. Serpent leaves those files where they are — handle it in your file manager.',
+  INVALID_STATE_TRANSITION:
+    'That action is not valid in the library’s current state, which another window or background task may have changed. Refresh disk changes and try again.',
   INVALID_ASSET_FILE_NAME: 'Choose a file name that is safe on macOS and Windows.',
   ASSET_FILE_NAME_CONFLICT: 'A file with this name already exists in the asset folder.',
   INVALID_ASSET_METADATA: 'Choose valid asset metadata values, including six-digit hex colors and an HTTP(S) source page URL.',
