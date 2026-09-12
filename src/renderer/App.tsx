@@ -6241,7 +6241,7 @@ function AppInner() {
     if (!result.ok) {
       setImageSequenceDialog((current) =>
         current
-          ? { ...current, submitting: false, error: result.error.message }
+          ? { ...current, submitting: false, error: messageForPublicError(result.error, locale) }
           : current,
       );
       return;
@@ -6273,7 +6273,7 @@ function AppInner() {
     if (!result.ok) {
       setImageSequenceDialog((current) =>
         current
-          ? { ...current, submitting: false, error: result.error.message }
+          ? { ...current, submitting: false, error: messageForPublicError(result.error, locale) }
           : current,
       );
       return;
@@ -6289,7 +6289,7 @@ function AppInner() {
       sequenceId,
     });
     if (!result.ok) {
-      setError(result.error.message);
+      setError(messageForPublicError(result.error, locale));
       return;
     }
     clearAssetSelection();
@@ -6303,7 +6303,7 @@ function AppInner() {
       sequenceIds,
     });
     if (!result.ok) {
-      setError(result.error.message);
+      setError(messageForPublicError(result.error, locale));
       return;
     }
     clearAssetSelection();

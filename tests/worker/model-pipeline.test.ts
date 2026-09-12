@@ -603,7 +603,9 @@ describe('model asset pipeline (slice A, Serpent-fu2i)', () => {
       }
       expect(caught).toBeInstanceOf(LibraryServiceError);
       expect((caught as LibraryServiceError).code).toBe('UNSUPPORTED_MEDIA_TYPE');
-      expect((caught as LibraryServiceError).reason).toBe('UNSUPPORTED_FORMAT');
+      // Serpent-50c466 review F6: the code copy already states the cause, so no
+      // redundant UNSUPPORTED_FORMAT reason is attached.
+      expect((caught as LibraryServiceError).reason).toBeUndefined();
 
       expect(() => service.resolveModelCompanions({
         libraryId: created.libraryId,

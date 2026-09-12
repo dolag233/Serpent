@@ -10,7 +10,7 @@ import {
 
 import type { SerpentLibraryApi } from "../shared/library-api";
 import { TEXT_VIEWER_MAX_BYTES, countTextLines } from "../shared/text-media";
-import { messageForPublicError } from "./error-utils";
+import { LibraryOperationError, messageForPublicError, toMessage } from "./error-utils";
 import { useLocale, useT } from "./i18n";
 import { invalidateTextAssetPreviewCache } from "./TextAssetPreviewTile";
 
@@ -212,9 +212,11 @@ export const TextViewerControls = forwardRef<
         return true;
       } catch (error) {
         setActionError(
-          error instanceof Error
-            ? t("preview.textSaveFailedWithDetail", { detail: error.message })
-            : t("preview.textSaveFailed"),
+          error instanceof LibraryOperationError
+            ? toMessage(error, t("preview.textSaveFailed"), locale)
+            : error instanceof Error
+              ? t("preview.textSaveFailedWithDetail", { detail: error.message })
+              : t("preview.textSaveFailed"),
         );
         return false;
       } finally {

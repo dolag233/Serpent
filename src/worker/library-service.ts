@@ -11127,7 +11127,7 @@ export class LibraryService {
         const folder = openLibrary.connection.prepare(
           'SELECT folder_id FROM managed_folders WHERE folder_id = ?',
         ).get(input.targetFolderId);
-        if (!folder) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+        if (!folder) throw new LibraryServiceError('INVALID_SELECTION');
       }
     }
     const rows = sqliteAllInChunks<string, {
@@ -14227,7 +14227,6 @@ export class LibraryService {
           throw new LibraryServiceError('ASSET_ALREADY_TRASHED');
         }
       }
-      throw new LibraryServiceError('INVALID_STATE_TRANSITION');
     }
     if (rows.some((row) => row.location_kind !== 'managed')) {
       throw new LibraryServiceError('ASSET_NOT_MANAGED');
@@ -19507,9 +19506,7 @@ export class LibraryService {
         break;
       case 'folder': {
         if (!input.scope.folderId) {
-          throw new LibraryServiceError('FOLDER_NOT_FOUND', {
-            reason: 'SOURCE_NOT_FOUND',
-          });
+          throw new LibraryServiceError('INVALID_SELECTION');
         }
         // Recursive: get all assets under this folder (assets.managed_folder_id).
         const folderRows = conn
@@ -21095,9 +21092,7 @@ export class LibraryService {
     const imageDecoder = imageDecoderForExtension(ext);
     const viewerDecoder = imageViewerDecoderForExtension(ext);
     if (mediaType === 'other' || (mediaType === 'image' && !imageDecoder)) {
-      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE', {
-        reason: 'UNSUPPORTED_FORMAT',
-      });
+      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE');
     }
 
     // Model assets have no sharp/OIIO/FFmpeg generator in the Worker; their
@@ -26861,9 +26856,7 @@ export class LibraryService {
       throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
     }
     if (!isSupportedModelExtension(asset.relative_file_path)) {
-      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE', {
-        reason: 'UNSUPPORTED_FORMAT',
-      });
+      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE');
     }
     return queryModelCompanionAssets(openLibrary.connection, asset.relative_file_path);
   }
@@ -26907,7 +26900,7 @@ export class LibraryService {
         ? 'audio_proxy'
         : 'thumbnail';
     if (input.kind !== expectedKind) {
-      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE', { reason: 'UNSUPPORTED_FORMAT' });
+      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE');
     }
     const jobKind = input.kind === 'webm_proxy'
       ? 'generate_webm_proxy'
@@ -32295,9 +32288,7 @@ export class LibraryService {
   } {
     const destinationPath = this.folderPath(openLibrary, destinationRelativePath);
     if (existsSync(destinationPath)) {
-      throw new LibraryServiceError('ASSET_FILE_NAME_CONFLICT', {
-        reason: 'SOURCE_CHANGED',
-      });
+      throw new LibraryServiceError('ASSET_FILE_NAME_CONFLICT');
     }
 
     let sourceStat: BigIntStats;
@@ -32355,9 +32346,7 @@ export class LibraryService {
         throw new LibraryServiceError('INVALID_LIBRARY_PATH');
       }
       if (existsSync(destinationPath)) {
-        throw new LibraryServiceError('ASSET_FILE_NAME_CONFLICT', {
-          reason: 'SOURCE_CHANGED',
-        });
+        throw new LibraryServiceError('ASSET_FILE_NAME_CONFLICT');
       }
       renameSync(stagedPath, destinationPath);
       placed = true;
@@ -33928,7 +33917,7 @@ export class LibraryService {
       throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
     }
     if (LibraryService.detectMediaType(row.relative_file_path) !== 'text') {
-      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE', { reason: 'UNSUPPORTED_FORMAT' });
+      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE');
     }
 
     const absolutePath = isTrashed
@@ -33970,7 +33959,7 @@ export class LibraryService {
     }
 
     if (buffer.includes(0)) {
-      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE', { reason: 'UNSUPPORTED_FORMAT' });
+      throw new LibraryServiceError('ASSET_CONTENT_INVALID');
     }
 
     const truncated = buffer.length > maxBytes;
@@ -34033,7 +34022,7 @@ export class LibraryService {
       throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
     }
     if (LibraryService.detectMediaType(row.relative_file_path) !== 'text') {
-      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE', { reason: 'UNSUPPORTED_FORMAT' });
+      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE');
     }
     if (
       input.expectedRevisionId &&
@@ -36435,7 +36424,6 @@ export class LibraryService {
           throw new LibraryServiceError('ASSET_ALREADY_TRASHED');
         }
       }
-      throw new LibraryServiceError('INVALID_STATE_TRANSITION');
     }
 
     const operationId = randomUUID();
@@ -36527,9 +36515,10 @@ export class LibraryService {
           .prepare('SELECT asset_id, deleted_at FROM assets WHERE asset_id = ?')
           .get(id) as { asset_id: string; deleted_at: string | null } | undefined;
         if (!exists) throw new LibraryServiceError('ASSET_NOT_FOUND');
-        if (exists.deleted_at === null) throw new LibraryServiceError('ASSET_NOT_TRASHED');
+        if (exists.deleted_at === null) {
+          throw new LibraryServiceError('ASSET_NOT_TRASHED', { reason: 'PERMANENT_DELETE_NEEDS_TRASH' });
+        }
       }
-      throw new LibraryServiceError('INVALID_STATE_TRANSITION');
     }
 
     let deletedCount = 0;
@@ -37367,10 +37356,14 @@ export class LibraryService {
     for (const id of input.assetIds) {
       if (!foundIds.has(id)) {
         const exists = openLibrary.connection
-          .prepare('SELECT location_kind FROM assets WHERE asset_id = ?')
-          .get(id) as { location_kind: string } | undefined;
+          .prepare('SELECT location_kind, deleted_at FROM assets WHERE asset_id = ?')
+          .get(id) as { location_kind: string; deleted_at: string | null } | undefined;
         if (!exists) throw new LibraryServiceError('ASSET_NOT_FOUND');
-        throw new LibraryServiceError('ASSET_NOT_MANAGED');
+        if (exists.deleted_at !== null) {
+          throw new LibraryServiceError('ASSET_ALREADY_TRASHED');
+        }
+        // A managed asset cannot be handled by the linked-asset delete path.
+        throw new LibraryServiceError('INVALID_SELECTION');
       }
     }
 
@@ -39524,9 +39517,7 @@ export class LibraryService {
     if (this.linkedFolderRowForImport(openLibrary, input.targetFolderId)) {
       // Linked imports skip the managed staging pipeline; callers should use
       // prepareOrExecuteImport. Surface a clear error if prepareImport is used alone.
-      throw new LibraryServiceError('AUTOMATION_FILE_PLAN_INVALID', {
-        reason: 'SOURCE_NOT_FOUND',
-      });
+      throw new LibraryServiceError('AUTOMATION_FILE_PLAN_INVALID');
     }
     const targetFolder = this.targetFolder(openLibrary, input.targetFolderId);
     const enumerated = input.sourceEntries
@@ -41091,7 +41082,7 @@ export class LibraryService {
     const pending = this.pendingImports.get(input.importId);
     if (!pending) throw new LibraryServiceError('IMPORT_NOT_FOUND');
     if (pending.awaitingSourceFailureDecision) {
-      throw new LibraryServiceError('INVALID_STATE_TRANSITION', { reason: 'IMPORT_AWAITING_SOURCE_DECISION' });
+      throw new LibraryServiceError('IMPORT_AWAITING_DECISION');
     }
     this.pendingImports.delete(input.importId);
     this.cancelImportExpiry(pending);

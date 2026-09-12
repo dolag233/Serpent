@@ -60,17 +60,11 @@ tsc --noEmit / eslint → exit 0
 
 `tests/worker/trash-relink.test.ts` 的 11 条断言按场景改为：linked 资产 trash → `ASSET_NOT_MANAGED`；重复 trash → `ASSET_ALREADY_TRASHED`；restore 活跃资产 → `ASSET_NOT_TRASHED`；restore 重复 id → `INVALID_STATE_TRANSITION`；永久删除活跃资产/混合批次 → `ASSET_NOT_TRASHED`；重复 id → `INVALID_STATE_TRANSITION`；`deleteLinkedAssets` 重复 id / 对 managed 资产 → `INVALID_STATE_TRANSITION`；relink 可用资产 → `INVALID_STATE_TRANSITION`；relink 已回收站资产 → `ASSET_ALREADY_TRASHED`。
 
-## 5. Phase 2（本次未做，剩余 33 处）
+## 5. Phase 2 的范围（当时未做，已在 §7 完成）
 
-剩下的调用点属于**另一类根因（输入/模式/格式校验）**，每类需要自己的码与文案，不宜塞进本次四个码里：
+> 历史记录：本节写下时 Phase 2 尚未开始，用来界定边界。实际完成情况与最终映射见 §7。
 
-- 智能合集定义解析：`createSmartCollection:31801`、`updateSmartCollection:31929`、`parseSmartCollectionDefinition:32030`
-- 忽略规则/路径规范化：`normalizeLinkedFolderRule:38210-38225`、`normalizeExplicitIgnorePath:38235`、`setIgnore:38582`
-- 图片序列：`createImageSequence:16570-16596`、`setImageSequenceFps:16657`
-- 文本资产读写：`readTextAsset:33927/33969`、`saveTextAsset:34032`
-- 其他：`previewAutomationFileOperation:11122/11130`、`setLinkedFolderRules:15840`、`copyLinkedAssetsToManagedFolder:16028`、`clearAiContent:19490/19506`、`generateThumbnail:21094`、`resolveModelCompanions:26860`、`enqueueArtifactRetry:26906`、`placeManagedRelinkFile:32294/32354`
-- `resolveImport:41084-41094` 属**正当用法**（导入决策本身），保持。
-
+剩下的调用点属于**另一类根因（输入/模式/格式校验）**，每类需要自己的码与文案，不宜塞进首批四个码里：智能合集定义解析、忽略规则/路径规范化、图片序列、文本资产读写、自动化预览、插件/缩略图/模型伴随、`placeManagedRelinkFile` 等；`resolveImport` 属**正当用法**（导入决策本身），保持不动。
 另有一项**行为层面**的改进来自同一份审查报告，本单未做（需要产品口径）：永久删除/回收站对"已完成"的批次改为**幂等成功**而不是报错。现在重复点仍会得到上面的专用码提示。若要改成静默幂等，请单独开单确认交互。
 
 ## 6. 自主核查：独立子代理审计后的修正（2026-09-12 同日）
@@ -105,26 +99,28 @@ tsc --noEmit / eslint → exit 0
 
 ## 7. Phase 2：剩余调用点清理（同日完成）
 
-审计报告 §2.1 里剩下的 19 处（worker 18 + main 1）已按它的建议逐条处理，`INVALID_IMPORT_DECISION` **只剩 `resolveImport` 里正当的 2 处**（`library-service.ts:41102` 写 `file_operations.error_code`、`:41104` 校验 suspectedDuplicate/nameConflict 取值）+ `import-planning.test.ts:1199` 的对应断言。
+审计报告 §2.1 里剩下的 **17 处**（worker 16 + main 1）已按它的建议逐条处理，`INVALID_IMPORT_DECISION` **只剩 `resolveImport` 里正当的 2 处**（`library-service.ts:41102` 写 `file_operations.error_code`、`:41104` 校验 suspectedDuplicate/nameConflict 取值）+ `import-planning.test.ts:1199` 的对应断言。
 
-| 站点（当前行号） | 场景 | 改判 |
+下表按**函数 / 守卫条件**定位（行号会随后续改动漂移；经独立复核，本文早期版本里按行号写的表格整体偏旧 2–3 行，已改为符号定位）：
+
+| 位置（函数 / 守卫） | 场景 | 改判 |
 | --- | --- | --- |
-| 11122 | 自动化预览：assetIds 空/重复 | `INVALID_SELECTION` |
-| 15846 | 链接规则 >200 条或 ruleId 重复 | `INVALID_SELECTION` |
-| 16034 | 复制链接资产：assetIds 空/重复 | `INVALID_SELECTION` |
-| 16576 / 16663 | 序列图 fps 非有限 / <1 / >240（对话框已拦截，属内部不变量） | `INTERNAL_ERROR` |
-| 19496 | `clearAiContent` 的 library/folder scope 未带 confirm（原 `reason: PERMISSION_DENIED` 也不贴切，一并去掉） | **新码** `CONFIRMATION_REQUIRED` |
-| 21100 | 缩略图：`mediaType === 'other'` 或无解码器 | **新码** `UNSUPPORTED_MEDIA_TYPE` |
-| 26866 | 模型伴随：非受支持模型扩展名 | `UNSUPPORTED_MEDIA_TYPE` |
-| 26912 | 工件重试：kind 与媒体类型不符 | `UNSUPPORTED_MEDIA_TYPE` |
-| 33933 / 33975 / 34038 | 文本资产：非文本读写 / 内容含 NUL / 非文本写回 | `UNSUPPORTED_MEDIA_TYPE` |
-| 38247 | 忽略路径不合法 | `INVALID_FOLDER_NAME` |
-| 38594 | 扩展名忽略项含 `/`、`\` | `INVALID_FOLDER_NAME` |
-| 39529 | `prepareImport` 收到链接文件夹目标（调用方契约错，应走 `prepareOrExecuteImport`） | `AUTOMATION_FILE_PLAN_INVALID` |
-| 41096 | 该导入正在等待"源失败"决定 | `INVALID_STATE_TRANSITION` + **新 reason** `IMPORT_AWAITING_SOURCE_DECISION` |
-| main/index.ts:4652 | 序列确认对话框的 `sequenceIndex` 过期 | `IMPORT_NOT_FOUND`（同分支 4638/4644 对 offer 失效已这么用） |
+| `previewAutomationFileOperation`：assetIds 空/重复 | 自动化文件计划预览 | `INVALID_SELECTION` |
+| `setLinkedFolderRules`：>200 条或 ruleId 重复 | 链接规则 | `INVALID_SELECTION` |
+| `copyLinkedAssetsToManagedFolder`：assetIds 空/重复 | 复制链接资产 | `INVALID_SELECTION` |
+| `createImageSequence` / `setImageSequenceFps`：fps 非有限 / <1 / >240 | 对话框与 MCP schema 都已限 1..240，属不可达的内部契约守卫（保留 `INTERNAL_ERROR` 是有意的：见 §8 F14） | `INTERNAL_ERROR` |
+| `clearAiContent`：library/folder scope 未带 confirm | 原 `reason: PERMISSION_DENIED` 也不贴切，一并去掉 | **新码** `CONFIRMATION_REQUIRED`（现由 main 的 AI 设置分支使用，见 §8 F11） |
+| `generateThumbnail`：`mediaType === 'other'` 或无解码器 | 缩略图 | **新码** `UNSUPPORTED_MEDIA_TYPE`（§8 F6 去掉了重复 reason） |
+| `resolveModelCompanions`：非受支持模型扩展名 | 模型伴随 | `UNSUPPORTED_MEDIA_TYPE` |
+| `enqueueArtifactRetry`：kind 与媒体类型不符 | 工件重试 | `UNSUPPORTED_MEDIA_TYPE` |
+| `readTextAsset` / `saveTextAsset`：资产非文本 | 文本资产读写 | `UNSUPPORTED_MEDIA_TYPE` |
+| `readTextAsset`：文件内容含 NUL | 类型受支持、内容是二进制（§8 F3） | **新码** `ASSET_CONTENT_INVALID` |
+| `normalizeExplicitIgnorePath` / `setIgnore`：路径或扩展名忽略项非法 | 忽略规则 | `INVALID_FOLDER_NAME` |
+| `prepareImport`：目标是链接文件夹（应走 `prepareOrExecuteImport`） | 调用方契约错 | `AUTOMATION_FILE_PLAN_INVALID`（§8 F8a 去掉了无关 reason） |
+| `resolveImport`：该导入正在等待"源失败"决定 | 与主诉无关的状态 | **新码** `IMPORT_AWAITING_DECISION`（§8 F4：不再复用状态竞争码 + 矛盾 reason） |
+| `asset.import-sequence.confirm`：`sequenceIndex` 过期（main） | offer 失效 | `IMPORT_NOT_FOUND`（同分支 4638/4644 已这么用） |
 
-新增文案（中英同步）：`UNSUPPORTED_MEDIA_TYPE`「这类文件不支持这项操作。请改选受支持的文件类型。」、`CONFIRMATION_REQUIRED`「这项操作需要先确认。请重新打开对话框并确认后再试。」、reason `IMPORT_AWAITING_SOURCE_DECISION`「这次导入正在等待一个决定（关于无法读取的文件）。请先处理它，再重试。」
+新增文案（中英同步）：`UNSUPPORTED_MEDIA_TYPE`「这类文件不支持这项操作。请改选受支持的文件类型。」、`CONFIRMATION_REQUIRED`「这项操作需要先确认。请重新打开对话框并确认后再试。」、`ASSET_CONTENT_INVALID`「这个文件的内容不是文本（可能是二进制或已损坏），文本视图无法打开它。…」、`IMPORT_AWAITING_DECISION`「这次导入还在等你决定怎么处理读不到的文件。…」、`AI_SETTINGS_INCOMPLETE`「自动分析还没开启：请先在 AI 设置里填入 API Key、选择模型，然后重试。」、reason `PERMANENT_DELETE_NEEDS_TRASH`「永久删除只对回收站里的资产生效：请先把它移入回收站。」（原 Phase 2 的 reason `IMPORT_AWAITING_SOURCE_DECISION` 已在 §8 F4 中删除。）
 
 证据：
 
@@ -143,7 +139,37 @@ npm run test:library-availability            9 files / 211 passed | 1 skipped
 tsc --noEmit / eslint                        exit 0
 ```
 
-## 8. 本单之外的同类问题（已开单 `Serpent-3c71f3`）
+## 8. 独立复核（2026-09-12）：发现与处理
+
+派了一个只读审查子代理（deepseek-v4.1-flash）复核本次「报错信息 + 日志记录」的工作，报告收录在 [`docs/internal/reviews/2026-09-12-error-code-review.md`](../reviews/2026-09-12-error-code-review.md)（73 个改判站点 → 58 right、11 wrong、4 unsure/unreachable；9 类文案问题；2 项日志/诊断问题；8 项测试缺口；2 项文档不实）。它抓到的问题与**已做的修改**：
+
+| # | 发现 | 处理 |
+| --- | --- | --- |
+| F1（高） | `App.tsx:6244/6276/6292/6306` 与 `TextViewerControls.tsx` 直接渲染协议英文 `message`、丢掉 reason → 本次为序列图新写的 zh 文案与 `IMAGE_SEQUENCE_SELECTION` 在主路径上**一个字都不显示**，清单 ⑤ 的预期在该路径不可能出现 | 已改为 `messageForPublicError(result.error, locale)`（App 4 处；`locale` 在同一作用域已有）与 `toMessage(error, …, locale)`（文本查看器保存失败分支）。修复后清单 ⑤ 的预期成立 |
+| F2（高） | `deleteLinkedAssets` 的兜底把「managed 资产」与「已在回收站的链接资产」都写成 `ASSET_NOT_MANAGED`（对前者事实相反，对后者原因/解法都错）；`SELECT` 只查 `location_kind`，结构上无法区分 | 已改为查 `location_kind, deleted_at`：`deleted_at !== null` → `ASSET_ALREADY_TRASHED`；否则（managed）→ `INVALID_SELECTION`。测试断言同步为 `INVALID_SELECTION`。注：「已回收的链接资产」在当前调用方下不可达（链接行不会带 `deleted_at`：`deleteLinkedFolderSubtree` 是删行 + 移 OS 回收站），该分支属防御——我为此写过一个用例，实测得到 `ASSET_NOT_FOUND`，说明前提不成立，已删掉该用例而不是留一个假绿 |
+| F3（高） | 「文本资产内容含 NUL」用了 `UNSUPPORTED_MEDIA_TYPE` + `UNSUPPORTED_FORMAT`：类型本就受支持，解法不可用；reason 还含内部术语「当前切片」 | 已新增 `ASSET_CONTENT_INVALID`（「这个文件的内容不是文本（可能是二进制或已损坏），文本视图无法打开它。…」）并去掉该 reason；`UNSUPPORTED_FORMAT` 的文案改为「Serpent 目前还不能处理这种文件格式。」（去掉"当前切片"） |
+| F4（高） | 「该导入在等源失败决定」用了 `INVALID_STATE_TRANSITION` + reason，一句话里两个互斥的原因/解法 | 已新增 `IMPORT_AWAITING_DECISION`，并**删除** reason `IMPORT_AWAITING_SOURCE_DECISION` |
+| F5（中） | `ASSET_NOT_TRASHED` 的解法对**恢复**路径是反的（让它先移入回收站） | 文案改为意图中立（「…不在回收站里，可能已经被恢复。请刷新回收站列表后重试。」）；「永久删除」这一处单独带 reason `PERMANENT_DELETE_NEEDS_TRASH` 保留原有引导 |
+| F6（中） | `UNSUPPORTED_MEDIA_TYPE` 的 6 处附加 `UNSUPPORTED_FORMAT` 与 code 文案语义重复、无解法 | 已全部去掉该 reason（`model-pipeline` 测试断言同步为 `reason` 为 `undefined`） |
+| F7（中） | `main/index.ts` 保存 AI 设置失败却报「AI 服务未能完成资产分析」 | 「未接受数据发送说明」→ `CONFIRMATION_REQUIRED`；「没有 API Key」→ 新增 `AI_SETTINGS_INCOMPLETE`（「自动分析还没开启：请先在 AI 设置里填入 API Key、选择模型，然后重试。」） |
+| F8（中） | 3 处附加 reason 与本码原因冲突（`prepareImport` + `SOURCE_NOT_FOUND`；两处重定位落点占用 + `SOURCE_CHANGED`） | 已去掉这 3 处 reason |
+| F9（中） | `jobs.error_code` 里放公开码时渲染成**裸标识符**（AI 批量失败对话框中英界面都是） | `ai-job-error-message.ts` 先查 `error.reason.*`、再回退 `error.code.*`；新增 `tests/unit/ai-job-error-message.test.ts`（4 条） |
+| F10（中） | `previewAutomationFileOperation` / `clearAiContent` 的「folderId 不存在」用 `FOLDER_NOT_FOUND`（归因磁盘断开），后者还带无关 reason | 两处改为 `INVALID_SELECTION` 并去掉 reason。这里我采用了 INVALID_SELECTION 而不是新增 `RECORD_NOT_FOUND`：本次范围内只有这 2 处，且「重新选择」正是该情形的解法；给标签/合集/记录族统一新码属 `Serpent-3c71f3` 的设计决定 |
+| F11（中） | `CONFIRMATION_REQUIRED` 是死文案（`clearAiContent` 的 folder/library scope 无调用方） | 由 F7 的 main AI 设置分支使用，已可达；`clearAiContent` 那个分支仍是防御（Renderer 只发 asset scope，已验证），保留 |
+| F12（中） | 开发日志 §7 写「19 处」而表格/diff 是 17 处；表头「当前行号」是旧行号（差 2–3 行） | 本节已改为 **17 处（worker 16 + main 1）**，并把表格改为按**函数/守卫**定位（不再写会漂移的行号） |
+| F15（低） | 3 处 `INVALID_STATE_TRANSITION` 兜底是不可达死代码（循环已为每个缺失 id 抛错） | 已删除这 3 处（`deleteAssetsFromDiskAsync` / `deleteAssetsFromDisk` / `deleteAssetsPermanent` 各 1） |
+| F17（低） | 两个 catalog 有 3 个无对应公开码的死键（`TAG_UNDO_EXPIRED`/`INVALID_SYNC_URL`/`SYNC_PASSWORD_STORAGE_UNAVAILABLE`） | 已删除（全仓无引用，仅 `main/index.ts` 注释提到旧码名） |
+| F18（低） | 单测的 `enFor()` 同时接受 catalog 与协议文本，掩盖 en catalog 与 wire 文本的漂移 | 已改为只断言 catalog 文本（用户实际看到的），并新增 `UNSUPPORTED_MEDIA_TYPE`/`CONFIRMATION_REQUIRED` 等进码表；协议侧由 schema 测试覆盖 |
+
+**未按建议改、保留并说明理由的**：
+
+- **F13**（`INVALID_SELECTION` 不说明是空/重复/超限）：普通 UI 已按 20 分块、拖放已拆分 managed/linked，命中者主要是 MCP/脚本（审计也把它判为低）。给每个超限加 reason 会让这一族码回到"一码多因"，本次不加；如需给脚本调用方更具体的信息，属 `Serpent-3c71f3` 的编码决定。
+- **F14**（fps 守卫用 `INTERNAL_ERROR`）：命中条件被对话框与 MCP schema 双重限制，是不可达的内部契约守卫；`INTERNAL_ERROR` 正是这种情形的码，不会把用户可见路径降级成兜底句。保留。
+- **F16**（`INVALID_FOLDER_NAME` 用于规则/忽略模式，措辞只说"名称"）：中英一致、方向正确；规则输入框是自由文本，用户可达，但「名称包含不支持的字符」对规则模式仍然成立（规则模式就是名字/路径片段）。若要更具体，加 reason 更合适，列入 `Serpent-3c71f3`。
+
+**仍未做的测试缺口**（复核 §6 列出，本次只补了 F9 与 F2 的断言）：`main` 序列确认 `sequenceIndex` 过期 → `IMPORT_NOT_FOUND`、`prepareImport` 链接目标 → `AUTOMATION_FILE_PLAN_INVALID` 仍无断言；fps 守卫无断言（不可达）。这三条已在复核报告里登记，本次不假称已覆盖。
+
+## 9. 本单之外的同类问题（已开单 `Serpent-3c71f3`）
 
 审计 §4.2–§4.9 发现的**同一类"文案与场景不符"**属其它错误码，不在本单调用点范围内：
 
@@ -155,7 +181,7 @@ tsc --noEmit / eslint                        exit 0
 - `worker/index.ts:1480-1489` 硬编码中文缩略图失败文案，英文界面也显示中文
 - 行为层面（需产品口径）：永久删除/回收站对已完成批次改幂等。
 
-## 9. 未验证 / 边界
+## 10. 未验证 / 边界
 
 - packaged / Windows 打包态：未执行（Windows 开发态由 worker 测试覆盖）。
 - 人类验收：见清单 `ERROR-STATE-001`（连续 trash、对活跃资产 restore/永久删除、链接资产 trash 四种情况的文案）。

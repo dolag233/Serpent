@@ -1929,7 +1929,7 @@ describe('deleteLinkedAssets', () => {
       libraryId: created.libraryId,
       assetIds: [r.assets[0]!.assetId],
       deleteSourceFile: false,
-    })).rejects.toMatchObject({ code: 'ASSET_NOT_MANAGED' });
+    })).rejects.toMatchObject({ code: 'INVALID_SELECTION' });
     service.closeAll();
   });
 });

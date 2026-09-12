@@ -4216,13 +4216,13 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       if (request.autoAnalyzeEnabled && !request.disclaimerAccepted) {
         return {
           ok: false,
-          error: createPublicError("AI_ANALYSIS_FAILED", "AI_NOT_CONFIGURED"),
+          error: createPublicError("CONFIRMATION_REQUIRED"),
         } satisfies RendererResult;
       }
       if (!request.apiKey && !currentConfig.hasKey) {
         return {
           ok: false,
-          error: createPublicError("AI_ANALYSIS_FAILED", "AI_NOT_CONFIGURED"),
+          error: createPublicError("AI_SETTINGS_INCOMPLETE"),
         } satisfies RendererResult;
       }
       const savedConfig: AiConfig = {

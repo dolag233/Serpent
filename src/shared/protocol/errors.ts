@@ -64,7 +64,8 @@ export const PUBLIC_ERROR_MESSAGES = {
   // conflict decision"), which told the user nothing about what happened.
   ASSET_ALREADY_TRASHED:
     'That asset is already in the trash. Restore it, or delete it permanently from the trash.',
-  ASSET_NOT_TRASHED: 'That asset is not in the trash. Move it to the trash first.',
+  ASSET_NOT_TRASHED:
+    'That asset is not in the trash — it may already have been restored. Refresh the trash list and try again.',
   ASSET_NOT_MANAGED:
     'That file lives in a linked folder, outside the library’s own storage. Serpent leaves those files where they are — handle it in your file manager.',
   INVALID_STATE_TRANSITION:
@@ -85,6 +86,15 @@ export const PUBLIC_ERROR_MESSAGES = {
   // arrived without the confirmation flag.
   CONFIRMATION_REQUIRED:
     'That action needs confirmation first. Reopen the dialog, confirm it, and try again.',
+  // Serpent-50c466 review F3: the file type is supported; its *content* is not text.
+  ASSET_CONTENT_INVALID:
+    'This file’s content is not text — it may be binary or damaged, so the text view cannot open it. If it should be text, check that the file is intact.',
+  // Serpent-50c466 review F4: the import itself is blocked on the user’s answer.
+  IMPORT_AWAITING_DECISION:
+    'This import is still waiting for you to decide what to do with the files that could not be read. Answer that prompt first, then continue.',
+  // Serpent-50c466 review F7: the user is saving AI settings, not watching an analysis.
+  AI_SETTINGS_INCOMPLETE:
+    'Automatic analysis is not on yet. Add an API key and choose a model in AI settings, then try again.',
   INVALID_ASSET_FILE_NAME: 'Choose a file name that is safe on macOS and Windows.',
   ASSET_FILE_NAME_CONFLICT: 'A file with this name already exists in the asset folder.',
   INVALID_ASSET_METADATA: 'Choose valid asset metadata values, including six-digit hex colors and an HTTP(S) source page URL.',
@@ -188,8 +198,8 @@ export const publicErrorReasonSchema = z.enum([
   'LINKED_SOURCE_INSIDE_LINKED_FOLDER',
   /** Serpent-50c466 audit: image-sequence selection does not form one series. */
   'IMAGE_SEQUENCE_SELECTION',
-  /** Serpent-50c466 Phase 2 (audit §2.1 #31): the import waits on another answer. */
-  'IMPORT_AWAITING_SOURCE_DECISION',
+  /** Serpent-50c466 review F5: permanent delete only applies to trashed assets. */
+  'PERMANENT_DELETE_NEEDS_TRASH',
 ]);
 
 export type PublicErrorReason = z.infer<typeof publicErrorReasonSchema>;
