@@ -42,6 +42,15 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-09-12 文件夹栏空白区域（回到根目录）
+
+> 单测环境提示（2026-09-12 实测）：Node v26 自带 `localStorage` 全局会遮蔽 happy-dom 注入的 web storage，`NavigationSidebar` 中 4 条既有用例在 v26 下挂载即失败（`LocalePreferences: no storage provided and globalThis.localStorage is not available.`）。项目要求 Node 24.x（`.nvmrc` = 24.15.0），请在 Node 24 下复跑该文件。
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| NAV-FOLDER-ROOT-001 / `Serpent-6e3b10` | 点「文件夹」栏空白区域回到资源库根目录 | 人类验收通过 | ① 打开资源库，进入任意子文件夹。② 点「文件夹」栏里的空白：文件夹行**左侧缩进槽**（展开箭头那一列），以及没有文件夹时的提示文字。③ 看浏览标题栏与侧栏高亮。④ 再点下方「合集 / 智能合集」区域和面板底部作对比。⑤ 点一次「+」开始新建文件夹，此时再点空白。 | 缩进槽等空白点击回到资源库根目录；「合集 / 智能合集」区域与面板底部**不**触发；点文件夹行仍只进该文件夹；inline 新建/重命名进行中点空白只提交输入，不跳转；文件夹栏下方的间距与改动前一致（未额外加空白条）。 | [开发日志](../development/2026-09-12-folder-pane-background-root-development-log.md) / `NavigationSidebar.tsx` `.nav-folder-list` / `tests/unit/navigation-sidebar.test.ts`、`tests/e2e/nav-pane-background.test.ts` | 2026-09-12 用户验收通过。自动化：`folder-section blank area` 13 条单测通过；真实 Electron E2E `nav-pane-background` 1 passed。同一单测文件 4 条既有用例在本机 Node v26 下失败，见上方提示。packaged / Windows 未执行。 |
+| DND-FOLDER-ROOT-001 / `Serpent-b29bc4` | 把文件夹拖到「文件夹」栏空白处移动到根目录 | 人类验收通过 | ① 打开含嵌套子文件夹的资源库。② 把子文件夹拖到「文件夹」栏行左侧的缩进槽释放。③ 再拖一个已经在根目录的文件夹到空白处。④ 把另一个子文件夹拖到某个文件夹行上、以及拖到「合集」区域对比。 | 拖过空白区域时文件夹栏出现淡色 drop 高亮，框为 6px 圆角（与文件夹行圆角一致），拖到行上时高亮让位给该行；释放后该文件夹成为顶层文件夹；已在根目录的文件夹不发请求；拖到「合集」区域不产生移动；资产/外部文件拖到空白处行为不变。 | [开发日志](../development/2026-09-12-folder-pane-background-root-development-log.md) / `NavigationSidebar.tsx` `folderListBlankHandlers` / `folder-drag-drop.ts` `resolveFolderOntoFolderDrop` / `styles.css` `.nav-folder-list.is-root-drop-target` / `tests/unit/folder-drag-drop.test.ts`、`tests/unit/navigation-sidebar.test.ts`、`tests/e2e/nav-pane-background.test.ts` | 2026-09-12 用户验收通过（含圆角与「不要扩大下方空白」两点反馈的修正）。自动化：`folder-drag-drop` 10 passed、13 条新增单测通过；真实 Electron E2E `nav-pane-background` 1 passed。packaged / Windows 未执行。 |
+
 ### 2026-09-10 本地插件 ZIP / 文件夹安装（GitHub #19）
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

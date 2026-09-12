@@ -80,6 +80,27 @@ describe("resolveFolderOntoFolderDrop", () => {
       targetParentFolderId: "root-child",
     });
   });
+
+  // Serpent-b29bc4: the pane background is the library-root target.
+  it("moves a nested folder to the library root", () => {
+    expect(
+      resolveFolderOntoFolderDrop({
+        targetFolderId: null,
+        draggedFolderIds: ["c"],
+        folders,
+      }),
+    ).toEqual({ kind: "move", folderIds: ["c"], targetParentFolderId: null });
+  });
+
+  it("rejects the root target for folders that already live there", () => {
+    expect(
+      resolveFolderOntoFolderDrop({
+        targetFolderId: null,
+        draggedFolderIds: ["root-child"],
+        folders,
+      }),
+    ).toEqual({ kind: "reject", reason: "same-parent" });
+  });
 });
 
 describe("isFolderDescendantOf", () => {

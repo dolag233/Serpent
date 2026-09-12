@@ -972,6 +972,9 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
   // Cleared on leave/drop, and defensively on window dragend/drop so a drop
   // outside any row never leaves a stale highlight.
   const [assetDropTarget, setAssetDropTarget] = useState<string | null>(null);
+  // Serpent-b29bc4: a managed-folder drag hovering the folder section's blank
+  // area (indentation gutter / space below the last row) targets the root.
+  const [folderListDropActive, setFolderListDropActive] = useState(false);
   const [navTreePrefs, setNavTreePrefs] = useState<NavTreePreferences>(() =>
     loadNavTreePreferences(),
   );
@@ -984,15 +987,18 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     saveFolderSortPreferences(next);
   }
   useEffect(() => {
-    if (!assetDropTarget) return;
-    const clear = () => setAssetDropTarget(null);
+    if (!assetDropTarget && !folderListDropActive) return;
+    const clear = () => {
+      setAssetDropTarget(null);
+      setFolderListDropActive(false);
+    };
     window.addEventListener("dragend", clear);
     window.addEventListener("drop", clear);
     return () => {
       window.removeEventListener("dragend", clear);
       window.removeEventListener("drop", clear);
     };
-  }, [assetDropTarget]);
+  }, [assetDropTarget, folderListDropActive]);
 
   const persistedCollapsedFolderIds = new Set(navTreePrefs.collapsedFolderIds);
   const collapsedFolderIds = new Set(persistedCollapsedFolderIds);
@@ -1168,6 +1174,104 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           return;
         }
         onExternalDrop(event, folderId, undefined);
+      },
+    };
+  }
+
+  /**
+   * Serpent-6e3b10 / Serpent-b29bc4: the blank area **of the folder section** —
+   * the indentation gutter left of the rows and the empty strip below the last
+   * row — is a real target. Clicking it returns to the library root; dropping
+   * dragged managed folders on it moves them to the root.
+   *
+   * Scope is the folder list only (2026-09-12 user clarification on a marked-up
+   * screenshot): the collections / smart-collections sections below are not
+   * blank space, and neither is the rest of the pane. A first version used the
+   * whole `.navigation-scroll` and the band under the tree — which is what the
+   * user actually aims at — was covered by the next section's heading and its
+   * "尚无合集" paragraph, so the click was swallowed.
+   *
+   * "Blank" means the event does not land on a row or a control. Rows and
+   * controls stay foreground so their own handlers keep working untouched, and
+   * the indentation gutter counts as blank because it belongs to no row.
+   */
+  const NAV_FOREGROUND_SELECTOR = [
+    ".nav-row",
+    ".nav-disclosure",
+    ".nav-inline-edit",
+    "button",
+    "input",
+    "textarea",
+    "select",
+    "label",
+    "a[href]",
+    "[role]",
+    "[tabindex]",
+    "[contenteditable='true']",
+  ].join(", ");
+
+  function isFolderListBlankTarget(event: {
+    target: EventTarget | null;
+    currentTarget: EventTarget | null;
+  }): boolean {
+    if (event.target === event.currentTarget) return true;
+    let node = event.target instanceof Element ? event.target : null;
+    while (node && node !== event.currentTarget) {
+      if (node.matches(NAV_FOREGROUND_SELECTOR)) return false;
+      node = node.parentElement;
+    }
+    return true;
+  }
+
+  // An open inline editor owns the click that follows (blur commits it);
+  // navigating at the same time would fight that commit.
+  const inlineEditorOpen =
+    inlineFolderEdit !== null ||
+    inlineCollectionRename !== null ||
+    inlineSmartCollectionEdit !== null ||
+    showCollectionInput;
+
+  /** Handlers for the folder section's blank area (gutter + trailing strip). */
+  function folderListBlankHandlers() {
+    return {
+      onClick: (event: React.MouseEvent<HTMLElement>) => {
+        if (!library || inlineEditorOpen) return;
+        if (!isFolderListBlankTarget(event)) return;
+        void onChooseFolder("root");
+      },
+      onDragEnter: (event: React.DragEvent<HTMLElement>) => {
+        if (!library || !supportsManagedFolderDrag(event.dataTransfer)) return;
+        if (!isFolderListBlankTarget(event)) return;
+        setFolderListDropActive(true);
+      },
+      onDragOver: (event: React.DragEvent<HTMLElement>) => {
+        if (!library || !supportsManagedFolderDrag(event.dataTransfer)) return;
+        if (!isFolderListBlankTarget(event)) {
+          // A row took over under the pointer: drop the blank-area highlight so
+          // only the row the drag hovers stays highlighted.
+          setFolderListDropActive(false);
+          return;
+        }
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        setFolderListDropActive(true);
+      },
+      onDragLeave: (event: React.DragEvent<HTMLElement>) => {
+        // Moving onto a child fires dragleave here even though the area is still
+        // the drop target; a real exit (or a row taking over in dragover) is
+        // what clears the highlight.
+        if (event.currentTarget.contains(event.relatedTarget as Node | null))
+          return;
+        setFolderListDropActive(false);
+      },
+      onDrop: (event: React.DragEvent<HTMLElement>) => {
+        if (!supportsManagedFolderDrag(event.dataTransfer)) return;
+        if (!isFolderListBlankTarget(event)) return;
+        setFolderListDropActive(false);
+        const folderIds = parseManagedFolderDrag(event.dataTransfer);
+        if (!library || !folderIds || folderIds.length === 0) return;
+        event.preventDefault();
+        onFoldersDroppedOnFolder(null, folderIds);
       },
     };
   }
@@ -1851,9 +1955,12 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           }
         >
           {library ? (
-            <>
+            <div
+              className={`nav-folder-list${folderListDropActive ? " is-root-drop-target" : ""}`}
+              {...folderListBlankHandlers()}
+            >
               {renderDirectoryEntries()}
-            </>
+            </div>
           ) : (
             <p className="nav-empty">{t("nav.openLibraryFoldersHint")}</p>
           )}
