@@ -22971,9 +22971,67 @@ export class LibraryService {
         originalOperationId: null,
         version: 4,
       });
+      this.pruneEmptyManagedFoldersAfterSyncRelocate(openLibrary, existing.managed_folder_id);
       this.noteClientFilesystemMutation();
       this.emitClientAssetsChanged(libraryId, 1);
     });
+  }
+
+  /**
+   * Sync replay only moves files (the exchange format is a file layout). After a
+   * relocate the source directory can remain as an empty managed_folders row on
+   * the receiving device. Walk the source folder and empty ancestors and remove
+   * them: no child folders, no managed assets, and rmdir of an empty disk dir.
+   * Folders that still have contents are left in place. Missing disk dirs still
+   * drop the index row so the sidebar cannot keep a phantom empty folder.
+   */
+  private pruneEmptyManagedFoldersAfterSyncRelocate(
+    openLibrary: OpenLibrary,
+    folderId: string | null,
+  ): void {
+    const childCount = openLibrary.connection.prepare(
+      'SELECT COUNT(*) AS count FROM managed_folders WHERE parent_folder_id = ?',
+    );
+    const assetCount = openLibrary.connection.prepare(
+      `SELECT COUNT(*) AS count FROM assets
+         WHERE managed_folder_id = ? AND location_kind = 'managed'`,
+    );
+    const loadFolder = openLibrary.connection.prepare(
+      'SELECT folder_id, parent_folder_id, relative_path FROM managed_folders WHERE folder_id = ?',
+    );
+    const remove = openLibrary.connection.prepare(
+      'DELETE FROM managed_folders WHERE folder_id = ?',
+    );
+
+    let currentId: string | null = folderId;
+    while (currentId) {
+      const row = loadFolder.get(currentId) as
+        | { folder_id: string; parent_folder_id: string | null; relative_path: string }
+        | undefined;
+      if (!row) break;
+      const children = childCount.get(row.folder_id) as { count: number };
+      const assets = assetCount.get(row.folder_id) as { count: number };
+      if (children.count !== 0 || assets.count !== 0) break;
+
+      const directoryPath = this.folderPath(openLibrary, row.relative_path);
+      if (realDirectoryExists(directoryPath)) {
+        try {
+          rmdirSync(directoryPath);
+        } catch (error) {
+          if (!isMissingPathError(error)) {
+            const code = typeof error === 'object' && error !== null && 'code' in error
+              ? (error as { code?: unknown }).code
+              : undefined;
+            if (code === 'ENOTEMPTY' || code === 'EEXIST') break;
+            throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+          }
+        }
+      }
+
+      const parentId = row.parent_folder_id;
+      if (remove.run(row.folder_id).changes !== 1) break;
+      currentId = parentId;
+    }
   }
 
   /** 按 posix 相对路径逐级确保托管文件夹存在，返回最内层 folder_id。 */

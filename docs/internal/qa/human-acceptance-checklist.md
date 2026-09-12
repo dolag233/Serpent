@@ -70,6 +70,14 @@
 | SYNC-UI-001 / `Serpent-7043e1` | 自动同步后侧栏出现对端新建的子文件夹 | 待人类验收 | ① 两台电脑打开同一 WebDAV 同步库。② 机器 A 在已有文件夹 K 下新建子文件夹 L，并把至少一份已同步文件放进 L（空文件夹不会上传）。③ 机器 B **不要**手动刷新或重开库，等自动同步结束。④ 看 B 的侧栏文件夹树（展开 K）。 | B 的侧栏在 K 下出现 L，不必点刷新、不必关掉再开。当前正在看 K 时，画布上的子文件夹卡片也应出现 L。 | [开发日志](../development/2026-09-12-webdav-sync-ui-refresh-development-log.md) / `library-service.ts` `emitAssetsChanged` / `sync-auto-scheduler.ts` | 2026-09-12：用户报告 B 同步后仍只显示 K。根因是回放为防循环不发/误发 `client` 事件，Renderer 不重拉导航。已改为 `source=sync` 刷新 UI、调度器忽略。空文件夹仍不同步。Computer Use、packaged 未执行。 |
 | SYNC-CARD-001 / `Serpent-871f34` | 卡片右下角显示同步状态，已同步不显示，设置可关 | 人类验收通过 | ① 打开已绑定 WebDAV 的资源库。② 导入一张新图或给已同步照片改标签，不要点立即同步。③ 看该卡片右下角（文件名/大小那一行右侧）的圆环，悬停。④ 等自动同步开始后同一圆环应变绿并有光沿环流动。⑤ 同步结束后圆环消失。⑥ **设置 → 同步**，关掉「在卡片上显示同步状态」，再看画布。亮/暗主题各看一次。 | 待上传为蓝环；正在上传为绿环且高光流动；冲突为黄底警告三角（不是圆环）。悬停约 0.4 秒出现状态名称。完成后圆环消失。已同步的其它卡片没有圆环。关掉开关后不再显示。不再弹出「正在同步 / 已同步」toast。 | [开发日志](../development/2026-09-12-webdav-sync-card-status-development-log.md) / `sync-card-status.ts` / `SyncCardStatusBadge.tsx` | 2026-09-12：用户验收通过。开关在通用设置 → 同步。查询曾误读 `assets.byte_size`（列在 `revisions`），已改为 JOIN revisions。冲突手选「使用本地 / 使用云端」仍未做，工单不关。Computer Use、packaged 未执行。 |
 | SYNC-LINKED-001 / `Serpent-19ca6e` | 同步资源库不支持链接文件夹 | 仅记录 | 不验收。打开含链接文件夹的已绑定 WebDAV 库时，链接目录中的文件不会上传到交换格式。 | 当前产品缺口；未授权前不改同步规划。 | `Serpent-19ca6e` | 2026-09-12 只记工单，不实现。 |
+| SYNC-FOLDER-EMPTY-001 / `Serpent-546f1a` | 对端移动或改名文件夹/文件后，本机不留下旧的空目录 | 待人类验收 | ① 两台电脑打开同一 WebDAV 同步库。② 机器 A 把一个**里面已有文件**的文件夹移到别处或改名（也可把文件移出该文件夹、或改文件名）。③ 等自动同步结束（或点立即同步）。④ 看机器 B 的侧栏文件夹树与画布。 | B 上文件出现在新位置；旧路径上不再留着空文件夹。空文件夹在还没有任何文件时本来就不会同步到对端。 | [开发日志](../development/2026-09-12-webdav-sync-empty-folder-prune-development-log.md) / `library-service.ts` `pruneEmptyManagedFoldersAfterSyncRelocate` | 2026-09-12：用户报告 A 移动目录后 B 新位置有文件，但旧空目录仍在。根因是 relocate 只搬文件、不删源 `managed_folders`。不要把真实库名或路径写入仓库。Computer Use、packaged 未执行。 |
+
+### 2026-09-12 侧栏空白处（仅记录）
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| SIDEBAR-ROOT-001 / `Serpent-e71051` | 点击文件夹树空白处回到根目录 | 仅记录 | 不验收。点侧栏文件夹树最后一行下面的空白，浏览范围应切到根目录。 | 与点「根目录」行相同；便于在根下新建顶层文件夹。与 `SIDEBAR-ROOT-002` 共用同一空白命中区。 | `Serpent-e71051` | 2026-09-12 只记工单，本轮不实现。 |
+| SIDEBAR-ROOT-002 / `Serpent-fa76a7` | 把文件夹拖到树空白处即移到根目录 | 仅记录 | 不验收。从侧栏拖起子文件夹，放到树空白处，应成为顶层文件夹。 | 磁盘与侧栏都到根下。与 `SIDEBAR-ROOT-001` 共用同一空白命中区。 | `Serpent-fa76a7` | 2026-09-12 只记工单，本轮不实现。 |
 
 ### 2026-09-09 链接文件夹递归浏览
 

@@ -41,6 +41,7 @@ Open **Library settings** → **Sync**:
 - If two machines edit the same file, the losing version is kept as a “name (conflict-…)” copy instead of being silently overwritten.
 - Auto-sync and manual sync are mutually exclusive; a failed sync only writes a log entry and does not interrupt you.
 - After a pull creates local files, folders, or tags, the sidebar, canvas, and Inspector for the current selection update on their own. F5 also reloads tags on the selected asset. Empty folders with no files are not uploaded, so the other device will not show them.
+- After a folder or file is moved or renamed on one computer, the other computer shows it in the new place once sync finishes, without keeping an empty folder at the old path.
 
 ## Open a synced library
 

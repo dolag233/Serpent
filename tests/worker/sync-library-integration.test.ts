@@ -204,6 +204,59 @@ describe('library sync integration (Serpent-xffq)', () => {
     service.closeAll();
   });
 
+  it('prunes empty source folders after relocating a nested directory to the root (Serpent-546f1a)', () => {
+    const service = new LibraryService();
+    const { libraryId, libraryPath, assetId } = createLibraryWithAsset(service, '空目录残留库');
+    const syncId = service.syncSnapshot(libraryId).assets[0]!.syncId;
+    service.applySyncRelocate(libraryId, syncId, 'K/L/source.txt');
+    expect(service.listManagedFolders(libraryId).map((folder) => folder.relativePath).sort()).toEqual(['K', 'K/L']);
+
+    service.applySyncRelocate(libraryId, syncId, 'L/source.txt');
+    expect(service.listAssets({ libraryId, recursive: true })[0]!.relativeFilePath).toBe('L/source.txt');
+    expect(service.listManagedFolders(libraryId).map((folder) => folder.relativePath)).toEqual(['L']);
+    expect(existsSync(path.join(libraryPath, 'Assets', 'K'))).toBe(false);
+    expect(existsSync(service.resolveAssetPath(libraryId, assetId))).toBe(true);
+    service.closeAll();
+  });
+
+  it('keeps a source folder that still has another asset after sync relocate', () => {
+    const service = new LibraryService();
+    const { libraryId, assetPath } = createLibraryWithAsset(service, '保留目录库');
+    const firstSyncId = service.syncSnapshot(libraryId).assets[0]!.syncId;
+    service.applySyncRelocate(libraryId, firstSyncId, 'K/L/source.txt');
+    const folderL = service.listManagedFolders(libraryId).find((folder) => folder.relativePath === 'K/L')!;
+    const extra = path.join(path.dirname(assetPath), 'keep.txt');
+    writeFileSync(extra, 'keep-me');
+    service.prepareOrExecuteImport({
+      libraryId,
+      targetFolderId: folderL.folderId,
+      sourceKind: 'files',
+      sourcePaths: [extra],
+    });
+
+    service.applySyncRelocate(libraryId, firstSyncId, 'M/source.txt');
+    expect(service.listAssets({ libraryId, recursive: true }).map((asset) => asset.relativeFilePath).sort()).toEqual([
+      'K/L/keep.txt',
+      'M/source.txt',
+    ]);
+    expect(service.listManagedFolders(libraryId).map((folder) => folder.relativePath).sort()).toEqual(['K', 'K/L', 'M']);
+    service.closeAll();
+  });
+
+  it('prunes a renamed folder and keeps a folder after a same-directory rename', () => {
+    const service = new LibraryService();
+    const { libraryId } = createLibraryWithAsset(service, '改名路径库');
+    const syncId = service.syncSnapshot(libraryId).assets[0]!.syncId;
+    service.applySyncRelocate(libraryId, syncId, 'K/source.txt');
+    service.applySyncRelocate(libraryId, syncId, 'K2/source.txt');
+    expect(service.listManagedFolders(libraryId).map((folder) => folder.relativePath)).toEqual(['K2']);
+
+    service.applySyncRelocate(libraryId, syncId, 'K2/renamed.txt');
+    expect(service.listAssets({ libraryId, recursive: true })[0]!.relativeFilePath).toBe('K2/renamed.txt');
+    expect(service.listManagedFolders(libraryId).map((folder) => folder.relativePath)).toEqual(['K2']);
+    service.closeAll();
+  });
+
   it('round-trips human tags and description through sync metadata helpers', () => {
     const service = new LibraryService();
     const { libraryId, assetId } = createLibraryWithAsset(service, '元数据库');

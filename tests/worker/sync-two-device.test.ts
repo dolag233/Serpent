@@ -173,6 +173,62 @@ describe('two-device sync over a shared WebDAV server (Serpent-xffq)', () => {
     await server.close();
   });
 
+  it('drops empty source folders on the receiving device after a folder move (Serpent-546f1a)', async () => {
+    const server = await startMockWebDAVServer();
+    const root = { id: 'server', baseUrl: server.baseUrl };
+
+    const serviceA = new LibraryService();
+    const rootA = tempRoot();
+    const createdA = serviceA.createLibrary({ displayName: '搬目录库', selectedParentPath: rootA });
+    const libraryId = createdA.libraryId;
+    const fileA = path.join(rootA, 'alpha.txt');
+    writeFileSync(fileA, 'alpha-nested-move');
+    importFile(serviceA, libraryId, fileA);
+    const alpha = serviceA.listAssets({ libraryId, recursive: true })
+      .find((asset) => asset.relativeFilePath === 'alpha.txt')!;
+    const folderK = serviceA.createManagedFolder({ libraryId, name: 'K' });
+    const folderL = serviceA.createManagedFolder({
+      libraryId,
+      name: 'L',
+      parentFolderId: folderK.folderId,
+    });
+    serviceA.moveAssets({
+      libraryId,
+      assetIds: [alpha.assetId],
+      targetFolderId: folderL.folderId,
+    });
+
+    const serviceB = new LibraryService();
+    const rootB = tempRoot();
+    serviceB.createLibrary({ displayName: '搬目录库', selectedParentPath: rootB, libraryId });
+
+    const engineA = new SyncEngine(createLibrarySyncPort(serviceA), { deviceId: 'device-a' });
+    const engineB = new SyncEngine(createLibrarySyncPort(serviceB), { deviceId: 'device-b' });
+
+    await engineA.syncOnce(libraryId, root);
+    await engineB.syncOnce(libraryId, root);
+    expect(serviceB.listAssets({ libraryId, recursive: true }).map((asset) => asset.relativeFilePath))
+      .toEqual(['K/L/alpha.txt']);
+    expect(serviceB.listManagedFolders(libraryId).map((folder) => folder.relativePath).sort())
+      .toEqual(['K', 'K/L']);
+
+    serviceA.moveManagedFolders({
+      libraryId,
+      folderIds: [folderL.folderId],
+      targetParentFolderId: null,
+    });
+    await engineA.syncOnce(libraryId, root);
+    await engineB.syncOnce(libraryId, root);
+
+    expect(serviceB.listAssets({ libraryId, recursive: true }).map((asset) => asset.relativeFilePath))
+      .toEqual(['L/alpha.txt']);
+    expect(serviceB.listManagedFolders(libraryId).map((folder) => folder.relativePath)).toEqual(['L']);
+
+    serviceA.closeAll();
+    serviceB.closeAll();
+    await server.close();
+  });
+
   it('propagates deletions as tombstones to the other device', async () => {
     const server = await startMockWebDAVServer();
     const root = { id: 'server', baseUrl: server.baseUrl };
