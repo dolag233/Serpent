@@ -6,10 +6,10 @@ This guide is for contributors joining Serpent for the first time. It explains t
 
 | Branch | Purpose | What belongs there |
 | --- | --- | --- |
-| `main` | Release baseline | Shippable source, tests, resources, public docs, and build configuration; packages are built from here |
-| `dev` | Daily development integration | A descendant of `main` plus `.beads/`, `AGENTS.md`, [`docs/internal/`](https://github.com/dolag233/Serpent/tree/dev/docs/internal), and other collaboration material |
+| `main` | Release baseline | Shippable source, tests, resources, public docs (including `docs/developer/` contributor guides), and build configuration; packages are built from here |
+| `dev` | Daily development integration | A descendant of `main` plus `.beads/`, `AGENTS.md`, [`docs/internal/`](https://github.com/dolag233/Serpent/tree/dev/docs/internal), and other internal collaboration material |
 
-`main` is for “ready to release”; `dev` is for “safe to keep developing”. Feature branches must start from `dev`. Development, acceptance, ticket assignment, and internal records happen on `dev` or its feature branches. The current development branch in this repository is `dev`.
+`main` is for “ready to release and contribute”; `dev` is for “safe to keep developing”. `docs/developer/` teaches local setup and how to become a contributor; it ships on `main`. `docs/internal/` holds slice logs, specs, QA, and agent records; it stays on `dev`. Feature branches must start from `dev`. Development, acceptance, ticket assignment, and internal records happen on `dev` or its feature branches. The current development branch in this repository is `dev`.
 
 ## External contributions and pull requests
 
@@ -19,7 +19,7 @@ Accepted and merged code, documentation, tests, translations, design improvement
 
 GitHub's automatic Contributors graph is primarily based on commits to the default branch, so a contribution merged into `dev` may not appear there immediately. This does not prevent the project from recognizing the contributor in `CONTRIBUTORS.md`. Contributors should associate the email used for their commits with their GitHub account so that GitHub can attribute the commits correctly when the work later reaches `main`.
 
-Development-only files must not leak into the release baseline. Do not merge `dev` directly into `main`: prefer cherry-picking reviewed feature commits. If a merge is unavoidable, use `--no-commit`, remove `.beads/`, `.codex/`, `.cursor/`, agent instructions, and `docs/internal/` before committing. Verify the result with:
+Internal collaboration files must not leak into the release baseline. Do not merge `dev` directly into `main`: prefer cherry-picking reviewed feature commits. If a merge is unavoidable, use `--no-commit`, remove `.beads/`, `.codex/`, `.cursor/`, agent instructions, and `docs/internal/` before committing. **Do not delete `docs/developer/`.** Verify the result with:
 
 ```bash
 git merge-base --is-ancestor main dev

@@ -10,8 +10,9 @@
 
 ## 2. 分支与代码基线
 
-- **main = 发布分支**：只含完整软件代码库（`src` / `tests` / `resources` / `scripts` / `assets` / 产品文档 `docs/user-guide`、`docs/manual`、`docs/assets`、`README`、`website` 等）。开发文件（`.beads/`、`.github/`、`.codex/`、`.cursor/`、`AGENTS.md`、`CLAUDE.md`、`CONTEXT.md`、`docs/internal/`、`docs/developer/`、`benchmark.md`）只存在于 dev。main 剥离动作见历史提交 `3d6474fc`（strip dev-only files）、`0a8984f`（移除 .beads/.github）与对应恢复提交 `b4ca9b98`。
-- **主分支切勿引入开发相关文件（强制）**：`.beads/`（工单数据）与 `.github/`（CI 配置）只属于 dev；dev → main 合并前必须从合并结果中剥离两者（`git rm -r .beads .github` 后提交），禁止将工单/CI 文件带入 main。2026-08-19 用户明确要求：main 只保留产品代码与产品文档。
+- **main = 发布分支**：只含完整软件代码库（`src` / `tests` / `resources` / `scripts` / `assets`）与**公开文档**（`docs/user-guide`、`docs/developer`、`docs/manual`、`docs/assets`、`docs/product-brief.md`、`docs/glossary.md`、`README`、`website` 等）。`docs/developer/` 是面向贡献者的交付文档（本地搭建、架构、测试、如何参与），**必须随 main 发布**，不得与 `docs/internal/` 一并剥离。历史上 `0b55d64a` 把 `docs/developer` 从 main 删掉，属于分类错误，不得再做。
+- **只存在于 dev 的开发协作文件**：`.beads/`、`.github/`、`.codex/`、`.cursor/`、`AGENTS.md`、`CLAUDE.md`、`CONTEXT.md`、`docs/internal/`、`benchmark.md`。main 剥离动作见历史提交 `3d6474fc`（strip dev-only files）、`0a8984f`（移除 .beads/.github）与对应恢复提交 `b4ca9b98`。
+- **主分支切勿引入内部开发记录（强制）**：`.beads/`（工单数据）、`.github/`（CI 配置）、`docs/internal/`（切片日志/规格/QA）只属于 dev；dev → main 合并前必须从合并结果中剥离这些路径，禁止将工单/CI/内部记录带入 main。2026-08-19 用户要求 main 只保留产品代码与**公开**文档；2026-09-13 补充：公开文档包含 `docs/developer/`。
 - **打包在 dev 分支进行**：`verify-package.mjs` 要求 `docs/internal/skills/serpent-automation/automation-api.d.ts`（从 `src/automation/command-registry.ts` 生成、随 dev 提交），main 剥离该目录后无法通过发布门禁。发布前核对代码一致性：
   ```bash
   git diff main dev --stat -- src/ tests/ package.json package-lock.json   # 应为空
@@ -135,7 +136,7 @@ gh release upload v<ver> release-meta.json
 ## 8. 发布检查清单（逐条对照，禁止凭印象执行）
 
 - [ ] 版本号已改（package.json + lock，提交 `chore(release): 版本号 …`），先落 dev
-- [ ] dev 与 main 的 `src/ tests/ package.json` 一致；main 无开发文件（`.beads`/`CLAUDE.md`/`AGENTS.md`/`docs/internal`/`.github` 等）
+- [ ] dev 与 main 的 `src/ tests/ package.json` 一致；main 无内部开发文件（`.beads`/`CLAUDE.md`/`AGENTS.md`/`docs/internal`/`.github` 等），但**保留** `docs/developer/`
 - [ ] main 合流用**单一提交**完成（merge --no-commit → git rm 开发文件 → 一次 commit），禁止「引入又删除」的来回提交
 - [ ] 全部发布门禁通过（media verify / verify-package / ufbx WASM）——**在 dev 分支打包**
 - [ ] 产物按 §4 规范名精确重命名（`win-x86-64` 不是 `win32-x64`；安装包是 `-setup.zip` 不是裸 exe）+ 每个资产同名 `.sha256`（只含哈希）

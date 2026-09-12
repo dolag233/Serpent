@@ -96,7 +96,7 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 
 - **版本号**：`npm version <ver> --no-git-tag-version`（改 package.json + package-lock.json），提交 `chore(release): 版本号 x.y.z → x.y.z+1`，先落 dev。
 - **打包只在 dev 分支**：main 剥离 docs/internal 后 `verify-package` 门禁过不了（设计如此，不是缺陷）。main 仅作发布基线，不承载构建。
-- **main 合流纪律**：dev→main 必须剥离全部开发文件（`AGENTS.md`/`CLAUDE.md`/`docs/internal/`/`.beads/`/`.github/` 等），**用单一提交完成**（merge --no-commit → git rm 开发文件 → 一次 commit），禁止「引入又删除」的来回提交；`scripts/hooks/pre-commit` 守卫 main 提交（`npm run install:git-hooks` 安装）。
+- **main 合流纪律**：dev→main 必须剥离内部开发文件（`AGENTS.md`/`CLAUDE.md`/`docs/internal/`/`.beads/`/`.github/`），**用单一提交完成**（merge --no-commit → git rm 内部文件 → 一次 commit），禁止「引入又删除」的来回提交。`docs/developer/` 是公开贡献者文档，**不得**剥离。`scripts/hooks/pre-commit` 守卫 main 提交（`npm run install:git-hooks` 安装）。
 - **产物命名规范**（自动更新按名字选资产，必须精确，禁止上传裸 exe 或 Forge 默认名）：
   - Windows 便携版 `Serpent-win-x86-64-<ver>-portable.zip`
   - Windows 安装包 `Serpent-win-x86-64-<ver>-setup.zip`（Inno 的 `SerpentSetup.exe` **打包成 zip** 上传）

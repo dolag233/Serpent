@@ -6,10 +6,10 @@
 
 | 分支 | 定位 | 应该包含什么 |
 | --- | --- | --- |
-| `main` | 发布基线 | 可交付的软件代码、测试、资源、公开文档和构建配置；从这里打包和发布 |
-| `dev` | 日常开发集成分支 | `main` 的后代，加上 `.beads/`、`AGENTS.md`、[`docs/internal/`](https://github.com/dolag233/Serpent/tree/dev/docs/internal) 等开发协作资料 |
+| `main` | 发布基线 | 可交付的软件代码、测试、资源、公开文档（含 `docs/developer/` 贡献者指南）和构建配置；从这里打包和发布 |
+| `dev` | 日常开发集成分支 | `main` 的后代，加上 `.beads/`、`AGENTS.md`、[`docs/internal/`](https://github.com/dolag233/Serpent/tree/dev/docs/internal) 等内部协作资料 |
 
-`main` 的目标是“拿来发布”，`dev` 的目标是“方便持续开发”。功能分支必须从 `dev` 创建；开发、验收、工单认领和内部记录都在 `dev` 或其功能分支完成。当前仓库的开发分支名就是 `dev`。
+`main` 的目标是“拿来发布和参与”，`dev` 的目标是“方便持续开发”。`docs/developer/` 教人如何在本地开发、如何成为贡献者，属于公开文档，随 `main` 发布。`docs/internal/` 才是切片日志、规格、QA 与 agent 工作记录，只留在 `dev`。功能分支必须从 `dev` 创建；开发、验收、工单认领和内部记录都在 `dev` 或其功能分支完成。当前仓库的开发分支名就是 `dev`。
 
 ## 外部贡献与 Pull Request
 
@@ -19,7 +19,7 @@
 
 由于 GitHub 的自动 Contributors 图主要依据默认分支的提交统计，合并到 `dev` 后可能不会立即显示；这不影响项目在 `CONTRIBUTORS.md` 中及时致谢。贡献者应确保提交使用的邮箱已关联自己的 GitHub 账号，以便后续发布到 `main` 后 GitHub 正确归属提交。
 
-开发资料不应被偷偷带入发布基线。不要直接把 `dev` 合并到 `main`：优先逐个 cherry-pick 已审查的功能提交；如果必须合并，使用 `--no-commit`，并在提交前移除 `.beads/`、`.codex/`、`.cursor/`、agent 指南和 `docs/internal/` 等开发专用内容。合流后检查：
+内部协作资料不应被偷偷带入发布基线。不要直接把 `dev` 合并到 `main`：优先逐个 cherry-pick 已审查的功能提交；如果必须合并，使用 `--no-commit`，并在提交前移除 `.beads/`、`.codex/`、`.cursor/`、agent 指南和 `docs/internal/`。**不要删除 `docs/developer/`。**合流后检查：
 
 ```bash
 git merge-base --is-ancestor main dev

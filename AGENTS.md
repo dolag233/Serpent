@@ -149,7 +149,7 @@ JSONL 流程操作，禁止重新启用旧数据库同步。
 
 - 版本号用 `npm version --no-git-tag-version`，提交 `chore(release): 版本号 x.y.z → x.y.z+1`，先落 dev。
 - **打包只在 dev 分支**（main 剥离 docs/internal 后 verify-package 门禁过不了，设计如此）；main 仅作发布基线。
-- **main 合流纪律**：剥离全部开发文件（`AGENTS.md`/`CLAUDE.md`/`docs/internal/`/`.beads/`/`.github/`），**单一提交完成**（merge --no-commit → git rm → 一次 commit），禁止「引入又删除」来回提交；`scripts/hooks/pre-commit` 守卫 main（`npm run install:git-hooks`）。
+- **main 合流纪律**：剥离内部开发文件（`AGENTS.md`/`CLAUDE.md`/`docs/internal/`/`.beads/`/`.github/`），**单一提交完成**（merge --no-commit → git rm → 一次 commit），禁止「引入又删除」来回提交。`docs/developer/` 是公开贡献者文档，**不得**剥离。`scripts/hooks/pre-commit` 守卫 main（`npm run install:git-hooks`）。
 - **产物命名**（自动更新按名字选资产，禁止裸 exe 或 Forge 默认名）：`Serpent-win-x86-64-<ver>-portable.zip` / `-setup.zip`（Inno `SerpentSetup.exe` 打包成 zip）/ macOS `Serpent-darwin-arm64-<ver>-portable.zip` / `-package.dmg`；每个资产配同名 `.sha256`。
 - **Changelog 中英双语**（中文在前），标题 `**Serpent <版本>** — 一句话 · English one-liner`，按重要度排序，次要改动概括；直接写入 GitHub Release 正文（可选 `release-meta.json` 短条目）。不在仓库维护 `release-notes-<ver>.md`；`gh release create --notes-file` 使用本地临时草稿，不要提交进 git。
 - **Release**：`gh release create v<ver> --title "Serpent <ver>" --notes-file <本地临时草稿.md> --target main`（gh 在 `C:\Program Files\GitHub CLI\gh.exe`，PATH 可能缺失用全路径）；tag `v<ver>` 指向 main 发布基线。
@@ -230,7 +230,7 @@ JSONL 流程操作，禁止重新启用旧数据库同步。
 - 预览测试必须证明媒体被解码：图片检查 `complete && naturalWidth > 0`；视频至少检查元数据和非零尺寸。只断言 DOM、状态或 job 成功不算通过。
 - 持久化必须以“完整退出应用后重新启动”为测试边界；仅关闭窗口或复用同一 Worker 不算重启恢复。
 - 多 agent 或共享工作树结束后，主 agent 必须在最终合并状态运行 `npm run verify:mainline`。详见 `docs/internal/development-process.md`。
-- **主分支切勿引入开发相关文件（强制）**：`.beads/`（工单数据）与 `.github/`（CI 配置）只属于 dev；dev → main 合并前必须从合并结果中剥离两者，禁止将工单/CI 文件带入 main（2026-08-19 用户要求，详见 `docs/internal/development/release-process-and-distribution.md` §2）。
+- **主分支切勿引入内部开发文件（强制）**：`.beads/`（工单数据）与 `.github/`（CI 配置）只属于 dev；dev → main 合并前必须从合并结果中剥离两者，禁止将工单/CI 文件带入 main。`docs/developer/` 随 main 发布（2026-08-19 / 2026-09-13，详见 `docs/internal/development/release-process-and-distribution.md` §2）。
 - 每个较大功能或核心 UX 更新在验收前，主 agent 必须使用 Computer Use 操作真实 Serpent 应用，并用截图检查关键 UI 状态；自动化全绿不能代替 UX/视觉验收。截图证据与发现写入对应开发日志或 QA 报告。
 - 当前环境没有 Computer Use 或等价真实桌面控制能力时，该项必须记为未执行并移交给具备能力的 agent 或人工 QA；不得自行跳过或标记为通过。
 

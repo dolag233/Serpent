@@ -1,5 +1,7 @@
 # Developer Docs
 
+For people who want to build Serpent locally or become contributors: setup, architecture, testing, packaging, and how to participate. These pages ship on `main`. They are not the slice logs or internal specs in `docs/internal/`.
+
 Developer documentation is split into two parts.
 
 ## Part 1: Software development
