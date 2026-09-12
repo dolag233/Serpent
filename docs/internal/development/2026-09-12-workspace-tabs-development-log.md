@@ -40,12 +40,23 @@
   `calc(var(--ui-space-4) - 2px)`（14px）。标题行仍对齐顶栏 28px 中线。
 - 多标签横向浏览：纵向鼠标滚轮和触控板两指滑动都改写标签条 `scrollLeft`。
   pinch / Ctrl+滚轮不拦截。横向手势复用 `isPrimarilyHorizontalWheel`。
+- 顶栏两侧贴齐侧栏列：前进/菜单/资源库的左缘对齐左栏右缘，搜索框右缘对齐
+  Inspector 左缘（去掉中间列 14/12px 内边距，不把控件拉进侧栏列）。搜索在
+  有标签时由 240px 收到 216px。侧栏收起时仍预留折叠开关。
+- 活动页签投下阴影：复用设置里的层级投影（`--elev-size` / `--elev-intensity`，
+  0 级 `:not([data-elevation="0"])` 不绘制）。新增 `--shadow-workspace-tab`，
+  亮/暗各一套底 alpha。顶栏本身仍无 elevation 阴影；页签列表 `overflow-y`
+  裁掉落向画布的分量，避免活动页签与范围栏之间再夹缝。
+- 相邻页签之间的竖向发丝线：非活动页签 `::after` 1px `--divider-soft`。已去掉，
+  只保留活动页签自身轮廓。
+- 加号离末标签过远：列表 `padding-inline` 为右肩部留了曲线宽，外加 4px gap。
+  已去掉 gap，加号负 margin 收进肩部沟槽，与末标签相隔 `--ui-space-1`。
 
 ## 验证
 
 - `npm run typecheck`：通过。
 - 定向 ESLint：通过。
-- `npx vitest run tests/unit/workspace-tabs.test.ts tests/unit/use-workspace-tabs.test.tsx tests/unit/workspace-tabs-ui.test.tsx tests/unit/workspace-tab-presentation.test.ts tests/unit/workspace-scroll-position.test.ts tests/unit/workspace-nav-history.test.ts tests/unit/navigation-sidebar.test.ts tests/unit/context-menu.test.ts`：8 文件，46 项通过。
+- `npx vitest run tests/unit/workspace-tabs-css.test.ts tests/unit/theme-css-tokens.test.ts tests/unit/workspace-tabs-ui.test.tsx tests/unit/workspace-tab-strip-scroll.test.ts`：4 文件、17 项通过。新增 token 检查暴露的 `asset-sync-status` mask 裸 `#000` 已改用主题 token。
 - `node scripts/run-e2e-isolated.mjs tests/e2e/workspace-tabs.test.ts`：1 项通过，Windows 开发态真实 Electron；覆盖防抖搜索结果提交后的选择恢复；临时资源库与 userData 等待完整进程退出后删除。
 - 亮色、暗色、760px 窄窗口、1300px 与 1600px 窗口做过临时视觉预览；发现并修复窗口缩放后活动标签可能离开可视区的问题。预览图片和源文件已删除。
 - 扩展回归 `folder-context-menu.test.ts + shell-navigation.test.ts`：2 项通过、4 项失败。1 项是新增关闭按钮造成的宽泛 locator 歧义，已统一改成精确 locator；两项为既有行内子文件夹缩进断言（期望 21、实际 7），一项为既有 Windows 原生菜单项未启用超时。后两类与本次标签实现无代码路径交集，保持为未通过证据，不写成全绿。
@@ -67,3 +78,16 @@ Luna high 已在隔离 userData 与临时资源库上启动 Computer Use，并�
 ## 临时文件
 
 本轮 Playwright 失败 trace、临时视觉预览、E2E 资源库与 userData 均已清理。
+
+## 2026-09-12 导航算法重设计
+
+用户确认当前 UI 方向可继续，同时报告切换标签会白闪。独立复核还确认：当前异步
+页面读取只按资源库或全局 generation 过滤，旧结果仍可能写入新标签；关闭非活动
+标签会推进全局 generation，从而误取消活动智能合集或防抖搜索。
+
+本轮停止继续打补丁，业务逻辑回到提交 `83ee70f8`，保留后续 UI 调整。新算法写入
+[导航与无闪烁切换算法](../implementation/2026-09-12-workspace-tab-navigation-algorithm.md)：
+按标签 generation 的 token、prepare/commit 两阶段导航、有界 render snapshot、
+显示前恢复 viewport。实现拆为 `Serpent-ea5c9c`、`Serpent-58467e`、
+`Serpent-bb3ce7`、`Serpent-83d71f`，按两项纯模型并行、`App.tsx` 单人集成、E2E
+收口的顺序执行。

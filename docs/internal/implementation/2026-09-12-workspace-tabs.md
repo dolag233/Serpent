@@ -30,6 +30,9 @@ Serpent 顶部提供浏览器式工作区标签页。文件夹、合集、回收
 
 ## 架构
 
+导航竞态、历史语义和无闪烁切换的冻结方案见
+[工作区标签页导航与无闪烁切换算法](2026-09-12-workspace-tab-navigation-algorithm.md)。
+
 - `workspace-tabs.ts` 是无 React 依赖的标签状态模型。
 - `use-workspace-tabs.ts` 负责保存/恢复标签上下文，并把现有导航历史引用切到
   活动标签。
@@ -44,10 +47,11 @@ Serpent 顶部提供浏览器式工作区标签页。文件夹、合集、回收
 
 - 复用 `Icon`、`data-hover-tip`、`MenuSurface` 和既有主题 token。
 - 标签栏使用连续文件夹页签轮廓：顶部与窗口边缘留空隙，上圆角与肩部用同一
-  套较大曲线；非活动标签在同一底边上排列，活动标签以圆滑肩部与内容区相连；
-  不显示彼此分离的卡片。
+  套较大曲线；非活动标签在同一底边上排列，相邻页签之间不画竖向分割线；活动标签以圆滑肩部与内容区相连；
+  不显示彼此分离的卡片。活动页签投下的阴影走层级投影 token（`--shadow-workspace-tab`），
+  强度跟随设置 0–3；不得在页签与内容区之间再夹一条缝。
 - 标签栏水平溢出时，鼠标滚轮与触控板两指滑动都横向平移标签条；活动标签在
-  新增、切换和窗口缩放后保持可见。加号留在条带外侧，不随列表滚动。
+  新增、切换和窗口缩放后保持可见。加号留在条带外侧，不随列表滚动，并紧贴最后一个标签。
 - 标签支持 ArrowLeft/ArrowRight、Home/End；Delete 关闭当前聚焦标签；
   ContextMenu 或 Shift+F10 打开右键菜单。
 - 不把状态模型、页面解释或内部术语写进用户界面。
@@ -61,3 +65,4 @@ Serpent 顶部提供浏览器式工作区标签页。文件夹、合集、回收
 | 关闭按钮与右键关闭 | `WorkspaceTabs.tsx`、`AssetContextMenu.tsx` | UI 单测与 workspace-tabs E2E | Windows 开发态 Electron E2E 通过 |
 | 文件夹/合集对应右键操作与侧栏定位 | `workspace-tab-presentation.ts`、`AssetContextMenu.tsx`、`NavigationSidebar.tsx` | presentation/sidebar 单测与 workspace-tabs E2E | Windows 开发态 Electron E2E 通过；Finder、系统文件浏览器实际打开未点击 |
 | 亮暗主题、窄/宽窗口与溢出 | `workspace-tabs.css`、`workspace-tab-strip-scroll.ts` | 静态 lint；组件键盘单测；滚轮映射单测与 UI 单测 | 临时预览已检查亮/暗、760/1300/1600px；滚轮横向滑动自动化已覆盖，macOS 真机两指手势未执行；Luna high 的独立 Computer Use 在首张截图后因目标窗口无法再次激活而未完成 |
+| 活动页签阴影跟随层级投影 | `workspace-tabs.css`、`styles.css` `--shadow-workspace-tab` | `workspace-tabs-css.test.ts`、`theme-css-tokens.test.ts` | 待人类在设置 0–3 点验；Computer Use 未执行 |

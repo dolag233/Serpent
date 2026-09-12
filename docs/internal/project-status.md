@@ -3,7 +3,7 @@
 > 更新时间：2026-09-12
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
-- **2026-09-12 工作区标签页（`Serpent-738426`）**：顶部仍是接入画布的文件夹页签，顶部留 4px 空隙，肩部 14px 圆角。有页签时去掉顶栏底边和阴影，避免活动页签与范围栏之间夹缝；侧栏改用顶发丝线。顶栏 28px 控件与页签标题同一条垂直中线。加号跟在最后一个标签旁，不占满到搜索框。标签多到溢出时，鼠标滚轮和触控板两指滑动横向移动标签条。标签按钮为 `no-drag`，条带不扩张，顶栏空白仍拖窗口。只有加号新增标签。见[实施规格](implementation/2026-09-12-workspace-tabs.md)、[开发日志](development/2026-09-12-workspace-tabs-development-log.md)和[QA](qa/2026-09-12-workspace-tabs-qa.md)。
+- **2026-09-12 工作区标签页（`Serpent-738426`）**：顶部仍是接入画布的文件夹页签，顶部留 4px 空隙，肩部 14px 圆角。有页签时去掉顶栏底边和阴影，避免活动页签与范围栏之间夹缝；侧栏改用顶发丝线。活动页签用 `--shadow-workspace-tab` 投下阴影，强度跟随设置里的层级投影；0 级不绘制。顶栏 28px 控件与页签标题同一条垂直中线。前进/菜单/资源库贴齐左栏右缘、搜索右缘贴齐右栏左缘，中间留给标签。加号跟在最后一个标签旁，不占满到搜索框。标签多到溢出时，鼠标滚轮和触控板两指滑动横向移动标签条。标签按钮为 `no-drag`，条带不扩张，顶栏空白仍拖窗口。只有加号新增标签。用户确认 UI 方向可继续，但标签切换会白闪，且独立审查发现异步导航可串标签、关闭非活动标签会误取消活动查询。业务逻辑已冻结为 [导航与无闪烁算法](implementation/2026-09-12-workspace-tab-navigation-algorithm.md)，拆为 `Serpent-ea5c9c`、`Serpent-58467e`、`Serpent-bb3ce7`、`Serpent-83d71f`，尚未实施。见[实施规格](implementation/2026-09-12-workspace-tabs.md)、[开发日志](development/2026-09-12-workspace-tabs-development-log.md)和[QA](qa/2026-09-12-workspace-tabs-qa.md)。
 
 - **2026-09-12 同步搬家留下空目录**：A 移动/重命名已同步文件夹或文件后，B 能同步到新位置，但侧栏仍留着旧的空目录。根因是 `applySyncRelocate` 只搬资产、用文件布局建目标文件夹，不删除已空的源 `managed_folders`。已在回放后按空目录规则剪枝。工单 `Serpent-546f1a`，清单 `SYNC-FOLDER-EMPTY-001`。侧栏点击/拖到空白处回根只记 `Serpent-e71051` / `Serpent-fa76a7`，本轮不实现。
 

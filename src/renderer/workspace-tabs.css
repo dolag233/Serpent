@@ -34,7 +34,7 @@
   align-items: stretch;
   min-width: 0;
   max-width: 100%;
-  gap: var(--ui-space-1);
+  gap: 0;
   height: auto;
   --workspace-tab-curve: calc(var(--ui-space-4) - 2px);
 }
@@ -75,16 +75,6 @@
   -webkit-app-region: no-drag;
 }
 
-.workspace-tab:not(.is-active)::after {
-  content: "";
-  position: absolute;
-  top: var(--ui-space-2);
-  right: 0;
-  bottom: var(--ui-space-2);
-  width: 1px;
-  background: var(--divider-soft);
-}
-
 .workspace-tab:not(.is-active):hover {
   background: var(--hover);
   color: var(--text);
@@ -95,6 +85,13 @@
   background: var(--canvas);
   border-color: var(--divider-soft);
   color: var(--text);
+}
+
+/* Halo on the toolbar around the folder tab. The list clips overflow-y, so
+   the downward component never lands on the canvas (that would reopen the
+   seam). Size/alpha come from --elev-*; level 0 omits paint. */
+:root:not([data-elevation="0"]) .workspace-tab.is-active {
+  box-shadow: var(--shadow-workspace-tab);
 }
 
 .workspace-tab.is-active::before,
@@ -184,6 +181,9 @@
   align-self: center;
   width: var(--shell-control-height);
   height: var(--shell-control-height);
+  /* List padding-inline keeps the last tab's right scoop unclipped; pull
+     the plus back into that gutter so it sits a space-1 from the tab. */
+  margin-inline-start: calc(-1 * var(--workspace-tab-curve) + var(--ui-space-1));
   border-radius: var(--ui-radius-surface);
   color: var(--secondary);
 }
@@ -209,9 +209,29 @@
   outline-offset: -2px;
 }
 
+.toolbar-workspace-leading {
+  display: flex;
+  flex: 0 1 auto;
+  align-self: center;
+  align-items: center;
+  min-width: 0;
+  height: var(--shell-control-height);
+  gap: 9px;
+}
+
+/* Flush the browse chrome to the pane dividers: search's right edge meets
+   the inspector's left edge, history/library meet the nav pane's right edge. */
+.app-shell:not(.left-collapsed) .toolbar-workspace-cluster:has(.workspace-tabs) {
+  padding-left: 0;
+}
+
+.app-shell:not(.right-collapsed) .toolbar-workspace-cluster:has(.workspace-tabs) {
+  padding-right: 0;
+}
+
 /* Keep a usable tab and the add action visible beside the search field. */
 .toolbar-workspace-cluster:has(.workspace-tabs) .toolbar-workspace-search {
-  flex: 0 1 240px;
+  flex: 0 1 216px;
   min-width: 132px;
 }
 

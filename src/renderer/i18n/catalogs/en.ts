@@ -1355,7 +1355,7 @@ export const en = {
     themePreviewInspector: "Inspector",
     elevationSection: "Elevation shadows",
     elevationHint:
-      "Soft shadows on the toolbar, side panes, and asset previews to reinforce hierarchy. 0 turns elevation shadows off (not painted); 1–3 go from subtle to strong. Drag or click a tick — changes apply immediately.",
+      "Soft shadows on the toolbar, tabs, side panes, and asset previews to reinforce hierarchy. 0 turns elevation shadows off (not painted); 1–3 go from subtle to strong. Drag or click a tick — changes apply immediately.",
     elevationOff: "Off",
     elevationStrong: "Strong",
     elevationLevelValue: "Level {level}",

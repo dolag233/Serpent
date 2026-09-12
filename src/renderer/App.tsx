@@ -606,11 +606,6 @@ type QueryFilterSnapshot = {
 // inline in the directory tree (use-inline-folder-edit), not in a dialog.
 type DialogKind = "library" | "tag" | "collection" | null;
 type AssetScope = "all" | "root" | string;
-type WorkspaceNavigationRequest = Readonly<{
-  isCurrent: () => boolean;
-  recordHistory: boolean;
-  saveViewport: boolean;
-}>;
 type OrganizationKind = "collection" | "smart";
 type OrganizationRenameTarget = {
   kind: OrganizationKind;
@@ -11152,60 +11147,62 @@ function AppInner() {
         </div>
         <div className="toolbar-cluster toolbar-workspace-cluster">
           <div className="toolbar-workspace-main">
-            <ScopeHistoryButtons
-              // Serpent-b7e173：预览已是历史条目（打开查看器必压在某浏览 scope 上），
-              // 所以后退/前进由纯历史驱动即可，无需对预览做任何特判。
-              canBack={navHistoryUi.canBack}
-              canForward={navHistoryUi.canForward}
-              onBack={() => void goWorkspaceBack()}
-              onForward={() => void goWorkspaceForward()}
-            />
-            {IS_WINDOWS_PLATFORM ? (
-              <MainMenu disabled={busy} sections={mainMenuSections} />
-            ) : (
-              <AppSettingsEntry
-                disabled={busy}
-                onOpen={() => {
-                  setAppSettingsCategory("general");
-                  setAppSettingsOpen(true);
-                }}
+            <div className="toolbar-workspace-leading">
+              <ScopeHistoryButtons
+                // Serpent-b7e173：预览已是历史条目（打开查看器必压在某浏览 scope 上），
+                // 所以后退/前进由纯历史驱动即可，无需对预览做任何特判。
+                canBack={navHistoryUi.canBack}
+                canForward={navHistoryUi.canForward}
+                onBack={() => void goWorkspaceBack()}
+                onForward={() => void goWorkspaceForward()}
               />
-            )}
-            <LibrarySwitcher
-              busy={busy}
-              disabled={!api}
-              syncStatus={syncBindingStatus}
-              importMenuCopy={importMenuCopy}
-              libraryName={library?.displayName ?? null}
-              libraryOpen={Boolean(library)}
-              onCloseLibrary={() => void closeLibrary()}
-              onRemoveLibrary={() => void removeLibrary()}
-              onDeleteLibraryFromDisk={() => requestDeleteLibraryFromDisk()}
-              onOpenLibrarySettings={() => {
-                setAppSettingsOpen(false);
-                setLibrarySettingsOpen(true);
-              }}
-              onCreateLibrary={() => {
-                setDialogValue(t("shell.myLibrary"));
-                setCreateLibraryPhase("form");
-                setDialog("library");
-              }}
-              onExportLibrary={() => setExportDialogOpen(true)}
-              onImportFolder={() => void importAssets("folder")}
-              onImportLibrary={() => {
-                setOpenLibraryChooserOpen(false);
-                setImportLibraryChooserOpen(true);
-              }}
-              onImportLinkedFolder={() => void importFolderAsLinked()}
-              onMenuOpen={() => void refreshRecentLibraries()}
-              onOpenLibrary={() => {
-                setImportLibraryChooserOpen(false);
-                setOpenLibraryChooserOpen(true);
-              }}
-              onOpenRecent={(path) => void openRecentLibrary(path)}
-              onForgetRecent={(path) => void forgetRecentLibrary(path)}
-              recentLibraries={recentLibraries}
-            />
+              {IS_WINDOWS_PLATFORM ? (
+                <MainMenu disabled={busy} sections={mainMenuSections} />
+              ) : (
+                <AppSettingsEntry
+                  disabled={busy}
+                  onOpen={() => {
+                    setAppSettingsCategory("general");
+                    setAppSettingsOpen(true);
+                  }}
+                />
+              )}
+              <LibrarySwitcher
+                busy={busy}
+                disabled={!api}
+                syncStatus={syncBindingStatus}
+                importMenuCopy={importMenuCopy}
+                libraryName={library?.displayName ?? null}
+                libraryOpen={Boolean(library)}
+                onCloseLibrary={() => void closeLibrary()}
+                onRemoveLibrary={() => void removeLibrary()}
+                onDeleteLibraryFromDisk={() => requestDeleteLibraryFromDisk()}
+                onOpenLibrarySettings={() => {
+                  setAppSettingsOpen(false);
+                  setLibrarySettingsOpen(true);
+                }}
+                onCreateLibrary={() => {
+                  setDialogValue(t("shell.myLibrary"));
+                  setCreateLibraryPhase("form");
+                  setDialog("library");
+                }}
+                onExportLibrary={() => setExportDialogOpen(true)}
+                onImportFolder={() => void importAssets("folder")}
+                onImportLibrary={() => {
+                  setOpenLibraryChooserOpen(false);
+                  setImportLibraryChooserOpen(true);
+                }}
+                onImportLinkedFolder={() => void importFolderAsLinked()}
+                onMenuOpen={() => void refreshRecentLibraries()}
+                onOpenLibrary={() => {
+                  setImportLibraryChooserOpen(false);
+                  setOpenLibraryChooserOpen(true);
+                }}
+                onOpenRecent={(path) => void openRecentLibrary(path)}
+                onForgetRecent={(path) => void forgetRecentLibrary(path)}
+                recentLibraries={recentLibraries}
+              />
+            </div>
             <WorkspaceTabs
               activeTabId={workspaceTabsState.activeTabId}
               disabled={!library || busy}

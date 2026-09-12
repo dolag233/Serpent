@@ -1,0 +1,28 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+import { describe, expect, it } from "vitest";
+
+const css = readFileSync(
+  resolve(__dirname, "../../src/renderer/workspace-tabs.css"),
+  "utf8",
+);
+
+describe("workspace tab chrome", () => {
+  it("paints the active tab with the global elevation token and skips level 0", () => {
+    expect(css).toContain(
+      ':root:not([data-elevation="0"]) .workspace-tab.is-active',
+    );
+    expect(css).toContain("box-shadow: var(--shadow-workspace-tab)");
+  });
+
+  it("does not paint a hairline between adjacent tabs", () => {
+    expect(css).not.toContain(".workspace-tab:not(.is-active)::after");
+  });
+
+  it("keeps the add button a space-1 from the last tab", () => {
+    expect(css).toContain(
+      "margin-inline-start: calc(-1 * var(--workspace-tab-curve) + var(--ui-space-1))",
+    );
+  });
+});

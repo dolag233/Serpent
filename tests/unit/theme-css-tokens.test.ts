@@ -27,6 +27,7 @@ describe('theme CSS tokens (REQ-THEME-002)', () => {
       '--shadow-toolbar',
       '--shadow-pane-east',
       '--shadow-card',
+      '--shadow-workspace-tab',
       '--shadow-menu',
     ]) {
       expect(css).toContain(token);

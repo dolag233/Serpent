@@ -94,6 +94,9 @@
   --shadow-card:
     0 calc(2px * var(--elev-size)) calc(10px * var(--elev-size))
     rgb(0 0 0 / calc(0.24 * var(--elev-intensity)));
+  --shadow-workspace-tab:
+    0 0 calc(8px * var(--elev-size))
+    rgb(0 0 0 / calc(0.22 * var(--elev-intensity)));
   /* Floating overlays stay fixed (pre-elevation family; Serpent-4ojz). */
   --shadow-menu: 0 8px 24px rgb(0 0 0 / 28%);
   /* Shared menu family: context menus, the Windows main menu, and the library
@@ -195,6 +198,9 @@
     rgb(0 0 0 / calc(0.08 * var(--elev-intensity)));
   --shadow-card:
     0 calc(1px * var(--elev-size)) calc(8px * var(--elev-size))
+    rgb(0 0 0 / calc(0.1 * var(--elev-intensity)));
+  --shadow-workspace-tab:
+    0 0 calc(6px * var(--elev-size))
     rgb(0 0 0 / calc(0.1 * var(--elev-intensity)));
   --shadow-menu: 0 6px 18px rgb(0 0 0 / 12%), 0 1px 3px rgb(0 0 0 / 8%);
   --shadow-elevated: 0 18px 48px rgb(0 0 0 / 16%);
@@ -10725,12 +10731,12 @@ select.ai-config-input.ai-config-languages {
   -webkit-mask: radial-gradient(
     farthest-side,
     transparent calc(100% - 2px),
-    #000 calc(100% - 1.5px)
+    var(--text) calc(100% - 1.5px)
   );
   mask: radial-gradient(
     farthest-side,
     transparent calc(100% - 2px),
-    #000 calc(100% - 1.5px)
+    var(--text) calc(100% - 1.5px)
   );
   animation: plugin-view-spin 1.15s linear infinite;
 }
