@@ -49,7 +49,7 @@
 - 不在本轮做 `Serpent-871f34` 全套卡片同步状态与可隐藏徽章（可与 #38 的「强制本地/云端」分 PR）。
 - 不同步插件安装目录、脚本、MCP 配置（#38 末尾产品建议，另开单）。
 - 不把远端 `trash/` 做成用户可浏览的「云回收站 UI」；墓碑文件已存在，只保证删除传播可靠。
-- 不合集成员、智能合集、AI 标签单独通道；#39 首期只做人标签、描述、评分、收藏。
+- 不合集成员、智能合集单独通道；#39 的 sidecar 覆盖人手与 AI 的标签、描述、评分，以及收藏。合集成员仍不同步。
 - 不把资源库直接放到 SMB 当同步（#41 已关，不是 WebDAV）。
 
 ## 5. 设计决策
@@ -103,14 +103,14 @@
 
 手册已承诺首次同步上传元数据。常量 `SYNC_METADATA_DIR` 未接线。`metadataVersion` 恒为 1，`pollRemoteChange` 的比较无意义。
 
-首期范围：人标签（名称列表）、描述、评分、收藏。文件夹层级走资产 `path`（依赖 §5.1 真的把路径传出去）。合集成员不做。
+首期范围：人标签（名称列表）、描述、评分、收藏，以及 AI 标签 / AI 简介 / AI 评分（独立 `ai` 对象，写入 `ai_asset_tags` / `ai_content`，不写进人表）。文件夹层级走资产 `path`（依赖 §5.1 真的把路径传出去）。合集成员不做。
 
 应对：
 
 - 每资产一份 JSON，路径 `metadata/entries/<syncId>.json`，与 manifest `metadataVersion` 同号递增。
 - `SyncLibraryPort` 增加读本地元数据 / 应用远端元数据。规划：`metadataVersion` 单侧增加 → 上传或下载 sidecar；双侧不同且字段冲突 → 该资产元数据 LWW（与文件冲突副本策略分开，首期不要为标签再做 `(conflict-…)` 文件）。
-- 改标签/描述/评分必须让自动同步跑起来（`asset.changed` 或等价 dirty）。当前这些编辑是否发事件要在实现时扫一遍。
-- 打开同步库下载文件后必须应用 sidecar，不能只落媒体。
+- 改标签/描述/评分/AI 分析结果必须让自动同步跑起来（`asset.changed` 或等价 dirty）。
+- 打开同步库下载文件后必须应用 sidecar，不能只落媒体。旧 sidecar 没有 `ai` 键时不覆盖本机 AI 层。
 - 测试可用极小文件 + 标签字符串，不要拷用户库。
 
 若首期时间只够改文档：那是产品降级，须改 `docs/user-guide/sync.md` 与英文手册，明确「当前版本不同步标签/描述」。默认实现通道，不默认只改文档。
@@ -133,7 +133,7 @@
 - 调度器：`moveAssets` 后在 debounce 内出现 `local-change` 同步请求；`applySyncRelocate` 不叠加第二次。
 - plan/runner：回收站 → delete-remote 成功或 404 视为成功；单条 409 不抛翻整次 `syncOnce`。
 - engine：远端已有 libraryId 时写出仍为该 ID；空 entries 不得覆盖非空远端。
-- 元数据：A 写标签与描述后 sidecar 存在且 `metadataVersion` > 1；B 打开同步库后本地 tags/description 非空。
+- 元数据：A 写标签与描述（含 AI 自动打标）后 sidecar 存在且 `metadataVersion` > 1；B 打开同步库后本地人字段与 AI 层均非空。
 - Renderer：`toMessage` 对 `{ code: 'CONFLICT' }` 对象不抛。
 - 改 library-service / 开库 / 同步：完整 `npm run test:library-availability`。
 - 不要用用户真实库路径或 NAS 地址；测试目录用完即删。
@@ -145,4 +145,4 @@
 - `SYNC-AUTO-MOVE-001`：已同步照片拖进新建文件夹，只等自动同步（不要点立即同步），远端 `assets/` 出现子目录且根上原文件消失。
 - `SYNC-TRASH-001`：已同步照片进回收站，同步结束不整库 CONFLICT；浏览界面仍可点；缺缩略图会重建而不是卡死。
 - `SYNC-ID-001`：第二台电脑「打开同步资源库」后，远端 `manifest.json` 的 `libraryId`/`displayName` 仍是第一台写入的值。
-- `SYNC-META-001`：第一台打标签、写描述并等同步；第二台打开同步库后能看到同一标签和描述。
+- `SYNC-META-001`：第一台打标签（人手或 AI）、写描述或等 AI 简介并等同步；第二台打开同步库后能看到同一标签和描述。合集成员本轮不同步。

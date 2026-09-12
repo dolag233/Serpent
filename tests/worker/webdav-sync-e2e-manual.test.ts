@@ -141,6 +141,16 @@ describe.skipIf(!probeUrl)('real WebDAV acceptance (temporary remote library onl
         expectedVersion: currentMeta.entityVersion,
         description: '主角设定',
       });
+      serviceA.writeAiAnalysisResult({
+        libraryId: libraryA.libraryId,
+        assetId: alphaAsset.assetId,
+        tags: ['风景'],
+        description: '城市夜景',
+        rating: 5,
+        modelId: 'gpt-4o',
+        modelVersion: '2024-05-13',
+        enabledFields: { description: true, tags: true, rating: true },
+      });
 
       const engineA = new SyncEngine(createLibrarySyncPort(serviceA), { deviceId: 'device-A' });
       const first = await engineA.syncOnce(libraryA.libraryId, config);
@@ -180,6 +190,11 @@ describe.skipIf(!probeUrl)('real WebDAV acceptance (temporary remote library onl
       const metaB = serviceB.getAssetMetadata({ libraryId: libraryB.libraryId, assetId: alphaOnB.assetId });
       expect(metaB.description).toBe('主角设定');
       expect(metaB.tags.some((item) => item.name === '角色')).toBe(true);
+      expect(metaB.tags.some((item) => item.name === '风景' && item.source === 'ai')).toBe(true);
+      expect(serviceB.listAiTagNames(libraryB.libraryId, alphaOnB.assetId)).toEqual(['风景']);
+      const aiB = serviceB.getAiContent(libraryB.libraryId, alphaOnB.assetId);
+      expect(aiB.some((row) => row.fieldName === 'description' && row.value === '城市夜景')).toBe(true);
+      expect(aiB.some((row) => row.fieldName === 'rating' && row.value === '5')).toBe(true);
       const remoteAfterB = parseManifest(
         (await remote.read(`${directoryName}/${SYNC_MANIFEST_FILE}`)).body.toString('utf-8'),
       );

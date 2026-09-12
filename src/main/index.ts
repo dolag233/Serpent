@@ -7527,7 +7527,7 @@ async function startApplication(): Promise<void> {
 
   // Serpent-bfsb 后续：自动同步调度器。打开同步资源库后自动绑定并开启
   // （见 handleLibraryRequest 的 sync.open-remote-library.request 成功分支）；
-  // 本地资产变更 debounce 后自动同步；固定间隔轮询云端 manifest 变化。
+  // 本地资产变更 5 秒防抖后自动同步；轮询间隔只用于检查云端。
   syncAutoScheduler = new SyncAutoScheduler({
     workerClient,
     deviceId: () => syncDeviceId(),

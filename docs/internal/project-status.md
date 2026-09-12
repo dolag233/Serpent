@@ -3,6 +3,12 @@
 > 更新时间：2026-09-11
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
+- **2026-09-12 本地立即同步**：轮询间隔只查云端；本地 `asset.changed` 默认 5 秒防抖后 `sync.run`，进行中的变更尾随一次。工单 `Serpent-7ddcaf`。同步状态条后续做。
+
+- **2026-09-12 改标签不同步提示**：只改 sidecar 时 `sync.progress` 的 `filesTotal` 一直为 0，toast 被当成空跑。已按动作数起步汇报进度；重命名/删除/合并已用标签发 `asset.changed`。工单 `Serpent-8fa7b3`。清单 `SYNC-META-002`。
+
+- **2026-09-12 WebDAV AI 元数据**：GitHub #39 的 sidecar 原先只同步人手标签/描述/评分/收藏。AI 自动打标写在 `ai_asset_tags` / `ai_content`，对端看不到。已把 AI 层纳入同一 sidecar（不写进人表）。合集成员仍不同步。见 [开发日志](development/2026-09-12-webdav-ai-metadata-sync-development-log.md)，工单 `Serpent-4ffae8`。清单 `SYNC-META-001` 待人按 AI 打标路径再点。
+
 - **2026-09-11 十万级导入（用户日志）**：Windows 0.2.1 便携版、库在网盘同步盘。导入 10 万+ 在 `resolveImport` → `countLogicalAssetUnits` 上 `too many SQL variables`；进度遮罩不消失；取消 `IMPORT_NOT_FOUND`；冲突窗关闭/applying 中断恢复会丢掉已拷文件。五个可靠性工单已实现并完成自动化验证：SQLite 动态 IN 分块、提交后处理隔离、应用中断恢复、24 小时决策 TTL、Renderer 失败/取消收口与复制进度。见设计 [2026-09-11-large-batch-import-reliability.md](implementation/2026-09-11-large-batch-import-reliability.md) 与[开发日志](development/2026-09-11-large-batch-import-reliability-development-log.md)。Epic `Serpent-168624` 仍待真实 10 万级 Eagle 库、Windows/打包环境和人工 UI 验收。
 
 - **2026-09-10 导入冲突连点 / 跳过无法读取的文件**：内容重复窗连点会把已消费的 `resolveImport` 打成一串 `IMPORT_NOT_FOUND`（`Serpent-85e60c`）。批量导入夹杂无法读取的项时整批失败（`Serpent-7d1ba2`）。已加提交锁，并弹出可跳过的「无法导入部分文件」决策窗（勾选文案对齐序列帧 applyToRest）。见 [开发日志](development/2026-09-10-import-skip-failures-and-conflict-submit-development-log.md)。

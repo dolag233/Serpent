@@ -211,6 +211,7 @@ import {
 } from './billfish-library';
 import {
   emptySyncAssetMetadata,
+  hasSyncAiLayer,
   type SyncAssetMetadata,
 } from './sync/sync-metadata';
 
@@ -15150,19 +15151,25 @@ export class LibraryService {
           )`
           : null,
       ].filter((sql): sql is string => sql !== null);
-      const childRows = openLibrary.connection
-        .prepare(
-          `SELECT parent_folder_id AS folder_id, COUNT(*) AS count
-             FROM managed_folders mf
-            WHERE parent_folder_id IN (${placeholders})
-              AND ${
-                showIgnored || folderIgnoreClauses.length === 0
-                  ? '1 = 1'
-                  : folderIgnoreClauses.join(' AND ')
-              }
-            GROUP BY parent_folder_id`,
-        )
-        .all(...folderIds) as Array<{ folder_id: string; count: number }>;
+      const childRows = withSqliteInPredicate(
+        openLibrary.connection,
+        'parent_folder_id',
+        folderIds,
+        (sql, params) =>
+          openLibrary.connection
+            .prepare(
+              `SELECT parent_folder_id AS folder_id, COUNT(*) AS count
+                 FROM managed_folders mf
+                WHERE ${sql}
+                  AND ${
+                    showIgnored || folderIgnoreClauses.length === 0
+                      ? '1 = 1'
+                      : folderIgnoreClauses.join(' AND ')
+                  }
+                GROUP BY parent_folder_id`,
+            )
+            .all(...params) as Array<{ folder_id: string; count: number }>,
+      );
       for (const row of childRows) childFolderCounts.set(row.folder_id, row.count);
       return { directAssetCounts, childFolderCounts };
     }
@@ -17185,6 +17192,7 @@ export class LibraryService {
       throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
     }
 
+    this.emitClientAssetsChanged(input.libraryId, affectedAssets.length);
     const countRow = openLibrary.connection
       .prepare(
         `SELECT COUNT(*) AS count
@@ -17221,6 +17229,7 @@ export class LibraryService {
         this.syncAssetSearchContent(openLibrary.connection, assetId);
       }
     })();
+    this.emitClientAssetsChanged(input.libraryId, affectedAssets.length);
     return input.tagId;
   }
 
@@ -17341,6 +17350,7 @@ export class LibraryService {
       throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
     }
 
+    this.emitClientAssetsChanged(input.libraryId, affectedAssets.length);
     const countRow = openLibrary.connection
       .prepare(
         `SELECT COUNT(*) AS count
@@ -19272,7 +19282,10 @@ export class LibraryService {
       return true;
     })();
 
-    if (committed) this.syncAssetSearchContent(openLibrary.connection, input.assetId);
+    if (committed) {
+      this.syncAssetSearchContent(openLibrary.connection, input.assetId);
+      this.emitClientAssetsChanged(input.libraryId, 1);
+    }
 
     return { tagsWritten, fieldsWritten, committed };
   }
@@ -19460,6 +19473,7 @@ export class LibraryService {
       }
     })();
 
+    this.emitClientAssetsChanged(input.libraryId, targetAssetIds.length);
     return { clearedCount: targetAssetIds.length, affectedAssetIds: targetAssetIds };
   }
 
@@ -23053,6 +23067,18 @@ export class LibraryService {
         rating: metadata.rating,
         favorite: metadata.favorite,
       });
+      if (metadata.ai) {
+        this.writeAiAnalysisResult({
+          libraryId,
+          assetId: row.asset_id,
+          description: metadata.ai.description ?? undefined,
+          tags: metadata.ai.tags,
+          rating: metadata.ai.rating,
+          modelId: metadata.ai.modelId || 'sync',
+          modelVersion: metadata.ai.modelVersion || '1',
+          enabledFields: { description: true, tags: true, rating: true },
+        });
+      }
     });
   }
 
@@ -23085,45 +23111,135 @@ export class LibraryService {
     for (const assetId of assetIds) {
       map.set(assetId, emptySyncAssetMetadata());
     }
-    if (!hasTable(openLibrary.connection, 'tags') || !hasTable(openLibrary.connection, 'human_asset_tags')) {
-      return map;
+    if (hasTable(openLibrary.connection, 'tags') && hasTable(openLibrary.connection, 'human_asset_tags')) {
+      const tagRows = sqliteAllInChunks<string, { asset_id: string; name: string }>({
+        connection: openLibrary.connection,
+        values: assetIds,
+        buildSql: (placeholders) =>
+          `SELECT hat.asset_id, t.name
+             FROM human_asset_tags hat
+             JOIN tags t ON t.tag_id = hat.tag_id
+            WHERE hat.asset_id IN (${placeholders})`,
+      });
+      for (const row of tagRows) {
+        const current = map.get(row.asset_id) ?? emptySyncAssetMetadata();
+        if (!current.tags.includes(row.name)) current.tags.push(row.name);
+        map.set(row.asset_id, current);
+      }
     }
-    const tagRows = sqliteAllInChunks<string, { asset_id: string; name: string }>({
-      connection: openLibrary.connection,
-      values: assetIds,
-      buildSql: (placeholders) =>
-        `SELECT hat.asset_id, t.name
-           FROM human_asset_tags hat
-           JOIN tags t ON t.tag_id = hat.tag_id
-          WHERE hat.asset_id IN (${placeholders})`,
-    });
-    for (const row of tagRows) {
-      const current = map.get(row.asset_id) ?? emptySyncAssetMetadata();
-      if (!current.tags.includes(row.name)) current.tags.push(row.name);
-      map.set(row.asset_id, current);
+    if (hasTable(openLibrary.connection, 'asset_metadata')) {
+      const metaRows = sqliteAllInChunks<string, {
+        asset_id: string;
+        description: string | null;
+        rating: number;
+        favorite: number;
+      }>({
+        connection: openLibrary.connection,
+        values: assetIds,
+        buildSql: (placeholders) =>
+          `SELECT asset_id, description, rating, favorite
+             FROM asset_metadata
+            WHERE asset_id IN (${placeholders})`,
+      });
+      for (const row of metaRows) {
+        const current = map.get(row.asset_id) ?? emptySyncAssetMetadata();
+        current.description = row.description?.trim() ? row.description.trim() : null;
+        current.rating = row.rating;
+        current.favorite = row.favorite !== 0;
+        map.set(row.asset_id, current);
+      }
     }
-    if (!hasTable(openLibrary.connection, 'asset_metadata')) return map;
-    const metaRows = sqliteAllInChunks<string, {
-      asset_id: string;
-      description: string | null;
-      rating: number;
-      favorite: number;
-    }>({
-      connection: openLibrary.connection,
-      values: assetIds,
-      buildSql: (placeholders) =>
-        `SELECT asset_id, description, rating, favorite
-           FROM asset_metadata
-          WHERE asset_id IN (${placeholders})`,
-    });
-    for (const row of metaRows) {
-      const current = map.get(row.asset_id) ?? emptySyncAssetMetadata();
-      current.description = row.description?.trim() ? row.description.trim() : null;
-      current.rating = row.rating;
-      current.favorite = row.favorite !== 0;
-      map.set(row.asset_id, current);
-    }
+    this.attachSyncAiLayer(openLibrary, assetIds, map);
     return map;
+  }
+
+  private attachSyncAiLayer(
+    openLibrary: OpenLibrary,
+    assetIds: readonly string[],
+    map: Map<string, SyncAssetMetadata>,
+  ): void {
+    if (assetIds.length === 0) return;
+    const aiTagsByAsset = new Map<string, string[]>();
+    const modelByAsset = new Map<string, { modelId: string; modelVersion: string }>();
+    if (hasTable(openLibrary.connection, 'tags') && hasTable(openLibrary.connection, 'ai_asset_tags')) {
+      const aiTagRows = sqliteAllInChunks<string, {
+        asset_id: string;
+        name: string;
+        model_id: string;
+        model_version: string;
+      }>({
+        connection: openLibrary.connection,
+        values: assetIds,
+        buildSql: (placeholders) =>
+          `SELECT aat.asset_id, t.name, aat.model_id, aat.model_version
+             FROM ai_asset_tags aat
+             JOIN tags t ON t.tag_id = aat.tag_id
+            WHERE aat.asset_id IN (${placeholders})`,
+      });
+      for (const row of aiTagRows) {
+        const tags = aiTagsByAsset.get(row.asset_id) ?? [];
+        if (!tags.includes(row.name)) tags.push(row.name);
+        aiTagsByAsset.set(row.asset_id, tags);
+        if (!modelByAsset.has(row.asset_id)) {
+          modelByAsset.set(row.asset_id, { modelId: row.model_id, modelVersion: row.model_version });
+        }
+      }
+    }
+    const descriptionByAsset = new Map<string, { value: string; generatedAt: string }>();
+    const ratingByAsset = new Map<string, { value: number; generatedAt: string }>();
+    if (hasTable(openLibrary.connection, 'ai_content')) {
+      const contentRows = sqliteAllInChunks<string, {
+        asset_id: string;
+        field_name: string;
+        value: string;
+        model_id: string;
+        model_version: string;
+        generated_at: string;
+      }>({
+        connection: openLibrary.connection,
+        values: assetIds,
+        buildSql: (placeholders) =>
+          `SELECT asset_id, field_name, value, model_id, model_version, generated_at
+             FROM ai_content
+            WHERE asset_id IN (${placeholders})
+              AND field_name IN ('description', 'rating')`,
+      });
+      for (const row of contentRows) {
+        const generatedAt = row.generated_at ?? '';
+        if (row.field_name === 'description') {
+          const current = descriptionByAsset.get(row.asset_id);
+          if (!current || generatedAt >= current.generatedAt) {
+            const trimmed = row.value.trim();
+            if (trimmed) descriptionByAsset.set(row.asset_id, { value: trimmed, generatedAt });
+          }
+        }
+        if (row.field_name === 'rating') {
+          const score = Number.parseInt(row.value.trim(), 10);
+          if (Number.isInteger(score) && score >= 1 && score <= 5) {
+            const current = ratingByAsset.get(row.asset_id);
+            if (!current || generatedAt >= current.generatedAt) {
+              ratingByAsset.set(row.asset_id, { value: score, generatedAt });
+            }
+          }
+        }
+        if (row.model_id && !modelByAsset.has(row.asset_id)) {
+          modelByAsset.set(row.asset_id, { modelId: row.model_id, modelVersion: row.model_version });
+        }
+      }
+    }
+    for (const assetId of assetIds) {
+      const ai = {
+        tags: [...(aiTagsByAsset.get(assetId) ?? [])].sort((left, right) => left.localeCompare(right)),
+        description: descriptionByAsset.get(assetId)?.value ?? null,
+        rating: ratingByAsset.get(assetId)?.value ?? null,
+        modelId: modelByAsset.get(assetId)?.modelId ?? 'sync',
+        modelVersion: modelByAsset.get(assetId)?.modelVersion ?? '1',
+      };
+      if (!hasSyncAiLayer(ai)) continue;
+      const current = map.get(assetId) ?? emptySyncAssetMetadata();
+      current.ai = ai;
+      map.set(assetId, current);
+    }
   }
 
   /** 按 syncId 读取本地资产内容（同步上传用）。 */

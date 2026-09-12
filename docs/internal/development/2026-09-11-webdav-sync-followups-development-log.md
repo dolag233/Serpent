@@ -10,7 +10,7 @@
 - `delete-remote` 在远端已无文件时视为成功；单资产失败记入 `failed`，其余动作继续并写回已成功的 manifest。同路径被另一 `syncId` 占用时先墓碑占用方。
 - 批量 `getArtifactAbsolutePaths` 对缺文件/非法路径跳过，不再用 `ASSET_NOT_FOUND` 打穿浏览。`toMessage` 对非字符串 / 无 `message` 的对象不调用 `.trim()`。
 - 写回 manifest 时 `stampRemoteIdentity`：远端已有 `libraryId` 则保留；空 entries 不得覆盖非空远端。打开同步库优先使用远端身份，并在下载文件后应用 sidecar。
-- 人标签、描述、评分、收藏走 `metadata/entries/<syncId>.json`。下载文件时若存在 sidecar 一并应用。
+- 人标签、描述、评分、收藏走 `metadata/entries/<syncId>.json`。下载文件时若存在 sidecar 一并应用。AI 标签/简介/评分见 2026-09-12 开发日志。
 - 后接入设备下载新资产时按交换格式相对路径确保托管文件夹再导入（`applySyncContentUpdate` / 冲突副本），不再只按 basename 落在库根。
 
 ## 自动化证据

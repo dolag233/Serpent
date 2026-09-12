@@ -77,6 +77,8 @@ export interface SyncRunnerContext {
   ): Promise<{ syncId: string; contentHash: string; size: number }>;
   readLocalMetadata?(syncId: string): Promise<SyncAssetMetadata>;
   applyRemoteMetadata?(syncId: string, metadata: SyncAssetMetadata): Promise<void>;
+  /** 每个动作成功或失败后回调一次，供进度按动作数推进。 */
+  onActionComplete?(): void;
 }
 
 export interface SyncRunResult {
@@ -170,6 +172,8 @@ export async function runSyncActions(
       });
     } catch {
       result.failed += 1;
+    } finally {
+      context.onActionComplete?.();
     }
   }
   return result;

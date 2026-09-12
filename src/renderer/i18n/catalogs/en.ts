@@ -1502,7 +1502,7 @@ export const en = {
       autoSync: "Auto sync",
       autoSyncHint: "When enabled, local asset changes are uploaded automatically and remote changes are pulled automatically.",
       pollInterval: "Poll interval (seconds)",
-      pollIntervalHint: "How often remote changes are checked. For large libraries, consider a longer interval.",
+      pollIntervalHint: "How often remote changes are checked. Local edits (tags, imports) upload about 5 seconds after you stop changing them, independent of this interval. For large libraries, consider a longer poll.",
       transferProgress: "Syncing: file {filesDone}/{filesTotal}, {bytesDone}/{bytesTotal} transferred.",
       noServer: "No sync servers configured yet. Add one under Settings → Sync first.",
       bindingSaved: "Saved this library's sync configuration.",

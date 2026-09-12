@@ -88,6 +88,29 @@ describe('two-device sync over a shared WebDAV server (Serpent-xffq)', () => {
     expect(metaB.description).toBe('主角设定');
     expect(metaB.tags.some((item) => item.name === '角色')).toBe(true);
 
+    serviceA.writeAiAnalysisResult({
+      libraryId,
+      assetId: assetA.assetId,
+      tags: ['风景'],
+      description: '城市夜景',
+      rating: 5,
+      modelId: 'gpt-4o',
+      modelVersion: '2024-05-13',
+      enabledFields: { description: true, tags: true, rating: true },
+    });
+    await engineA.syncOnce(libraryId, root);
+    await engineB.syncOnce(libraryId, root);
+    const assetsBAfterAi = serviceB.listAssets({ libraryId, recursive: true });
+    const downloadedAfterAi = assetsBAfterAi.find((asset) => asset.relativeFilePath === 'a.txt')!;
+    const humanB = serviceB.getAssetMetadata({ libraryId, assetId: downloadedAfterAi.assetId });
+    expect(humanB.tags.some((item) => item.name === '风景' && item.source === 'ai')).toBe(true);
+    expect(humanB.tags.some((item) => item.name === '角色' && item.source === 'user')).toBe(true);
+    expect(humanB.description).toBe('主角设定');
+    expect(serviceB.listAiTagNames(libraryId, downloadedAfterAi.assetId)).toEqual(['风景']);
+    const aiB = serviceB.getAiContent(libraryId, downloadedAfterAi.assetId);
+    expect(aiB.some((row) => row.fieldName === 'description' && row.value === '城市夜景')).toBe(true);
+    expect(aiB.some((row) => row.fieldName === 'rating' && row.value === '5')).toBe(true);
+
     // A 修改内容并新增 b.txt → 同步。
     writeFileSync(fileA, 'hello-from-A-v2');
     const fileB = path.join(rootA, 'b.txt');

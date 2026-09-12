@@ -210,4 +210,78 @@ describe('library sync integration (Serpent-xffq)', () => {
     expect(updated.tags.some((item) => item.name === '角色' && item.source === 'user')).toBe(false);
     service.closeAll();
   });
+
+  it('round-trips AI tags, description and rating without writing human fields', () => {
+    const service = new LibraryService();
+    const { libraryId, assetId } = createLibraryWithAsset(service, 'AI元数据库');
+    service.writeAiAnalysisResult({
+      libraryId,
+      assetId,
+      tags: ['风景', '夜景'],
+      description: '城市夜景',
+      rating: 5,
+      modelId: 'gpt-4o',
+      modelVersion: '2024-05-13',
+      enabledFields: { description: true, tags: true, rating: true },
+    });
+    const snapshot = service.syncSnapshot(libraryId);
+    expect(snapshot.assets[0]!.metadata).toMatchObject({
+      tags: [],
+      description: null,
+      rating: 0,
+      favorite: false,
+      ai: {
+        tags: ['夜景', '风景'],
+        description: '城市夜景',
+        rating: 5,
+        modelId: 'gpt-4o',
+        modelVersion: '2024-05-13',
+      },
+    });
+    const syncId = snapshot.assets[0]!.syncId;
+    service.applySyncAssetMetadata(libraryId, syncId, {
+      tags: [],
+      description: null,
+      rating: 0,
+      favorite: false,
+      ai: {
+        tags: ['室内'],
+        description: '工作室',
+        rating: 3,
+        modelId: 'sync',
+        modelVersion: '1',
+      },
+    });
+    const human = service.getAssetMetadata({ libraryId, assetId });
+    expect(human.description === '工作室').toBe(false);
+    expect(human.rating).toBe(0);
+    expect(human.tags.some((item) => item.name === '室内' && item.source === 'ai')).toBe(true);
+    expect(human.tags.some((item) => item.source === 'user')).toBe(false);
+    expect(service.listAiTagNames(libraryId, assetId)).toEqual(['室内']);
+    const ai = service.getAiContent(libraryId, assetId);
+    expect(ai.some((row) => row.fieldName === 'description' && row.value === '工作室')).toBe(true);
+    expect(ai.some((row) => row.fieldName === 'rating' && row.value === '3')).toBe(true);
+
+    service.writeAiAnalysisResult({
+      libraryId,
+      assetId,
+      tags: ['保留AI'],
+      description: '本机AI',
+      rating: 4,
+      modelId: 'local',
+      modelVersion: '9',
+      enabledFields: { description: true, tags: true, rating: true },
+    });
+    service.applySyncAssetMetadata(libraryId, syncId, {
+      tags: ['人手'],
+      description: '人手简介',
+      rating: 1,
+      favorite: false,
+    });
+    const afterOldSidecar = service.getAssetMetadata({ libraryId, assetId });
+    expect(afterOldSidecar.tags.some((item) => item.name === '人手' && item.source === 'user')).toBe(true);
+    expect(service.listAiTagNames(libraryId, assetId)).toEqual(['保留AI']);
+    expect(service.getAiContent(libraryId, assetId).some((row) => row.value === '本机AI')).toBe(true);
+    service.closeAll();
+  });
 });

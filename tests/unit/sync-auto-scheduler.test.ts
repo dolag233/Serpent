@@ -151,6 +151,54 @@ describe('SyncAutoScheduler (Serpent-bfsb 后续)', () => {
     expect(client.posts.filter((post) => post.type === 'sync.run')).toHaveLength(0);
   });
 
+  it('starts a local-change sync after the 5s debounce, not the poll interval', async () => {
+    vi.useFakeTimers();
+    try {
+      const { options, client } = makeOptions();
+      const scheduler = new SyncAutoScheduler(options);
+      scheduler.start();
+      client.posts.length = 0;
+      for (const listener of [...client.listeners]) listener({ libraryId: 'lib-enabled' });
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(client.posts.filter((post) => post.type === 'sync.run')).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(1_000);
+      const runs = client.posts.filter((post) => post.type === 'sync.run');
+      expect(runs).toHaveLength(1);
+      expect(runs[0]?.libraryId).toBe('lib-enabled');
+      scheduler.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('queues a trailing local sync when assets change during an in-flight run', async () => {
+    const { options, client } = makeOptions({ localChangeDebounceMs: 0 });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = client.request.bind(client);
+    client.request = async (command: PostedCommand) => {
+      if (command.type === 'sync.run') {
+        client.posts.push(command);
+        await gate;
+        return { ok: true, type: 'sync.completed' };
+      }
+      return original(command);
+    };
+    const scheduler = new SyncAutoScheduler(options);
+    scheduler.start();
+    for (const listener of [...client.listeners]) listener({ libraryId: 'lib-enabled' });
+    await settle();
+    expect(client.posts.filter((post) => post.type === 'sync.run')).toHaveLength(1);
+    for (const listener of [...client.listeners]) listener({ libraryId: 'lib-enabled' });
+    release();
+    await settle();
+    await settle();
+    expect(client.posts.filter((post) => post.type === 'sync.run')).toHaveLength(2);
+    scheduler.stop();
+  });
+
   it('polls at the 5-second default interval (user decision 2026-08-18)', async () => {
     vi.useFakeTimers();
     try {

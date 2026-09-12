@@ -24,7 +24,7 @@ export interface LocalAssetSnapshotEntry {
   modifiedAt: string;
   /** 库内 portable 相对路径。 */
   path: string;
-  /** 人标签/描述/评分/收藏；缺省表示本轮不规划元数据动作。 */
+  /** 人标签/描述/评分/收藏与可选 AI 层；缺省表示本轮不规划元数据动作。 */
   metadata?: SyncAssetMetadata;
 }
 

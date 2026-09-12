@@ -256,4 +256,33 @@ describe('planSyncActions (Serpent-xffq)', () => {
     });
     expect(actions.some((action) => action.type === 'upload-metadata' && action.assetId === 'a1')).toBe(true);
   });
+
+  it('plans metadata upload when local AI tags change', () => {
+    const localManifest = manifest();
+    localManifest.entries.a1 = entry({ metadataHash: 'old-meta' });
+    const remoteManifest = manifest();
+    remoteManifest.entries.a1 = entry({ metadataHash: 'old-meta' });
+    const actions = planSyncActions({
+      localAssets: new Map([['a1', {
+        ...asset(),
+        metadata: {
+          tags: [],
+          description: null,
+          rating: 0,
+          favorite: false,
+          ai: {
+            tags: ['风景'],
+            description: '夜景',
+            rating: 4,
+            modelId: 'gpt-4o',
+            modelVersion: '1',
+          },
+        },
+      }]]),
+      localManifest,
+      remoteManifest,
+      remoteTombstones: new Set(),
+    });
+    expect(actions.some((action) => action.type === 'upload-metadata' && action.assetId === 'a1')).toBe(true);
+  });
 });

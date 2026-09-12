@@ -203,41 +203,45 @@ export class SyncEngine {
       }
     }
     let bytesDone = 0;
+    const reportProgress = (): void => {
+      this.options.onProgress?.(done, total, bytesDone, bytesTotal);
+    };
+    // 元数据-only 会话没有媒体读写回调；起步先发 0/total，Renderer 才能弹出「正在同步」。
+    reportProgress();
     const reportBytes = (body: Buffer) => {
       bytesDone += body.length;
-      this.options.onProgress?.(done, total, bytesDone, bytesTotal);
+      reportProgress();
     };
     const wrappedContext: SyncRunnerContext = {
       ...context,
       readLocalAsset: async (syncId) => {
         const body = await context.readLocalAsset(syncId);
-        done += 1;
         reportBytes(body);
         return body;
       },
       writeLocalAsset: async (syncId, path, body) => {
         await context.writeLocalAsset(syncId, path, body);
-        done += 1;
         reportBytes(body);
       },
       relocateLocalAsset: async (syncId, relativePath) => {
         await context.relocateLocalAsset(syncId, relativePath);
-        done += 1;
-        this.options.onProgress?.(done, total, bytesDone, bytesTotal);
+        reportProgress();
       },
       recycleLocalAsset: async (syncId) => {
         await context.recycleLocalAsset(syncId);
-        done += 1;
-        this.options.onProgress?.(done, total, bytesDone, bytesTotal);
+        reportProgress();
       },
       saveLocalConflictCopy: async (syncId, path, body, conflictName) => {
         const meta = await context.saveLocalConflictCopy(syncId, path, body, conflictName);
-        done += 1;
         reportBytes(body);
         return meta;
       },
       readLocalMetadata: context.readLocalMetadata,
       applyRemoteMetadata: context.applyRemoteMetadata,
+      onActionComplete: () => {
+        done += 1;
+        reportProgress();
+      },
     };
 
     const result = await runSyncActions(actions, localManifest, wrappedContext);

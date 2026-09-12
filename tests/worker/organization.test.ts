@@ -64,14 +64,16 @@ afterEach(() => {
 
 // ── Helper: create a library with a managed asset via direct DB insertion ──
 
-function createLibraryWithAsset(): {
+function createLibraryWithAsset(
+  serviceOptions?: ConstructorParameters<typeof LibraryService>[0],
+): {
   service: LibraryService;
   libraryId: string;
   libraryPath: string;
   assetId: string;
 } {
   const root = temporaryRoot();
-  const service = newService();
+  const service = serviceOptions === undefined ? newService() : newService(serviceOptions);
   const library = service.createLibrary({ displayName: 'Org', selectedParentPath: root });
 
   // Create a managed folder and an asset on disk + in DB so tags/collections can reference it.
@@ -236,6 +238,21 @@ describe('tags', () => {
       'FOLDER_ALREADY_EXISTS',
     );
 
+    service.closeAll();
+  });
+
+  it('emits asset.changed when assigning or renaming a tag on an asset', () => {
+    const events: number[] = [];
+    const { service, libraryId, assetId } = createLibraryWithAsset({
+      onAssetsChanged: (event) => events.push(event.changedCount),
+    });
+    const tag = service.createTag({ libraryId, name: '可同步' });
+    events.length = 0;
+    service.assignTags({ libraryId, assetIds: [assetId], tagIds: [tag.tagId] });
+    expect(events.some((count) => count >= 1)).toBe(true);
+    events.length = 0;
+    service.renameTag({ libraryId, tagId: tag.tagId, name: '已改名' });
+    expect(events.some((count) => count >= 1)).toBe(true);
     service.closeAll();
   });
 

@@ -6,7 +6,7 @@ Serpent can sync a library across machines over WebDAV. Configure servers global
 
 - Configure one or more WebDAV servers in **General settings**; each library binds to one server and a remote folder.
 - Sync is bidirectional: local imports, edits, and deletions upload automatically; remote changes are pulled to the local library.
-- Auto-sync is per library: after saving a binding it runs once immediately, then checks the server for changes on the configured poll interval; local asset changes upload about 10 seconds after they happen.
+- Auto-sync is per library: after saving a binding it runs once immediately, then checks the server for **remote** changes on the configured poll interval; local imports, tag edits, and description edits upload about 5 seconds after the last local change (independent of the poll interval).
 - A toast appears in the bottom-right while syncing or when sync completes; the library switcher (top-left, next to the library name) shows a connection icon — green link = auto-sync on, grey link-off = off (hover for details).
 
 ## Configure a WebDAV server (General settings)
@@ -35,7 +35,7 @@ Open **Library settings** → **Sync**:
 
 ## Sync behavior
 
-- **The first sync uploads assets, metadata, and a manifest to the server**; later syncs transfer only changed files.
+- **The first sync uploads assets, metadata, and a manifest to the server**; later syncs transfer only changed files. Metadata includes human and AI tags, descriptions, ratings, and favorites. Collection membership is not synced yet.
 - If two machines edit the same file, the losing version is kept as a “name (conflict-…)” copy instead of being silently overwritten.
 - Auto-sync and manual sync are mutually exclusive; a failed sync only writes a log entry and does not interrupt you.
 

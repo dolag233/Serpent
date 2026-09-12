@@ -4,13 +4,14 @@
  * 用户决定（2026-08-17）：
  * - 打开同步资源库后自动绑定并开启自动同步；
  * - 本地导入/修改/管理资产 → 自动同步到服务器；
- * - 云端有改动 → 本地自动同步（固定间隔轮询，不提供频率设置）；
+ * - 云端有改动 → 本地自动同步（固定间隔轮询）；
  * - 传输数据无墙钟超时；仅测试连接（probe）有超时与自动重试。
  *
  * 触发源：
- * 1. 资产变更事件（worker 广播 asset.changed）→ debounce 后自动 sync.run；
+ * 1. 资产变更事件（worker 广播 asset.changed）→ 默认 5 秒防抖后 sync.run
+ *    （批量导入/连发合并成一轮；同库进行中则记 pending，本轮结束后再跑一次）；
  * 2. 固定间隔轮询 sync.poll-remote（只读远端 manifest 对比本地缓存，
- *    不做本地全量 hash），有变化则自动 sync.run；
+ *    不做本地全量 hash），有变化则自动 sync.run；轮询间隔不代替本地防抖；
  * 3. 绑定保存（binding-save）→ 立即触发一次同步。
  *
  * 只对 enabled 的绑定生效；与手动同步经 worker 端 beginSyncSession
@@ -49,7 +50,10 @@ export interface SyncAutoSchedulerOptions {
   pollIntervalMs?: number;
   /** 内部 tick（驱动每库独立间隔检查，默认 1 秒）。 */
   pollTickMs?: number;
-  /** 资产变更 debounce（批量导入/删除只触发一次）。 */
+  /**
+   * 本地变更合并窗口（默认 5 秒）。最后一次本地改动后再等该时间，只跑一轮。
+   * 与轮询间隔独立：轮询只查云端。
+   */
   localChangeDebounceMs?: number;
 }
 
@@ -69,6 +73,8 @@ export class SyncAutoScheduler {
   #lastPolledAt = new Map<string, number>();
   /** 进行中的自动同步（libraryId → promise），避免同一库叠加。 */
   #running = new Map<string, Promise<void>>();
+  /** 同步进行中又收到本地变更：本轮结束后再跑一次。 */
+  #pendingLocal = new Set<string>();
   #unsubscribeAssetsChanged: (() => void) | undefined;
 
   constructor(options: SyncAutoSchedulerOptions) {
@@ -77,7 +83,7 @@ export class SyncAutoScheduler {
     // 保存后长时间无反馈，用户感知不到自动同步）；支持按库覆盖。
     this.#pollIntervalMs = options.pollIntervalMs ?? 5_000;
     this.#pollTickMs = options.pollTickMs ?? 1_000;
-    this.#localChangeDebounceMs = options.localChangeDebounceMs ?? 10_000;
+    this.#localChangeDebounceMs = options.localChangeDebounceMs ?? 5_000;
   }
 
   start(): void {
@@ -112,9 +118,14 @@ export class SyncAutoScheduler {
     this.#unsubscribeAssetsChanged = undefined;
     for (const timer of this.#debounceTimers.values()) clearTimeout(timer);
     this.#debounceTimers.clear();
+    this.#pendingLocal.clear();
   }
 
   #scheduleLocalSync(libraryId: string): void {
+    if (this.#running.has(libraryId)) {
+      this.#pendingLocal.add(libraryId);
+      return;
+    }
     const existing = this.#debounceTimers.get(libraryId);
     if (existing !== undefined) clearTimeout(existing);
     const timer = setTimeout(() => {
@@ -158,7 +169,10 @@ export class SyncAutoScheduler {
   }
 
   async #autoSync(libraryId: string, reason: SyncReason): Promise<void> {
-    if (this.#running.has(libraryId)) return;
+    if (this.#running.has(libraryId)) {
+      if (reason === 'local-change') this.#pendingLocal.add(libraryId);
+      return;
+    }
     const binding = this.#options.readBindings()[libraryId];
     if (!binding?.enabled) return;
     const credentials = this.#options.resolveCredentials(binding.serverId);
@@ -213,6 +227,10 @@ export class SyncAutoScheduler {
       await run;
     } finally {
       this.#running.delete(libraryId);
+      if (this.#pendingLocal.has(libraryId)) {
+        this.#pendingLocal.delete(libraryId);
+        void this.#autoSync(libraryId, 'local-change');
+      }
     }
   }
 }

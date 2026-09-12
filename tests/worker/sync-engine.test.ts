@@ -9,6 +9,7 @@ import type {
   RemoteWriteResult,
 } from '../../src/worker/sync/remote-storage';
 import { SyncEngine, type SyncLibraryPort, type SyncRootConfig } from '../../src/worker/sync/sync-engine';
+import type { SyncAssetMetadata } from '../../src/worker/sync/sync-metadata';
 
 class MemoryDriver implements RemoteStorageDriver {
   readonly files = new Map<string, Buffer>();
@@ -78,6 +79,7 @@ interface FakeAsset {
   syncId: string;
   relativePath: string;
   body: Buffer;
+  metadata?: SyncAssetMetadata;
 }
 
 class FakeLibrary implements SyncLibraryPort {
@@ -96,6 +98,7 @@ class FakeLibrary implements SyncLibraryPort {
       contentHash: `hash-${Buffer.from(asset.body).toString('hex').slice(0, 8)}`,
       size: asset.body.length,
       modifiedAt: '2026-08-15T10:00:00Z',
+      ...(asset.metadata === undefined ? {} : { metadata: asset.metadata }),
     }));
     return { library: { libraryId, displayName: this.displayName }, assets };
   }
@@ -388,6 +391,32 @@ describe('SyncEngine end-to-end (Serpent-xffq)', () => {
     // 上传 4 字节（1 个文件）。
     expect(last.bytesDone).toBe(4);
     expect(last.bytesTotal).toBe(4);
+  });
+
+  it('reports progress for metadata-only uploads so the UI can show a sync toast', async () => {
+    const driver = new MemoryDriver();
+    const library = new FakeLibrary();
+    library.assets.set('s1', { syncId: 's1', relativePath: 'a.png', body: Buffer.from('aaaa') });
+    const engine = new SyncEngine(library, { deviceId: 'dev-a' });
+    engine.buildDriver = () => driver;
+    await engine.syncOnce('lib-1', root);
+
+    library.assets.get('s1')!.metadata = {
+      tags: ['角色'],
+      description: '主角设定',
+      rating: 4,
+      favorite: false,
+    };
+    const progress: Array<{ done: number; total: number }> = [];
+    const metaEngine = new SyncEngine(library, {
+      deviceId: 'dev-a',
+      onProgress: (done, total) => progress.push({ done, total }),
+    });
+    metaEngine.buildDriver = () => driver;
+    await metaEngine.syncOnce('lib-1', root);
+    expect(progress[0]).toEqual({ done: 0, total: 1 });
+    expect(progress.at(-1)).toEqual({ done: 1, total: 1 });
+    expect([...driver.files.keys()].some((key) => key.includes('metadata/entries/s1.json'))).toBe(true);
   });
 
   it('moves a remote file when only the local folder path changed (Serpent-038ecf)', async () => {

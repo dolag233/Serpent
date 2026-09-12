@@ -1485,7 +1485,7 @@ export const zhCN = {
       directoryNameHint: "此资源库在服务器上的文件夹名称，默认使用资源库名称。",
       autoSync: "自动同步",
       pollInterval: "轮询间隔（秒）",
-      pollIntervalHint: "云端变化检查间隔；资源库较大时建议填写更长的轮询时间。",
+      pollIntervalHint: "只用于检查云端是否有变化。本地改标签、导入等在停手约 5 秒后上传，不受此间隔影响。资源库较大时建议把轮询设长一些。",
       autoSyncHint: "开启后，本库资产变动会自动同步到服务器，也会自动拉取服务器上的改动。",
       transferProgress: "同步中：文件 {filesDone}/{filesTotal}，已传输 {bytesDone}/{bytesTotal}。",
       noServer: "尚未配置同步服务器。请先在「设置 → 同步」中添加服务器。",
