@@ -56,6 +56,7 @@ describe("useWorkspaceTabsController", () => {
         beginTransition: () => () => true,
         getDefaultBrowseState: createDefaultWorkspaceTabBrowseState,
         onHistoryChanged: () => undefined,
+        persistTabs: () => undefined,
       });
       return null;
     }
@@ -106,6 +107,7 @@ describe("useWorkspaceTabsController", () => {
         beginTransition: () => () => true,
         getDefaultBrowseState: createDefaultWorkspaceTabBrowseState,
         onHistoryChanged: () => undefined,
+        persistTabs: () => undefined,
       });
       return null;
     }
@@ -166,6 +168,7 @@ describe("useWorkspaceTabsController", () => {
         beginTransition: () => () => true,
         getDefaultBrowseState: createDefaultWorkspaceTabBrowseState,
         onHistoryChanged: () => undefined,
+        persistTabs: () => undefined,
       });
       return null;
     }
@@ -206,6 +209,7 @@ describe("useWorkspaceTabsController", () => {
         beginTransition: () => () => true,
         getDefaultBrowseState: createDefaultWorkspaceTabBrowseState,
         onHistoryChanged: () => undefined,
+        persistTabs: () => undefined,
       });
       return null;
     }
@@ -223,5 +227,97 @@ describe("useWorkspaceTabsController", () => {
 
     expect(controller!.state.activeTabId).toBe(firstTabId);
     expect(controller!.isNavigationCurrent(oldRequest)).toBe(false);
+  });
+
+  it("reorders tabs without changing identity, and never persists a teardown", async () => {
+    const persistTabs = vi.fn();
+    let controller: ReturnType<typeof useWorkspaceTabsController> | undefined;
+    function Host() {
+      controller = useWorkspaceTabsController({
+        captureContext: () => null,
+        restoreTab: async () => undefined,
+        restoreAll: async () => undefined,
+        beginTransition: () => () => true,
+        getDefaultBrowseState: createDefaultWorkspaceTabBrowseState,
+        onHistoryChanged: () => undefined,
+        persistTabs,
+      });
+      return null;
+    }
+
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(<Host />));
+    await act(async () => controller?.addTab());
+    await act(async () => controller?.addTab());
+    const [first, second, third] = controller!.state.tabs.map((tab) => tab.id);
+    const activeTabId = controller!.state.activeTabId;
+    persistTabs.mockClear();
+
+    await act(async () => controller?.moveTab(third!, 0));
+
+    expect(controller!.state.tabs.map((tab) => tab.id)).toEqual([
+      third,
+      first,
+      second,
+    ]);
+    expect(controller!.state.activeTabId).toBe(activeTabId);
+    expect(persistTabs).toHaveBeenCalledTimes(1);
+
+    persistTabs.mockClear();
+    await act(async () => controller?.resetTabs());
+    expect(persistTabs).not.toHaveBeenCalled();
+  });
+
+  it("rebuilds a saved strip and keeps the saved active tab", async () => {
+    const persistTabs = vi.fn();
+    let controller: ReturnType<typeof useWorkspaceTabsController> | undefined;
+    function Host() {
+      controller = useWorkspaceTabsController({
+        captureContext: () => null,
+        restoreTab: async () => undefined,
+        restoreAll: async () => undefined,
+        beginTransition: () => () => true,
+        getDefaultBrowseState: createDefaultWorkspaceTabBrowseState,
+        onHistoryChanged: () => undefined,
+        persistTabs,
+      });
+      return null;
+    }
+
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(<Host />));
+
+    await act(async () =>
+      controller?.restoreTabs({
+        version: 1,
+        activeTabId: "tab-b",
+        tabs: [
+          { id: "tab-a", location: { kind: "folder", folderId: "folder-1" } },
+          { id: "tab-b", location: { kind: "all" } },
+          { id: "tab-c", location: { kind: "trash", tombstoneId: null } },
+        ],
+      })
+    );
+
+    expect(controller!.state.tabs.map((tab) => tab.id)).toEqual([
+      "tab-a",
+      "tab-b",
+      "tab-c",
+    ]);
+    expect(controller!.state.activeTabId).toBe("tab-b");
+    expect(controller!.state.tabs[0]?.history.current).toEqual({
+      kind: "folder",
+      folderId: "folder-1",
+    });
+    // A restored location sits on an "all assets" base so Back works at once.
+    expect(controller!.state.tabs[0]?.history.canBack).toBe(true);
+    expect(controller!.state.tabs[1]?.history.canBack).toBe(false);
+    // The startup restore writes the session itself, against the library id it
+    // holds; the render-bound persist hook would still see the previous library.
+    expect(persistTabs).not.toHaveBeenCalled();
   });
 });

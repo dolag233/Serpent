@@ -3,6 +3,8 @@
 > 更新时间：2026-09-13
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
+- **2026-09-13 工作区标签页收尾二（Serpent-3ad7ed）**：按用户反馈补齐六项——标签可拖动实时换位（顺序持久化）、只剩一个标签时不出现关闭入口（× 与右键菜单项同步隐藏）、文件夹标签 hover 显示**库内路径**（普通文件夹为 Assets 之下的相对路径，链接文件夹为磁盘路径，只用 Renderer 已有的 `folder.relativePath` / `linkedFolder.absoluteRootPath`，未新增路径能力）、标签条按标签数动态收窄（220px 逐级降到 132px）、右键「关闭其他标签页」补 close 图标、以及**重启恢复标签页**：按资源库存 `serpent.workspace-tabs.v1.<libraryId>`（位置与顺序，不含前进/后退分支），启动恢复先于浏览范围恢复，使上次浏览位置落回关闭时活动的那个标签；关库/换库的拆除不写会话。见[开发日志](development/2026-09-13-workspace-tabs-followups-development-log.md)，清单 TABS-005–009 待人类验收。顺带修正该 E2E 里写死 Windows 文案的「在文件浏览器中打开」断言（macOS 上为「在 Finder 中打开」），并把用例 `finally` 里无超时的退出等待换成有界 helper（超时后会挂住整轮运行）。**该文件第 1 个用例本轮未能取得整文件通过**：新增断言（拖动换位、单标签无 ×、菜单关闭项隐藏）跑到时均通过，但既有断言（新建标签后搜索框清空、缓存视口探针）在开发机高负载下交替失败，耗时在 18 秒与 120 秒超时之间摆动，判断为既有 flaky，已开 `Serpent-75a2df` 记「疑似 flaky，未关闭」；新增的重启恢复用例 5/5 通过。另发现全量单测中 `import-source-failure.test.ts` 在 macOS 上失败（`path.basename` 平台相关），已开 `Serpent-ee725a`。
+
 - **2026-09-13 开发者文档属于 `main`**：`docs/developer/` 是公开贡献者指南（本地搭建、如何参与），不是 `docs/internal/` 的切片记录。发布合流不得再剥离该目录；历史上 `0b55d64a` 从 main 删除属于分类错误。README 相对链接依赖 `main` 上保留这些文件。
 
 - **2026-09-12/13 工作区标签页（Serpent-738426）**：用户确认的文件夹式页签 UI 已保留；业务导航按标签隔离历史、搜索、选择与精确视口，缓存首帧先恢复目标视口，切换时保留已提交画面避免白闪。typecheck、21 项定向单测、改动文件 ESLint、隔离 Electron E2E 通过，Luna High 复审通过缓存首帧与历史回放两项修复。Serpent-bb3ce7 和 Serpent-83d71f 已关闭；冷标签取消恢复可能误缓存旧画布的 P2 Serpent-d2bbe3 阻塞父工单，TABS-001–004 待人类验收。见[导航算法](implementation/2026-09-12-workspace-tab-navigation-algorithm.md)、[开发日志](development/2026-09-12-workspace-tabs-development-log.md)和[QA](qa/2026-09-12-workspace-tabs-qa.md)。

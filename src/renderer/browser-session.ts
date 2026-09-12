@@ -3,6 +3,11 @@
  * Extracted from App.tsx for Serpent-uye — pure read/write/build helpers.
  */
 
+import {
+  resolveSessionStorage,
+  type SessionStorage,
+} from "./session-storage";
+
 export type StoredBrowserSession = {
   version: 1;
   scope:
@@ -16,10 +21,7 @@ export type StoredBrowserSession = {
   selectedAssetName: string;
 };
 
-export type BrowserSessionStorage = {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-};
+export type BrowserSessionStorage = SessionStorage;
 
 export type BrowseStateForSession = {
   showTrash: boolean;
@@ -38,20 +40,11 @@ export function browserSessionKey(libraryId: string): string {
   return `serpent.browser-session.v1.${libraryId}`;
 }
 
-function resolveStorage(
-  storage?: BrowserSessionStorage,
-): BrowserSessionStorage | null {
-  if (storage) return storage;
-  const ls = (globalThis as { localStorage?: BrowserSessionStorage })
-    .localStorage;
-  return ls ?? null;
-}
-
 export function readBrowserSession(
   libraryId: string,
   storage?: BrowserSessionStorage,
 ): StoredBrowserSession | null {
-  const store = resolveStorage(storage);
+  const store = resolveSessionStorage(storage);
   if (!store) return null;
   try {
     const value = JSON.parse(
@@ -94,7 +87,7 @@ export function writeBrowserSession(
   session: StoredBrowserSession,
   storage?: BrowserSessionStorage,
 ): void {
-  const store = resolveStorage(storage);
+  const store = resolveSessionStorage(storage);
   if (!store) return;
   store.setItem(browserSessionKey(libraryId), JSON.stringify(session));
 }

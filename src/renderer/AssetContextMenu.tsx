@@ -718,13 +718,16 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           return (
             <>
               <ContextMenuSection>
-                <ContextMenuItem
-                  icon={<Icon name="close" size={14} />}
-                  label={t("tabs.close")}
-                  onAction={() => props.onCloseWorkspaceTab(desc.tabId)}
-                />
+                {desc.canClose ? (
+                  <ContextMenuItem
+                    icon={<Icon name="close" size={14} />}
+                    label={t("tabs.close")}
+                    onAction={() => props.onCloseWorkspaceTab(desc.tabId)}
+                  />
+                ) : null}
                 <ContextMenuItem
                   disabled={!desc.canCloseOthers}
+                  icon={<Icon name="close" size={14} />}
                   label={t("tabs.closeOthers")}
                   onAction={() => props.onCloseOtherWorkspaceTabs(desc.tabId)}
                 />

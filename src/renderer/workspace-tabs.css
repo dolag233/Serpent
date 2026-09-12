@@ -63,7 +63,7 @@
   align-items: flex-start;
   position: relative;
   min-width: 132px;
-  max-width: 220px;
+  max-width: var(--workspace-tab-max-width, 220px);
   height: auto;
   margin-top: var(--ui-space-1);
   padding-top: var(--ui-space-1);

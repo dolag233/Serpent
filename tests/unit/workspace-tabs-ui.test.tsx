@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceTabs } from "../../src/renderer/WorkspaceTabs";
 import { LocaleProvider } from "../../src/renderer/i18n";
+import { workspaceTabMaxWidthPx } from "../../src/renderer/workspace-tabs";
 
 describe("WorkspaceTabs interaction contract", () => {
   let root: Root | undefined;
@@ -30,6 +31,7 @@ describe("WorkspaceTabs interaction contract", () => {
       onSelect: vi.fn(),
       onAdd: vi.fn(),
       onClose: vi.fn(),
+      onReorder: vi.fn(),
       onContextMenu: vi.fn(),
       ...overrides,
     };
@@ -167,5 +169,83 @@ describe("WorkspaceTabs interaction contract", () => {
     expect(onClose).toHaveBeenCalledExactlyOnceWith("two");
     expect(onParentKeyDown).not.toHaveBeenCalled();
     document.removeEventListener("keydown", onParentKeyDown);
+  });
+
+  it("hides the close affordance while only one tab is open", async () => {
+    const { onClose, container: host } = await renderTabs({
+      tabs: [{ id: "one", title: "All assets", icon: "file" }],
+      activeTabId: "one",
+    });
+    expect(host.querySelectorAll(".workspace-tab-close")).toHaveLength(0);
+    expect(host.querySelectorAll(".workspace-tab-add")).toHaveLength(1);
+
+    // Delete is still swallowed so it cannot reach the canvas, but the last tab stays.
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[role="tab"]')!.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "Delete",
+        }),
+      );
+    });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("uses a folder tab's location as its hover tip", async () => {
+    const { container: host } = await renderTabs({
+      tabs: [
+        { id: "one", title: "All assets", icon: "file" },
+        { id: "two", title: "Characters", tip: "Reference/Characters", icon: "folder" },
+      ],
+    });
+    const titles = [...host.querySelectorAll<HTMLElement>(".workspace-tab-select")];
+    expect(titles[0]?.getAttribute("data-hover-tip")).toBe("All assets");
+    expect(titles[1]?.getAttribute("data-hover-tip")).toBe("Reference/Characters");
+  });
+
+  it("reorders tabs by dragging one onto another tab's edge", async () => {
+    const { onReorder, container: host } = await renderTabs();
+    const items = [...host.querySelectorAll<HTMLDivElement>(".workspace-tab")];
+    const dragEvent = (type: string, clientX: number) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "clientX", { value: clientX });
+      Object.defineProperty(event, "dataTransfer", {
+        value: {
+          dropEffect: "",
+          effectAllowed: "",
+          setData: () => undefined,
+        },
+      });
+      return event;
+    };
+    Object.defineProperty(items[0]!, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 100, width: 120, top: 0, height: 30 }),
+    });
+
+    await act(async () => {
+      items[2]!.dispatchEvent(dragEvent("dragstart", 0));
+    });
+    // Left half of the first tab: the dragged tab lands in front of it.
+    await act(async () => {
+      items[0]!.dispatchEvent(dragEvent("dragover", 110));
+    });
+
+    expect(onReorder).toHaveBeenCalledExactlyOnceWith("three", 0);
+  });
+
+  it("binds the tab width cap for the open tab count", async () => {
+    const { container: host } = await renderTabs({
+      tabs: Array.from({ length: 9 }, (_, index) => ({
+        id: `tab-${index}`,
+        title: `Tab ${index}`,
+        icon: "file" as const,
+      })),
+      activeTabId: "tab-0",
+    });
+    const cap = (host.querySelector(".workspace-tabs") as HTMLElement)
+      .style.getPropertyValue("--workspace-tab-max-width");
+    expect(cap).toBe(`${workspaceTabMaxWidthPx(9)}px`);
   });
 });

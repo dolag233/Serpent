@@ -174,6 +174,11 @@ import {
   type WorkspaceTabBrowseState,
   type WorkspaceTabSession,
 } from "./workspace-tabs";
+import {
+  buildWorkspaceTabsSession,
+  readWorkspaceTabsSession,
+  writeWorkspaceTabsSession,
+} from "./workspace-tabs-session";
 import { useWorkspaceTabsController } from "./use-workspace-tabs";
 import { presentWorkspaceTab } from "./workspace-tab-presentation";
 import {
@@ -1585,7 +1590,9 @@ function AppInner() {
     addTab: addWorkspaceTab,
     closeTab: closeWorkspaceTab,
     closeOtherTabs: closeOtherWorkspaceTabs,
+    moveTab: moveWorkspaceTab,
     resetTabs: resetWorkspaceTabs,
+    restoreTabs: restoreWorkspaceTabs,
     beginNavigation: beginWorkspaceTabNavigation,
     isNavigationCurrent: isWorkspaceTabNavigationCurrent,
     activateRenderSnapshotLibrary,
@@ -1603,10 +1610,35 @@ function AppInner() {
         canForward: history.canForward,
       });
     },
+    persistTabs: (tabsState) => {
+      const libraryId = library?.libraryId;
+      if (!libraryId) return;
+      writeWorkspaceTabsSession(
+        libraryId,
+        buildWorkspaceTabsSession(tabsState),
+      );
+    },
   });
   useEffect(() => {
     activateRenderSnapshotLibrary(library?.libraryId ?? null);
   }, [activateRenderSnapshotLibrary, library?.libraryId]);
+  /**
+   * Rebuild the saved tab strip for the library the session restore just opened.
+   * The write is explicit: `persistTabs` reads the library from render state,
+   * which has not caught up with the library being opened yet.
+   */
+  const restoreWorkspaceTabsForLibrary = useCallback(
+    (libraryId: string) => {
+      const restored = restoreWorkspaceTabs(
+        readWorkspaceTabsSession(libraryId),
+      );
+      writeWorkspaceTabsSession(
+        libraryId,
+        buildWorkspaceTabsSession(restored),
+      );
+    },
+    [restoreWorkspaceTabs],
+  );
   const [appLogEntries, setAppLogEntries] = useState<AppLogEntry[]>([]);
   const [appLogLoading, setAppLogLoading] = useState(false);
   const [appLogAutomationCorrelationId, setAppLogAutomationCorrelationId] = useState("");
@@ -3960,6 +3992,7 @@ function AppInner() {
     setAssetSelectionAnchor,
     setBrowserSessionReady,
     resetImportTargetFolderRef: managedImportTargetFolderIdRef,
+    restoreWorkspaceTabs: restoreWorkspaceTabsForLibrary,
     pendingRestoredFocusRef,
     navHistoryRef,
     setNavHistoryUi,
@@ -11748,6 +11781,7 @@ function AppInner() {
               onAdd={() => void addWorkspaceTab()}
               onClose={(tabId) => void closeWorkspaceTab(tabId)}
               onSelect={(tabId) => void selectWorkspaceTab(tabId)}
+              onReorder={(tabId, toIndex) => moveWorkspaceTab(tabId, toIndex)}
               onContextMenu={(tabId, position) => {
                 const tab = workspaceTabPresentations.find(
                   (candidate) => candidate.id === tabId,
@@ -11759,6 +11793,7 @@ function AppInner() {
                     tabId,
                     name: tab.title,
                     entity: tab.entity,
+                    canClose: workspaceTabPresentations.length > 1,
                     canCloseOthers: workspaceTabPresentations.length > 1,
                   },
                   position,

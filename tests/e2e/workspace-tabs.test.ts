@@ -1,4 +1,10 @@
-import { _electron as electron, expect, test, type Page } from "@playwright/test";
+import {
+  _electron as electron,
+  expect,
+  test,
+  type ElectronApplication,
+  type Page,
+} from "@playwright/test";
 
 import { once } from "node:events";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -13,7 +19,16 @@ import {
 
 test.describe.configure({ timeout: 120_000 });
 
-function launchApp(temporaryRoot: string, libraryPath: string, importFiles: string) {
+// The folder menu names the platform's file browser, so the label differs on macOS.
+const revealInFileManagerLabel =
+  process.platform === "darwin" ? "在 Finder 中打开" : "在文件浏览器中打开";
+
+function launchApp(
+  temporaryRoot: string,
+  libraryPath: string,
+  importFiles: string,
+  extraEnv: Record<string, string> = {},
+) {
   const applicationDirectory =
     process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
   return electron.launch({
@@ -27,6 +42,7 @@ function launchApp(temporaryRoot: string, libraryPath: string, importFiles: stri
       SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
       SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, "user-data"),
       SERPENT_E2E_IMPORT_FILES: importFiles,
+      ...extraEnv,
     },
   });
 }
@@ -269,6 +285,27 @@ async function waitForWorkspaceNavigation(window: Page) {
   );
 }
 
+/** macOS keeps the process alive after the last window closes; quit explicitly. */
+async function quitApplication(application: ElectronApplication): Promise<void> {
+  const childProcess = application.process();
+  if (childProcess.exitCode === null) {
+    try {
+      await application.evaluate(({ app }) => app.quit());
+    } catch {
+      // The transport can close before the child process exits.
+    }
+    await Promise.race([
+      once(childProcess, "exit").then(() => undefined),
+      new Promise<void>((resolve) => setTimeout(resolve, 10_000)),
+    ]);
+  }
+  if (childProcess.exitCode === null) {
+    childProcess.kill("SIGKILL");
+    await once(childProcess, "exit").catch(() => undefined);
+  }
+  await application.close().catch(() => undefined);
+}
+
 test("keeps navigation inside explicit tabs and exposes contextual tab actions", async () => {
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), "serpent-workspace-tabs-"));
   const libraryName = "标签页验收库";
@@ -286,7 +323,6 @@ test("keeps navigation inside explicit tabs and exposes contextual tab actions",
     libraryPath,
     [sourceAsset, ...folderAssets].join(path.delimiter),
   );
-  const childProcess = application.process();
 
   try {
     const window = await application.firstWindow();
@@ -304,6 +340,7 @@ test("keeps navigation inside explicit tabs and exposes contextual tab actions",
 
     const tablist = window.getByRole("tablist", { name: "工作区标签页" });
     const tabs = tablist.getByRole("tab");
+    const tabItems = tablist.locator(".workspace-tab");
     await expect(tabs).toHaveCount(1);
     const initialTabName = await tabs.first().getAttribute("aria-label");
     expect(initialTabName).toBeTruthy();
@@ -499,7 +536,7 @@ test("keeps navigation inside explicit tabs and exposes contextual tab actions",
     await expect(folderMenu.getByRole("menuitem", { name: "复制名称" })).toBeVisible();
     await expect(folderMenu.getByRole("menuitem", { name: "复制路径" })).toBeVisible();
     await expect(
-      folderMenu.getByRole("menuitem", { name: "在文件浏览器中打开" }),
+      folderMenu.getByRole("menuitem", { name: revealInFileManagerLabel }),
     ).toBeVisible();
     await folderMenu.getByRole("menuitem", { name: "在文件夹中显示" }).click();
     await expect(folderRow(window, "角色原画")).toBeFocused();
@@ -516,10 +553,43 @@ test("keeps navigation inside explicit tabs and exposes contextual tab actions",
     await expect(tabs.first()).toHaveAccessibleName("角色原画");
     await expect(window.getByRole("searchbox", { name: "搜索资源库" })).toHaveValue("blue metal");
 
-    await window.getByRole("button", { name: "关闭标签页：角色原画" }).click();
-    await expect(tabs).toHaveCount(1);
+    // The last tab can never be closed away: no X, and no close item in its menu.
+    await expect(
+      window.getByRole("button", { name: "关闭标签页：角色原画" }),
+    ).toHaveCount(0);
+    await tabs.first().click({ button: "right" });
+    const lastTabMenu = window.getByRole("menu", { name: "角色原画" });
+    await expect(lastTabMenu.getByRole("menuitem", { name: "关闭标签页" })).toHaveCount(0);
+    await expect(
+      lastTabMenu.getByRole("menuitem", { name: "关闭其他标签页" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    await window.keyboard.press("Escape");
+    await expect(lastTabMenu).toHaveCount(0);
+
+    // Drag reorder: the tab follows whichever half of the target it lands on.
+    await window.getByRole("button", { name: "新建标签页" }).click();
+    await expect(tabs).toHaveCount(2);
+    await waitForWorkspaceNavigation(window);
+    await tabItems.first().click();
+    await waitForWorkspaceNavigation(window);
+
+    const secondTabBox = await tabItems.nth(1).boundingBox();
+    await tabItems.first().dragTo(tabItems.nth(1), {
+      targetPosition: { x: Math.max(8, (secondTabBox?.width ?? 160) - 6), y: 8 },
+    });
     await expect(tabs.first()).toHaveAccessibleName("所有资产");
-    await expect(window.getByRole("searchbox", { name: "搜索资源库" })).toHaveValue("");
+    await expect(tabs.nth(1)).toHaveAccessibleName("角色原画");
+    await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
+
+    await tabItems.nth(1).dragTo(tabItems.first(), {
+      targetPosition: { x: 6, y: 8 },
+    });
+    await expect(tabs.first()).toHaveAccessibleName("角色原画");
+    await expect(tabs.nth(1)).toHaveAccessibleName("所有资产");
+    await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
+    await tabItems.nth(1)
+      .getByRole("button", { name: "关闭标签页：所有资产" }).click();
+    await expect(tabs).toHaveCount(1);
 
     await window.getByRole("button", { name: "新建标签页" }).click();
     await expect(tabs).toHaveCount(2);
@@ -530,7 +600,7 @@ test("keeps navigation inside explicit tabs and exposes contextual tab actions",
     await delayNextBrowseSession(window, { smartCollectionId }, 900);
     await smartCollectionRow.click();
     await tablist.locator(".workspace-tab").first()
-      .getByRole("button", { name: "关闭标签页：所有资产" }).click();
+      .getByRole("button", { name: "关闭标签页：角色原画" }).click();
     await expect(tabs).toHaveCount(1);
     await expect(window.locator('.asset-card[title="blue metal.txt"]')).toBeVisible({
       timeout: 15_000,
@@ -540,16 +610,106 @@ test("keeps navigation inside explicit tabs and exposes contextual tab actions",
     await expect(window.locator('.asset-card[title="blue metal.txt"]')).toBeVisible();
     await expect(window.locator(".scope-crumb-label.is-current")).toContainText("慢速智能合集");
   } finally {
-    if (childProcess.exitCode === null) {
-      try {
-        await application.evaluate(({ app }) => app.quit());
-      } catch {
-        // The Electron process can close its Playwright transport before the
-        // child-process exit event arrives; still wait for exit and clean its
-        // isolated userData/library directory below.
-      }
-      await once(childProcess, "exit");
-    }
+    await quitApplication(application);
+    await rm(temporaryRoot, {
+      force: true,
+      recursive: true,
+      maxRetries: 20,
+      retryDelay: 250,
+    });
+  }
+});
+
+test("restores the saved tab strip after a relaunch", async () => {
+  const temporaryRoot = mkdtempSync(
+    path.join(tmpdir(), "serpent-workspace-tabs-restore-"),
+  );
+  const libraryName = "标签页恢复库";
+  const libraryPath = path.join(temporaryRoot, libraryName);
+  const sourceAsset = path.join(temporaryRoot, "restore fixture.txt");
+  writeFileSync(sourceAsset, "restore fixture", "utf8");
+
+  // The first launch has to record the recent library too: under SERPENT_E2E the
+  // recent-library file is only written when the restore flag is on, and the
+  // relaunch below depends on it to reopen the library by itself.
+  const application = await launchApp(temporaryRoot, libraryPath, sourceAsset, {
+    SERPENT_E2E_RESTORE_RECENT: "1",
+  });
+  try {
+    const window = await application.firstWindow();
+    await createLibrary(window, libraryName);
+    await createFolder(window, "恢复夹甲");
+    await createFolder(window, "恢复夹乙");
+    await importFilesThroughBridge(window, "恢复夹甲");
+    await createFolder(window, "恢复夹丙");
+
+    const tablist = window.getByRole("tablist", { name: "工作区标签页" });
+    const tabs = tablist.getByRole("tab");
+
+    await folderRow(window, "恢复夹甲").click();
+    await waitForWorkspaceNavigation(window);
+    await expect(window.locator(".scope-crumb-label.is-current")).toHaveText(
+      "恢复夹甲",
+    );
+
+    await window.getByRole("button", { name: "新建标签页" }).click();
+    await expect(tabs).toHaveCount(2);
+    await waitForWorkspaceNavigation(window);
+    await folderRow(window, "恢复夹乙").click();
+    await waitForWorkspaceNavigation(window);
+    await expect(window.locator(".scope-crumb-label.is-current")).toHaveText(
+      "恢复夹乙",
+    );
+
+    await window.getByRole("button", { name: "新建标签页" }).click();
+    await expect(tabs).toHaveCount(3);
+    await waitForWorkspaceNavigation(window);
+
+    // Quit with the middle tab active, so the relaunch has to pick it back.
+    await tabs.nth(1).click();
+    await waitForWorkspaceNavigation(window);
+    await expect(window.locator(".scope-crumb-label.is-current")).toHaveText(
+      "恢复夹乙",
+    );
+    await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
+  } finally {
+    await quitApplication(application);
+  }
+
+  const relaunched = await launchApp(temporaryRoot, libraryPath, "", {
+    SERPENT_E2E_RESTORE_RECENT: "1",
+  });
+  try {
+    const window = await relaunched.firstWindow();
+    await expect(
+      window.getByRole("button", { name: `当前资源库 ${libraryName}` }),
+    ).toBeVisible({ timeout: 20_000 });
+    await waitForWorkspaceNavigation(window);
+
+    const tablist = window.getByRole("tablist", { name: "工作区标签页" });
+    const tabs = tablist.getByRole("tab");
+    await expect(tabs).toHaveCount(3);
+    await expect(tabs.nth(0)).toHaveAccessibleName("恢复夹甲");
+    await expect(tabs.nth(1)).toHaveAccessibleName("恢复夹乙");
+    await expect(tabs.nth(2)).toHaveAccessibleName("所有资产");
+    await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
+    await expect(window.locator(".scope-crumb-label.is-current")).toHaveText(
+      "恢复夹乙",
+    );
+
+    // Every tab kept the place it was left on.
+    await tabs.nth(0).click();
+    await waitForWorkspaceNavigation(window);
+    await expect(window.locator(".scope-crumb-label.is-current")).toHaveText(
+      "恢复夹甲",
+    );
+    await tabs.nth(2).click();
+    await waitForWorkspaceNavigation(window);
+    await expect(window.locator(".scope-crumb-label.is-current")).toHaveText(
+      "所有资产",
+    );
+  } finally {
+    await quitApplication(relaunched);
     await rm(temporaryRoot, {
       force: true,
       recursive: true,

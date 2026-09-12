@@ -87,6 +87,8 @@ export type ContextMenuDescriptor =
         | { kind: "folder"; id: string }
         | { kind: "collection"; id: string }
         | null;
+      /** False for the last remaining tab: the strip never empties entirely. */
+      canClose: boolean;
       canCloseOthers: boolean;
     }
   | {

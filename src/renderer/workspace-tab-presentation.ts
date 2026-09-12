@@ -9,11 +9,14 @@ import type {
 import type { IconName } from "./Icons";
 import type { TranslateFn } from "./i18n";
 import type { PluginSidebarViewDescriptor } from "./plugin-sidebar-views";
+import type { WorkspaceNavLocation } from "./workspace-nav-history";
 import type { WorkspaceTabSession } from "./workspace-tabs";
 
 export interface WorkspaceTabPresentation {
   id: string;
   title: string;
+  /** Hover text: a folder's location, otherwise the title. */
+  tip: string;
   icon: IconName;
   entity:
     | { kind: "folder"; id: string; name: string }
@@ -32,12 +35,54 @@ export interface WorkspaceTabPresentationInput {
   t: TranslateFn;
 }
 
+function normalizeRelativePath(value: string | undefined): string {
+  return (value ?? "").trim().replace(/^\/+|\/+$/gu, "");
+}
+
+/**
+ * The path a folder tab shows on hover. A managed folder lives inside the
+ * library, so the path the user actually navigates by (Assets-relative) is what
+ * tells two same-named folders apart. A linked folder lives on someone else's
+ * disk, so its root is the only path that identifies it. Both are assembled
+ * from data the Renderer already holds — no new path capability is exposed.
+ */
+export function folderTabHoverPath(
+  managed: Pick<ManagedFolderSummary, "relativePath"> | undefined,
+  linked:
+    | Pick<LinkedFolderSummary, "absoluteRootPath" | "relativePath">
+    | undefined,
+  fallback: string,
+): string {
+  if (linked) {
+    const root = linked.absoluteRootPath.trim().replace(/[\\/]+$/u, "");
+    if (!root) return fallback;
+    const relative = normalizeRelativePath(linked.relativePath);
+    if (!relative) return root;
+    const separator = root.includes("\\") ? "\\" : "/";
+    return `${root}${separator}${relative.split("/").filter(Boolean).join(separator)}`;
+  }
+  const relative = normalizeRelativePath(managed?.relativePath);
+  return relative || fallback;
+}
+
 /** Resolves labels from shared navigation data so inactive tabs stay meaningful. */
 export function presentWorkspaceTab(
   tab: WorkspaceTabSession,
   input: WorkspaceTabPresentationInput,
 ): WorkspaceTabPresentation {
   const location = tab.history.current;
+  const presented = presentLocation(location, tab, input);
+  return {
+    ...presented,
+    tip: presented.tip ?? presented.title,
+  };
+}
+
+function presentLocation(
+  location: WorkspaceNavLocation,
+  tab: WorkspaceTabSession,
+  input: WorkspaceTabPresentationInput,
+): Omit<WorkspaceTabPresentation, "tip"> & { tip?: string } {
   switch (location.kind) {
     case "all":
       return { id: tab.id, title: input.t("scope.allAssets"), icon: "grid", entity: null };
@@ -50,6 +95,7 @@ export function presentWorkspaceTab(
       return {
         id: tab.id,
         title: name,
+        tip: folderTabHoverPath(managed, linked, name),
         icon: linked ? "link" : "folder",
         entity: { kind: "folder", id: location.folderId, name },
       };

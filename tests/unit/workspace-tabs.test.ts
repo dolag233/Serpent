@@ -7,10 +7,12 @@ import {
   createDefaultWorkspaceTabBrowseState,
   createWorkspaceTabs,
   getWorkspaceTab,
+  moveWorkspaceTab,
   selectWorkspaceTab,
   updateWorkspaceTabContext,
   updateWorkspaceTabBrowseState,
   workspaceTabBrowseStateHasDiscoveryInput,
+  workspaceTabMaxWidthPx,
 } from "../../src/renderer/workspace-tabs";
 
 function ids(...values: string[]) {
@@ -184,5 +186,39 @@ describe("workspace tabs", () => {
     expect(result.state.tabs.map((tab) => tab.id)).toEqual(["one"]);
     expect(result.state.activeTabId).toBe("one");
     expect(result.shouldNavigateToAll).toBe(true);
+  });
+
+  it("reorders tabs without touching history or the active tab", () => {
+    let state = createWorkspaceTabs(ids("one"));
+    state = addWorkspaceTab(state, ids("two"));
+    state = addWorkspaceTab(state, ids("three"));
+    state = selectWorkspaceTab(state, "two");
+    getWorkspaceTab(state, "one")!.history.push({ kind: "folder", folderId: "folder-a" });
+
+    const moved = moveWorkspaceTab(state, "three", 0);
+    expect(moved.tabs.map((tab) => tab.id)).toEqual(["three", "one", "two"]);
+    expect(moved.activeTabId).toBe("two");
+    expect(getWorkspaceTab(moved, "one")?.history.current).toEqual({
+      kind: "folder",
+      folderId: "folder-a",
+    });
+
+    expect(moveWorkspaceTab(moved, "three", 0)).toBe(moved);
+    expect(moveWorkspaceTab(moved, "missing", 0)).toBe(moved);
+    expect(moveWorkspaceTab(moved, "three", 99).tabs.map((tab) => tab.id)).toEqual([
+      "one",
+      "two",
+      "three",
+    ]);
+  });
+
+  it("caps the tab width by how many tabs are open", () => {
+    expect(workspaceTabMaxWidthPx(1)).toBe(220);
+    expect(workspaceTabMaxWidthPx(3)).toBe(220);
+    expect(workspaceTabMaxWidthPx(4)).toBe(202);
+    expect(workspaceTabMaxWidthPx(7)).toBe(148);
+    expect(workspaceTabMaxWidthPx(8)).toBe(132);
+    expect(workspaceTabMaxWidthPx(40)).toBe(132);
+    expect(workspaceTabMaxWidthPx(0)).toBe(220);
   });
 });

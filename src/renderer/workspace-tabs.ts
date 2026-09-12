@@ -174,6 +174,42 @@ export function selectWorkspaceTab(
   return { ...state, activeTabId: tabId };
 }
 
+/** Reorders tabs without touching tab identity, history, or the active tab. */
+export function moveWorkspaceTab(
+  state: WorkspaceTabsState,
+  tabId: string,
+  toIndex: number,
+): WorkspaceTabsState {
+  const fromIndex = state.tabs.findIndex((tab) => tab.id === tabId);
+  if (fromIndex < 0) return state;
+  const targetIndex = Math.max(
+    0,
+    Math.min(Math.trunc(toIndex), state.tabs.length - 1),
+  );
+  if (targetIndex === fromIndex) return state;
+  const tabs = [...state.tabs];
+  const [moved] = tabs.splice(fromIndex, 1);
+  tabs.splice(targetIndex, 0, moved!);
+  return { ...state, tabs };
+}
+
+/**
+ * Longest a tab may read at a given tab count. Few tabs get the full width;
+ * past three the cap steps down so every title keeps a readable run of text
+ * instead of every tab collapsing to an ellipsis.
+ */
+export const WORKSPACE_TAB_WIDTH_STEPS_PX = [
+  220, 220, 220, 202, 184, 166, 148, 132,
+] as const;
+
+export function workspaceTabMaxWidthPx(tabCount: number): number {
+  const index = Math.min(
+    Math.max(Math.trunc(tabCount) - 1, 0),
+    WORKSPACE_TAB_WIDTH_STEPS_PX.length - 1,
+  );
+  return WORKSPACE_TAB_WIDTH_STEPS_PX[index]!;
+}
+
 export function updateWorkspaceTabContext(
   state: WorkspaceTabsState,
   tabId: string,

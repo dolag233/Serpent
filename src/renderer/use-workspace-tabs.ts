@@ -6,6 +6,7 @@ import {
   closeWorkspaceTabsExcept,
   createWorkspaceTabs,
   getWorkspaceTab,
+  moveWorkspaceTab,
   selectWorkspaceTab,
   updateWorkspaceTabBrowseState,
   updateWorkspaceTabContext,
@@ -13,6 +14,10 @@ import {
   type WorkspaceTabSession,
   type WorkspaceTabsState,
 } from "./workspace-tabs";
+import {
+  createWorkspaceTabsFromSession,
+  type StoredWorkspaceTabsSession,
+} from "./workspace-tabs-session";
 import type { WorkspaceNavHistory } from "./workspace-nav-history";
 import {
   createWorkspaceNavigationCoordinator,
@@ -43,6 +48,12 @@ export interface UseWorkspaceTabsControllerOptions {
   beginTransition: () => () => boolean;
   getDefaultBrowseState: () => WorkspaceTabBrowseState;
   onHistoryChanged: (history: WorkspaceNavHistory) => void;
+  /**
+   * Persists the strip after a user tab action. Locations come straight off the
+   * live histories, so this stays accurate without a separate save step, and
+   * tearing the strip down for a library change never writes a session.
+   */
+  persistTabs: (state: WorkspaceTabsState) => void;
 }
 
 /** Owns tab lifetimes and keeps each tab paired with its independent history. */
@@ -61,12 +72,13 @@ export function useWorkspaceTabsController(options: UseWorkspaceTabsControllerOp
     callbacksRef.current = options;
   }, [options]);
 
-  const commit = useCallback((next: WorkspaceTabsState) => {
+  const commit = useCallback((next: WorkspaceTabsState, persist = true) => {
     stateRef.current = next;
     const activeTab = getWorkspaceTab(next, next.activeTabId);
     if (activeTab) historyRef.current = activeTab.history;
     setState(next);
     if (activeTab) callbacksRef.current.onHistoryChanged(activeTab.history);
+    if (persist) callbacksRef.current.persistTabs(next);
   }, []);
 
   const saveActiveContext = useCallback(() => {
@@ -254,8 +266,45 @@ export function useWorkspaceTabsController(options: UseWorkspaceTabsControllerOp
     navigation.invalidateLibrary();
     navigation.activateTab(next.activeTabId);
     renderSnapshotCache.clear();
-    commit(next);
+    // Closing or switching a library tears the strip down; the next library's
+    // own session must survive, so this teardown is never written.
+    commit(next, false);
   }, [commit, navigation, renderSnapshotCache]);
+
+  /**
+   * Rebuilds the strip for the library that just opened. Tab content itself is
+   * restored lazily: the startup browse session owns the active tab, and any
+   * other tab is loaded the first time the user selects it.
+   *
+   * Returns the rebuilt state and skips the persist hook: this runs during the
+   * startup restore, before `library` has re-rendered, so the caller writes the
+   * session against the library id it already knows.
+   */
+  const restoreTabs = useCallback(
+    (session: StoredWorkspaceTabsSession | null): WorkspaceTabsState => {
+      transitionEpochRef.current += 1;
+      callbacksRef.current.beginTransition();
+      const next = session
+        ? createWorkspaceTabsFromSession(session)
+        : createWorkspaceTabs();
+      navigation.invalidateLibrary();
+      navigation.activateTab(next.activeTabId);
+      renderSnapshotCache.clear();
+      commit(next, false);
+      return next;
+    },
+    [commit, navigation, renderSnapshotCache],
+  );
+
+  /** Reordering changes the strip only — never identity, content, or focus. */
+  const moveTab = useCallback(
+    (tabId: string, toIndex: number) => {
+      const next = moveWorkspaceTab(stateRef.current, tabId, toIndex);
+      if (next === stateRef.current) return;
+      commit(next);
+    },
+    [commit],
+  );
 
   const beginNavigation = useCallback(
     (historyMode: WorkspaceNavigationHistoryMode = "push") => {
@@ -292,7 +341,9 @@ export function useWorkspaceTabsController(options: UseWorkspaceTabsControllerOp
     addTab,
     closeTab,
     closeOtherTabs,
+    moveTab,
     resetTabs,
+    restoreTabs,
     saveActiveContext,
     beginNavigation,
     isNavigationCurrent,

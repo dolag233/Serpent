@@ -66,6 +66,11 @@ export type UseBrowserSessionRestoreArgs = {
   /** Importing after a relaunch starts at the library root even when the last
    * browse scope is restored to a nested folder. */
   resetImportTargetFolderRef: MutableRefObject<string | undefined>;
+  /**
+   * Rebuilds the saved tab strip before the browse scope is applied, so that
+   * scope lands in the tab that was active when the app was closed.
+   */
+  restoreWorkspaceTabs: (libraryId: string) => void;
   pendingRestoredFocusRef: MutableRefObject<string | null>;
   navHistoryRef: MutableRefObject<WorkspaceNavHistory>;
   setNavHistoryUi: Dispatch<
@@ -119,6 +124,7 @@ export function useBrowserSessionRestore(
     setAssetSelectionAnchor,
     setBrowserSessionReady,
     resetImportTargetFolderRef,
+    restoreWorkspaceTabs,
     pendingRestoredFocusRef,
     navHistoryRef,
     setNavHistoryUi,
@@ -144,6 +150,9 @@ export function useBrowserSessionRestore(
       setTrashedAssets([]);
       if (activeLibrary) {
         setLibraryLoading({ name: activeLibrary.displayName });
+        // Tabs first: the saved strip decides which tab is active, and the
+        // scope restored below is applied to that tab's history.
+        restoreWorkspaceTabs(activeLibrary.libraryId);
         const restoredItems =
           (await loadContent(activeLibrary, "all", {
             blockingLibraryLoad: true,
@@ -256,6 +265,7 @@ export function useBrowserSessionRestore(
     setTrashedAssets,
     setUiState,
     resetImportTargetFolderRef,
+    restoreWorkspaceTabs,
     t,
   ]);
 
