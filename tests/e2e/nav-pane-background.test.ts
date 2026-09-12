@@ -229,10 +229,17 @@ test("right-clicking the blank area opens the library-root folder menu", async (
       exact: true,
     });
     await expect(menu).toBeVisible();
-    // Serpent-a6c516: the menu starts by naming its subject.
+    // Serpent-a6c516: the menu starts by naming its subject, as a quiet caption
+    // (the multi-select summary style it reuses is the emphasized one).
     await expect(
       menu.locator(".context-menu-selection-summary", { hasText: /^根目录$/u }),
     ).toBeVisible();
+    expect(
+      await menu
+        .locator(".context-menu-selection-summary")
+        .first()
+        .evaluate((node) => getComputedStyle(node).fontWeight),
+    ).toBe("400");
 
     // Root-appropriate entries…
     await expect(

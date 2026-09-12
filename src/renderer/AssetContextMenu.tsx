@@ -1048,9 +1048,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             <>
               {/* Serpent-a6c516: name the subject — the root has no row of its
                   own in the menu, so the panel's blank area / root row menu
-                  starts by saying what it acts on. */}
+                  starts by saying what it acts on. Quiet caption weight: the
+                  shared summary class is the emphasized multi-select style. */}
               {desc.isLibraryRoot && (
-                <div className="context-menu-selection-summary">
+                <div className="context-menu-selection-summary context-menu-subject">
                   {t("menu.libraryRoot")}
                 </div>
               )}

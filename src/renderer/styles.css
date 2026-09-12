@@ -3990,6 +3990,15 @@ body.serpent-modal-open .app-shell {
   letter-spacing: 0.01em;
 }
 
+/* Serpent-a6c516: the library-root menu names its subject in the leading line.
+   It reuses the multi-select summary's geometry but is a quiet caption, not an
+   emphasized count — same reason it overrides the weight instead of the whole
+   block. Must stay after .context-menu-selection-summary (equal specificity). */
+.context-menu-subject {
+  color: var(--secondary);
+  font-weight: 400;
+}
+
 .context-menu-scope-note {
   max-width: 310px;
   margin: 0 6px 5px;
