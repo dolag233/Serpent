@@ -38,7 +38,7 @@ Open **Library settings** → **Sync**:
 - **The first sync uploads assets, metadata, and a manifest to the server**; later syncs transfer only changed files. Metadata includes human and AI tags, descriptions, ratings, and favorites. Collection membership is not synced yet.
 - If two machines edit the same file, the losing version is kept as a “name (conflict-…)” copy instead of being silently overwritten.
 - Auto-sync and manual sync are mutually exclusive; a failed sync only writes a log entry and does not interrupt you.
-- After a pull creates local files or folders, the sidebar and canvas update on their own. Empty folders with no files are not uploaded, so the other device will not show them.
+- After a pull creates local files, folders, or tags, the sidebar, canvas, and Inspector for the current selection update on their own. F5 also reloads tags on the selected asset. Empty folders with no files are not uploaded, so the other device will not show them.
 
 ## Open a synced library
 

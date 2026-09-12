@@ -306,6 +306,7 @@ export class SyncEngine {
         || remote.path !== local.path
         || remote.size !== local.size
         || remote.metadataVersion !== local.metadataVersion
+        || remote.metadataHash !== local.metadataHash
       ) {
         return true;
       }
@@ -390,9 +391,15 @@ export class SyncEngine {
     let remoteDeletes = 0;
     let localRecycles = 0;
     for (const action of actions) {
-      if (action.type === 'upload' || action.type === 'move-remote') uploads += 1;
-      else if (action.type === 'download' || action.type === 'relocate-local') downloads += 1;
-      else if (action.type === 'conflict') conflicts += 1;
+      if (action.type === 'upload' || action.type === 'move-remote' || action.type === 'upload-metadata') {
+        uploads += 1;
+      } else if (
+        action.type === 'download'
+        || action.type === 'relocate-local'
+        || action.type === 'download-metadata'
+      ) {
+        downloads += 1;
+      } else if (action.type === 'conflict') conflicts += 1;
       else if (action.type === 'delete-remote') remoteDeletes += 1;
       else if (action.type === 'delete-local') localRecycles += 1;
     }

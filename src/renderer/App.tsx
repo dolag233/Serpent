@@ -7349,6 +7349,8 @@ function AppInner() {
       const result = await api.refreshAssets({ libraryId: library.libraryId });
       if (!result.ok) throw new LibraryOperationError(result.error);
       await reloadCurrentContent();
+      const selected = selectedAssetIdRef.current;
+      if (selected) await refreshAfterAiRef.current(selected);
       setNotice(
         result.value.changedCount
           ? t("toast.diskSynced", { count: result.value.changedCount })
@@ -8966,10 +8968,17 @@ function AppInner() {
           // 完成事件 filesDone=0（worker 不携带 report），只弹中性
           // 「已同步」toast；仅当本次同步实际发生过传输（progress 曾
           // 显示 filesTotal>0）才提示，空跑同步不打扰。
-          if (syncRunNotifiedRef.current) {
+          const didNotify = syncRunNotifiedRef.current;
+          if (didNotify) {
             syncRunNotifiedRef.current = false;
             if (startedAt !== null) playTaskCompletionSound(startedAt);
             setNotice(t("settings.sync.statusSynced"));
+          }
+          // 元数据回放可能不发 asset.changed，或选中项未变。F5 原先也不
+          // 重拉 Inspector；同步结束后补拉当前选中项标签/描述。
+          const selected = selectedAssetIdRef.current;
+          if (selected && didNotify) {
+            void refreshAfterAiRef.current(selected);
           }
         } else {
           setSyncProgress(event);

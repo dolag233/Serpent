@@ -108,9 +108,10 @@
 应对：
 
 - 每资产一份 JSON，路径 `metadata/entries/<syncId>.json`，与 manifest `metadataVersion` 同号递增。
-- `SyncLibraryPort` 增加读本地元数据 / 应用远端元数据。规划：`metadataVersion` 单侧增加 → 上传或下载 sidecar；双侧不同且字段冲突 → 该资产元数据 LWW（与文件冲突副本策略分开，首期不要为标签再做 `(conflict-…)` 文件）。
+- `SyncLibraryPort` 增加读本地元数据 / 应用远端元数据。规划：`metadataVersion` 单侧增加 → 上传或下载 sidecar；双侧不同且字段冲突 → 该资产元数据 LWW（与文件冲突副本策略分开，首期不要为标签再做 `(conflict-…)` 文件）。**2026-09-12 用户实测**：AB 同时改同一资产人手标签时整份 sidecar 被一方覆盖（此次为 B）。已知缺口，工单 `Serpent-44936d` / 清单 `SYNC-META-004`。后续产品再定并集、按字段或冲突手选；未授权前不要改规划。
 - 改标签/描述/评分/AI 分析结果必须让自动同步跑起来（`asset.changed` 或等价 dirty）。
 - 打开同步库下载文件后必须应用 sidecar，不能只落媒体。旧 sidecar 没有 `ai` 键时不覆盖本机 AI 层。
+- 应用 sidecar 后，Renderer 必须刷新**当前选中资产**的 Inspector 标签/描述。不得只在 `selectedAssetId` 变化时 `getAssetMetadata`；F5（磁盘刷新）与 `sync.progress` complete 也要重拉。轮询须比较 `metadataHash`，不能只比 `metadataVersion`。
 - 测试可用极小文件 + 标签字符串，不要拷用户库。
 
 若首期时间只够改文档：那是产品降级，须改 `docs/user-guide/sync.md` 与英文手册，明确「当前版本不同步标签/描述」。默认实现通道，不默认只改文档。
@@ -127,6 +128,7 @@
 | `Serpent-079d71` | P1 | GitHub #40 manifest 身份不覆盖 | 无 |
 | `Serpent-b20a7f` | P1 | GitHub #39 标签/描述 sidecar | 被 `Serpent-486cba` 阻塞 |
 | `Serpent-871f34` | P2 已有 | 状态徽章与冲突手选 | 不纳入本 epic |
+| `Serpent-44936d` | P2 | 双端同时改标签整份 sidecar LWW | 只记录；与 `Serpent-871f34` 不同层 |
 
 ## 7. 测试
 
@@ -147,4 +149,5 @@
 - `SYNC-TRASH-001`：已同步照片进回收站，同步结束不整库 CONFLICT；浏览界面仍可点；缺缩略图会重建而不是卡死。
 - `SYNC-ID-001`：第二台电脑「打开同步资源库」后，远端 `manifest.json` 的 `libraryId`/`displayName` 仍是第一台写入的值。
 - `SYNC-META-001`：第一台打标签（人手或 AI）、写描述或等 AI 简介并等同步；第二台打开同步库后能看到同一标签和描述。合集成员本轮不同步。
+- `SYNC-META-004`：双端同时改同一资产标签时的冲突策略（当前整份 LWW）。只记录，不在本 epic 改规划。工单 `Serpent-44936d`。
 - `SYNC-UI-001`：第二台自动同步完成后，侧栏文件夹树与当前画布无需手动刷新即可看到对端新建的子文件夹（该文件夹里已有资产）。空文件夹仍可不出现。

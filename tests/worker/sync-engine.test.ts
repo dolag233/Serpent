@@ -324,6 +324,41 @@ describe('SyncEngine end-to-end (Serpent-xffq)', () => {
     await expect(engine.pollRemoteChange('lib-1', pollRoot)).resolves.toBe(false);
   });
 
+  it('pollRemoteChange reports change when only metadataHash advanced', async () => {
+    const driver = new MemoryDriver();
+    driver.files.set('参考库/manifest.json', Buffer.from(JSON.stringify({
+      formatVersion: 1,
+      libraryId: 'lib-1',
+      displayName: '参考库',
+      directoryName: '参考库',
+      entries: {
+        s1: {
+          path: 'a.png', contentHash: 'hash-x', size: 1, version: 2,
+          deviceId: 'dev-b', modifiedAt: '2026-08-15T12:00:00Z', metadataVersion: 3,
+          metadataHash: 'hash-meta-new',
+        },
+      },
+    })));
+    const library = new FakeLibrary();
+    await library.writeSyncManifestCache('lib-1', JSON.stringify({
+      formatVersion: 1,
+      libraryId: 'lib-1',
+      displayName: '参考库',
+      directoryName: '参考库',
+      entries: {
+        s1: {
+          path: 'a.png', contentHash: 'hash-x', size: 1, version: 2,
+          deviceId: 'dev-b', modifiedAt: '2026-08-15T12:00:00Z', metadataVersion: 3,
+          metadataHash: 'hash-meta-old',
+        },
+      },
+    }));
+    const engine = new SyncEngine(library, { deviceId: 'dev-a' });
+    engine.buildDriver = () => driver;
+    const pollRoot: SyncRootConfig = { id: 'root-1', baseUrl: 'https://mock/', directoryName: '参考库' };
+    await expect(engine.pollRemoteChange('lib-1', pollRoot)).resolves.toBe(true);
+  });
+
   it('pollRemoteChange reports change when remote advanced or local cache is missing (auto-sync)', async () => {
     const driver = new MemoryDriver();
     driver.files.set('参考库/manifest.json', Buffer.from(JSON.stringify({
@@ -413,9 +448,10 @@ describe('SyncEngine end-to-end (Serpent-xffq)', () => {
       onProgress: (done, total) => progress.push({ done, total }),
     });
     metaEngine.buildDriver = () => driver;
-    await metaEngine.syncOnce('lib-1', root);
+    const outcome = await metaEngine.syncOnce('lib-1', root);
     expect(progress[0]).toEqual({ done: 0, total: 1 });
     expect(progress.at(-1)).toEqual({ done: 1, total: 1 });
+    expect(outcome.report.uploads).toBe(1);
     expect([...driver.files.keys()].some((key) => key.includes('metadata/entries/s1.json'))).toBe(true);
   });
 

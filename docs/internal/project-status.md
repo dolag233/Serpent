@@ -3,6 +3,10 @@
 > 更新时间：2026-09-11
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
+- **2026-09-12 双端同时改标签整份 LWW**：AB 同时改同一已同步资产的人手标签时，整份 sidecar 被一方覆盖（此次收敛成 B）。`planMetadataActions` 按 `metadataVersion` / 哈希做整表上传或下载，不做标签并集，也不出 `(conflict-…)` 副本。首期规格如此；文件冲突手选仍是 `Serpent-871f34`。工单 `Serpent-44936d`，清单 `SYNC-META-004`。本轮只记录。
+
+- **2026-09-12 同步标签进库但 Inspector 不刷新**：对端改标签后本机 sqlite 已有 sidecar 写入，F5 只对账磁盘并重拉画布，Inspector 只在选中项变化时 `getAssetMetadata`。已改为库就绪、F5、同步完成都重拉当前选中项元数据；轮询比较 `metadataHash`；报告计入 metadata 动作。工单 `Serpent-2c462e`，清单 `SYNC-META-003`。
+
 - **2026-09-12 同步后文件夹栏不刷新**：对端新建子文件夹（内有资产）后，本机自动同步已写入 `managed_folders`，但回放不发或误发 `client` 的 `asset.changed`，侧栏仍停在旧树。已改为回放发 `source=sync`，Renderer 静默重拉导航，调度器忽略以免死循环。工单 `Serpent-7043e1`，清单 `SYNC-UI-001`。空文件夹仍按文件布局不同步。
 
 - **2026-09-12 本地立即同步**：轮询间隔只查云端；本地 `asset.changed` 默认 5 秒防抖后 `sync.run`，进行中的变更尾随一次。工单 `Serpent-7ddcaf`。同步状态条后续做。

@@ -269,8 +269,22 @@ export function useInspectorAssetMetadata({
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- selection primary only
-  }, [selectedAssetId]);
+    // 选中项不变时也要在库就绪后拉一次：会话恢复先 setSelectedAssetId、
+    // 后才有 library 时，旧依赖只会跳过这次 getAssetMetadata，F5 也补不上。
+  }, [
+    api,
+    applyLoadedMetadata,
+    library,
+    loadAiContentForAsset,
+    locale,
+    selectedAssetId,
+    setAiContent,
+    setAssetMetadata,
+    setDescriptionIsAi,
+    setError,
+    setVersionConflict,
+    t,
+  ]);
 
   const saveMetadata = useCallback(
     (fields: MetadataSaveFields): Promise<void> => {
