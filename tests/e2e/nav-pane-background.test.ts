@@ -256,6 +256,29 @@ test("right-clicking the blank area opens the library-root folder menu", async (
     await expect(menu.getByRole("menuitem", { name: "重命名…" })).toHaveCount(0);
     await expect(menu.getByRole("menuitem", { name: "移入回收站" })).toHaveCount(0);
     await expect(menu.getByRole("menuitem", { name: "删除" })).toHaveCount(0);
+    // Serpent-a6c516: 根目录不可忽略 —— 该项对根目录会拿菜单标题当路径。
+    await expect(menu.getByRole("menuitem", { name: "忽略此文件夹" })).toHaveCount(0);
+
+    // A real folder row still offers it (no regression).
+    await window.keyboard.press("Escape");
+    await folderRow(window, "Alpha").click({ button: "right" });
+    const alphaMenu = window.getByRole("menu", {
+      name: "文件夹操作：Alpha",
+      exact: true,
+    });
+    await expect(alphaMenu).toBeVisible();
+    await expect(
+      alphaMenu.getByRole("menuitem", { name: "忽略此文件夹" }),
+    ).toBeVisible();
+    await window.keyboard.press("Escape");
+
+    // Re-open the root menu to continue with creation.
+    await window.mouse.click(
+      Math.round(betaGutterBox!.x + 4),
+      Math.round(betaGutterBox!.y + betaGutterBox!.height / 2),
+      { button: "right" },
+    );
+    await expect(menu).toBeVisible();
 
     // 「新建文件夹」creates at the library root.
     await menu.getByRole("menuitem", { name: "新建文件夹" }).click();

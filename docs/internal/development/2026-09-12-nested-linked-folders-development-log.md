@@ -72,6 +72,7 @@ tsc --noEmit / eslint → exit 0
 - `NavigationSidebar`：**两个入口共用同一条回调** —— 文件夹栏空白区的 `onContextMenu`（同样用 `isFolderListBlankTarget` 判定）与「资源库根目录」那一行的 `onContextMenu`，都调用新 prop `onOpenRootFolderContextMenu`；行与控件上的右键仍走各自菜单。
 - `App`：以 `{type:'folder', folderId: sentinel, name: t('menu.libraryRoot')='根目录', locationKind:'managed', isLibraryRoot:true}` 打开文件夹菜单（菜单可访问名随之变成「文件夹操作：根目录」）；创建 / 导入链接文件夹 / 粘贴把 sentinel 映射为 `null`（根级）。
 - `commands/sidebar-commands.ts`：上下文新增 `isLibraryRoot`。库根菜单只保留 **在文件浏览器中打开 / 新建文件夹（根级文案，不再是"新建子文件夹"）/ 导入链接文件夹 / 粘贴 / 复制文件夹路径**；重命名、复制文件夹、克隆、移动、移入回收站、从硬盘删除、从资源库移除都不出现。插件文件夹命令也隐藏（它们按文件夹 id 分发，根没有真实 id）。
+- `AssetContextMenu`：**硬编码的「忽略此文件夹」也要门控**（用户反馈「根目录不可忽略」）。该项不在命令注册表里，是分支内直接渲染的，所以只靠 `isLibraryRoot` 的白名单挡不住；对根目录它还会用 `managed?.relativePath ?? desc.name` 兜底 → 拿菜单标题「根目录」当路径去建忽略规则（等于凭空造一条无效规则）。现在 `!desc.isLibraryRoot` 才渲染。Worker 侧无需改：`setIgnore` 的 managed + folder 分支要求 `managed_folders` 里存在该相对路径的行，根目录没有行 → 本来就返回 `FOLDER_NOT_FOUND`。
 - `AssetContextMenu`：库根菜单**首行**显示「根目录」，说明这个菜单作用于谁（其余文件夹菜单沿用"没有表头"的现状）。样式复用多项选择摘要那套几何（`.context-menu-selection-summary`：内边距/字号），但**另加修饰类 `.context-menu-subject`**把字重降到 400、颜色改为 `--secondary` —— 用户反馈「根目录的字重别这么大」：那份样式本来是给「已选 N 项」的强调用的（650 + `--text`），用作标题过重。修饰类必须排在 `.context-menu-selection-summary` 之后（同优先级靠源码顺序覆盖）。
 - `use-shell-file-actions` 的路径动作不需要改：`folder.get-path` 已支持根 sentinel，`LibraryService.resolveFolderPath` 对 sentinel 返回库的 `Assets` 目录（Main 用它 shell.openPath / 写剪贴板，路径不回到 Renderer）。
 

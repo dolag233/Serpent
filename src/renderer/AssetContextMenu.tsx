@@ -1163,25 +1163,30 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   items={folderPluginItems("organize", "after")}
                   onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
                 />
-                <ContextMenuItem
-                  icon={<Icon name="close" size={14} />}
-                  label={t("menu.ignoreFolder")}
-                  onAction={() => {
-                    const managed = desc.locationKind === "managed"
-                      ? managedFolders.find((folder) => folder.folderId === desc.folderId)
-                      : undefined;
-                    onSetIgnore({
-                      locationKind: desc.locationKind,
-                      linkedFolderId: desc.locationKind === "linked" ? desc.folderId : null,
-                      relativePath: desc.locationKind === "linked"
-                        ? desc.linkedRelativePath ?? ""
-                        : managed?.relativePath ?? desc.name,
-                      pathKind: "folder",
-                      ignored: true,
-                      name: desc.name,
-                    });
-                  }}
-                />
+                {/* Serpent-a6c516: the library root cannot be ignored — it has
+                    no managed folder row, so this entry would build an ignore
+                    rule from the menu's own label instead of a real path. */}
+                {!desc.isLibraryRoot && (
+                  <ContextMenuItem
+                    icon={<Icon name="close" size={14} />}
+                    label={t("menu.ignoreFolder")}
+                    onAction={() => {
+                      const managed = desc.locationKind === "managed"
+                        ? managedFolders.find((folder) => folder.folderId === desc.folderId)
+                        : undefined;
+                      onSetIgnore({
+                        locationKind: desc.locationKind,
+                        linkedFolderId: desc.locationKind === "linked" ? desc.folderId : null,
+                        relativePath: desc.locationKind === "linked"
+                          ? desc.linkedRelativePath ?? ""
+                          : managed?.relativePath ?? desc.name,
+                        pathKind: "folder",
+                        ignored: true,
+                        name: desc.name,
+                      });
+                    }}
+                  />
+                )}
               </ContextMenuSection>
               {(trashItem
                 || deleteFromDiskItem
