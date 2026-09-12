@@ -62,7 +62,21 @@ tsc --noEmit / eslint → exit 0
 - 链接根本身的删除/移除仍走原有路径（移除索引 / 删盘），不受本次改动影响。
 - 排序：链接子级排在同类 managed 子级之后（沿用"无创建时间排末尾"的既有规则）。
 
-## 6. 未验证项
+## 6. 追加：空白处右键 = 根目录右键（`Serpent-a6c516` / `NAV-FOLDER-ROOT-002`）
+
+用户补充：「把文件夹面板的空白处的语义理解为根目录，因此如果在空白处右键就相当于在根目录右键」，需要支持在文件浏览器中打开、添加文件夹等入口。
+
+实现：
+
+- 新增共享 sentinel `LIBRARY_ROOT_FOLDER_ID = 'serpent:library-root'`（`src/shared/library-root-folder.ts`）：根目录没有 `managed_folders` 行，用显式 sentinel 跨 Renderer → Main → Worker 传递，且**不复用**渲染层的浏览 scope 字符串 `'root'`。
+- `NavigationSidebar`：空白区新增 `onContextMenu`（同样用 `isFolderListBlankTarget` 判定，行/控件上的右键仍走各自菜单）→ 新 prop `onOpenRootFolderContextMenu`。
+- `App`：以 `{type:'folder', folderId: sentinel, name: 资源库根目录, locationKind:'managed', isLibraryRoot:true}` 打开文件夹菜单；创建 / 导入链接文件夹 / 粘贴把 sentinel 映射为 `null`（根级）。
+- `commands/sidebar-commands.ts`：上下文新增 `isLibraryRoot`。库根菜单只保留 **在文件浏览器中打开 / 新建文件夹（根级文案，不再是"新建子文件夹"）/ 导入链接文件夹 / 粘贴 / 复制文件夹路径**；重命名、复制文件夹、克隆、移动、移入回收站、从硬盘删除、从资源库移除都不出现。插件文件夹命令也隐藏（它们按文件夹 id 分发，根没有真实 id）。
+- `use-shell-file-actions` 的路径动作不需要改：`folder.get-path` 已支持根 sentinel，`LibraryService.resolveFolderPath` 对 sentinel 返回库的 `Assets` 目录（Main 用它 shell.openPath / 写剪贴板，路径不回到 Renderer）。
+
+证据：E2E `nav-pane-background` 新增用例——在缩进槽右键弹出「文件夹操作：资源库根目录」，菜单含在文件浏览器中打开/新建文件夹/导入链接文件夹/复制文件夹路径，不含重命名/移入回收站/删除；点「新建文件夹」后新文件夹 `parentFolderId=null`（根级）。单测：`sidebar-commands` 50 passed（含库根可见性、根级文案、命令透传 3 条）、`navigation-sidebar` 23 条中 19 passed（4 条为既有 Node v26 环境失败），含空白处右键触发根菜单、行上右键不触发。
+
+## 7. 未验证项
 
 - packaged / Windows：未执行。
 - 人类验收：见清单 `LINKED-FOLDER-NEST-001`（含右键入口、嵌套渲染、拒绝文案、父级进回收站后的表现）。

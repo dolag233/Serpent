@@ -159,6 +159,7 @@ import {
 } from '../shared/content-replace';
 import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type BrowseLayoutEntry, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type IgnoredPath, type LinkedFolderDirectoryMutation, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchQuery, type SearchScope, type SortDefinition, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagCooccurrenceGraph, type TagSummary, type TrashedFolderSummary } from '../shared/asset-types';
 import type { LibraryNavigationSummary } from '../shared/library-navigation';
+import { isLibraryRootFolderId } from '../shared/library-root-folder';
 import { BROWSE_SCOPE_MAX_ASSETS } from '../shared/browse-scope';
 import {
   createAutomationFilePlanHash,
@@ -20904,6 +20905,13 @@ export class LibraryService {
    */
   resolveFolderPath(libraryId: string, folderId: string): string {
     const openLibrary = this.requireOpenLibrary(libraryId);
+    // Serpent-316493: the folder panel's blank area is the library root — its
+    // context menu resolves to the Assets directory that holds top-level files.
+    if (isLibraryRootFolderId(folderId)) {
+      const assetsPath = path.join(openLibrary.summary.libraryPath, 'Assets');
+      if (!directoryExists(assetsPath)) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+      return assetsPath;
+    }
     const managed = openLibrary.connection
       .prepare('SELECT relative_path FROM managed_folders WHERE folder_id = ?')
       .get(folderId) as { relative_path: string } | undefined;

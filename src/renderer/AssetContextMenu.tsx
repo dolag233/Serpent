@@ -973,6 +973,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             linkedFolder,
             isLinkedRoot: desc.locationKind === "linked" ? !isLinkedChild : undefined,
             linkedRelativePath: desc.linkedRelativePath,
+            isLibraryRoot: desc.isLibraryRoot === true,
             actions: {
               openFolderInFileManager: onOpenFolderInFileManager,
               createSubfolder: onCreateSubfolder,
@@ -1033,11 +1034,21 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           const removeFromLibraryItem = resolvedById.get(
             "folder.remove-from-library",
           );
+          // Serpent-316493 follow-up: the library root has no managed_folders
+          // row, so plugin folder commands (which receive a folder id) are not
+          // offered for the blank-area menu.
+          const folderPluginItems = (
+            group: "open" | "organize" | "delete",
+            placement: "before" | "after",
+          ) =>
+            desc.isLibraryRoot
+              ? []
+              : pluginItemsForHostGroup(pluginFolderMenuPlacement, group, placement);
           return (
             <>
               <ContextMenuSection label={t("command.group.open")}>
                 <PluginMenuItems
-                  items={pluginItemsForHostGroup(pluginFolderMenuPlacement, "open", "before")}
+                  items={folderPluginItems("open", "before")}
                   onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
                 />
                 {openInFileManagerItem && (
@@ -1054,13 +1065,13 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   />
                 )}
                 <PluginMenuItems
-                  items={pluginItemsForHostGroup(pluginFolderMenuPlacement, "open", "after")}
+                  items={folderPluginItems("open", "after")}
                   onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
                 />
               </ContextMenuSection>
               <ContextMenuSection label={t("command.group.folders")}>
                 <PluginMenuItems
-                  items={pluginItemsForHostGroup(pluginFolderMenuPlacement, "organize", "before")}
+                  items={folderPluginItems("organize", "before")}
                   onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
                 />
                 {createSubfolderItem && (
@@ -1140,7 +1151,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   />
                 )}
                 <PluginMenuItems
-                  items={pluginItemsForHostGroup(pluginFolderMenuPlacement, "organize", "after")}
+                  items={folderPluginItems("organize", "after")}
                   onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
                 />
                 <ContextMenuItem
@@ -1166,11 +1177,11 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               {(trashItem
                 || deleteFromDiskItem
                 || removeFromLibraryItem
-                || pluginItemsForHostGroup(pluginFolderMenuPlacement, "delete", "before").length > 0
-                || pluginItemsForHostGroup(pluginFolderMenuPlacement, "delete", "after").length > 0) && (
+                || folderPluginItems("delete", "before").length > 0
+                || folderPluginItems("delete", "after").length > 0) && (
                 <ContextMenuSection label={t("command.group.delete")}>
                   <PluginMenuItems
-                    items={pluginItemsForHostGroup(pluginFolderMenuPlacement, "delete", "before")}
+                    items={folderPluginItems("delete", "before")}
                     onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
                   />
                   {trashItem && (
@@ -1210,7 +1221,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     />
                   )}
                   <PluginMenuItems
-                    items={pluginItemsForHostGroup(pluginFolderMenuPlacement, "delete", "after")}
+                    items={folderPluginItems("delete", "after")}
                     onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
                   />
                 </ContextMenuSection>

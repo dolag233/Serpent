@@ -713,6 +713,43 @@ describe("NavigationSidebar folder-section blank area", () => {
     expect(onChooseFolder).not.toHaveBeenCalled();
   });
 
+  // Serpent-316493 follow-up: right-clicking the blank area is a right-click on
+  // the library root.
+  it("opens the root context menu when the blank area is right-clicked", async () => {
+    const onOpenRootFolderContextMenu = vi.fn();
+    const nav = await renderSidebar({ onOpenRootFolderContextMenu });
+
+    await act(async () => {
+      const event = new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 42,
+        clientY: 24,
+      });
+      folderList(nav).dispatchEvent(event);
+    });
+
+    expect(onOpenRootFolderContextMenu).toHaveBeenCalledWith({ x: 42, y: 24 });
+  });
+
+  it("keeps a folder row right-click on that row's own menu", async () => {
+    const onOpenRootFolderContextMenu = vi.fn();
+    const nav = await renderSidebar({ onOpenRootFolderContextMenu });
+
+    await act(async () => {
+      folderRow(nav, childFolder.folderId).dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 10,
+          clientY: 10,
+        }),
+      );
+    });
+
+    expect(onOpenRootFolderContextMenu).not.toHaveBeenCalled();
+  });
+
   // Serpent-6e3b10
   it("keeps a folder row click on that folder and never falls back to the root", async () => {
     const onChooseFolder = vi.fn();

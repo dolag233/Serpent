@@ -3,6 +3,8 @@
 > 更新时间：2026-09-12
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
+- **2026-09-12 文件夹面板空白处右键 = 根目录右键**：「文件夹」栏空白区域（缩进槽 / 空状态）的右键菜单即**库根菜单**（`NAV-FOLDER-ROOT-002` / `Serpent-a6c516`）：在文件浏览器中打开、新建文件夹（根级文案）、导入链接文件夹、粘贴、复制文件夹路径；重命名 / 克隆 / 移入回收站 / 删除 / 从资源库移除不出现，插件文件夹命令也不出现。根目录用共享 sentinel `serpent:library-root` 跨 Renderer→Main→Worker 传递，`folder.get-path` 解析为库的 `Assets` 目录（路径不回 Renderer）。见 [开发日志](development/2026-09-12-nested-linked-folders-development-log.md) §6。E2E `nav-pane-background` 3 passed，待人验。
+
 - **2026-09-12 链接文件夹可挂在普通文件夹下**：文件夹右键新增「导入链接文件夹」（仅 managed 文件夹可见），把磁盘目录链接为该文件夹的子级（`Serpent-316493` / `LINKED-FOLDER-NEST-001`）。schema v49 只增一列 `linked_folders.parent_folder_id`（不加外键，回收站删父行时不静默清掉嵌套）；父级不可见（回收站 / 已删盘）时链接临时回落显示在库根，父级恢复后自动回到父级下。拒绝规则：目标在本库内 / 已是链接根 / 在已链接根内部，都有专门 reason 与中英文案。不做链接套链接。见 [开发日志](development/2026-09-12-nested-linked-folders-development-log.md)。worker 37 passed、真实 Electron E2E `linked-folders` 4 passed，待人验。
 
 - **2026-09-12 文件夹创建层级收口**：侧栏「+」与「链接」按钮改为**始终在资源库根目录**创建（`Serpent-186547` / `FOLDER-CREATE-001`），不再跟随当前选中文件夹；子级创建统一由右键承担（普通子文件夹已有，链接子级见 `Serpent-316493`）。见 [开发日志](development/2026-09-12-folder-create-at-root-development-log.md)。E2E `nav-pane-background` 2 passed，待人验。

@@ -795,6 +795,11 @@ export interface NavigationSidebarProps {
    * actually change anything; the HTML5 payload cannot be read during dragover.
    */
   getManagedFolderDragIds?: () => readonly string[] | null;
+  /**
+   * Serpent-316493 follow-up: right-click on the folder panel's blank area,
+   * i.e. on the library root.
+   */
+  onOpenRootFolderContextMenu?: (position: { x: number; y: number }) => void;
   /** Resolve an Electron native file drop back to managed asset ids. */
   onResolveManagedAssetDrop?: (files: File[]) => Promise<string[]>;
 
@@ -930,6 +935,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onExternalDrop,
     getManagedAssetDragIds,
     getManagedFolderDragIds,
+    onOpenRootFolderContextMenu,
     onResolveManagedAssetDrop,
     onAssetsDroppedOnFolder,
     onFoldersDroppedOnFolder,
@@ -1307,6 +1313,15 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         if (!library || inlineEditorOpen) return;
         if (!isFolderListBlankTarget(event)) return;
         void onChooseFolder("root");
+      },
+      // Serpent-316493 follow-up: the blank area *is* the library root, so its
+      // context menu is the root folder menu (open in file manager, new folder,
+      // import linked folder, paste, copy path).
+      onContextMenu: (event: React.MouseEvent<HTMLElement>) => {
+        if (!library) return;
+        if (!isFolderListBlankTarget(event)) return;
+        event.preventDefault();
+        onOpenRootFolderContextMenu?.({ x: event.clientX, y: event.clientY });
       },
       onDragEnter: (event: React.DragEvent<HTMLElement>) => {
         if (!library || !supportsManagedFolderDrag(event.dataTransfer)) return;

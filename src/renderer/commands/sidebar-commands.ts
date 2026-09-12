@@ -77,6 +77,13 @@ export interface SidebarCommandContext extends CommandContext {
   readonly isLinkedRoot?: boolean;
   /** Present when the subject is a linked child directory path. */
   readonly linkedRelativePath?: string;
+  /**
+   * Serpent-316493: the subject is the library root itself (the folder panel's
+   * blank area). Only actions that make sense without a managed_folders row are
+   * offered: open in file manager, create, import a linked folder, paste and
+   * copy path. Rename / clone / move / trash / disk-delete / remove are hidden.
+   */
+  readonly isLibraryRoot?: boolean;
   readonly actions: SidebarCommandActions;
 }
 
@@ -111,7 +118,12 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
   {
     id: 'folder.create-subfolder',
     title: (ctx) =>
-      translateForLocale(ctx.locale, 'command.folder.newSubfolder'),
+      translateForLocale(
+        ctx.locale,
+        ctx.isLibraryRoot
+          ? 'command.folder.newFolder'
+          : 'command.folder.newSubfolder',
+      ),
     group: 'organize',
     // Finder/Explorer new-folder chord; Windows Ctrl twin (Serpent-vf8x).
     shortcut: {
@@ -144,6 +156,7 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
     },
     visible: (ctx) =>
       ctx.menuKind === 'folder' &&
+      !ctx.isLibraryRoot &&
       (ctx.locationKind === 'managed' || ctx.locationKind === 'linked'),
     run: (ctx) => ctx.actions.renameFolder(ctx.subjectId, ctx.subjectName),
   },
@@ -178,7 +191,7 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
       mac: { label: '⌘C', key: 'c', metaKey: true },
       windows: { label: 'Ctrl+C', key: 'c', ctrlKey: true },
     },
-    visible: (ctx) => ctx.menuKind === 'folder',
+    visible: (ctx) => ctx.menuKind === 'folder' && !ctx.isLibraryRoot,
     disabledReason: offlineReason,
     run: (ctx) => ctx.actions.copyFolder(revealFolderId(ctx)),
   },
@@ -199,7 +212,10 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
     id: 'folder.clone',
     title: (ctx) => translateForLocale(ctx.locale, 'command.folder.clone'),
     group: 'organize',
-    visible: (ctx) => ctx.menuKind === 'folder' && ctx.locationKind === 'managed',
+    visible: (ctx) =>
+      ctx.menuKind === 'folder' &&
+      !ctx.isLibraryRoot &&
+      ctx.locationKind === 'managed',
     run: (ctx) => ctx.actions.cloneFolder(ctx.subjectId),
   },
   {
@@ -220,6 +236,7 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
     },
     visible: (ctx) =>
       ctx.menuKind === 'folder' &&
+      !ctx.isLibraryRoot &&
       (ctx.locationKind === 'managed' || ctx.locationKind === 'linked'),
     disabledReason: offlineReason,
     run: (ctx) => {
@@ -252,6 +269,7 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
     },
     visible: (ctx) =>
       ctx.menuKind === 'folder' &&
+      !ctx.isLibraryRoot &&
       (ctx.locationKind === 'managed' || ctx.locationKind === 'linked'),
     disabledReason: offlineReason,
     run: (ctx) =>

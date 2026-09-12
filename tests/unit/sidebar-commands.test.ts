@@ -121,8 +121,51 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     ]);
   });
 
-  it('linked 根：按普通文件夹提供创建、重命名、粘贴、删除等基础操作', () => {
-    const { ctx } = makeCtx({
+  // Serpent-316493 follow-up: the folder panel's blank area is the library root,
+  // so its menu offers only the root-appropriate entries.
+  it('库根（文件夹面板空白处）：只提供打开/新建/导入链接/粘贴/复制路径', () => {
+    const { ctx } = makeCtx({ isLibraryRoot: true });
+    expect(resolveIds(ctx)).toEqual([
+      'folder.open-in-file-manager',
+      'folder.create-subfolder',
+      'folder.import-linked',
+      'folder.copy-path',
+      'folder.paste',
+    ]);
+  });
+
+  it('库根的「新建」按根级文案显示（新建文件夹，而非新建子文件夹）', () => {
+    const { ctx } = makeCtx({ isLibraryRoot: true });
+    expect(findItem(registry.resolveMenu(ctx), 'folder.create-subfolder').label).toBe(
+      '新建文件夹',
+    );
+    const { ctx: folderCtx } = makeCtx();
+    expect(
+      findItem(registry.resolveMenu(folderCtx), 'folder.create-subfolder').label,
+    ).toBe('新建子文件夹');
+  });
+
+  it('库根的创建/导入/粘贴命令把 subjectId 透传（App 侧再把根 sentinel 映射为 null）', () => {
+    const { ctx, calls } = makeCtx({ isLibraryRoot: true });
+    const menu = registry.resolveMenu(ctx);
+    for (const id of [
+      'folder.create-subfolder',
+      'folder.import-linked',
+      'folder.paste',
+    ]) {
+      expect(findItem(menu, id).disabled).toBe(false);
+    }
+    registry.get('folder.create-subfolder')?.run(ctx);
+    registry.get('folder.import-linked')?.run(ctx);
+    registry.get('folder.paste')?.run(ctx);
+    expect(calls).toEqual([
+      { action: 'createSubfolder', args: ['folder-1'] },
+      { action: 'importLinkedFolderInto', args: ['folder-1'] },
+      { action: 'pasteIntoFolder', args: ['folder-1'] },
+    ]);
+  });
+
+  it('linked 根：按普通文件夹提供创建、重命名、粘贴、删除等基础操作', () => {    const { ctx } = makeCtx({
       locationKind: 'linked',
       status: 'available',
       linkedFolderResolved: true,

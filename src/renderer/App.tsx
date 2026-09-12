@@ -391,6 +391,7 @@ import type {
   TrashedFolderSummary,
 } from "../shared/asset-types";
 import type { LibraryNavigationSummary } from "../shared/library-navigation";
+import { LIBRARY_ROOT_FOLDER_ID, isLibraryRootFolderId } from "../shared/library-root-folder";
 import { hasMeaningfulSmartCollectionCondition } from "../shared/smart-collection-query";
 import { expandFormatFilterTokens } from "../shared/text-media";
 import type {
@@ -11029,6 +11030,20 @@ function AppInner() {
         }
         getManagedAssetDragIds={getManagedAssetDragIds}
         getManagedFolderDragIds={getManagedFolderDragIds}
+        onOpenRootFolderContextMenu={({ x, y }) =>
+          // Serpent-316493 follow-up: the folder panel's blank area is the
+          // library root, so its context menu acts on the root folder.
+          openContextMenu(
+            {
+              type: "folder",
+              folderId: LIBRARY_ROOT_FOLDER_ID,
+              name: t("scope.rootFolder"),
+              locationKind: "managed",
+              isLibraryRoot: true,
+            },
+            { x, y },
+          )
+        }
         onResolveManagedAssetDrop={resolveManagedAssetDrop}
         onAssetsDroppedOnFolder={(folderId, assetIds, mode) =>
           handleAssetsDroppedOnFolder(folderId, assetIds, mode)
@@ -13181,11 +13196,14 @@ function AppInner() {
         }}
         onCreateSubfolder={(folderId) => {
           cancelInlineSmartCollectionEdit();
-          openInlineFolderCreate(folderId);
+          openInlineFolderCreate(isLibraryRootFolderId(folderId) ? null : folderId);
         }}
         onImportLinkedFolderInto={(folderId) => {
-          // Serpent-316493: 导入链接文件夹 under the right-clicked folder.
-          void importFolderAsLinked(folderId);
+          // Serpent-316493: 导入链接文件夹 under the right-clicked folder (or at
+          // the library root when the folder panel's blank area was clicked).
+          void importFolderAsLinked(
+            isLibraryRootFolderId(folderId) ? null : folderId,
+          );
         }}
         onSetIgnore={({ locationKind, linkedFolderId, relativePath, pathKind, ignored, name }) => {
           void setIgnoreState({ locationKind, linkedFolderId, relativePath, pathKind, ignored, name });
@@ -13204,7 +13222,9 @@ function AppInner() {
           void handleCopyFolder(folderId);
         }}
         onPasteIntoFolder={(folderId) => {
-          dispatchClipboardPaste(folderId);
+          // Serpent-316493 follow-up: the root sentinel means "the library
+          // root", which paste/import APIs express as null.
+          dispatchClipboardPaste(isLibraryRootFolderId(folderId) ? null : folderId);
         }}
         onCloneFolder={(folderId) => {
           void cloneFolder(folderId);

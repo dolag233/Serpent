@@ -200,6 +200,89 @@ test("folder-section + creates at the library root while a subfolder is in scope
   }
 });
 
+// Serpent-316493 follow-up: the blank area *is* the library root, so its
+// right-click menu is the root folder menu.
+test("right-clicking the blank area opens the library-root folder menu", async () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), "serpent-nav-root-menu-"));
+  const libraryName = "Nav Root Menu";
+  const libraryPath = path.join(temporaryRoot, libraryName);
+  const application = await launchApp(temporaryRoot, libraryPath);
+
+  try {
+    const window = await application.firstWindow();
+    await createLibrary(window, libraryName);
+    await createFolder(window, "Alpha");
+    await createSubfolder(window, "Alpha", "Beta");
+
+    const betaGutterBox = await window
+      .locator('.navigation-pane .nav-tree-row:has(button[title="Beta"])')
+      .boundingBox();
+    expect(betaGutterBox).not.toBeNull();
+    await window.mouse.click(
+      Math.round(betaGutterBox!.x + 4),
+      Math.round(betaGutterBox!.y + betaGutterBox!.height / 2),
+      { button: "right" },
+    );
+
+    const menu = window.getByRole("menu", {
+      name: "文件夹操作：资源库根目录",
+      exact: true,
+    });
+    await expect(menu).toBeVisible();
+
+    // Root-appropriate entries…
+    await expect(
+      menu.getByRole("menuitem", { name: "在文件浏览器中打开" }),
+    ).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: "新建文件夹" })).toBeVisible();
+    await expect(
+      menu.getByRole("menuitem", { name: "导入链接文件夹" }),
+    ).toBeVisible();
+    await expect(
+      menu.getByRole("menuitem", { name: "复制文件夹路径" }),
+    ).toBeVisible();
+    // …and none of the ones that need a real folder row.
+    await expect(menu.getByRole("menuitem", { name: "重命名…" })).toHaveCount(0);
+    await expect(menu.getByRole("menuitem", { name: "移入回收站" })).toHaveCount(0);
+    await expect(menu.getByRole("menuitem", { name: "删除" })).toHaveCount(0);
+
+    // 「新建文件夹」creates at the library root.
+    await menu.getByRole("menuitem", { name: "新建文件夹" }).click();
+    const input = window.locator(".nav-inline-edit input");
+    await expect(input).toBeVisible();
+    await input.fill("Rooty");
+    await input.press("Enter");
+    await expect(folderRow(window, "Rooty")).toBeVisible({ timeout: 10_000 });
+
+    expect(
+      await window.evaluate(async () => {
+        const api = (
+          globalThis as typeof globalThis & {
+            serpent: {
+              library: {
+                listOpen(): Promise<{ ok: boolean; value?: Array<{ libraryId: string }> }>;
+                listFolders(input: { libraryId: string }): Promise<{
+                  ok: boolean;
+                  value?: Array<{ name: string; parentFolderId: string | null }>;
+                }>;
+              };
+            };
+          }
+        ).serpent.library;
+        const open = await api.listOpen();
+        const libraryId = open.value?.[0]?.libraryId;
+        if (!libraryId) return "no-library";
+        const result = await api.listFolders({ libraryId });
+        const created = (result.value ?? []).find((item) => item.name === "Rooty");
+        return created ? (created.parentFolderId ?? "root") : "missing";
+      }),
+    ).toBe("root");
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
 test("folder-section blank area returns to the root and accepts folder drops", async () => {
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), "serpent-nav-bg-"));
   const libraryName = "Nav Background";

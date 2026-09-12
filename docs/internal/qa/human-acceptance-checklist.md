@@ -42,6 +42,8 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+| NAV-FOLDER-ROOT-002 / `Serpent-a6c516` | 文件夹面板空白处右键 = 根目录右键菜单 | 待人类验收 | ① 打开资源库。② 在「文件夹」栏行左侧的缩进槽、或没有文件夹时的提示文字上点右键。③ 看菜单里有哪些条目。④ 点「新建文件夹」，输入名字回车。⑤ 再在某个文件夹行上点右键对比。 | 空白处右键弹出「文件夹操作：资源库根目录」，含在文件浏览器中打开 / 新建文件夹 / 导入链接文件夹 / 粘贴 / 复制文件夹路径；不含重命名、移入回收站、删除、克隆（这些需要真实的文件夹行）；点「新建文件夹」建出的是**库根**的文件夹（与已有顶层文件夹同层）；文件夹行上右键仍是该文件夹自己的菜单。 | [开发日志](../development/2026-09-12-nested-linked-folders-development-log.md) §6 / `shared/library-root-folder.ts` / `NavigationSidebar.tsx` `onOpenRootFolderContextMenu` / `commands/sidebar-commands.ts` `isLibraryRoot` / `tests/e2e/nav-pane-background.test.ts`、`tests/unit/sidebar-commands.test.ts`、`tests/unit/navigation-sidebar.test.ts` | 自动化：E2E `nav-pane-background` 3 passed（含空白处右键菜单条目与「新建文件夹」落根级）；单测 `sidebar-commands` 50 passed、`navigation-sidebar` 空白处右键触发根菜单 / 行上右键不触发通过。在文件浏览器中打开未在自动化里点击（会弹出真实窗口），留人工验收。packaged / Windows 未执行。 |
+
 ### 2026-09-12 文件夹右键「导入链接文件夹」到子级（LINKED-FOLDER-NEST-001）
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

@@ -526,6 +526,7 @@ export const en = {
     },
     folder: {
       newSubfolder: "New subfolder",
+      newFolder: "New folder",
       importLinked: "Import linked folder",
       rename: "Rename…",
       revealInFinder: "Open in Finder",

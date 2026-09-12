@@ -514,6 +514,7 @@ export const zhCN = {
     },
     folder: {
       newSubfolder: "新建子文件夹",
+      newFolder: "新建文件夹",
       importLinked: "导入链接文件夹",
       rename: "重命名…",
       revealInFinder: "在 Finder 中打开",

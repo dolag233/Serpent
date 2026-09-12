@@ -59,6 +59,11 @@ export type ContextMenuDescriptor =
        * means a linked root (or any managed folder).
        */
       linkedRelativePath?: string;
+      /**
+       * Serpent-316493: the subject is the library root (folder panel blank
+       * area). Only the root-appropriate entries are offered.
+       */
+      isLibraryRoot?: boolean;
     }
   | {
       type: "multi-asset";
