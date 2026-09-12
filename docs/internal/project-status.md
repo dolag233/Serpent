@@ -1,7 +1,11 @@
 # Serpent 项目状态
 
-> 更新时间：2026-09-11
+> 更新时间：2026-09-12
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
+
+- **2026-09-12 卡片同步状态**：已绑定 WebDAV 的库在卡片右下角显示等待（蓝环）/正在同步（绿环流动）；冲突为黄底警告三角。已同步不显示。通用设置 → 同步可关。去掉「正在同步 / 已同步」toast。状态从本地 manifest 缓存的路径/大小/sidecar 哈希派生。清单 `SYNC-CARD-001` 人类验收通过。冲突手选「使用本地 / 使用云端」仍未做，工单 `Serpent-871f34` 不关。链接文件夹见 `Serpent-19ca6e`。
+
+- **2026-09-12 同步不覆盖链接文件夹**：已绑定库里的链接目录不走交换格式/manifest。只记 P1 `Serpent-19ca6e` / `SYNC-LINKED-001`，未改规划。
 
 - **2026-09-12 双端同时改标签整份 LWW**：AB 同时改同一已同步资产的人手标签时，整份 sidecar 被一方覆盖（此次收敛成 B）。`planMetadataActions` 按 `metadataVersion` / 哈希做整表上传或下载，不做标签并集，也不出 `(conflict-…)` 副本。首期规格如此；文件冲突手选仍是 `Serpent-871f34`。工单 `Serpent-44936d`，清单 `SYNC-META-004`。本轮只记录。
 

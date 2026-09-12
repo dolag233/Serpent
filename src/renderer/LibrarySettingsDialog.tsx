@@ -18,8 +18,8 @@ export interface SyncSettingsCallbacks {
   syncProbe(input: { serverId: string }): Promise<{ ok: true; value: SyncCapabilities } | { ok: false; message: string }>;
   syncPreview(input: { libraryId: string; serverId: string; directoryName?: string }): Promise<{ ok: true; value: SyncReport } | { ok: false; message: string }>;
   syncRun(input: { libraryId: string; serverId: string; directoryName?: string }): Promise<{ ok: true; value: { report: SyncReport; conflicts: Array<{ syncId: string; conflictCopyPath: string }> } } | { ok: false; message: string }>;
-  syncSaveBinding(input: { libraryId: string; serverId: string; directoryName?: string; enabled?: boolean; pollIntervalMs?: number }): Promise<{ ok: true } | { ok: false; message: string }>;
-  syncGetBinding(input: { libraryId: string }): Promise<{ ok: true; value: { serverId: string; directoryName?: string; lastSyncedAt?: string; enabled?: boolean; pollIntervalMs?: number } | null } | { ok: false; message: string }>;
+  syncSaveBinding(input: { libraryId: string; serverId: string; directoryName?: string; enabled?: boolean; pollIntervalMs?: number; showCardSyncStatus?: boolean }): Promise<{ ok: true } | { ok: false; message: string }>;
+  syncGetBinding(input: { libraryId: string }): Promise<{ ok: true; value: { serverId: string; directoryName?: string; lastSyncedAt?: string; enabled?: boolean; pollIntervalMs?: number; showCardSyncStatus?: boolean } | null } | { ok: false; message: string }>;
 }
 
 type ConnectionState = "checking" | "connected" | "failed";

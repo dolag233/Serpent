@@ -1047,6 +1047,8 @@ interface SyncBindingRecord {
   enabled?: boolean;
   /** 云端变化轮询间隔（毫秒，用户可设置；缺省 5000）。 */
   pollIntervalMs?: number;
+  /** 卡片右下角同步状态；缺省 true（Serpent-871f34）。 */
+  showCardSyncStatus?: boolean;
 }
 
 /** 兼容旧格式绑定：directoryName 优先，其次旧 subPath。 */
@@ -3602,6 +3604,12 @@ async function commandFor(
         libraryId: request.libraryId,
         assetIds: request.assetIds,
       };
+    case "sync.asset-card-status.request":
+      return {
+        type: "sync.asset-card-status",
+        libraryId: request.libraryId,
+        assetIds: request.assetIds,
+      };
     case "sync.probe.request": {
       const server = resolveSyncServerCredentials(request.serverId);
       if (!server) throw new Error("同步服务器不存在，请先在通用设置中配置。");
@@ -4008,6 +4016,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         lastSyncedAt: previous?.lastSyncedAt,
         enabled: request.enabled ?? previous?.enabled ?? false,
         pollIntervalMs: request.pollIntervalMs ?? previous?.pollIntervalMs,
+        showCardSyncStatus: request.showCardSyncStatus ?? previous?.showCardSyncStatus ?? true,
       };
       writeSyncBindings(bindings);
       // Serpent-7405ef: 保存绑定（含开启自动同步）后立即触发一次同步，
@@ -4039,6 +4048,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
               lastSyncedAt: binding.lastSyncedAt,
               enabled: binding.enabled ?? false,
               pollIntervalMs: binding.pollIntervalMs,
+              showCardSyncStatus: binding.showCardSyncStatus ?? true,
             }
           : null,
       } satisfies RendererResult;

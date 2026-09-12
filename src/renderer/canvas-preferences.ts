@@ -29,6 +29,8 @@ export interface CanvasPreferences {
     readonly badgeSource: boolean;
     /** Non-image extension chip, bottom-left (Serpent-cs1). */
     readonly badgeExtension: boolean;
+    /** WebDAV sync mark on the thumbnail corner (Serpent-871f34). */
+    readonly badgeSync: boolean;
   };
   /** Audio assets play in-place on hover (Serpent hover 音频). */
   readonly hoverAudioPlay: boolean;
@@ -65,6 +67,7 @@ const canvasFieldsSchema = z
     badgeDuration: z.boolean().optional(),
     badgeSource: z.boolean().optional(),
     badgeExtension: z.boolean().optional(),
+    badgeSync: z.boolean().optional(),
   })
   .transform((fields) => ({
     name: fields.name,
@@ -75,6 +78,7 @@ const canvasFieldsSchema = z
     badgeDuration: fields.badgeDuration ?? true,
     badgeSource: fields.badgeSource ?? true,
     badgeExtension: fields.badgeExtension ?? true,
+    badgeSync: fields.badgeSync ?? true,
   }));
 
 const canvasPreferencesSchema = z
@@ -119,6 +123,7 @@ export const DEFAULT_CANVAS_PREFERENCES: CanvasPreferences = {
     badgeDuration: true,
     badgeSource: true,
     badgeExtension: true,
+    badgeSync: true,
   },
   hoverAudioPlay: true,
   hoverVideoSound: false,

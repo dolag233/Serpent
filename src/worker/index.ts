@@ -1950,6 +1950,19 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       });
       return { ok: true, type: 'sync.poll-remote.result', changed };
     }
+    case 'sync.asset-card-status': {
+      if (!libraryService.isLibraryOpen(request.command.libraryId)) {
+        return { ok: true, type: 'sync.asset-card-status', statuses: [] };
+      }
+      return {
+        ok: true,
+        type: 'sync.asset-card-status',
+        statuses: libraryService.listSyncCardStatuses(
+          request.command.libraryId,
+          request.command.assetIds,
+        ),
+      };
+    }
     case 'sync.list-remote-libraries': {
       const driver = syncWebDAVDriver({
         baseUrl: request.command.baseUrl,

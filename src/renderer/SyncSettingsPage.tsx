@@ -5,6 +5,7 @@ import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import { SettingsCard } from "./ui/patterns";
+import { Switch } from "./ui/primitives";
 import type { SyncServerSummary } from "./sync-settings-types";
 
 export interface SyncServerSettingsCallbacks {
@@ -35,8 +36,12 @@ function ConnectionDot({ state }: { state: ServerConnectionState | "idle" }): Re
  */
 export function SyncSettingsPage({
   callbacks,
+  showCardSyncStatus,
+  onShowCardSyncStatusChange,
 }: {
   callbacks: SyncServerSettingsCallbacks;
+  showCardSyncStatus: boolean;
+  onShowCardSyncStatusChange: (checked: boolean) => void;
 }): ReactNode {
   const t = useT();
   const [servers, setServers] = useState<SyncServerSummary[]>([]);
@@ -162,6 +167,18 @@ export function SyncSettingsPage({
 
   return (
     <SettingsCard className="library-sync-card">
+      <label className="app-settings-toggle-row">
+        <span className="app-settings-row-copy">
+          <strong>{t("settings.sync.showCardStatus")}</strong>
+          <span>{t("settings.sync.showCardStatusHint")}</span>
+        </span>
+        <Switch
+          aria-label={t("settings.sync.showCardStatus")}
+          checked={showCardSyncStatus}
+          onCheckedChange={onShowCardSyncStatusChange}
+        />
+      </label>
+      <div className="app-settings-card-divider" />
       <div className="app-settings-row-copy">
         <strong>{t("settings.sync.serversTitle")}</strong>
         <span>{t("settings.sync.serversHint")}</span>

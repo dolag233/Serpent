@@ -314,4 +314,13 @@ describe('library sync integration (Serpent-xffq)', () => {
     expect(service.getAiContent(libraryId, assetId).some((row) => row.value === '本机AI')).toBe(true);
     service.closeAll();
   });
+
+  it('lists pending card status from revision size, not assets.byte_size', () => {
+    const service = new LibraryService();
+    const { libraryId, assetId } = createLibraryWithAsset(service, '卡片状态');
+    expect(service.listSyncCardStatuses(libraryId, [assetId])).toEqual([
+      { assetId, status: 'pending' },
+    ]);
+    service.closeAll();
+  });
 });

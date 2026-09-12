@@ -51,6 +51,8 @@ import {
 } from "../shared/thumbnail-support";
 import { AssetCardMedia } from "./AssetCardMedia";
 import { useAssetCardHoverPreview } from "./use-asset-card-hover-preview";
+import { SyncCardStatusBadge } from "./SyncCardStatusBadge";
+import { useSyncCardStatuses } from "./use-sync-card-status";
 import { resolveSearchSnippetCaption } from "./search-snippet-caption";
 import { parseSearchExpression, splitSearchHighlights } from "./search-expression";
 import { ConvertLinkedDialog } from "./ConvertLinkedDialog";
@@ -1504,7 +1506,7 @@ function AppInner() {
   syncProgressRef.current = syncProgress;
   /** 当前库的同步绑定状态（库切换器 link/link-off 图标）。 */
   const [syncBindingStatus, setSyncBindingStatus] = useState<"none" | "disabled" | "enabled">("none");
-  /** 本次同步是否已弹过「正在同步」toast（有实际传输才提示）。 */
+  /** 本次同步是否发生过实际传输（完成音、Inspector 重拉仍用；不再弹 toast）。 */
   const syncRunNotifiedRef = useRef(false);
   const syncRunStartedAtRef = useRef<number | null>(null);
   const [showIgnoredItems, setShowIgnoredItems] = useState(false);
@@ -1801,6 +1803,30 @@ function AppInner() {
   const [canvasPrefs, setCanvasPrefs] = useState<CanvasPreferences>(() =>
     loadCanvasPreferences(),
   );
+  const syncCardAssetIds = useMemo(() => {
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    const push = (id: string) => {
+      if (seen.has(id)) return;
+      seen.add(id);
+      ids.push(id);
+    };
+    for (const asset of assets) push(asset.assetId);
+    for (const entry of browseLayout) push(entry.assetId);
+    return ids;
+  }, [assets, browseLayout]);
+  const syncCardStatuses = useSyncCardStatuses({
+    api,
+    libraryId: library?.libraryId,
+    bound: syncBindingStatus !== "none",
+    showBadges: canvasPrefs.fields.badgeSync !== false && syncBindingStatus !== "none",
+    assetIds: syncCardAssetIds,
+    syncing: Boolean(
+      syncProgress
+      && syncProgress.phase !== "complete"
+      && syncProgress.filesTotal > 0,
+    ),
+  });
   const [imageSequencePrefs, setImageSequencePrefs] = useState(() =>
     loadImageSequencePreferences(),
   );
@@ -8965,14 +8991,12 @@ function AppInner() {
           setSyncProgress(null);
           const startedAt = syncRunStartedAtRef.current;
           syncRunStartedAtRef.current = null;
-          // 完成事件 filesDone=0（worker 不携带 report），只弹中性
-          // 「已同步」toast；仅当本次同步实际发生过传输（progress 曾
-          // 显示 filesTotal>0）才提示，空跑同步不打扰。
+          // 完成事件 filesDone=0（worker 不携带 report）。有实际传输时
+          // 播完成音并重拉 Inspector；卡片状态标识代替 toast。
           const didNotify = syncRunNotifiedRef.current;
           if (didNotify) {
             syncRunNotifiedRef.current = false;
             if (startedAt !== null) playTaskCompletionSound(startedAt);
-            setNotice(t("settings.sync.statusSynced"));
           }
           // 元数据回放可能不发 asset.changed，或选中项未变。F5 原先也不
           // 重拉 Inspector；同步结束后补拉当前选中项标签/描述。
@@ -8984,7 +9008,6 @@ function AppInner() {
           setSyncProgress(event);
           if (event.filesTotal > 0 && !syncRunNotifiedRef.current) {
             syncRunNotifiedRef.current = true;
-            setNotice(t("settings.sync.statusSyncing"));
           }
         }
       } else if (event.type === "delete.progress") {
@@ -11625,6 +11648,10 @@ function AppInner() {
                         searchSnippets.get(asset.assetId),
                         asset.displayName,
                       );
+                      const syncStatus =
+                        canvasPrefs.fields.badgeSync !== false
+                          ? syncCardStatuses.get(asset.assetId)
+                          : undefined;
                       const layoutThumbnailArtifactId =
                         layoutThumbnailArtifacts.libraryId === library?.libraryId
                           ? layoutThumbnailArtifacts.ids.get(asset.assetId)
@@ -12155,6 +12182,7 @@ function AppInner() {
                           ) : null}
                         </div>
                       )}
+                      {syncStatus ? <SyncCardStatusBadge status={syncStatus} /> : null}
                     </CardTag>
                     );
                     };
@@ -12186,6 +12214,11 @@ function AppInner() {
                                   previewArtifactId={
                                     layoutThumbnailArtifacts.libraryId === library.libraryId
                                       ? layoutThumbnailArtifacts.ids.get(entry.assetId)
+                                      : undefined
+                                  }
+                                  syncStatus={
+                                    canvasPrefs.fields.badgeSync !== false
+                                      ? syncCardStatuses.get(entry.assetId)
                                       : undefined
                                   }
                                   viewMode="masonry"
@@ -12225,6 +12258,11 @@ function AppInner() {
                                   previewArtifactId={
                                     layoutThumbnailArtifacts.libraryId === library.libraryId
                                       ? layoutThumbnailArtifacts.ids.get(entry.assetId)
+                                      : undefined
+                                  }
+                                  syncStatus={
+                                    canvasPrefs.fields.badgeSync !== false
+                                      ? syncCardStatuses.get(entry.assetId)
                                       : undefined
                                   }
                                   viewMode="grid"
@@ -12649,6 +12687,13 @@ function AppInner() {
         libraryId={library?.libraryId}
         mcpApi={(window as RendererWindow).serpent?.mcp}
         open={appSettingsOpen}
+        showCardSyncStatus={canvasPrefs.fields.badgeSync}
+        onShowCardSyncStatusChange={(checked) => {
+          setCanvasPrefs((current) => ({
+            ...current,
+            fields: { ...current.fields, badgeSync: checked },
+          }));
+        }}
         syncServerCallbacks={{
           async syncListServers() {
             if (!api) return { ok: false, message: t("common.unavailable") };
@@ -12752,6 +12797,9 @@ function AppInner() {
             if (!api) return { ok: false, message: t("common.unavailable") };
             const result = await api.syncSaveBinding(input);
             if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
+            if (input.enabled !== undefined) {
+              setSyncBindingStatus(input.enabled ? "enabled" : "disabled");
+            }
             return { ok: true };
           },
           async syncGetBinding(input) {

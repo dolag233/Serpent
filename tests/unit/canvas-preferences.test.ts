@@ -370,6 +370,7 @@ describe('DEFAULT_CANVAS_PREFERENCES', () => {
       badgeDuration: true,
       badgeSource: true,
       badgeExtension: true,
+      badgeSync: true,
     });
   });
 

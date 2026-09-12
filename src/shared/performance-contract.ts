@@ -244,6 +244,7 @@ export function performanceLaneForCommand(command: WorkerCommandLike): Performan
  */
 export function performanceInteractionKeyForCommand(command: WorkerCommandLike): string | undefined {
   if (command.type === 'asset.thumbnail.visible-window') return 'visible-window';
+  if (command.type === 'sync.asset-card-status') return 'sync-card-status';
   if (command.assetId === undefined) return undefined;
   switch (command.type) {
     case 'asset.preview': return `viewer:${command.assetId}`;
@@ -282,6 +283,7 @@ const NON_PREEMPTIVE_MEDIA_COMMANDS = new Set([
   'browse.session.close',
   'history.status',
   'ai.status',
+  'sync.asset-card-status',
   'media.list-jobs',
   'media.get-artifact-path',
   'media.get-artifact-paths',

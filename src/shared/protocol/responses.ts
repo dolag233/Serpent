@@ -1969,6 +1969,14 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('sync.asset-card-status'),
+    statuses: z.array(z.strictObject({
+      assetId: nonBlankString,
+      status: z.enum(['pending', 'conflict']),
+    })),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('ai.jobs.enqueued'),
     libraryId: nonBlankString,
     enqueued: z.number().int().nonnegative(),
@@ -2226,7 +2234,16 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
       lastSyncedAt: z.string().optional(),
       enabled: z.boolean().optional(),
       pollIntervalMs: z.number().int().min(1000).max(3_600_000).optional(),
+      showCardSyncStatus: z.boolean().optional(),
     }).nullable(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('sync.asset-card-status'),
+    statuses: z.array(z.strictObject({
+      assetId: nonBlankString,
+      status: z.enum(['pending', 'conflict']),
+    })),
   }),
   z.strictObject({
     ok: z.literal(true),

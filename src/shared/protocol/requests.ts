@@ -1038,6 +1038,11 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     assetIds: z.array(identifierSchema).min(1).max(300),
   }),
   z.strictObject({
+    type: z.literal('sync.asset-card-status.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).max(300),
+  }),
+  z.strictObject({
     type: z.literal('sync.probe.request'),
     serverId: nonBlankString,
   }),
@@ -1077,6 +1082,8 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     enabled: z.boolean().optional(),
     /** 云端变化轮询间隔（毫秒；缺省 5000）。 */
     pollIntervalMs: z.number().int().min(1000).max(3_600_000).optional(),
+    /** 卡片右下角同步状态；缺省 true。 */
+    showCardSyncStatus: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('sync.library.binding.get.request'),
@@ -1386,6 +1393,11 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     password: z.string().optional(),
     allowInsecureTls: z.boolean().optional(),
     directoryName: z.string().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('sync.asset-card-status'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).max(300),
   }),
   z.strictObject({
     type: z.literal('history.status'),

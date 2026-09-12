@@ -29,7 +29,8 @@ export type AppSettingsCanvasFieldOption = {
     | "toolbar.showBadgeType"
     | "toolbar.showBadgeDuration"
     | "toolbar.showBadgeSource"
-    | "toolbar.showBadgeExtension";
+    | "toolbar.showBadgeExtension"
+    | "toolbar.showBadgeSync";
 };
 
 export type AppSettingsCategoryId =
@@ -158,6 +159,7 @@ export const APP_SETTINGS_CANVAS_BADGE_FIELD_OPTIONS: readonly AppSettingsCanvas
     { field: "badgeExtension", labelKey: "toolbar.showBadgeExtension" },
     { field: "badgeType", labelKey: "toolbar.showBadgeType" },
     { field: "badgeSource", labelKey: "toolbar.showBadgeSource" },
+    { field: "badgeSync", labelKey: "toolbar.showBadgeSync" },
   ];
 
 /** @deprecated Prefer caption + badge option lists (Serpent-i07). */

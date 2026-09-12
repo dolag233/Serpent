@@ -60,6 +60,7 @@ describe("app-settings-sections (Serpent-97l / Serpent-9es / Serpent-i07)", () =
       "badgeExtension",
       "badgeType",
       "badgeSource",
+      "badgeSync",
     ]);
     expect(APP_SETTINGS_CANVAS_FIELD_OPTIONS.map((o) => o.field)).toEqual([
       "name",
@@ -70,6 +71,7 @@ describe("app-settings-sections (Serpent-97l / Serpent-9es / Serpent-i07)", () =
       "badgeExtension",
       "badgeType",
       "badgeSource",
+      "badgeSync",
     ]);
     expect(canvasFieldOptionsUseSharedHint()).toBe(true);
     expect(

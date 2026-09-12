@@ -10197,6 +10197,7 @@ select.ai-config-input.ai-config-languages {
 }
 
 .asset-card {
+  position: relative;
   min-width: 0;
   padding: 0;
   border: 1px solid transparent;
@@ -10634,6 +10635,89 @@ select.ai-config-input.ai-config-languages {
   letter-spacing: 0.04em;
   line-height: 1.45;
   pointer-events: none;
+}
+
+/* Serpent-871f34: ring at the card's bottom-right. Pending = blue, syncing =
+   green with a moving highlight, conflict = yellow + warning. */
+.asset-sync-status {
+  --asset-sync-status-color: var(--ui-action-accent);
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--pane) 78%, transparent);
+  color: var(--asset-sync-status-color);
+  pointer-events: auto;
+}
+.asset-sync-status[data-state="syncing"] {
+  --asset-sync-status-color: var(--success);
+}
+.asset-sync-status[data-state="conflict"] {
+  --asset-sync-status-color: var(--rating-star);
+  background: var(--rating-star);
+  color: var(--ui-content-on-accent);
+  box-shadow: 0 0 0 2px var(--pane);
+}
+.asset-sync-status .icon {
+  position: relative;
+  z-index: 1;
+  stroke-width: 2.2;
+}
+.asset-sync-status-ring {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: 2px solid var(--asset-sync-status-color);
+  border-radius: inherit;
+  pointer-events: none;
+}
+.asset-sync-status[data-state="syncing"] .asset-sync-status-ring {
+  border-color: color-mix(in srgb, var(--asset-sync-status-color) 32%, transparent);
+}
+.asset-sync-status[data-state="syncing"] .asset-sync-status-ring::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    transparent 210deg,
+    var(--asset-sync-status-color) 292deg,
+    color-mix(in srgb, var(--asset-sync-status-color) 35%, transparent) 328deg,
+    transparent 360deg
+  );
+  filter: drop-shadow(0 0 3px var(--asset-sync-status-color));
+  -webkit-mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 2px),
+    #000 calc(100% - 1.5px)
+  );
+  mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 2px),
+    #000 calc(100% - 1.5px)
+  );
+  animation: plugin-view-spin 1.15s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .asset-sync-status[data-state="syncing"] .asset-sync-status-ring::after {
+    animation: none;
+    background: conic-gradient(
+      from 90deg,
+      transparent 0deg,
+      var(--asset-sync-status-color) 80deg,
+      transparent 140deg
+    );
+  }
+}
+.asset-card:has(.asset-sync-status) .asset-caption {
+  padding-right: 28px;
 }
 
 /* CU-U1: containing-folder origin for recursive / mixed-folder grids.

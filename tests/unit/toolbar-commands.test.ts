@@ -62,6 +62,7 @@ function makeCtx(
       badgeDuration: true,
       badgeSource: true,
       badgeExtension: true,
+      badgeSync: true,
     },
     ...overrides,
     actions,

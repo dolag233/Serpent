@@ -663,10 +663,12 @@ export interface SerpentLibraryApi {
   syncSaveServer(input: { id?: string; baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<LibraryApiResult<{ id: string }>>;
   /** Serpent-xffq: 删除同步服务器。 */
   syncDeleteServer(input: { id: string }): Promise<LibraryApiResult<{ id: string }>>;
-  /** Serpent-xffq: 保存库绑定（服务器 + 可选同步文件夹名，默认库名；enabled=自动同步开关；pollIntervalMs=云端轮询间隔）。 */
-  syncSaveBinding(input: { libraryId: string; serverId: string; directoryName?: string; enabled?: boolean; pollIntervalMs?: number }): Promise<LibraryApiResult<void>>;
+  /** Serpent-xffq: 保存库绑定（服务器 + 可选同步文件夹名，默认库名；enabled=自动同步开关；pollIntervalMs=云端轮询间隔；showCardSyncStatus=卡片同步状态）。 */
+  syncSaveBinding(input: { libraryId: string; serverId: string; directoryName?: string; enabled?: boolean; pollIntervalMs?: number; showCardSyncStatus?: boolean }): Promise<LibraryApiResult<void>>;
   /** Serpent-xffq: 读取库绑定。 */
-  syncGetBinding(input: { libraryId: string }): Promise<LibraryApiResult<{ serverId: string; directoryName?: string; lastSyncedAt?: string; enabled?: boolean; pollIntervalMs?: number } | null>>;
+  syncGetBinding(input: { libraryId: string }): Promise<LibraryApiResult<{ serverId: string; directoryName?: string; lastSyncedAt?: string; enabled?: boolean; pollIntervalMs?: number; showCardSyncStatus?: boolean } | null>>;
+  /** Serpent-871f34: 当前页资产的本地同步状态（已同步项不返回）。 */
+  syncListCardStatuses(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<Array<{ assetId: string; status: 'pending' | 'conflict' }>>>;
   /** Serpent-xffq: 对指定服务器做连接能力探测（不触碰库）。 */
   syncProbe(input: { serverId: string }): Promise<LibraryApiResult<SyncCapabilities>>;
   /** Serpent-xffq: 列出服务器上可打开的同步库（读远端 manifest）。 */

@@ -2015,17 +2015,24 @@ const library: SerpentLibraryApi = Object.freeze({
     if (result.type !== 'sync.server.deleted') throw new Error('Unexpected sync server delete response.');
     return { ok: true, value: { id: result.id } };
   },
-  async syncSaveBinding({ libraryId, serverId, directoryName, enabled, pollIntervalMs }: { libraryId: string; serverId: string; directoryName?: string; enabled?: boolean; pollIntervalMs?: number }): Promise<LibraryApiResult<void>> {
-    const result = await request({ type: 'sync.library.binding.save.request', libraryId, serverId, directoryName, enabled, pollIntervalMs });
+  async syncSaveBinding({ libraryId, serverId, directoryName, enabled, pollIntervalMs, showCardSyncStatus }: { libraryId: string; serverId: string; directoryName?: string; enabled?: boolean; pollIntervalMs?: number; showCardSyncStatus?: boolean }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'sync.library.binding.save.request', libraryId, serverId, directoryName, enabled, pollIntervalMs, showCardSyncStatus });
     if (!result.ok) return failure(result);
     if (result.type !== 'sync.binding.saved') throw new Error('Unexpected sync binding response.');
     return { ok: true, value: undefined };
   },
-  async syncGetBinding({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<{ serverId: string; directoryName?: string; lastSyncedAt?: string; enabled?: boolean; pollIntervalMs?: number } | null>> {
+  async syncGetBinding({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<{ serverId: string; directoryName?: string; lastSyncedAt?: string; enabled?: boolean; pollIntervalMs?: number; showCardSyncStatus?: boolean } | null>> {
     const result = await request({ type: 'sync.library.binding.get.request', libraryId });
     if (!result.ok) return failure(result);
     if (result.type !== 'sync.binding.got') throw new Error('Unexpected sync binding get response.');
     return { ok: true, value: result.binding };
+  },
+  async syncListCardStatuses({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<Array<{ assetId: string; status: 'pending' | 'conflict' }>>> {
+    if (assetIds.length === 0) return { ok: true, value: [] };
+    const result = await request({ type: 'sync.asset-card-status.request', libraryId, assetIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'sync.asset-card-status') throw new Error('Unexpected sync card status response.');
+    return { ok: true, value: result.statuses };
   },
 
   // Serpent-xffq: 同步探测/预览/执行（Main 按 serverId 解析 URL 与凭据）。

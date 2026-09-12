@@ -212,8 +212,11 @@ import {
 import {
   emptySyncAssetMetadata,
   hasSyncAiLayer,
+  metadataContentHash,
   type SyncAssetMetadata,
 } from './sync/sync-metadata';
+import { parseManifest } from './sync/manifest';
+import { deriveSyncCardStatus, isLocalSyncPending } from '../shared/sync-card-status';
 
 // sharp is an optional N-API dependency (no rebuild needed for Electron).
 // The Worker loads it lazily so it can still start if sharp is missing.
@@ -23312,6 +23315,84 @@ export class LibraryService {
           WHERE session_id = ? AND library_id = ?`,
       )
       .run(status, new Date().toISOString(), errorMessage ?? null, sessionId, libraryId);
+  }
+
+  /**
+   * Visible-card sync badges (Serpent-871f34). Compares path/size/sidecar hash
+   * against the last local manifest cache. Does not hash file bytes or call WebDAV.
+   * Linked / missing / trashed assets are omitted. Synced assets are omitted.
+   */
+  listSyncCardStatuses(
+    libraryId: string,
+    assetIds: readonly string[],
+  ): Array<{ assetId: string; status: 'pending' | 'conflict' }> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const unique: string[] = [];
+    const seen = new Set<string>();
+    for (const assetId of assetIds) {
+      if (seen.has(assetId) || unique.length >= 300) continue;
+      seen.add(assetId);
+      unique.push(assetId);
+    }
+    if (unique.length === 0) return [];
+    const rows = sqliteAllInChunks<string, {
+      asset_id: string;
+      sync_id: string | null;
+      relative_file_path: string;
+      byte_size: number;
+      location_kind: 'managed' | 'linked';
+      deleted_at: string | null;
+      availability: string;
+    }>({
+      connection: openLibrary.connection,
+      values: unique,
+      buildSql: (placeholders) =>
+        `SELECT a.asset_id, a.sync_id, a.relative_file_path, r.byte_size, a.location_kind,
+                a.deleted_at, a.availability
+           FROM assets a
+           JOIN revisions r ON r.revision_id = a.current_revision_id
+          WHERE a.asset_id IN (${placeholders})`,
+    });
+    let cacheEntries: Record<string, { path: string; size: number; metadataHash?: string }> = {};
+    const cachedJson = this.readSyncManifestCache(libraryId);
+    if (cachedJson) {
+      try {
+        cacheEntries = parseManifest(cachedJson).entries;
+      } catch {
+        cacheEntries = {};
+      }
+    }
+    const managedIds = rows
+      .filter((row) => row.location_kind === 'managed' && row.deleted_at === null)
+      .map((row) => row.asset_id);
+    const metadataByAssetId = this.readSyncAssetMetadataMap(openLibrary, managedIds);
+    const emptyHash = metadataContentHash(emptySyncAssetMetadata());
+    const out: Array<{ assetId: string; status: 'pending' | 'conflict' }> = [];
+    for (const row of rows) {
+      const cacheEntry = row.sync_id ? cacheEntries[row.sync_id] : undefined;
+      const metadata = metadataByAssetId.get(row.asset_id) ?? emptySyncAssetMetadata();
+      const pending = isLocalSyncPending({
+        hasCacheEntry: Boolean(cacheEntry),
+        localPath: row.relative_file_path,
+        ...(cacheEntry === undefined ? {} : { cachePath: cacheEntry.path, cacheSize: cacheEntry.size }),
+        localSize: row.byte_size,
+        localMetadataHash: metadataContentHash(metadata),
+        ...(cacheEntry?.metadataHash === undefined ? {} : { cacheMetadataHash: cacheEntry.metadataHash }),
+        emptyMetadataHash: emptyHash,
+      });
+      const status = deriveSyncCardStatus({
+        eligible: row.location_kind === 'managed'
+          && row.deleted_at === null
+          && row.availability === 'available',
+        pending,
+        syncing: false,
+        conflict: false,
+      });
+      if (status === 'pending' || status === 'conflict') {
+        out.push({ assetId: row.asset_id, status });
+      }
+    }
+    return out;
   }
 
   /** 写入本地 manifest 缓存（上次同步点）。 */

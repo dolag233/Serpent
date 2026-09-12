@@ -18,6 +18,7 @@ const baseInput: MarqueeLayoutKeyInput = {
     badgeDuration: true,
     badgeSource: true,
     badgeExtension: true,
+    badgeSync: true,
   },
   assetIds: ["asset-1", "asset-2"],
   folderIds: ["folder-1"],

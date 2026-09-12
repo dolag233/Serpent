@@ -1,10 +1,12 @@
 import type { BrowseLayoutEntry } from "../shared/asset-types";
+import type { SyncCardStatus } from "../shared/sync-card-status";
 import { formatBytes, formatShortDate } from "./format-file-meta";
 import { splitFilenameForDisplay } from "./filename-display";
 import { shouldShowGridDimensions } from "./canvas-preferences";
 import { Icon } from "./Icons";
 import { useLocale, useT, type AppLocale } from "./i18n";
 import { sourceSrc } from "./asset-card-hover-preview";
+import { SyncCardStatusBadge } from "./SyncCardStatusBadge";
 
 export type LayoutPreviewCaptionFields = {
   name: boolean;
@@ -55,6 +57,7 @@ export function BrowseLayoutPreview({
   fields = DEFAULT_CAPTION_FIELDS,
   loadImmediately = true,
   deferUntilVisible = false,
+  syncStatus,
 }: {
   entry: BrowseLayoutEntry;
   libraryId: string;
@@ -65,6 +68,7 @@ export function BrowseLayoutPreview({
   loadImmediately?: boolean;
   /** Keep source/artifact URLs off the virtual overscan runway. */
   deferUntilVisible?: boolean;
+  syncStatus?: SyncCardStatus;
 }) {
   const { locale } = useLocale();
   const t = useT();
@@ -131,6 +135,7 @@ export function BrowseLayoutPreview({
           ) : null}
         </div>
       ) : null}
+      {syncStatus ? <SyncCardStatusBadge status={syncStatus} /> : null}
     </div>
   );
 }
