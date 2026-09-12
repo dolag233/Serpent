@@ -42,6 +42,12 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-09-12 文件夹右键「导入链接文件夹」到子级（LINKED-FOLDER-NEST-001）
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| LINKED-FOLDER-NEST-001 / `Serpent-316493` | 文件夹右键「导入链接文件夹」把磁盘目录链接为该文件夹的子级 | 待人类验收 | ① 打开资源库，先建一个普通文件夹 A。② 在 A 上右键 →「导入链接文件夹」→ 选硬盘上另一个文件夹 B（里面有图片）。③ 看侧栏：B 是否缩进在 A 之下；点 B 能否浏览 B 里的文件。④ 折叠 A：B 是否跟着隐藏。⑤ 在**链接文件夹**上右键：菜单里不应有「导入链接文件夹」。⑥ 再次把同一个 B 导入：应给出「这个目录已经在库里链接过了」的提示，且不产生第二个条目。⑦ 把 A 拖进回收站再恢复：B 应在 A 恢复后回到 A 下面。 | B 作为链接文件夹出现在 A 下方（文件不复制、仍在原位置）；折叠 A 时隐藏；链接文件夹上没有该入口；重复导入被明确拒绝；A 进回收站期间 B 临时显示在库根，恢复后回到 A 下。 | [开发日志](../development/2026-09-12-nested-linked-folders-development-log.md) / `worker/library-service.ts`（迁移 v49 + `importFolderAsLinked`）/ `unified-directory-nav.ts` / `commands/sidebar-commands.ts` `folder.import-linked` / `tests/worker/linked-folders.test.ts`、`tests/e2e/linked-folders.test.ts` | 自动化：worker 37 passed（含 5 条新增：嵌套/重开存活/父级非法/库内目录/重复与已链接根内）；真实 Electron E2E `linked-folders` 4 passed（右键入口 → 侧栏嵌套 14px/28px、worker 回读父级、菜单在 linked 上不存在、重复导入被拒）；单测 15 + 47 passed；tsc/eslint exit 0。packaged / Windows 未执行。 |
+
 ### 2026-09-12 「+」/「链接」在库根创建（FOLDER-CREATE-001）
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

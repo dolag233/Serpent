@@ -988,11 +988,18 @@ const library: SerpentLibraryApi = Object.freeze({
   async importFolderAsLinked({
     libraryId,
     displayName,
+    parentFolderId,
   }: {
     libraryId: string;
     displayName?: string;
+    parentFolderId?: string | null;
   }): Promise<LibraryApiResult<LinkedFolderSummary>> {
-    const result = await request({ type: 'asset.import-linked.request', libraryId, displayName });
+    const result = await request({
+      type: 'asset.import-linked.request',
+      libraryId,
+      displayName,
+      parentFolderId,
+    });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.import-linked.completed') throw new Error('Unexpected import-linked-folder response.');
     return { ok: true, value: result.linkedFolder };

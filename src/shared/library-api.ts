@@ -441,6 +441,11 @@ export interface SerpentLibraryApi {
   importFolderAsLinked(input: {
     libraryId: string;
     displayName?: string;
+    /**
+     * Serpent-316493: managed folder the linked root hangs under; null/omitted
+     * links it at the library root (the folder-section 「+」 / link button).
+     */
+    parentFolderId?: string | null;
   }): Promise<LibraryApiResult<LinkedFolderSummary>>;
   relinkMissingFolder(input: {
     libraryId: string;

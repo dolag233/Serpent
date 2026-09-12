@@ -2833,6 +2833,7 @@ async function commandFor(
             libraryId: request.libraryId,
             displayName: request.displayName,
             sourceRootPath,
+            parentFolderId: request.parentFolderId,
           }
         : undefined;
     }

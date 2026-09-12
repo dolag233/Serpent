@@ -2639,6 +2639,26 @@ const LINKED_SOURCE_IDENTITY_SCHEMA_CHECKSUM = createHash('sha256')
   .update(LINKED_SOURCE_IDENTITY_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v49 (Serpent-316493): a linked root can be attached under a managed
+// folder ("导入链接文件夹" from the folder context menu). Deliberately no
+// REFERENCES clause: trashing a managed folder DELETEs its managed_folders row,
+// and a cascading SET NULL would silently reset the nesting — the id is kept so
+// a restore re-nests the link, while the renderer falls back to showing the
+// link at the library root whenever the parent is not visible.
+const LINKED_FOLDER_PARENT_SCHEMA_SQL = `
+  ALTER TABLE linked_folders ADD COLUMN parent_folder_id TEXT;
+`;
+const LINKED_FOLDER_PARENT_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(LINKED_FOLDER_PARENT_SCHEMA_SQL)
+  .digest('hex');
+
+function ensureLinkedFolderParentSchema(connection: DatabaseConnection): void {
+  const columns = columnsFor(connection, 'linked_folders');
+  if (!columns.has('parent_folder_id')) {
+    connection.exec('ALTER TABLE linked_folders ADD COLUMN parent_folder_id TEXT');
+  }
+}
+
 function ensureLinkedSourceIdentitySchema(connection: DatabaseConnection): void {
   const columns = columnsFor(connection, 'assets');
   if (!columns.has('source_device')) {
@@ -3254,6 +3274,11 @@ export const MIGRATIONS = [
     version: 48,
     sql: LINKED_SOURCE_IDENTITY_SCHEMA_SQL,
     checksum: LINKED_SOURCE_IDENTITY_SCHEMA_CHECKSUM,
+  },
+  {
+    version: 49,
+    sql: LINKED_FOLDER_PARENT_SCHEMA_SQL,
+    checksum: LINKED_FOLDER_PARENT_SCHEMA_CHECKSUM,
   },
 ] as const;
 export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
@@ -5333,6 +5358,7 @@ function migrateLegacyPluginMigrationHistory(connection: DatabaseConnection): vo
     connection.exec(ARTIFACT_IDENTITY_SCHEMA_SQL);
   }
   ensureContentFingerprintColumn(connection);
+  ensureLinkedFolderParentSchema(connection);
   const historyObjects = [
     'operation_history',
     'operation_history_steps',
@@ -6065,6 +6091,8 @@ function migrateDatabaseUnserialized(connection: DatabaseConnection, allowFresh:
           ensureSyncSchema(connection);
         } else if (migration.version === 48) {
           ensureLinkedSourceIdentitySchema(connection);
+        } else if (migration.version === 49) {
+          ensureLinkedFolderParentSchema(connection);
         } else {
           connection.exec(migration.sql);
         }
@@ -15718,13 +15746,15 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const rows = openLibrary.connection
       .prepare(
-        'SELECT folder_id, display_name, status, absolute_root_path FROM linked_folders WHERE library_id = ? ORDER BY display_name',
+        `SELECT folder_id, display_name, status, absolute_root_path, parent_folder_id
+           FROM linked_folders WHERE library_id = ? ORDER BY display_name`,
       )
       .all(libraryId) as Array<{
         folder_id: string;
         display_name: string;
         status: 'available' | 'offline';
         absolute_root_path: string;
+        parent_folder_id: string | null;
       }>;
     return rows
       .filter((row) => !this.explicitFolderIgnored(openLibrary, 'linked', row.folder_id, ''))
@@ -15748,7 +15778,8 @@ export class LibraryService {
           absoluteRootPath: row.absolute_root_path,
           linkedFolderId: row.folder_id,
           relativePath: '',
-          parentFolderId: null,
+          // Serpent-316493: a linked root may hang under a managed folder.
+          parentFolderId: row.parent_folder_id ?? null,
         };
         const children = prefixes
           .filter((prefix) => !this.explicitFolderIgnored(openLibrary, 'linked', row.folder_id, prefix))
@@ -16820,6 +16851,8 @@ export class LibraryService {
     libraryId: string;
     sourceRootPath: string;
     displayName?: string;
+    /** Serpent-316493: managed folder to hang the linked root under. */
+    parentFolderId?: string | null;
   }): LinkedFolderSummary {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     let sourceRoot: string;
@@ -16827,6 +16860,19 @@ export class LibraryService {
       sourceRoot = normalizeAbsolutePath(input.sourceRootPath);
     } catch (error) {
       throw serviceError(error, 'INVALID_IMPORT_SOURCE');
+    }
+
+    // Serpent-316493: the parent must be an active managed folder of this
+    // library. Linked ids never match, so "link under a linked folder" is
+    // rejected here rather than silently accepted.
+    const parentFolderId = input.parentFolderId ?? null;
+    if (parentFolderId !== null) {
+      // managed_folders has no library_id column: the library is the database
+      // file itself.
+      const parent = openLibrary.connection
+        .prepare('SELECT folder_id FROM managed_folders WHERE folder_id = ?')
+        .get(parentFolderId);
+      if (!parent) throw new LibraryServiceError('FOLDER_NOT_FOUND');
     }
 
     let rootStat: BigIntStats;
@@ -16859,10 +16905,41 @@ export class LibraryService {
     // helper rejects absolute paths; the linked root is device-specific anyway.
     const pathIdentity = canonicalRoot;
 
+    // Serpent-316493 rejection rules: the library's own tree is managed by
+    // Serpent, and a folder already covered by a linked root would be indexed
+    // twice. Both are reported with a specific reason so the UI can explain.
+    let canonicalLibraryPath = openLibrary.summary.libraryPath;
+    try {
+      canonicalLibraryPath = realpathSync(canonicalLibraryPath);
+    } catch {
+      // Unresolvable library path: fall back to the configured one.
+    }
+    if (pathIsWithin(canonicalLibraryPath, canonicalRoot)) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+        reason: 'LINKED_SOURCE_INSIDE_LIBRARY',
+      });
+    }
+    const linkedRoots = openLibrary.connection
+      .prepare('SELECT absolute_root_path FROM linked_folders WHERE library_id = ?')
+      .all(input.libraryId) as Array<{ absolute_root_path: string }>;
+    for (const linkedRoot of linkedRoots) {
+      if (!pathIsWithin(linkedRoot.absolute_root_path, canonicalRoot)) continue;
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+        reason:
+          linkedRoot.absolute_root_path === canonicalRoot
+            ? 'LINKED_SOURCE_ALREADY_LINKED'
+            : 'LINKED_SOURCE_INSIDE_LINKED_FOLDER',
+      });
+    }
+
     const existing = openLibrary.connection
       .prepare('SELECT folder_id FROM linked_folders WHERE path_identity = ?')
       .get(pathIdentity);
-    if (existing) throw new LibraryServiceError('FOLDER_ALREADY_EXISTS');
+    if (existing) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+        reason: 'LINKED_SOURCE_ALREADY_LINKED',
+      });
+    }
 
     const folderId = randomUUID();
     const defaultRules = DEFAULT_LINKED_FOLDER_RULES.map((rule) => ({ ...rule, ruleId: randomUUID() }));
@@ -16875,8 +16952,8 @@ export class LibraryService {
         .prepare(
           `INSERT INTO linked_folders
              (folder_id, library_id, display_name, absolute_root_path, source_device_hint,
-              status, path_identity, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, 'available', ?, ?, ?)`,
+              status, path_identity, parent_folder_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'available', ?, ?, ?, ?)`,
         )
         .run(
           folderId,
@@ -16885,6 +16962,7 @@ export class LibraryService {
           canonicalRoot,
           sourceDeviceHintValue,
           pathIdentity,
+          parentFolderId,
           now,
           now,
         );
@@ -16948,7 +17026,8 @@ export class LibraryService {
       absoluteRootPath: canonicalRoot,
       linkedFolderId: folderId,
       relativePath: '',
-      parentFolderId: null,
+      // Serpent-316493: echo the requested parent (null = library root).
+      parentFolderId,
     };
   }
 

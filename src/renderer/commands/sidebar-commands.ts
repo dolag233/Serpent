@@ -24,6 +24,11 @@ function revealFolderId(ctx: SidebarCommandContext): string {
 export interface SidebarCommandActions {
   readonly openFolderInFileManager: (folderId: string) => void;
   readonly createSubfolder: (folderId: string) => void;
+  /**
+   * Serpent-316493: link a disk directory as a child of this managed folder
+   * (folder context menu → 导入链接文件夹).
+   */
+  readonly importLinkedFolderInto: (folderId: string) => void;
   readonly renameFolder: (folderId: string, currentName: string) => void;
   readonly openLinkedRules: (folder: LinkedFolderSummary) => void;
   readonly copyFolderPath: (folderId: string) => void;
@@ -117,6 +122,17 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
       ctx.menuKind === 'folder' &&
       (ctx.locationKind === 'managed' || ctx.locationKind === 'linked'),
     run: (ctx) => ctx.actions.createSubfolder(ctx.subjectId),
+  },
+  {
+    id: 'folder.import-linked',
+    title: (ctx) =>
+      translateForLocale(ctx.locale, 'command.folder.importLinked'),
+    group: 'organize',
+    // Serpent-316493: only a managed folder can own a linked child; linking a
+    // folder under an existing linked folder stays unsupported.
+    visible: (ctx) =>
+      ctx.menuKind === 'folder' && ctx.locationKind === 'managed',
+    run: (ctx) => ctx.actions.importLinkedFolderInto(ctx.subjectId),
   },
   {
     id: 'folder.rename',

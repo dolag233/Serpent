@@ -1200,3 +1200,140 @@ describe('Linked folder sync diagnostics', () => {
     service.closeAll();
   });
 });
+
+// Serpent-316493: a linked root can hang under a managed folder (folder context
+// menu → 导入链接文件夹), with the rejection rules that keep the index honest.
+describe('Nested linked folders (Serpent-316493)', () => {
+  function createManagedFolder(service: LibraryService, libraryId: string, name: string, parentFolderId?: string) {
+    return service.createManagedFolder({ libraryId, name, parentFolderId });
+  }
+
+  it('hangs a linked root under the managed folder it was imported into', () => {
+    const root = temporaryRoot();
+    const sourceRoot = path.join(root, 'source');
+    mkdirSync(sourceRoot);
+    writeFileSync(path.join(sourceRoot, 'a.png'), 'aaa');
+    mkdirSync(path.join(sourceRoot, 'notes'));
+    writeFileSync(path.join(sourceRoot, 'notes', 'b.png'), 'bbb');
+
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Nested', selectedParentPath: root });
+    const parent = createManagedFolder(service, created.libraryId, 'Alpha');
+
+    const linked = service.importFolderAsLinked({
+      libraryId: created.libraryId,
+      sourceRootPath: sourceRoot,
+      parentFolderId: parent.folderId,
+    });
+
+    expect(linked.parentFolderId).toBe(parent.folderId);
+    const listed = service.listLinkedFolders(created.libraryId);
+    const rootRow = listed.find((folder) => folder.relativePath === '');
+    expect(rootRow?.parentFolderId).toBe(parent.folderId);
+    // Virtual subdirectories stay inside the linked root's own hierarchy.
+    expect(listed.find((folder) => folder.relativePath === 'notes')?.parentFolderId)
+      .toBe(linked.folderId);
+    service.closeAll();
+  });
+
+  it('keeps the nesting across a reopen (schema v49 column survives)', () => {
+    const root = temporaryRoot();
+    const sourceRoot = path.join(root, 'source');
+    mkdirSync(sourceRoot);
+    writeFileSync(path.join(sourceRoot, 'a.png'), 'aaa');
+
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'NestedReopen', selectedParentPath: root });
+    const parent = createManagedFolder(service, created.libraryId, 'Alpha');
+    service.importFolderAsLinked({
+      libraryId: created.libraryId,
+      sourceRootPath: sourceRoot,
+      parentFolderId: parent.folderId,
+    });
+    service.closeAll();
+
+    const reopened = newService();
+    reopened.openLibrary(created.libraryPath);
+    const listed = reopened.listLinkedFolders(created.libraryId);
+    expect(listed.find((folder) => folder.relativePath === '')?.parentFolderId)
+      .toBe(parent.folderId);
+    reopened.closeAll();
+  });
+
+  it('rejects a parent that is not a managed folder of this library', () => {
+    const root = temporaryRoot();
+    const sourceRoot = path.join(root, 'source');
+    mkdirSync(sourceRoot);
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'NestedBadParent', selectedParentPath: root });
+
+    let thrown: unknown;
+    try {
+      service.importFolderAsLinked({
+        libraryId: created.libraryId,
+        sourceRootPath: sourceRoot,
+        parentFolderId: 'not-a-managed-folder',
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({ code: 'FOLDER_NOT_FOUND' });
+    service.closeAll();
+  });
+
+  it('rejects a source inside the library folder', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'NestedInsideLibrary', selectedParentPath: root });
+
+    let thrown: unknown;
+    try {
+      service.importFolderAsLinked({
+        libraryId: created.libraryId,
+        sourceRootPath: created.libraryPath,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({
+      code: 'INVALID_IMPORT_SOURCE',
+      reason: 'LINKED_SOURCE_INSIDE_LIBRARY',
+    });
+    service.closeAll();
+  });
+
+  it('rejects a directory that is already linked, or lives inside a linked folder', () => {
+    const root = temporaryRoot();
+    const sourceRoot = path.join(root, 'source');
+    const nestedSource = path.join(sourceRoot, 'sub');
+    mkdirSync(sourceRoot);
+    mkdirSync(nestedSource);
+    writeFileSync(path.join(sourceRoot, 'a.png'), 'aaa');
+
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'NestedDuplicates', selectedParentPath: root });
+    service.importFolderAsLinked({
+      libraryId: created.libraryId,
+      sourceRootPath: sourceRoot,
+    });
+
+    const rejection = (sourcePath: string): unknown => {
+      try {
+        service.importFolderAsLinked({ libraryId: created.libraryId, sourceRootPath: sourcePath });
+      } catch (error) {
+        return error;
+      }
+      return undefined;
+    };
+
+    expect(rejection(sourceRoot)).toMatchObject({
+      code: 'INVALID_IMPORT_SOURCE',
+      reason: 'LINKED_SOURCE_ALREADY_LINKED',
+    });
+    expect(rejection(nestedSource)).toMatchObject({
+      code: 'INVALID_IMPORT_SOURCE',
+      reason: 'LINKED_SOURCE_INSIDE_LINKED_FOLDER',
+    });
+    service.closeAll();
+  });
+});

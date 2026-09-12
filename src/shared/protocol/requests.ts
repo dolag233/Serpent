@@ -496,6 +496,8 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.import-linked.request'),
     libraryId: identifierSchema,
     displayName: optionalIdentifierSchema,
+    /** Serpent-316493: managed folder to hang the linked root under. */
+    parentFolderId: identifierSchema.nullable().optional(),
   }),
   z.strictObject({
     type: z.literal('linked-folder.list.request'),
@@ -1622,6 +1624,8 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     displayName: optionalIdentifierSchema,
     sourceRootPath: selectedPathSchema,
+    /** Serpent-316493: managed folder to hang the linked root under. */
+    parentFolderId: identifierSchema.nullable().optional(),
   }),
   z.strictObject({
     type: z.literal('linked-folder.list'),

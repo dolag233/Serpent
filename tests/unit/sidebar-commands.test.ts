@@ -41,6 +41,7 @@ function makeActions(calls: RecordedCall[]): SidebarCommandActions {
   return {
     openFolderInFileManager: record('openFolderInFileManager'),
     createSubfolder: record('createSubfolder'),
+    importLinkedFolderInto: record('importLinkedFolderInto'),
     renameFolder: record('renameFolder'),
     openLinkedRules: record('openLinkedRules'),
     copyFolderPath: record('copyFolderPath'),
@@ -104,11 +105,12 @@ afterEach(() => {
 });
 
 describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致）', () => {
-  it('managed：open / create / rename / copy-paste-clone / trash 可见（移动到…已退役）', () => {
+  it('managed：open / create / import-linked / rename / copy-paste-clone / trash 可见（移动到…已退役）', () => {
     const { ctx } = makeCtx();
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
       'folder.create-subfolder',
+      'folder.import-linked',
       'folder.rename',
       'folder.copy-path',
       'folder.copy',
@@ -601,10 +603,11 @@ describe('删除命令的确认由界面动作统一处理', () => {
 });
 
 describe('注册表完整性', () => {
-  it('19 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
+  it('20 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
     expect(registry.list().map((def) => def.id)).toEqual([
       'folder.open-in-file-manager',
       'folder.create-subfolder',
+      'folder.import-linked',
       'folder.rename',
       'folder.linked-rules',
       'folder.copy-path',
@@ -630,6 +633,7 @@ describe('注册表完整性', () => {
     const groups = registry.resolveMenu(ctx).map((item) => item.group);
     expect(groups).toEqual([
       'open',
+      'organize',
       'organize',
       'organize',
       'organize',

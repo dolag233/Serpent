@@ -514,6 +514,7 @@ export const zhCN = {
     },
     folder: {
       newSubfolder: "新建子文件夹",
+      importLinked: "导入链接文件夹",
       rename: "重命名…",
       revealInFinder: "在 Finder 中打开",
       revealInExplorer: "在文件浏览器中打开",
@@ -2189,6 +2190,9 @@ export const zhCN = {
       LIBRARY_PARENT_IS_ROOT: "不能把资源库直接建在磁盘根目录（例如 E:\\）。请选择一个子文件夹。",
       LIBRARY_PARENT_NOT_DIRECTORY: "所选路径不是文件夹。请选择一个本地文件夹作为保存位置。",
       LIBRARY_PARENT_INSIDE_SOURCE: "不能把新 Serpent 资源库保存在 Eagle/Billfish 源库内部。请选择源库以外的文件夹。",
+      LINKED_SOURCE_INSIDE_LIBRARY: "这个目录在资源库文件夹内部，已经由 Serpent 自己管理。请选择资源库文件夹以外的目录。",
+      LINKED_SOURCE_ALREADY_LINKED: "这个目录已经在库里链接过了。请选择另一个目录。",
+      LINKED_SOURCE_INSIDE_LINKED_FOLDER: "这个目录已经在库里的某个链接文件夹内部，重复索引只会让同一批文件出现两次。请选择该链接文件夹以外的目录。",
       SYNC_AUTH_FAILED: "用户名或密码不正确。",
       SYNC_PERMISSION_DENIED: "该账号没有上传或下载文件的权限。",
       SYNC_NOT_FOUND: "服务器上找不到该同步路径。",

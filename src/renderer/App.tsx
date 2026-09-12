@@ -7414,7 +7414,7 @@ function AppInner() {
     }
   }
 
-  async function importFolderAsLinked() {
+  async function importFolderAsLinked(parentFolderId: string | null = null) {
     if (!api || !library) return;
     const startedAt = Date.now();
     setUiState("importing");
@@ -7424,6 +7424,9 @@ function AppInner() {
       const result = await api.importFolderAsLinked({
         libraryId: library.libraryId,
         displayName: undefined,
+        // Serpent-316493: null = library root (folder-section link button);
+        // a managed folder id hangs the link under that folder.
+        parentFolderId,
       });
       if (!result.ok) {
         if (result.error.code === "CANCELLED") return;
@@ -13179,6 +13182,10 @@ function AppInner() {
         onCreateSubfolder={(folderId) => {
           cancelInlineSmartCollectionEdit();
           openInlineFolderCreate(folderId);
+        }}
+        onImportLinkedFolderInto={(folderId) => {
+          // Serpent-316493: 导入链接文件夹 under the right-clicked folder.
+          void importFolderAsLinked(folderId);
         }}
         onSetIgnore={({ locationKind, linkedFolderId, relativePath, pathKind, ignored, name }) => {
           void setIgnoreState({ locationKind, linkedFolderId, relativePath, pathKind, ignored, name });

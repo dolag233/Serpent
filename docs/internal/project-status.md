@@ -3,6 +3,8 @@
 > 更新时间：2026-09-12
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
+- **2026-09-12 链接文件夹可挂在普通文件夹下**：文件夹右键新增「导入链接文件夹」（仅 managed 文件夹可见），把磁盘目录链接为该文件夹的子级（`Serpent-316493` / `LINKED-FOLDER-NEST-001`）。schema v49 只增一列 `linked_folders.parent_folder_id`（不加外键，回收站删父行时不静默清掉嵌套）；父级不可见（回收站 / 已删盘）时链接临时回落显示在库根，父级恢复后自动回到父级下。拒绝规则：目标在本库内 / 已是链接根 / 在已链接根内部，都有专门 reason 与中英文案。不做链接套链接。见 [开发日志](development/2026-09-12-nested-linked-folders-development-log.md)。worker 37 passed、真实 Electron E2E `linked-folders` 4 passed，待人验。
+
 - **2026-09-12 文件夹创建层级收口**：侧栏「+」与「链接」按钮改为**始终在资源库根目录**创建（`Serpent-186547` / `FOLDER-CREATE-001`），不再跟随当前选中文件夹；子级创建统一由右键承担（普通子文件夹已有，链接子级见 `Serpent-316493`）。见 [开发日志](development/2026-09-12-folder-create-at-root-development-log.md)。E2E `nav-pane-background` 2 passed，待人验。
 
 - **2026-09-12 拖放无变化不再提示**：按用户反馈清扫冗余提示（`Serpent-374266` / `TOAST-006`）——文件夹拖到自身 / 当前父级 / 自己的子文件夹，资产拖到当前所在文件夹，以及资产拖到已经是成员的合集，都不再出现任何 toast，无效目标也不再显示可放置高亮（dragover 不接收这次 drop）；合集投放改为先查成员关系，只报告**实际新增**数，无新增则不调用也不提示。删除 4 个已无用的 i18n 键。保留「没有符合条件的资产」（已删除/缺失/链接目录）这类说明性提示。见 [开发日志](development/2026-09-12-dnd-noop-notices-development-log.md)。packaged/Windows 与资产两条真机旅程未执行，待人验。

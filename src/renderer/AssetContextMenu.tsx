@@ -296,6 +296,8 @@ interface AssetContextMenuProps {
   onEditCollectionDetails: (collectionId: string) => void;
   onDeleteOrganization: (id: string, name: string) => void;
   onCreateSubfolder: (folderId: string) => void;
+  /** Serpent-316493: 导入链接文件夹 as a child of this managed folder. */
+  onImportLinkedFolderInto: (folderId: string) => void;
   onSetIgnore: (args: {
     locationKind: "managed" | "linked";
     linkedFolderId?: string | null;
@@ -395,6 +397,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onEditCollectionDetails,
     onDeleteOrganization,
     onCreateSubfolder,
+    onImportLinkedFolderInto,
     onSetIgnore,
     onRenameFolder,
     onOpenFolderInFileManager,
@@ -752,6 +755,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             actions: {
               openFolderInFileManager: onOpenFolderInFileManager,
               createSubfolder: onCreateSubfolder,
+              importLinkedFolderInto: onImportLinkedFolderInto,
               renameFolder: onRenameFolder,
               openLinkedRules: onOpenLinkedRules,
               copyFolderPath: onCopyFolderPath,
@@ -843,6 +847,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             actions: {
               openFolderInFileManager: onOpenFolderInFileManager,
               createSubfolder: onCreateSubfolder,
+              importLinkedFolderInto: onImportLinkedFolderInto,
               renameFolder: onRenameFolder,
               openLinkedRules: onOpenLinkedRules,
               copyFolderPath: onCopyFolderPath,
@@ -971,6 +976,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             actions: {
               openFolderInFileManager: onOpenFolderInFileManager,
               createSubfolder: onCreateSubfolder,
+              importLinkedFolderInto: onImportLinkedFolderInto,
               renameFolder: onRenameFolder,
               openLinkedRules: onOpenLinkedRules,
               copyFolderPath: onCopyFolderPath,
@@ -1013,6 +1019,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           const createSubfolderItem = resolvedById.get(
             "folder.create-subfolder",
           );
+          const importLinkedItem = resolvedById.get("folder.import-linked");
           const renameItem = resolvedById.get("folder.rename");
           const linkedRulesItem = resolvedById.get("folder.linked-rules");
           const copyPathItem = resolvedById.get("folder.copy-path");
@@ -1064,6 +1071,13 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     onAction={() =>
                       runSidebarCommand("folder.create-subfolder")
                     }
+                  />
+                )}
+                {importLinkedItem && (
+                  <ContextMenuItem
+                    icon={<Icon name="link" size={14} />}
+                    label={importLinkedItem.label}
+                    onAction={() => runSidebarCommand("folder.import-linked")}
                   />
                 )}
                 {renameItem && (

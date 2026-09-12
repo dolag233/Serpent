@@ -526,6 +526,7 @@ export const en = {
     },
     folder: {
       newSubfolder: "New subfolder",
+      importLinked: "Import linked folder",
       rename: "Rename…",
       revealInFinder: "Open in Finder",
       revealInExplorer: "Open in File Explorer",
@@ -2206,6 +2207,9 @@ export const en = {
       LIBRARY_PARENT_IS_ROOT: "A library cannot be created at a drive root (for example E:\\). Choose a subfolder.",
       LIBRARY_PARENT_NOT_DIRECTORY: "The selected path is not a folder. Choose a local folder as the save location.",
       LIBRARY_PARENT_INSIDE_SOURCE: "The new Serpent library cannot be saved inside the Eagle/Billfish source. Choose a folder outside the source library.",
+      LINKED_SOURCE_INSIDE_LIBRARY: "That folder is inside the library folder and is already managed by Serpent. Choose a folder outside the library folder.",
+      LINKED_SOURCE_ALREADY_LINKED: "That folder is already linked in this library. Choose a different folder.",
+      LINKED_SOURCE_INSIDE_LINKED_FOLDER: "That folder is already inside a linked folder in this library, so the same files would be indexed twice. Choose a folder outside that linked folder.",
       SYNC_AUTH_FAILED: "The username or password is incorrect.",
       SYNC_PERMISSION_DENIED: "This account cannot upload or download files on the server.",
       SYNC_NOT_FOUND: "The sync path could not be found on the server.",

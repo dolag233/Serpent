@@ -156,6 +156,10 @@ export const publicErrorReasonSchema = z.enum([
   'LINKED_FOLDER_NETWORK_DISCONNECTED',
   'LINKED_FOLDER_NOT_FOUND',
   'LINKED_FOLDER_FOREIGN_DEVICE',
+  // Serpent-316493: 导入链接文件夹的拒绝原因
+  'LINKED_SOURCE_INSIDE_LIBRARY',
+  'LINKED_SOURCE_ALREADY_LINKED',
+  'LINKED_SOURCE_INSIDE_LINKED_FOLDER',
 ]);
 
 export type PublicErrorReason = z.infer<typeof publicErrorReasonSchema>;
