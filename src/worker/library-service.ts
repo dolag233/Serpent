@@ -11119,7 +11119,7 @@ export class LibraryService {
   } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
     if (input.operation === 'move') {
       // Validate target folder exists when moving into a non-root folder.
@@ -15843,7 +15843,7 @@ export class LibraryService {
     ).get(input.folderId, input.libraryId);
     if (!folder) throw new LibraryServiceError('FOLDER_NOT_FOUND');
     if (input.rules.length > 200 || new Set(input.rules.map((rule) => rule.ruleId)).size !== input.rules.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
     const rules = input.rules.map((rule) => this.normalizeLinkedFolderRule(rule));
     let hiddenCount = 0;
@@ -16031,7 +16031,7 @@ export class LibraryService {
     this.assertLibraryWritable(openLibrary);
     this.assertAssetsNotExplicitlyIgnored(openLibrary, input.assetIds);
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_SELECTION');
     }
     const rows = sqliteAllInChunks<string, {
       asset_id: string;
@@ -16573,7 +16573,7 @@ export class LibraryService {
   }): AssetSummary {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (!Number.isFinite(input.fps) || input.fps < 1 || input.fps > 240) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INTERNAL_ERROR');
     }
     const uniqueIds = [...new Set(input.assetIds)];
     if (uniqueIds.length < 3 || uniqueIds.length !== input.assetIds.length) {
@@ -16660,7 +16660,7 @@ export class LibraryService {
   }): { sequenceId: string; fps: number } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (!Number.isFinite(input.fps) || input.fps < 1 || input.fps > 240) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INTERNAL_ERROR');
     }
     const result = openLibrary.connection
       .prepare(
@@ -19493,9 +19493,7 @@ export class LibraryService {
       (input.scope.kind === 'library' || input.scope.kind === 'folder') &&
       !input.confirm
     ) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
-        reason: 'PERMISSION_DENIED',
-      });
+      throw new LibraryServiceError('CONFIRMATION_REQUIRED');
     }
 
     const conn = openLibrary.connection;
@@ -21097,7 +21095,7 @@ export class LibraryService {
     const imageDecoder = imageDecoderForExtension(ext);
     const viewerDecoder = imageViewerDecoderForExtension(ext);
     if (mediaType === 'other' || (mediaType === 'image' && !imageDecoder)) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
+      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE', {
         reason: 'UNSUPPORTED_FORMAT',
       });
     }
@@ -26863,7 +26861,7 @@ export class LibraryService {
       throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
     }
     if (!isSupportedModelExtension(asset.relative_file_path)) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
+      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE', {
         reason: 'UNSUPPORTED_FORMAT',
       });
     }
@@ -26909,7 +26907,7 @@ export class LibraryService {
         ? 'audio_proxy'
         : 'thumbnail';
     if (input.kind !== expectedKind) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', { reason: 'UNSUPPORTED_FORMAT' });
+      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE', { reason: 'UNSUPPORTED_FORMAT' });
     }
     const jobKind = input.kind === 'webm_proxy'
       ? 'generate_webm_proxy'
@@ -33930,7 +33928,7 @@ export class LibraryService {
       throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
     }
     if (LibraryService.detectMediaType(row.relative_file_path) !== 'text') {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', { reason: 'UNSUPPORTED_FORMAT' });
+      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE', { reason: 'UNSUPPORTED_FORMAT' });
     }
 
     const absolutePath = isTrashed
@@ -33972,7 +33970,7 @@ export class LibraryService {
     }
 
     if (buffer.includes(0)) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', { reason: 'UNSUPPORTED_FORMAT' });
+      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE', { reason: 'UNSUPPORTED_FORMAT' });
     }
 
     const truncated = buffer.length > maxBytes;
@@ -34035,7 +34033,7 @@ export class LibraryService {
       throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
     }
     if (LibraryService.detectMediaType(row.relative_file_path) !== 'text') {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', { reason: 'UNSUPPORTED_FORMAT' });
+      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE', { reason: 'UNSUPPORTED_FORMAT' });
     }
     if (
       input.expectedRevisionId &&
@@ -38244,7 +38242,7 @@ export class LibraryService {
     try {
       return normalizeRelativeAssetPath(trimmed);
     } catch (error) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', { cause: error });
+      throw new LibraryServiceError('INVALID_FOLDER_NAME', { cause: error });
     }
   }
 
@@ -38591,7 +38589,7 @@ export class LibraryService {
         input.locationKind === 'linked' && input.pathKind === 'folder',
       );
     if (input.pathKind === 'extension' && (relativePath.length === 0 || relativePath.includes('/') || relativePath.includes('\\'))) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_FOLDER_NAME');
     }
     if (input.locationKind === 'linked' && !linkedFolderId) {
       throw new LibraryServiceError('FOLDER_NOT_FOUND');
@@ -39526,7 +39524,7 @@ export class LibraryService {
     if (this.linkedFolderRowForImport(openLibrary, input.targetFolderId)) {
       // Linked imports skip the managed staging pipeline; callers should use
       // prepareOrExecuteImport. Surface a clear error if prepareImport is used alone.
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
+      throw new LibraryServiceError('AUTOMATION_FILE_PLAN_INVALID', {
         reason: 'SOURCE_NOT_FOUND',
       });
     }
@@ -41093,7 +41091,7 @@ export class LibraryService {
     const pending = this.pendingImports.get(input.importId);
     if (!pending) throw new LibraryServiceError('IMPORT_NOT_FOUND');
     if (pending.awaitingSourceFailureDecision) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      throw new LibraryServiceError('INVALID_STATE_TRANSITION', { reason: 'IMPORT_AWAITING_SOURCE_DECISION' });
     }
     this.pendingImports.delete(input.importId);
     this.cancelImportExpiry(pending);

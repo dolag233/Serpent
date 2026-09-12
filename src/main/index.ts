@@ -4649,7 +4649,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       if (sequenceIndex !== pending.nextSequenceIndex) {
         return {
           ok: false,
-          error: createPublicError("INVALID_IMPORT_DECISION"),
+          error: createPublicError("IMPORT_NOT_FOUND"),
         } satisfies RendererResult;
       }
       const sequence = stored.sequences[sequenceIndex];

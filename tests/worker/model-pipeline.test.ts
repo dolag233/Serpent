@@ -602,7 +602,7 @@ describe('model asset pipeline (slice A, Serpent-fu2i)', () => {
         caught = error;
       }
       expect(caught).toBeInstanceOf(LibraryServiceError);
-      expect((caught as LibraryServiceError).code).toBe('INVALID_IMPORT_DECISION');
+      expect((caught as LibraryServiceError).code).toBe('UNSUPPORTED_MEDIA_TYPE');
       expect((caught as LibraryServiceError).reason).toBe('UNSUPPORTED_FORMAT');
 
       expect(() => service.resolveModelCompanions({

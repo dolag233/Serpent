@@ -77,6 +77,14 @@ export const PUBLIC_ERROR_MESSAGES = {
     'The selected items cannot be used for this action. Reselect them, or refresh the list and try again.',
   ASSET_STATE_CONFLICT:
     'This asset is not in a state that supports this action — it may have been deleted, restored, or changed elsewhere. Refresh the list and try again.',
+  // Serpent-50c466 Phase 2 (audit §2.1 #13-#15, #21-#23): an operation that does
+  // not apply to this file kind is not an invalid import decision.
+  UNSUPPORTED_MEDIA_TYPE:
+    'This kind of file does not support that action. Choose a supported file type instead.',
+  // Serpent-50c466 Phase 2 (audit §2.1 #11): a destructive AI scope change that
+  // arrived without the confirmation flag.
+  CONFIRMATION_REQUIRED:
+    'That action needs confirmation first. Reopen the dialog, confirm it, and try again.',
   INVALID_ASSET_FILE_NAME: 'Choose a file name that is safe on macOS and Windows.',
   ASSET_FILE_NAME_CONFLICT: 'A file with this name already exists in the asset folder.',
   INVALID_ASSET_METADATA: 'Choose valid asset metadata values, including six-digit hex colors and an HTTP(S) source page URL.',
@@ -180,6 +188,8 @@ export const publicErrorReasonSchema = z.enum([
   'LINKED_SOURCE_INSIDE_LINKED_FOLDER',
   /** Serpent-50c466 audit: image-sequence selection does not form one series. */
   'IMAGE_SEQUENCE_SELECTION',
+  /** Serpent-50c466 Phase 2 (audit §2.1 #31): the import waits on another answer. */
+  'IMPORT_AWAITING_SOURCE_DECISION',
 ]);
 
 export type PublicErrorReason = z.infer<typeof publicErrorReasonSchema>;

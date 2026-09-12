@@ -103,19 +103,59 @@ tsc --noEmit / eslint → exit 0
 
 测试同步：`trash-relink` 4 条断言（重复 id / 非链接资产）改判；`search.test.ts` 2 条与 `organization.test.ts` 1 条改为 `INVALID_SMART_COLLECTION_QUERY`；新增 `image-sequence` 2 条（跨文件夹 → `INVALID_SELECTION`+reason、帧进回收站 → `ASSET_STATE_CONFLICT`）与 `linked-folders` 1 条（规则模式非法 → `INVALID_FOLDER_NAME`）；`error-state-transition-copy` 扩到 21 条，覆盖 6 个状态/选择码 + 6 个复用码的中英文案，并断言 `INVALID_SELECTION` 的文案里**没有**"另一个窗口"、`INVALID_STATE_TRANSITION` 有。
 
-## 7. Phase 2（本次未做，剩余 33 处 + 审计 §4 的同类问题）
+## 7. Phase 2：剩余调用点清理（同日完成）
 
-- 输入/模式/格式校验类调用点（审计报告 §5.2 第 20–21 行之外的 33 处）：智能合集解析其余分支、忽略规则/路径、文本资产读写、图片序列其余守卫、插件/缩略图/模型伴随、`placeManagedRelinkFile` 等。
-- 审计 §4.2–§4.9 发现的**同一类"文案与场景不符"**（已另行开单，见工单 `Serpent-3c71f3`）：
-  - `FOLDER_ALREADY_EXISTS` 的**恢复专用文案**被用在文件夹/合集/智能合集**创建**路径（用户建重名文件夹会被告知"无法恢复到原路径"）
-  - `FOLDER_NOT_FOUND` 的"磁盘可能已断开"文案被用于标签/合集/智能合集不存在
-  - `VERSION_CONFLICT` 的"元数据被改过"文案被用于自动化计划过期
-  - 协议 `Error.message`（英文原文）被直接渲染进中文界面（`App.tsx:6244/6276/6292/6306`、`TextViewerControls.tsx:114/216`）
-  - 7 个公开码在两个 catalog 都缺文案（含 `FOLDER_NOT_EMPTY`，删除非空文件夹时用户可见）
-  - `worker/index.ts:1480-1489` 硬编码中文缩略图失败文案，英文界面也显示中文
+审计报告 §2.1 里剩下的 19 处（worker 18 + main 1）已按它的建议逐条处理，`INVALID_IMPORT_DECISION` **只剩 `resolveImport` 里正当的 2 处**（`library-service.ts:41102` 写 `file_operations.error_code`、`:41104` 校验 suspectedDuplicate/nameConflict 取值）+ `import-planning.test.ts:1199` 的对应断言。
+
+| 站点（当前行号） | 场景 | 改判 |
+| --- | --- | --- |
+| 11122 | 自动化预览：assetIds 空/重复 | `INVALID_SELECTION` |
+| 15846 | 链接规则 >200 条或 ruleId 重复 | `INVALID_SELECTION` |
+| 16034 | 复制链接资产：assetIds 空/重复 | `INVALID_SELECTION` |
+| 16576 / 16663 | 序列图 fps 非有限 / <1 / >240（对话框已拦截，属内部不变量） | `INTERNAL_ERROR` |
+| 19496 | `clearAiContent` 的 library/folder scope 未带 confirm（原 `reason: PERMISSION_DENIED` 也不贴切，一并去掉） | **新码** `CONFIRMATION_REQUIRED` |
+| 21100 | 缩略图：`mediaType === 'other'` 或无解码器 | **新码** `UNSUPPORTED_MEDIA_TYPE` |
+| 26866 | 模型伴随：非受支持模型扩展名 | `UNSUPPORTED_MEDIA_TYPE` |
+| 26912 | 工件重试：kind 与媒体类型不符 | `UNSUPPORTED_MEDIA_TYPE` |
+| 33933 / 33975 / 34038 | 文本资产：非文本读写 / 内容含 NUL / 非文本写回 | `UNSUPPORTED_MEDIA_TYPE` |
+| 38247 | 忽略路径不合法 | `INVALID_FOLDER_NAME` |
+| 38594 | 扩展名忽略项含 `/`、`\` | `INVALID_FOLDER_NAME` |
+| 39529 | `prepareImport` 收到链接文件夹目标（调用方契约错，应走 `prepareOrExecuteImport`） | `AUTOMATION_FILE_PLAN_INVALID` |
+| 41096 | 该导入正在等待"源失败"决定 | `INVALID_STATE_TRANSITION` + **新 reason** `IMPORT_AWAITING_SOURCE_DECISION` |
+| main/index.ts:4652 | 序列确认对话框的 `sequenceIndex` 过期 | `IMPORT_NOT_FOUND`（同分支 4638/4644 对 offer 失效已这么用） |
+
+新增文案（中英同步）：`UNSUPPORTED_MEDIA_TYPE`「这类文件不支持这项操作。请改选受支持的文件类型。」、`CONFIRMATION_REQUIRED`「这项操作需要先确认。请重新打开对话框并确认后再试。」、reason `IMPORT_AWAITING_SOURCE_DECISION`「这次导入正在等待一个决定（关于无法读取的文件）。请先处理它，再重试。」
+
+证据：
+
+```
+tests/worker/model-pipeline.test.ts          16 passed（断言从旧码改为 UNSUPPORTED_MEDIA_TYPE）
+tests/worker/linked-folders.test.ts          38 passed
+tests/worker/image-sequence.test.ts          17 passed
+tests/worker/thumbnails.test.ts              69 passed
+tests/worker/palette-artifact.test.ts        11 passed
+tests/worker/derived-artifact-repair.test.ts  6 passed
+tests/worker/import-planning.test.ts         57 passed | 1 skipped
+tests/worker/ai-completion.test.ts           47 passed
+tests/worker/ai-analysis.test.ts             28 passed
+tests/worker/automation-write-fencing.test.ts 12 passed
+npm run test:library-availability            9 files / 211 passed | 1 skipped
+tsc --noEmit / eslint                        exit 0
+```
+
+## 8. 本单之外的同类问题（已开单 `Serpent-3c71f3`）
+
+审计 §4.2–§4.9 发现的**同一类"文案与场景不符"**属其它错误码，不在本单调用点范围内：
+
+- `FOLDER_ALREADY_EXISTS` 的**恢复专用文案**被用在文件夹/合集/智能合集**创建**路径（用户建重名文件夹会被告知"无法恢复到原路径"）
+- `FOLDER_NOT_FOUND` 的"磁盘可能已断开"文案被用于标签/合集/智能合集不存在
+- `VERSION_CONFLICT` 的"元数据被改过"文案被用于自动化计划过期
+- 协议 `Error.message`（英文原文）被直接渲染进中文界面（`App.tsx:6244/6276/6292/6306`、`TextViewerControls.tsx:114/216`）
+- 7 个公开码在两个 catalog 都缺文案（含 `FOLDER_NOT_EMPTY`，删除非空文件夹时用户可见）
+- `worker/index.ts:1480-1489` 硬编码中文缩略图失败文案，英文界面也显示中文
 - 行为层面（需产品口径）：永久删除/回收站对已完成批次改幂等。
 
-## 8. 未验证 / 边界
+## 9. 未验证 / 边界
 
 - packaged / Windows 打包态：未执行（Windows 开发态由 worker 测试覆盖）。
 - 人类验收：见清单 `ERROR-STATE-001`（连续 trash、对活跃资产 restore/永久删除、链接资产 trash 四种情况的文案）。
