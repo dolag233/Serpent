@@ -1,5 +1,7 @@
 # Serpent 项目状态
 
+- **2026-09-13 交互性能设计与拆分**：针对文件夹切换、NAS、资源加载和新建文件夹反馈慢，形成[第二阶段顶层设计](implementation/2026-09-13-interactive-performance-design.md)与[执行安排](development/2026-09-13-interactive-performance-execution.md)。采用受控只读执行隔离、有界首屏、NAS版本化快照、提交后局部投影及定向刷新。仅设计完成，本轮性能/功能验收未执行；不替代历史用户工单关闭证据。开发全交Luna Extra High，主设计agent只协调。
+
 > 更新时间：2026-09-13
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 

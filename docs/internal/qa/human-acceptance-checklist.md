@@ -1,5 +1,7 @@
 # Serpent 人类功能验收清单
 
+> 2026-09-13 交互性能计划：见[第二阶段设计](../implementation/2026-09-13-interactive-performance-design.md)与[工单索引](../development/2026-09-13-interactive-performance-execution.md)，总工单 `Serpent-e9a66b`。`PERF2-NAV` / `PERF2-NAS` / `PERF2-MEDIA` / `PERF2-MUT` / `PERF2-REFRESH` 目前仅规划、均未实现/未验证，不进入「待人类验收」队列。后续由Luna集成者按可操作增量和实际测试证据登记；历史验收状态不因本设计改变。
+
 > 状态：持续维护
 >
 > 首次建立：2026-07-14

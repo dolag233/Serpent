@@ -1,5 +1,7 @@
 # ADR-0018：采用 UtilityProcess 与媒体子进程隔离后台任务
 
+> 2026-09-13：[ADR-0033](0033-isolated-catalog-reads.md) 设计将受控目录只读查询分离到Library Worker子系统的独立执行器；持久化owner和本文安全边界保持。实施待验证。
+
 - 状态：已接受
 - 日期：2026-07-11
 
