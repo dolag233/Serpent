@@ -3,7 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { utilityProcess, type UtilityProcess } from 'electron';
 
 import type { WorkerCommand, WorkerHistoryContext } from '../shared/protocol/requests';
-import type { performanceLaneForCommand } from '../shared/performance-contract';
+import {
+  correlateBrokerRoundTrip,
+  type PerformanceLane,
+} from '../shared/performance-contract';
 import type { AppLogger } from './app-logger';
 import { LibraryRequestBroker } from './library-request-broker';
 import { mediaBinaryWorkerEnv } from './media-binary-env';
@@ -48,10 +51,11 @@ import {
 
 interface PendingRequest {
   commandType: string;
-  lane: ReturnType<typeof performanceLaneForCommand>;
+  lane: PerformanceLane;
   resolve(result: WorkerResult): void;
   reject(error: Error): void;
   sentAt: number | undefined;
+  sentAtEpochMs: number;
   timer: ReturnType<typeof setTimeout> | undefined;
 }
 
@@ -353,6 +357,7 @@ export class LibraryWorkerClient {
         resolve,
         reject,
         sentAt,
+        sentAtEpochMs,
         timer,
       });
       child.postMessage({
@@ -763,13 +768,21 @@ export class LibraryWorkerClient {
     clearTimeout(pending.timer);
     this.#pending.delete(response.requestId);
     if (WORKER_CMD_LOG && pending.sentAt !== undefined) {
+      const roundTrip = correlateBrokerRoundTrip({
+        requestId: response.requestId,
+        sentAtEpochMs: pending.sentAtEpochMs,
+        completedAtEpochMs: Date.now(),
+      });
       this.logger.info(
         'worker.cmd.roundtrip',
         'Library Worker command roundtrip completed.',
         {
-          requestId: response.requestId,
+          requestId: roundTrip.requestId,
           commandType: pending.commandType,
           lane: pending.lane,
+          sentAtEpochMs: roundTrip.sentAtEpochMs,
+          completedAtEpochMs: roundTrip.completedAtEpochMs,
+          roundTripMs: roundTrip.roundTripMs,
           totalMs: Math.max(0, Date.now() - pending.sentAt),
         },
       );

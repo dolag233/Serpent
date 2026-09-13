@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { assetSummarySchema, managedFolderSummarySchema } from './asset-types';
+
 /**
  * The Worker-facing scheduling lanes from implementation 0032.  These are
  * internal admission-control metadata; Renderer code never chooses a lane.
@@ -59,8 +61,8 @@ export const MUTATION_RECEIPT_MAX_ENTITY_IDS = 256;
 const boundedIdListSchema = z.array(z.string().min(1).max(255)).max(MUTATION_RECEIPT_MAX_ENTITY_IDS);
 
 export const mutationReceiptChangesSchema = z.strictObject({
-  folders: z.array(z.unknown()).max(MUTATION_RECEIPT_MAX_ENTITY_IDS).optional(),
-  assets: z.array(z.unknown()).max(MUTATION_RECEIPT_MAX_ENTITY_IDS).optional(),
+  folders: z.array(managedFolderSummarySchema).max(MUTATION_RECEIPT_MAX_ENTITY_IDS).optional(),
+  assets: z.array(assetSummarySchema).max(MUTATION_RECEIPT_MAX_ENTITY_IDS).optional(),
   deletedFolderIds: boundedIdListSchema.optional(),
   deletedAssetIds: boundedIdListSchema.optional(),
   affectedFolderIds: boundedIdListSchema.optional(),
@@ -423,6 +425,25 @@ export function correlateBrokerRoundTrip(input: {
 }
 
 export const DEFAULT_PERFORMANCE_CONSUMER_ID = 'window:default';
+
+/** Window-scoped latest-wins identity. Must not collapse to a library-wide key. */
+export function performanceConsumerIdForWindow(webContentsId: number): string {
+  if (!Number.isInteger(webContentsId) || webContentsId < 0) {
+    throw new RangeError('webContentsId must be a non-negative integer.');
+  }
+  return `window:${webContentsId}`;
+}
+
+/** Local catalog reads publish a null snapshot generation; NAS fills it after publish. */
+export function localCatalogSequenceFields(browseChangeSequence: number): {
+  catalogSequence: number;
+  snapshotGeneration: null;
+} {
+  return {
+    catalogSequence: catalogSequenceFromBrowseChangeSequence(browseChangeSequence),
+    snapshotGeneration: null,
+  };
+}
 
 export type PerformanceTimingSummary = {
   count: number;

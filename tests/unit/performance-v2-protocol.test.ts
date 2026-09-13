@@ -8,12 +8,14 @@ import {
   catalogSequenceFromBrowseChangeSequence,
   correlateBrokerRoundTrip,
   mutationReceiptSchema,
+  performanceConsumerIdForWindow,
   performanceRequestEnvelopeSchema,
   performanceTimingReportSchema,
   resolveCatalogReadAdmission,
   summarizeTimingSamples,
   visibleImageDecodeCoverage,
 } from '../../src/shared/performance-contract';
+import { browseCatalogSequenceStale } from '../../src/worker/catalog-sequence-admission';
 import { parseWorkerRequest } from '../../src/shared/protocol/requests';
 import { workerResultSchema } from '../../src/shared/protocol/responses';
 
@@ -85,6 +87,11 @@ describe('PERF2-01 catalog version and mutation receipt protocol', () => {
       committedCatalogSequence: 4,
       changes: { affectedFolderIds: tooMany },
     })).toThrow();
+    expect(() => mutationReceiptSchema.parse({
+      operationId: 'op-1',
+      committedCatalogSequence: 4,
+      changes: { folders: [{ folderId: 'folder-1' }] },
+    })).toThrow();
 
     expect(mutationReceiptSchema.parse({
       operationId: 'op-1',
@@ -92,7 +99,14 @@ describe('PERF2-01 catalog version and mutation receipt protocol', () => {
       committedCatalogSequence: 4,
       changes: {
         affectedFolderIds: ['folder-1'],
-        folders: [{ folderId: 'folder-1' }],
+        folders: [{
+          folderId: 'folder-1',
+          parentFolderId: null,
+          name: 'Props',
+          relativePath: 'Props',
+          directAssetCount: 0,
+          childFolderCount: 0,
+        }],
       },
     })).toMatchObject({
       operationId: 'op-1',
@@ -123,6 +137,11 @@ describe('PERF2-01 catalog version and mutation receipt protocol', () => {
     expect(otherWindow.consumerId).toBe('window:secondary');
     expect(otherWindow.interactionGeneration).toBe(1);
     expect(sameWindow.interactionGeneration).toBe(2);
+  });
+
+  it('derives window consumer ids from webContents identity', () => {
+    expect(performanceConsumerIdForWindow(12)).toBe('window:12');
+    expect(() => performanceConsumerIdForWindow(-1)).toThrow();
   });
 
   it('correlates broker round trips from envelope send time', () => {
@@ -207,5 +226,12 @@ describe('PERF2-01 catalog version and mutation receipt protocol', () => {
     })).toMatchObject({
       reason: 'catalog-sequence',
     });
+    expect(browseCatalogSequenceStale('session-1', 4, 5)).toEqual({
+      ok: true,
+      type: 'browse.session.stale',
+      sessionId: 'session-1',
+      reason: 'catalog-sequence',
+    });
+    expect(browseCatalogSequenceStale('session-1', 5, 5)).toBeUndefined();
   });
 });

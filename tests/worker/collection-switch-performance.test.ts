@@ -247,7 +247,7 @@ describe("collection switch performance", () => {
 
     console.info("[collection-switch-performance]", JSON.stringify({
       assets: ASSET_COUNT,
-      phase: "persist",
+      work: "catalog-read",
       all: allTiming,
       folder: folderTiming,
       direct: directTiming,

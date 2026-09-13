@@ -14,24 +14,25 @@
 | 改动 | 位置 |
 | --- | --- |
 | 读版本、回执、计时相位、分位数与解码分母 | `src/shared/performance-contract.ts` |
-| Main envelope 默认 `window:default`，generation 键含 consumerId | `src/main/library-request-broker.ts`、`src/main/worker-client.ts` |
+| Renderer IPC 使用 `window:<webContentsId>` 作为 consumerId | `src/main/index.ts` `handleLibraryRequest` |
+| Main envelope generation 键含 consumerId | `src/main/library-request-broker.ts`、`src/main/worker-client.ts` |
 | Worker latest-wins 键含 consumerId | `src/worker/interactive-scheduler.ts`、`src/worker/index.ts` |
-| browse 响应带 `catalogSequence`；page/geometry/ids 在 `minCatalogSequence` 不足时 `browse.session.stale` / `catalog-sequence` | `src/worker/index.ts`、`src/shared/protocol/responses.ts` |
-| `folder.create` 返回有界 `mutationReceipt` | `src/worker/bounded-write-command.ts`、preload / `library-api` |
-| 20k 合集切换 persist 报告 p50/p95/max | `tests/worker/collection-switch-performance.test.ts` |
-| 可选 SMB persist 基线（`SERPENT_PERF_SMB_ROOT`，缺省跳过；不打印挂载路径） | `tests/worker/perf2-01-smb-baseline.test.ts` |
+| browse 响应带 `catalogSequence` 与本地 `snapshotGeneration: null`；page/geometry/ids 在 `minCatalogSequence` 不足时 stale | `src/worker/index.ts`、`catalog-sequence-admission.ts` |
+| `folder.create` 返回有界且类型化的 folder summary 回执 | `src/worker/bounded-write-command.ts`、preload / `library-api` |
+| 20k 合集切换 catalog-read 报告 p50/p95/max | `tests/worker/collection-switch-performance.test.ts` |
+| 可选 SMB persist 基线（空间预检、启动清残留、缺省跳过；不打印挂载路径） | `tests/worker/perf2-01-smb-baseline.test.ts` |
 
 ## 3. 四列证据
 
 | 需求 | 实现位置 | 自动化测试 | 人工/平台证据 |
 | --- | --- | --- | --- |
-| 旧 envelope 可解析；非法 `minCatalogSequence` 失败；回执实体上限 256 | `performance-contract.ts`、`responses.ts` | `tests/unit/performance-v2-protocol.test.ts` | Windows 单测通过 |
-| 窗口 consumer 互不取消 latest-wins | broker + scheduler `latestKey` | `performance-v2-protocol` / `interactive-scheduler` | Windows 单测通过 |
-| 同步阻塞的已开始 mutation 不能被 browse 抢占 | `interactive-scheduler.ts` `nextRunnableIndex` | `interactive-scheduler`：`while (Date.now())` 自旋后再 `await`，browse 在 mutation 结束前 `browseStarted === false` | 当前代码能力为红：同线程无法打断已开始的同步工作。这是后续 PERF2-03 隔离读执行器的前提，不是本单要修的性能 |
-| browse `catalogSequence` 与 stale `catalog-sequence` | Worker browse handlers | protocol 解析；`tests/worker/browse-session.test.ts` 既有 stale 路径 | 完整 Worker 消息未另测 `minCatalogSequence` 准入 |
-| `folder.create` 回执 | `bounded-write-command.ts` | `tests/worker/bounded-write-command.test.ts` | Windows Electron worker 通过 |
-| 20k 元数据合集切换 persist | 既有 20k SQL 夹具 | `collection-switch-performance`，见 §4 | 仅 Worker SQL persist，不是 UI 首屏或图片解码 |
-| 真实 SMB persist | 可选基线测试 | `perf2-01-smb-baseline`，见 §4 | 已跑；挂载路径与库位置未写入仓库。临时目录计数 0 |
+| 旧 envelope 可解析；非法 `minCatalogSequence` 失败；回执实体上限 256 且 folder/asset 用 summary schema | `performance-contract.ts`、`responses.ts` | `tests/unit/performance-v2-protocol.test.ts` | 本机开发态 Vitest（Electron ABI 的 worker 测另列）。不是 Windows 平台验收 |
+| 窗口 consumer 互不取消 latest-wins；Renderer IPC 使用 `window:<id>` | broker + scheduler + `handleLibraryRequest` | `performance-v2-protocol` / `interactive-scheduler` | 本机开发态单测。多窗口 Desktop 产品路径仍待后续窗口工单 |
+| 同步阻塞的已开始 mutation 不能被 browse 抢占 | `interactive-scheduler.ts` `nextRunnableIndex` | `interactive-scheduler`：`while (Date.now())` 自旋后再 `await` | 当前代码能力为红：同线程无法打断已开始的同步工作 |
+| browse `catalogSequence` / 本地 `snapshotGeneration: null` 与 stale `catalog-sequence` | Worker browse handlers、`catalog-sequence-admission.ts` | protocol + `browseCatalogSequenceStale` 单测；`tests/worker/browse-session.test.ts` 既有 stale 路径 | 未跑真实 Electron 窗口 E2E |
+| `folder.create` 回执 | `bounded-write-command.ts` | `tests/worker/bounded-write-command.test.ts` | Electron-as-node worker 测。packaged 未执行 |
+| 20k 元数据合集切换 catalog-read | 既有 20k SQL 夹具 | `collection-switch-performance`（`work: catalog-read`，不是 persist） | 仅 Worker SQL 读查询，不是 UI 首屏或图片解码 |
+| 真实 SMB persist | 可选基线测试 | `perf2-01-smb-baseline`：空间预检 + 启动清残留 | 已跑；挂载路径未写入仓库。临时目录计数 0 |
 | 输入确认 / UI 收敛 / 可见图片全解码 / 20k 混合媒体夹具 / packaged / macOS | 未接线到 Renderer 绘制 | 未执行 | 未执行 |
 
 ## 4. 当次命令与结果
@@ -86,4 +87,13 @@ node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/wo
 - browse page/geometry/ids：版本不足 → `browse.session.stale` `reason: 'catalog-sequence'`。
 - `folder.created.mutationReceipt.committedCatalogSequence` 来自 browse change sequence；`changes.folders` / `affectedFolderIds` 有界。
 - 计时报告用 `summarizeTimingSamples`；解码覆盖用 `visibleImageDecodeCoverage`（分母是应显示图片数，不是已挂载 img）。
-- 默认 consumer：`window:default`。
+- 默认 consumer：`window:default`（Worker/自动化）。Renderer IPC 使用 `window:<webContentsId>`。
+- 本地 browse 成功响应带 `snapshotGeneration: null`。
+
+## 7. 代码审查跟进
+
+对照 Composer 2.5 / Luna high 对 `46998d54...cfe5bd53` 的审查：
+
+- 已改：回执 `folders`/`assets` 使用 summary schema；Renderer 主路径传入窗口 consumerId；browse 发布本地 snapshotGeneration null；`minCatalogSequence` 准入抽到可测模块；catalog-read 不再标成 persist；SMB 夹具空间预检与启动清残留；开发日志不再把本机命令写成 Windows 平台通过。
+- 跟进命令：`npx vitest run tests/unit/performance-v2-protocol.test.ts tests/unit/interactive-scheduler.test.ts` → 2 files / 27 passed；`npm run typecheck` exit 0；eslint 改动文件 exit 0；`test:library-availability` 9 files / 211 passed；browse-session + bounded-write 4 passed；可选 SMB 基线 1 passed（createLibrary persist ~1059ms；挂载路径未记录）。
+- 不改：完整 Electron 窗口 E2E、20k 混合媒体解码矩阵、UI 输入确认/绘制相位（属后续 PERF2 工单）；`operationId` 在 `folder.create` 上与 `historyEntryId` 同值（后续投影去重需要稳定 id）；工单 JSONL 仍经 `node scripts/ticket.mjs`。

@@ -1388,6 +1388,7 @@ const library: SerpentLibraryApi = Object.freeze({
         sessionId: result.sessionId,
         changeSequence: result.changeSequence,
         ...(result.catalogSequence === undefined ? {} : { catalogSequence: result.catalogSequence }),
+        ...(result.snapshotGeneration === undefined ? {} : { snapshotGeneration: result.snapshotGeneration }),
         items: result.items,
         total: result.total,
         offset: result.offset,
@@ -1417,6 +1418,7 @@ const library: SerpentLibraryApi = Object.freeze({
         startIndex: result.startIndex,
         changeSequence: result.changeSequence,
         ...(result.catalogSequence === undefined ? {} : { catalogSequence: result.catalogSequence }),
+        ...(result.snapshotGeneration === undefined ? {} : { snapshotGeneration: result.snapshotGeneration }),
         entries: result.entries,
       },
     };

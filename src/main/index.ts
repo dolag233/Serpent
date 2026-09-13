@@ -281,6 +281,7 @@ import {
   parseAiContentClearedEvent,
 } from "../shared/protocol/responses";
 import { LibraryWorkerClient, WorkerRequestTimeoutError } from "./worker-client";
+import { performanceConsumerIdForWindow } from "../shared/performance-contract";
 import { SyncAutoScheduler, type SyncBindingLike } from "./sync-auto-scheduler";
 import { resolveImageSequenceImportPaths } from "./image-sequence-import";
 import { AppLogger } from "./app-logger";
@@ -3839,7 +3840,10 @@ function isRetryableProbeError(error: { code: string; reason?: string }): boolea
   );
 }
 
-async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
+async function handleLibraryRequest(
+  input: unknown,
+  options: { consumerId: string },
+): Promise<RendererResult> {
   let operation: "create" | "open" | "import" | "open-eagle" | "open-billfish" | undefined;
   let lifecyclePublished = false;
   let clipboardStageDirectory: string | undefined;
@@ -4939,7 +4943,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       : 0;
     const workerResult = command.type === "sync.probe"
       ? await runSyncProbeWithRetry(command)
-      : await workerClient.request(command);
+      : await workerClient.request(command, { consumerId: options.consumerId });
     if (viewerWorkerStartedAt > 0) {
       logger?.info("viewer.preview-worker-timing", "Preview request resolved.", {
         libraryId: viewerRequest?.libraryId,
@@ -4955,7 +4959,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           await workerClient.request({
             type: "library.close",
             libraryId: workerResult.library.libraryId,
-          });
+          }, { consumerId: options.consumerId });
         } catch (error) {
           logger?.error("library.open.cancel-close", error, {
             libraryId: workerResult.library.libraryId,
@@ -7952,7 +7956,9 @@ async function startApplication(): Promise<void> {
         error: createPublicError("INTERNAL_ERROR"),
       } satisfies RendererResult;
     }
-    return handleLibraryRequest(input);
+    return handleLibraryRequest(input, {
+      consumerId: performanceConsumerIdForWindow(event.sender.id),
+    });
   });
 
   ipcMain.on(ASSET_NATIVE_DRAG_CHANNEL, (event, input: unknown) => {

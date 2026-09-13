@@ -114,8 +114,7 @@ import {
   performanceInteractionKeyForCommand,
   isInteractivePerformanceLane,
   shouldPreemptAutomaticMedia,
-  catalogSequenceFromBrowseChangeSequence,
-  resolveCatalogReadAdmission,
+  localCatalogSequenceFields,
   type PerformanceRequestEnvelope,
 } from '../shared/performance-contract';
 import { createPublicError } from '../shared/protocol/errors';
@@ -123,6 +122,7 @@ import {
   InteractiveScheduler,
   SchedulerCancelledError,
 } from './interactive-scheduler';
+import { browseCatalogSequenceStale } from './catalog-sequence-admission';
 import { LibraryGenerationRegistry } from './library-generation';
 import {
   isViewportOnlyThumbnailWave,
@@ -2898,7 +2898,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         sessionId: result.session.sessionId,
         libraryGeneration: result.session.libraryGeneration,
         changeSequence: result.session.changeSequence,
-        catalogSequence: catalogSequenceFromBrowseChangeSequence(result.session.changeSequence),
+        ...localCatalogSequenceFields(result.session.changeSequence),
         queryFingerprint: result.session.queryFingerprint,
         items: result.items,
         total: result.total,
@@ -2933,7 +2933,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         type: 'browse.session.page',
         sessionId: result.session.sessionId,
         changeSequence: result.session.changeSequence,
-        catalogSequence: catalogSequenceFromBrowseChangeSequence(result.session.changeSequence),
+        ...localCatalogSequenceFields(result.session.changeSequence),
         items: result.items,
         total: result.total,
         offset: result.offset,
@@ -2969,7 +2969,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         sessionId: result.session.sessionId,
         startIndex: result.startIndex,
         changeSequence: result.session.changeSequence,
-        catalogSequence: catalogSequenceFromBrowseChangeSequence(result.session.changeSequence),
+        ...localCatalogSequenceFields(result.session.changeSequence),
         entries: result.entries,
       };
     }
@@ -2999,7 +2999,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         libraryId: request.command.libraryId,
         sessionId: result.session.sessionId,
         changeSequence: result.session.changeSequence,
-        catalogSequence: catalogSequenceFromBrowseChangeSequence(result.session.changeSequence),
+        ...localCatalogSequenceFields(result.session.changeSequence),
         assetIds: result.assetIds,
       };
     }
@@ -4663,25 +4663,6 @@ function requestIdFrom(input: unknown): string | undefined {
   return typeof requestId === 'string' && requestId.trim() !== '' && requestId.length <= 255
     ? requestId
     : undefined;
-}
-
-function browseCatalogSequenceStale(
-  sessionId: string,
-  changeSequence: number,
-  minCatalogSequence: number | undefined,
-): Extract<WorkerResult, { type: 'browse.session.stale' }> | undefined {
-  if (resolveCatalogReadAdmission(
-    catalogSequenceFromBrowseChangeSequence(changeSequence),
-    minCatalogSequence,
-  ) !== 'stale') {
-    return undefined;
-  }
-  return {
-    ok: true,
-    type: 'browse.session.stale',
-    sessionId,
-    reason: 'catalog-sequence',
-  };
 }
 
 function performanceEnvelopeForRequest(request: WorkerRequest): PerformanceRequestEnvelope {
