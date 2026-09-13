@@ -218,14 +218,18 @@ function InlineFolderEditRow({
     }, 0);
   }, [onCommit]);
 
-  // Focus with the whole name preselected: typing replaces the current
-  // (rename) or default (create) name immediately, Enter accepts it as-is.
+  // Keep inline creation ready for replacement; folder rename starts at the
+  // end so typing appends unless the user moves the caret.
   useEffect(() => {
     const input = inputRef.current;
     if (!input) return;
     input.focus();
-    input.select();
-  }, []);
+    if (state.kind === "create") {
+      input.select();
+    } else {
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  }, [state.kind]);
 
   // A blank area is not focusable, so Chromium does not always blur the input
   // when the user clicks there. Commit on the same outside interaction that
@@ -288,6 +292,7 @@ function InlineFolderEditRow({
 function InlineCollectionEditRow({
   depth,
   value,
+  selectAllOnOpen,
   ariaLabel,
   placeholder,
   onChange,
@@ -296,6 +301,7 @@ function InlineCollectionEditRow({
 }: {
   depth: number;
   value: string;
+  selectAllOnOpen: boolean;
   ariaLabel?: string;
   placeholder?: string;
   onChange: (value: string) => void;
@@ -322,22 +328,26 @@ function InlineCollectionEditRow({
     });
   }, [cancelScheduledBlurCommit, onCommit]);
 
-  // Context-menu dismissal and row insertion happen in the same interaction
-  // for “new subcollection”. Layout focus handles the initial mount before
-  // paint; the frame retry covers a menu teardown that briefly reclaims focus.
+  // Layout focus handles the initial mount before paint; the frame retry
+  // covers a menu teardown that briefly reclaims focus. Creation keeps its
+  // replacement-ready selection, while rename starts at the current name's end.
   useLayoutEffect(() => {
     const focusInput = () => {
       const input = inputRef.current;
       if (!input) return;
       input.focus({ preventScroll: true });
-      input.select();
+      if (selectAllOnOpen) {
+        input.select();
+      } else {
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
     };
     focusInput();
     const frame = window.requestAnimationFrame(() => {
       if (document.activeElement !== inputRef.current) focusInput();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, []);
+  }, [selectAllOnOpen]);
 
   useEffect(() => {
     return () => {
@@ -1759,6 +1769,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           }}
           onChange={onSetCollectionInputValue}
           onCommit={onCollectionInputCommit}
+          selectAllOnOpen
           value={collectionInputValue}
         />,
       );
@@ -1862,6 +1873,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             onChange={onInlineCollectionRenameChange}
             onCommit={onInlineCollectionRenameCommit}
             placeholder={c.name}
+            selectAllOnOpen={false}
             value={inlineCollectionRename.value}
           />
         ) : (

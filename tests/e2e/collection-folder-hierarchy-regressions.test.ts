@@ -90,6 +90,12 @@ async function renameCollection(window: Page, oldName: string, newName: string) 
   await menu.getByRole("menuitem", { name: "重命名合集" }).click();
   const input = window.locator(".nav-inline-edit input");
   await expect(input).toBeVisible();
+  await expect(input).toHaveValue(oldName);
+  const selection = await input.evaluate((element: HTMLInputElement) => [
+    element.selectionStart,
+    element.selectionEnd,
+  ]);
+  expect(selection).toEqual([oldName.length, oldName.length]);
   await input.fill(newName);
   await input.press("Enter");
   await expect(window.locator(".nav-inline-edit")).toHaveCount(0);
@@ -108,6 +114,12 @@ async function renameFolder(window: Page, oldName: string, newName: string) {
   await menu.getByRole("menuitem", { name: "重命名…" }).click();
   const input = window.locator(".nav-inline-edit input");
   await expect(input).toBeVisible();
+  await expect(input).toHaveValue(oldName);
+  const selection = await input.evaluate((element: HTMLInputElement) => [
+    element.selectionStart,
+    element.selectionEnd,
+  ]);
+  expect(selection).toEqual([oldName.length, oldName.length]);
   await input.fill(newName);
   await input.press("Enter");
   await expect(window.locator(".nav-inline-edit")).toHaveCount(0);
@@ -115,6 +127,78 @@ async function renameFolder(window: Page, oldName: string, newName: string) {
     "已将文件夹重命名为",
   );
 }
+
+test("places the smart-collection rename caret at the end of its name", async () => {
+  const temporaryRoot = mkdtempSync(
+    path.join(tmpdir(), "serpent-smart-rename-caret-"),
+  );
+  const libraryName = "Smart Rename Caret";
+  const libraryPath = path.join(temporaryRoot, libraryName);
+  const application = await launchApp(temporaryRoot, libraryPath);
+
+  try {
+    const window = await application.firstWindow();
+    await createLibrary(window, libraryName);
+    const smartCollectionName = "智能筛选";
+    await window.evaluate(async (name) => {
+      type LibraryApi = {
+        listOpen(): Promise<{
+          ok: boolean;
+          value?: Array<{ libraryId: string }>;
+        }>;
+        createSmartCollection(input: {
+          libraryId: string;
+          name: string;
+          queryDefinitionJson: string;
+        }): Promise<{ ok: boolean; error?: { message?: string } }>;
+      };
+      const library = (
+        globalThis as typeof globalThis & { serpent: { library: LibraryApi } }
+      ).serpent.library;
+      const opened = await library.listOpen();
+      const libraryId = opened.value?.[0]?.libraryId;
+      if (!opened.ok || !libraryId) throw new Error("No open library.");
+      const result = await library.createSmartCollection({
+        libraryId,
+        name,
+        queryDefinitionJson: JSON.stringify({
+          filters: [{ field: "format", values: ["txt"], exclude: false }],
+        }),
+      });
+      if (!result.ok) {
+        throw new Error(result.error?.message ?? "Could not create smart collection.");
+      }
+    }, smartCollectionName);
+
+    const refreshButton = window.getByRole("button", { name: "刷新磁盘变化" });
+    await refreshButton.click();
+    await expect(refreshButton).toBeEnabled({ timeout: 15_000 });
+    const smartCollectionRow = window.locator(
+      `.navigation-pane button.nav-row[title="${smartCollectionName}"]`,
+    );
+    await expect(smartCollectionRow).toBeVisible();
+    await smartCollectionRow.click({ button: "right" });
+    await window
+      .getByRole("menuitem", { name: "重命名智能合集" })
+      .click({ force: true });
+
+    const renameInput = window
+      .getByRole("dialog")
+      .getByLabel("智能合集名称");
+    await expect(renameInput).toHaveValue(smartCollectionName);
+    const selection = await renameInput.evaluate((element: HTMLInputElement) => [
+      element.selectionStart,
+      element.selectionEnd,
+    ]);
+    expect(selection).toEqual([
+      smartCollectionName.length,
+      smartCollectionName.length,
+    ]);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
 
 test("renames a parent collection and parent folder without losing children", async () => {
   const temporaryRoot = mkdtempSync(

@@ -358,7 +358,7 @@ import {
   resolveDialogEscapeAction,
   type DialogEscapeSnapshot,
 } from "./dialog-escape-stack";
-import { useAssetRename } from "./useAssetRename";
+import { splitAssetFileName, useAssetRename } from "./useAssetRename";
 import { useInlineFolderEdit } from "./use-inline-folder-edit";
 import { useInlineSmartCollectionEdit } from "./use-inline-smart-collection-edit";
 import { usePanelResize } from "./use-panel-resize";
@@ -13086,6 +13086,15 @@ function AppInner() {
                                       changeAssetRenameValue(event.target.value)
                                     }
                                     onClick={(event) => event.stopPropagation()}
+                                    onFocus={(event) => {
+                                      const { baseName } = splitAssetFileName(
+                                        event.currentTarget.value,
+                                      );
+                                      event.currentTarget.setSelectionRange(
+                                        baseName.length,
+                                        baseName.length,
+                                      );
+                                    }}
                                     onKeyDown={(event) => {
                                       event.stopPropagation();
                                       if (event.key === "Enter") {

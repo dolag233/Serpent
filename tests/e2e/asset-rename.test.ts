@@ -4,7 +4,10 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { resolveElectronExecutablePath } from "./electron-test-helpers";
+import {
+  importFilesThroughBridge,
+  resolveElectronExecutablePath,
+} from "./electron-test-helpers";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -35,10 +38,14 @@ function launchApp(temporaryRoot: string, libraryPath: string, importFiles?: str
   });
 }
 
-async function createLibraryAndImport(window: Page, libraryName: string) {
+async function createLibrary(window: Page, libraryName: string) {
   await window.getByRole("button", { name: "创建资源库" }).click();
   await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
   await window.getByRole("button", { name: "创建", exact: true }).click();
+}
+
+async function createLibraryAndImport(window: Page, libraryName: string) {
+  await createLibrary(window, libraryName);
   await window
     .getByRole("button", { name: "导入文件", exact: true })
     .first()
@@ -103,6 +110,40 @@ test("renames an asset file from the context menu and renames the real file on d
       true,
     );
     expect(existsSync(path.join(libraryPath, "Assets", "hero.png"))).toBe(false);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("places the F2 asset-rename caret immediately before the extension", async () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), "serpent-rename-caret-"));
+  const libraryName = "Rename Caret";
+  const libraryPath = path.join(temporaryRoot, libraryName);
+  const sourcePath = path.join(temporaryRoot, "hero.png");
+  writeFileSync(sourcePath, VALID_PNG);
+
+  const application = await launchApp(temporaryRoot, libraryPath, sourcePath);
+
+  try {
+    const window = await application.firstWindow();
+    await createLibrary(window, libraryName);
+    await importFilesThroughBridge(window);
+
+    const card = window.locator('[data-asset-id][title="hero.png"]');
+    await expect(card).toBeVisible({ timeout: 10_000 });
+    await card.click();
+    await window.keyboard.press("F2");
+
+    const input = card.locator(".asset-inline-rename-input");
+    await expect(input).toBeVisible({ timeout: 5_000 });
+    await expect(input).toBeFocused();
+    await expect(input).toHaveValue("hero.png");
+    const selection = await input.evaluate((element: HTMLInputElement) => [
+      element.selectionStart,
+      element.selectionEnd,
+    ]);
+    expect(selection).toEqual([4, 4]);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { recursive: true, force: true });

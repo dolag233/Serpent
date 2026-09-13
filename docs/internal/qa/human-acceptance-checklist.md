@@ -44,6 +44,12 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-09-13 重命名默认光标位置
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| RENAME-CARET-001 | 资产、文件夹、合集与智能合集重命名的默认插入位置 | 人类验收通过 | ① 选中资产按 F2。② 分别从侧栏右键重命名文件夹、合集、智能合集。 | 资产文件名光标在扩展名前，如 `1234567|.jpg`；其余名称输入框保持聚焦、没有选中文本，光标位于名称末尾。 | `src/renderer/App.tsx`、`src/renderer/NavigationSidebar.tsx`、`src/renderer/RenameDialog.tsx` / `tests/e2e/asset-rename.test.ts`、`tests/e2e/folder-context-menu.test.ts`、`tests/e2e/collection-folder-hierarchy-regressions.test.ts`、`tests/e2e/organization-search-trash.test.ts` | 2026-09-13：用户确认人工验收通过。定向 Electron E2E 已尝试；资产导入用例在打开重命名之前报“资源库切换正在进行”，文件夹套件有既有缩进断言 `Expected 21, Received 7`，因此这些运行未作为光标行为的自动化通过证据。 |
+
 ### 2026-09-12 工作区标签页
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

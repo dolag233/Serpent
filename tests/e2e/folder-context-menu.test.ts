@@ -125,6 +125,12 @@ async function openFolderRenameInline(window: Page, folderName: string) {
   await menu.getByRole("menuitem", { name: "重命名…" }).click();
   const input = window.locator(".nav-inline-edit input");
   await expect(input).toBeVisible({ timeout: 5_000 });
+  await expect(input).toHaveValue(folderName);
+  const selection = await input.evaluate((element: HTMLInputElement) => [
+    element.selectionStart,
+    element.selectionEnd,
+  ]);
+  expect(selection).toEqual([folderName.length, folderName.length]);
   return input;
 }
 
@@ -270,17 +276,11 @@ test("renames a folder inline from the context menu and keeps its assets visible
     await expect(assetCard).toBeVisible({ timeout: 15_000 });
 
     const input = await openFolderRenameInline(window, "原画");
-    // The row becomes an input holding the current name, focused and fully
-    // preselected so typing replaces it.
+    // The row becomes an input holding the current name, focused with the
+    // caret at the end so typing appends unless the user moves it.
     await expect(window.getByRole("dialog")).toHaveCount(0);
     await expect(input).toHaveValue("原画");
     await expect(input).toBeFocused();
-    const selection = await input.evaluate((element: HTMLInputElement) => [
-      element.selectionStart,
-      element.selectionEnd,
-    ]);
-    expect(selection).toEqual([0, "原画".length]);
-
     await input.fill("角色原画");
     await input.press("Enter");
 

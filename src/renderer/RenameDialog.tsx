@@ -40,14 +40,18 @@ export function RenameDialog({
   const inputRef = useRef<HTMLInputElement>(null);
   const isAsset = kind === "asset";
 
-  // Asset rename preselects the current base name so typing replaces it
-  // immediately; organization dialogs keep their plain autofocus behavior.
+  // Asset rename preselects its editable name; collection and smart
+  // collection rename place the caret at the end so typing appends.
   useEffect(() => {
-    if (!open || !isAsset) return;
+    if (!open) return;
     const input = inputRef.current;
     if (!input) return;
     input.focus();
-    input.select();
+    if (isAsset) {
+      input.select();
+    } else {
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
   }, [open, isAsset]);
 
   if (!open) return null;
@@ -119,6 +123,7 @@ export function RenameDialog({
               className="text-field"
               id={`${idPrefix}-name`}
               onChange={(event) => onNameChange(event.target.value)}
+              ref={inputRef}
               value={currentName}
             />
           )}

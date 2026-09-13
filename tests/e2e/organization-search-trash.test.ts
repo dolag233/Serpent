@@ -154,6 +154,11 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await window.getByRole('menuitem', { name: '重命名合集' }).click();
     const renameCollectionInput = window.getByRole('textbox', { name: 'nav.renameCollection' });
     await expect(renameCollectionInput).toBeVisible();
+    const collectionSelection = await renameCollectionInput.evaluate((element: HTMLInputElement) => [
+      element.selectionStart,
+      element.selectionEnd,
+    ]);
+    expect(collectionSelection).toEqual(['精选'.length, '精选'.length]);
     await renameCollectionInput.fill('收藏');
     await renameCollectionInput.press('Enter');
     await expect(window.getByRole('button', { name: /收藏/ })).toBeVisible();
@@ -287,7 +292,14 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     // the item before the click. A forced click models the already-visible
     // pointer action without introducing that synthetic scroll.
     await window.getByRole('menuitem', { name: '重命名智能合集' }).click({ force: true });
-    await window.getByRole('dialog').getByLabel('智能合集名称').fill('英雄筛选');
+    const smartCollectionRenameInput = window.getByRole('dialog').getByLabel('智能合集名称');
+    await expect(smartCollectionRenameInput).toHaveValue('英雄精选');
+    const smartCollectionSelection = await smartCollectionRenameInput.evaluate((element: HTMLInputElement) => [
+      element.selectionStart,
+      element.selectionEnd,
+    ]);
+    expect(smartCollectionSelection).toEqual(['英雄精选'.length, '英雄精选'.length]);
+    await smartCollectionRenameInput.fill('英雄筛选');
     await window.getByRole('dialog').getByRole('button', { name: '保存名称' }).click();
     await expect(sidebarSmartCollectionRow(window, '英雄筛选')).toBeVisible();
 
