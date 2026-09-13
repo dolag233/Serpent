@@ -12,7 +12,7 @@ import {
   horizontalScrollDeltaFromWheel,
   nextTabStripScrollLeft,
 } from "./workspace-tab-strip-scroll";
-import { workspaceTabMaxWidthPx } from "./workspace-tabs";
+import { workspaceTabWidthScale } from "./workspace-tabs";
 import "./workspace-tabs.css";
 
 export interface WorkspaceTabItem {
@@ -100,7 +100,8 @@ export function WorkspaceTabs({
     event: DragEvent<HTMLDivElement>,
     index: number,
   ) {
-    if (disabled || !draggingId || draggingId === tabs[index]?.id) return;
+    if (disabled || !draggingId) return;
+    if (draggingId === tabs[index]?.id) return;
     const fromIndex = tabs.findIndex((tab) => tab.id === draggingId);
     if (fromIndex < 0) return;
     event.preventDefault();
@@ -109,6 +110,19 @@ export function WorkspaceTabs({
     const target = index + (event.clientX > rect.left + rect.width / 2 ? 1 : 0);
     const toIndex = target > fromIndex ? target - 1 : target;
     if (toIndex !== fromIndex) onReorder(draggingId, toIndex);
+  }
+
+  /**
+   * The strip as a whole accepts the drop. A live reorder leaves the dragged tab
+   * sitting under the cursor, so the release lands on the dragged tab itself —
+   * if that were refused, Chromium would treat the drag as cancelled and animate
+   * the drag image back to where it started. Refusing only outside the strip
+   * keeps that animation for a dropped-outside drag.
+   */
+  function acceptTabDragOver(event: DragEvent<HTMLDivElement>) {
+    if (disabled || !draggingId) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
   }
 
   function handleKey(event: KeyboardEvent<HTMLButtonElement>, index: number) {
@@ -146,8 +160,16 @@ export function WorkspaceTabs({
     <div
       className="workspace-tabs"
       style={{
-        "--workspace-tab-max-width": `${workspaceTabMaxWidthPx(tabs.length)}px`,
+        "--workspace-tab-width-scale": `${workspaceTabWidthScale(tabs.length)}`,
       } as CSSProperties}
+      onDragOver={acceptTabDragOver}
+      onDrop={(event) => {
+        // Only claim drops that this strip started; a file dragged in from the
+        // desktop keeps its default handling.
+        if (!draggingId) return;
+        event.preventDefault();
+        setDraggingId(null);
+      }}
     >
       <div className="workspace-tabs-list" role="tablist" aria-label={t("tabs.label")} ref={listRef}>
         {tabs.map((tab, index) => (
@@ -165,13 +187,6 @@ export function WorkspaceTabs({
               event.dataTransfer.setData("text/plain", tab.id);
             }}
             onDragOver={(event) => handleDragOver(event, index)}
-            onDrop={(event) => {
-              // Only claim drops that this strip started; a file dragged in from
-              // the desktop keeps its default handling.
-              if (!draggingId) return;
-              event.preventDefault();
-              setDraggingId(null);
-            }}
             onDragEnd={() => setDraggingId(null)}
             onContextMenu={(event) => {
               event.preventDefault();

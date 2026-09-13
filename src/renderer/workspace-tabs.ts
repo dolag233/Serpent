@@ -194,20 +194,22 @@ export function moveWorkspaceTab(
 }
 
 /**
- * Longest a tab may read at a given tab count. Few tabs get the full width;
- * past three the cap steps down so every title keeps a readable run of text
- * instead of every tab collapsing to an ellipsis.
+ * How much of the tab-width budget a tab may use at a given tab count. The
+ * budget itself lives in CSS (an eight-character title plus the icon, paddings
+ * and close chip, so it also follows the font-scale setting); few tabs get all
+ * of it, and past three the share steps down so every title keeps a readable
+ * run of text instead of every tab collapsing to an ellipsis.
  */
-export const WORKSPACE_TAB_WIDTH_STEPS_PX = [
-  220, 220, 220, 202, 184, 166, 148, 132,
+export const WORKSPACE_TAB_WIDTH_SCALES = [
+  1, 1, 1, 0.94, 0.88, 0.82, 0.76, 0.75,
 ] as const;
 
-export function workspaceTabMaxWidthPx(tabCount: number): number {
+export function workspaceTabWidthScale(tabCount: number): number {
   const index = Math.min(
     Math.max(Math.trunc(tabCount) - 1, 0),
-    WORKSPACE_TAB_WIDTH_STEPS_PX.length - 1,
+    WORKSPACE_TAB_WIDTH_SCALES.length - 1,
   );
-  return WORKSPACE_TAB_WIDTH_STEPS_PX[index]!;
+  return WORKSPACE_TAB_WIDTH_SCALES[index]!;
 }
 
 export function updateWorkspaceTabContext(

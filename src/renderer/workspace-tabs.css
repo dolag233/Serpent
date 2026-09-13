@@ -37,6 +37,12 @@
   gap: 0;
   height: auto;
   --workspace-tab-curve: calc(var(--ui-space-4) - 2px);
+  --workspace-tab-font-size: calc(12.5px * var(--ui-font-scale));
+  /* Longest a tab may read: an eight-character title plus the chrome around it
+     (82px = 2px borders, 12+8px select padding, 16px icon, 8px gap, 22px close
+     chip, 8px tab padding, 6px rounding slack). The title term is in `em` so
+     raising the UI font size does not quietly break that promise. */
+  --workspace-tab-width-budget: calc(8em + 82px);
 }
 
 .workspace-tabs-list {
@@ -63,7 +69,9 @@
   align-items: flex-start;
   position: relative;
   min-width: 132px;
-  max-width: var(--workspace-tab-max-width, 220px);
+  max-width: calc(
+    var(--workspace-tab-width-scale, 1) * var(--workspace-tab-width-budget)
+  );
   height: auto;
   margin-top: var(--ui-space-1);
   padding-top: var(--ui-space-1);
@@ -73,6 +81,9 @@
   border-radius: var(--workspace-tab-curve) var(--workspace-tab-curve) 0 0;
   color: var(--secondary);
   -webkit-app-region: no-drag;
+  /* The width budget measures its title in `em`, so the tab carries the font
+     size the select inherits. */
+  font-size: var(--workspace-tab-font-size);
 }
 
 .workspace-tab:not(.is-active):hover {
@@ -147,7 +158,6 @@
   gap: var(--ui-space-2);
   padding: 0 var(--ui-space-2) 0 var(--ui-space-3);
   border-radius: inherit;
-  font-size: calc(12.5px * var(--ui-font-scale));
   font-weight: 560;
 }
 

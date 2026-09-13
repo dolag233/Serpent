@@ -93,6 +93,46 @@
 - 同一文件里「关闭仅剩的唯一标签应回到所有资产」的断言依赖第 3 条之前的旧行为，
   已改为断言「只剩一个标签时没有 ×、菜单没有关闭项、Delete 不关标签」。
 
+## 用户复验后的两处调整（同日晚）
+
+用户验收 1/3/4/5 通过，2 与 6 要求改：
+
+### 第 2 条：成功换位后不再播「飞回原位」动画
+
+现象：拖动换位成功、松手时，标签仍会播一段拖影飞回原位的动画。
+
+根因是实时重排与投放判定的相互作用：`dragover` 里对「悬停在被拖标签自己身上」直接
+`return`，不做 `preventDefault`。实时重排后，被拖的那个标签恰好停在光标下面，所以
+松手前最后一次 `dragover` 与 `drop` 都落在它自己身上 → Chromium 认为这次投放没有被
+接受 → 播放取消动画（拖影飞回原处）。
+
+修法：把整条标签栏（`.workspace-tabs`）本身设为有效投放区——只要这次拖动是自己发起的
+（`draggingId` 非空），`dragover`/`drop` 一律接受。拖到标签条外的窗口空白处仍然拒收，
+所以「交换失败」时的返位动画保留。标签级的 `dragover` 继续负责落点计算，`drop` 处理
+收拢到容器一处，避免两处重复。
+
+新增单测直接锁住这条：在被拖标签**自身**上派发 `dragover`，断言 `defaultPrevented`
+为真且不触发重排。
+
+### 第 6 条：上限收到「刚好放下 8 个汉字」
+
+用户要求最长宽度能完整显示「测试文件测试文件」。原先的上限是 220px，明显超出所需。
+
+标签里除标题外的固定占用：2px 边框 + 12px 左内边距 + 16px 图标 + 8px 间距 +
+8px 右内边距 + 22px 关闭钮 + 8px 标签右内边距 = 76px；8 个汉字在标签字号
+（`12.5px × --ui-font-scale`）下正好 8em = 100px。所以预算 = `calc(8em + 82px)`
+（多出的 6px 是舍入余量——8 个字正好占满时，任何亚像素舍入都会把第 8 个字挤成省略号）。
+
+- 预算写在 CSS 的自定义属性里，标题项用 `em`，所以**跟随设置里的界面字号一起放大**；
+  固定像素的上限在放大字号后会悄悄违约，这条不能写成 px。
+- 标签数量的收缩改由 `workspaceTabWidthScale(count)` 给出「占预算的比例」
+  （1/1/1/0.94/0.88/0.82/0.76/0.75），渲染为 `--workspace-tab-width-scale`。
+  上限 182px，8 个及以上收到下限 132px。
+- `.workspace-tab` 现在承载标签字号（`--workspace-tab-font-size`），
+  `.workspace-tab-select` 改为继承，`em` 才有正确的基准。
+- CSS 测试新增一条守卫，锁住预算表达式是 `calc(8em + 82px)` 且字号变量仍在，
+  防止以后有人把它改回固定 px。
+
 ## 验证（2026-09-13 当次运行）
 
 | 命令 | 结果 |
@@ -102,18 +142,13 @@
 | `npm run test:unit`（全量单测） | 3404 passed / 3 skipped / 1 failed |
 | `npm run test:library-availability` | 9 files / 212 passed |
 | 改动文件 ESLint | 通过（无输出） |
-| `node scripts/run-e2e-isolated.mjs tests/e2e/workspace-tabs.test.ts` | 见下 |
+| `node scripts/run-e2e-isolated.mjs tests/e2e/workspace-tabs.test.ts` | 2 passed（32.3 秒） |
 
-E2E 分项：
+E2E：
 
-- **重启恢复用例（本次新增，覆盖第 5 条端到端真实退出/重启）**：本次会话 5 次运行全部通过（约 9–11 秒）。它真的 `app.quit()` 退出再用同一个 userData 重新拉起，并断言三个标签的名字、顺序、活动标签、各自位置和「后退可用」。
-- **标签行为用例（既有）**：本次新增的断言——拖动换位（前/后半区各一次）、只剩一个标签时无 ×、菜单里没有关闭项且「关闭其他标签页」禁用——在跑到它们的 3 次运行里均通过。该用例其余**既有**断言在本次会话中交替失败：
-  - `新建标签页后搜索框应为空`：3 次运行中 1 次失败（5 秒重试耗尽后仍是上一标签的搜索词）；
-  - `切换标签应命中缓存视口探针 targetFrames > 0`：1 次失败；
-  - 实际耗时在 **18 秒 ~ >120 秒（顶到用例超时）** 之间大幅摆动，代码未变。
-  
-  失败点每次都落在不同的时间敏感断言上、且同一份代码既有 18 秒跑完也有顶格超时，判断为开发机负载导致的既有 flaky（当时 `load average ≈ 5.6`，用户其他应用长期占满 CPU），**不是本次改动引入**：这些断言的代码路径本次未改动，失败也不是新增断言。已开 `Serpent-75a2df` 跟踪，按要求记「疑似 flaky，未关闭」，不因重跑通过而结案。
-- 顺带把该用例 `finally` 里无超时的 `await once(childProcess, 'exit')` 换成有界退出 helper（10 秒上限 + SIGKILL 兜底），避免用例超时后一直挂住拖死后续运行——这是超时后整轮 wall time 达 5–16 分钟的直接原因。
+- **两个用例都通过**——`keeps navigation inside explicit tabs and exposes contextual tab actions`（含拖动换位、单标签无 ×、菜单关闭项隐藏、重启前状态）与 `restores the saved tab strip after a relaunch`（本次新增，真实 `app.quit()` 退出 + 同一 userData 重启，断言三个标签的名字、顺序、活动标签、各自位置和「后退可用」）。
+- 早前几轮该文件反复顶到 120s 用例上限、整轮 5–16 分钟，是因为当时开发机负载高（`load average ≈ 5.6`，用户其他应用长期占满 CPU）；负载回落后同一份代码 32 秒跑完。失败点每次都落在不同的**既有**时间敏感断言上，与本轮改动无关，仍按「疑似 flaky」记在 `Serpent-75a2df`。
+- 顺带把该用例 `finally` 里无超时的 `await once(childProcess, 'exit')` 换成有界退出 helper（10 秒上限 + SIGKILL 兜底）——这是用例超时后整轮 wall time 被拖到 5–16 分钟的直接原因。
 
 全量单测那 1 项失败是既有问题，与本次改动无关：`tests/unit/import-source-failure.test.ts` 期望 `locked.png`，在 macOS 上得到 `C:inboxlocked.png`（`path.basename` 平台相关）。已开 `Serpent-ee725a`。
 

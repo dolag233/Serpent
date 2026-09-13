@@ -6,7 +6,21 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceTabs } from "../../src/renderer/WorkspaceTabs";
 import { LocaleProvider } from "../../src/renderer/i18n";
-import { workspaceTabMaxWidthPx } from "../../src/renderer/workspace-tabs";
+import { workspaceTabWidthScale } from "../../src/renderer/workspace-tabs";
+
+/** Minimal HTML5 drag event; happy-dom has no DataTransfer of its own. */
+function tabDragEvent(type: string, clientX: number): Event {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "clientX", { value: clientX });
+  Object.defineProperty(event, "dataTransfer", {
+    value: {
+      dropEffect: "",
+      effectAllowed: "",
+      setData: () => undefined,
+    },
+  });
+  return event;
+}
 
 describe("WorkspaceTabs interaction contract", () => {
   let root: Root | undefined;
@@ -207,35 +221,41 @@ describe("WorkspaceTabs interaction contract", () => {
   it("reorders tabs by dragging one onto another tab's edge", async () => {
     const { onReorder, container: host } = await renderTabs();
     const items = [...host.querySelectorAll<HTMLDivElement>(".workspace-tab")];
-    const dragEvent = (type: string, clientX: number) => {
-      const event = new Event(type, { bubbles: true, cancelable: true });
-      Object.defineProperty(event, "clientX", { value: clientX });
-      Object.defineProperty(event, "dataTransfer", {
-        value: {
-          dropEffect: "",
-          effectAllowed: "",
-          setData: () => undefined,
-        },
-      });
-      return event;
-    };
     Object.defineProperty(items[0]!, "getBoundingClientRect", {
       configurable: true,
       value: () => ({ left: 100, width: 120, top: 0, height: 30 }),
     });
 
     await act(async () => {
-      items[2]!.dispatchEvent(dragEvent("dragstart", 0));
+      items[2]!.dispatchEvent(tabDragEvent("dragstart", 0));
     });
     // Left half of the first tab: the dragged tab lands in front of it.
     await act(async () => {
-      items[0]!.dispatchEvent(dragEvent("dragover", 110));
+      items[0]!.dispatchEvent(tabDragEvent("dragover", 110));
     });
 
     expect(onReorder).toHaveBeenCalledExactlyOnceWith("three", 0);
   });
 
-  it("binds the tab width cap for the open tab count", async () => {
+  it("accepts a drop on the dragged tab so the drag is not treated as cancelled", async () => {
+    const { onReorder, container: host } = await renderTabs();
+    const items = [...host.querySelectorAll<HTMLDivElement>(".workspace-tab")];
+
+    await act(async () => {
+      items[2]!.dispatchEvent(tabDragEvent("dragstart", 0));
+    });
+    // A live reorder leaves the dragged tab under the cursor, so the release
+    // lands on the tab itself — refusing it would replay the snap-back animation.
+    const onSelf = tabDragEvent("dragover", 0);
+    await act(async () => {
+      items[2]!.dispatchEvent(onSelf);
+    });
+
+    expect(onSelf.defaultPrevented).toBe(true);
+    expect(onReorder).not.toHaveBeenCalled();
+  });
+
+  it("binds the tab width share for the open tab count", async () => {
     const { container: host } = await renderTabs({
       tabs: Array.from({ length: 9 }, (_, index) => ({
         id: `tab-${index}`,
@@ -244,8 +264,8 @@ describe("WorkspaceTabs interaction contract", () => {
       })),
       activeTabId: "tab-0",
     });
-    const cap = (host.querySelector(".workspace-tabs") as HTMLElement)
-      .style.getPropertyValue("--workspace-tab-max-width");
-    expect(cap).toBe(`${workspaceTabMaxWidthPx(9)}px`);
+    const scale = (host.querySelector(".workspace-tabs") as HTMLElement)
+      .style.getPropertyValue("--workspace-tab-width-scale");
+    expect(scale).toBe(`${workspaceTabWidthScale(9)}`);
   });
 });

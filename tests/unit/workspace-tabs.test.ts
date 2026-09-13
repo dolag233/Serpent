@@ -12,7 +12,7 @@ import {
   updateWorkspaceTabContext,
   updateWorkspaceTabBrowseState,
   workspaceTabBrowseStateHasDiscoveryInput,
-  workspaceTabMaxWidthPx,
+  workspaceTabWidthScale,
 } from "../../src/renderer/workspace-tabs";
 
 function ids(...values: string[]) {
@@ -212,13 +212,13 @@ describe("workspace tabs", () => {
     ]);
   });
 
-  it("caps the tab width by how many tabs are open", () => {
-    expect(workspaceTabMaxWidthPx(1)).toBe(220);
-    expect(workspaceTabMaxWidthPx(3)).toBe(220);
-    expect(workspaceTabMaxWidthPx(4)).toBe(202);
-    expect(workspaceTabMaxWidthPx(7)).toBe(148);
-    expect(workspaceTabMaxWidthPx(8)).toBe(132);
-    expect(workspaceTabMaxWidthPx(40)).toBe(132);
-    expect(workspaceTabMaxWidthPx(0)).toBe(220);
+  it("shrinks the tab width share as more tabs open", () => {
+    expect(workspaceTabWidthScale(1)).toBe(1);
+    expect(workspaceTabWidthScale(3)).toBe(1);
+    expect(workspaceTabWidthScale(4)).toBe(0.94);
+    expect(workspaceTabWidthScale(7)).toBe(0.76);
+    expect(workspaceTabWidthScale(8)).toBe(0.75);
+    expect(workspaceTabWidthScale(40)).toBe(0.75);
+    expect(workspaceTabWidthScale(0)).toBe(1);
   });
 });

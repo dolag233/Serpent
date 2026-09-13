@@ -25,4 +25,10 @@ describe("workspace tab chrome", () => {
       "margin-inline-start: calc(-1 * var(--workspace-tab-curve) + var(--ui-space-1))",
     );
   });
+
+  it("measures the tab width budget in the tab's own font size", () => {
+    expect(css).toContain("--workspace-tab-width-budget: calc(8em + 82px)");
+    expect(css).toContain("--workspace-tab-font-size: calc(12.5px * var(--ui-font-scale))");
+    expect(css).toContain("font-size: var(--workspace-tab-font-size)");
+  });
 });
