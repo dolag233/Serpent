@@ -27,8 +27,17 @@ describe("workspace tab chrome", () => {
   });
 
   it("measures the tab width budget in the tab's own font size", () => {
-    expect(css).toContain("--workspace-tab-width-budget: calc(8em + 82px)");
+    expect(css).toContain("--workspace-tab-chrome: 82px");
+    // Shortest a tab may read: a two-character title plus the chrome.
+    expect(css).toContain(
+      "--workspace-tab-min-width: calc(2em + var(--workspace-tab-chrome))",
+    );
+    // Longest a tab may read: an eight-character title plus the chrome.
+    expect(css).toContain(
+      "--workspace-tab-width-budget: calc(8em + var(--workspace-tab-chrome))",
+    );
     expect(css).toContain("--workspace-tab-font-size: calc(12.5px * var(--ui-font-scale))");
+    expect(css).toContain("min-width: var(--workspace-tab-min-width)");
     expect(css).toContain("font-size: var(--workspace-tab-font-size)");
   });
 });
