@@ -1,6 +1,7 @@
 import type { WorkerCommand } from '../shared/protocol/requests';
 import type { WorkerResult } from '../shared/protocol/responses';
 import {
+  DEFAULT_PERFORMANCE_CONSUMER_ID,
   performanceInteractionKeyForCommand,
   performanceLaneForCommand,
   type PerformanceRequestEnvelope,
@@ -9,6 +10,10 @@ import {
 type RequestBrokerOptions = {
   sentAtEpochMs?: number;
   timeoutMs?: number | null;
+  consumerId?: string;
+  catalogSequence?: number;
+  snapshotGeneration?: number | null;
+  minCatalogSequence?: number;
 };
 
 /**
@@ -34,9 +39,10 @@ export class LibraryRequestBroker {
     const libraryId = 'libraryId' in command && typeof command.libraryId === 'string'
       ? command.libraryId
       : undefined;
+    const consumerId = options.consumerId ?? DEFAULT_PERFORMANCE_CONSUMER_ID;
     const interactionGeneration = interactionKey === undefined
       ? undefined
-      : this.nextInteractionGeneration(libraryId, interactionKey);
+      : this.nextInteractionGeneration(libraryId, consumerId, interactionKey);
     const libraryGeneration = libraryId === undefined
       ? undefined
       : this.#libraryGenerations.get(libraryId);
@@ -50,8 +56,16 @@ export class LibraryRequestBroker {
       ...(deadlineAtEpochMs === undefined ? {} : { deadlineAtEpochMs }),
       ...(libraryId === undefined ? {} : { libraryId }),
       ...(libraryGeneration === undefined ? {} : { libraryGeneration }),
+      consumerId,
       ...(interactionKey === undefined ? {} : { interactionKey }),
       ...(interactionGeneration === undefined ? {} : { interactionGeneration }),
+      ...(options.catalogSequence === undefined ? {} : { catalogSequence: options.catalogSequence }),
+      ...(options.snapshotGeneration === undefined
+        ? {}
+        : { snapshotGeneration: options.snapshotGeneration }),
+      ...(options.minCatalogSequence === undefined
+        ? {}
+        : { minCatalogSequence: options.minCatalogSequence }),
     };
   }
 
@@ -76,8 +90,12 @@ export class LibraryRequestBroker {
     this.#libraryGenerations.clear();
   }
 
-  private nextInteractionGeneration(libraryId: string | undefined, interactionKey: string): number {
-    const key = `${libraryId ?? ''}\u0000${interactionKey}`;
+  private nextInteractionGeneration(
+    libraryId: string | undefined,
+    consumerId: string,
+    interactionKey: string,
+  ): number {
+    const key = `${libraryId ?? ''}\u0000${consumerId}\u0000${interactionKey}`;
     const generation = (this.#interactionGenerations.get(key) ?? 0) + 1;
     this.#interactionGenerations.set(key, generation);
     return generation;

@@ -114,6 +114,8 @@ import {
   performanceInteractionKeyForCommand,
   isInteractivePerformanceLane,
   shouldPreemptAutomaticMedia,
+  catalogSequenceFromBrowseChangeSequence,
+  resolveCatalogReadAdmission,
   type PerformanceRequestEnvelope,
 } from '../shared/performance-contract';
 import { createPublicError } from '../shared/protocol/errors';
@@ -2896,6 +2898,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         sessionId: result.session.sessionId,
         libraryGeneration: result.session.libraryGeneration,
         changeSequence: result.session.changeSequence,
+        catalogSequence: catalogSequenceFromBrowseChangeSequence(result.session.changeSequence),
         queryFingerprint: result.session.queryFingerprint,
         items: result.items,
         total: result.total,
@@ -2919,11 +2922,18 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
           reason: result.status === 'missing' ? 'missing' : result.reason,
         };
       }
+      const pageStale = browseCatalogSequenceStale(
+        result.session.sessionId,
+        result.session.changeSequence,
+        request.performance?.minCatalogSequence,
+      );
+      if (pageStale) return pageStale;
       return {
         ok: true,
         type: 'browse.session.page',
         sessionId: result.session.sessionId,
         changeSequence: result.session.changeSequence,
+        catalogSequence: catalogSequenceFromBrowseChangeSequence(result.session.changeSequence),
         items: result.items,
         total: result.total,
         offset: result.offset,
@@ -2946,6 +2956,12 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
           reason: result.status === 'missing' ? 'missing' : result.reason,
         };
       }
+      const geometryStale = browseCatalogSequenceStale(
+        result.session.sessionId,
+        result.session.changeSequence,
+        request.performance?.minCatalogSequence,
+      );
+      if (geometryStale) return geometryStale;
       return {
         ok: true,
         type: 'browse.session.geometry',
@@ -2953,6 +2969,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         sessionId: result.session.sessionId,
         startIndex: result.startIndex,
         changeSequence: result.session.changeSequence,
+        catalogSequence: catalogSequenceFromBrowseChangeSequence(result.session.changeSequence),
         entries: result.entries,
       };
     }
@@ -2970,12 +2987,19 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
           reason: result.status === 'missing' ? 'missing' : result.reason,
         };
       }
+      const idsStale = browseCatalogSequenceStale(
+        result.session.sessionId,
+        result.session.changeSequence,
+        request.performance?.minCatalogSequence,
+      );
+      if (idsStale) return idsStale;
       return {
         ok: true,
         type: 'browse.session.ids',
         libraryId: request.command.libraryId,
         sessionId: result.session.sessionId,
         changeSequence: result.session.changeSequence,
+        catalogSequence: catalogSequenceFromBrowseChangeSequence(result.session.changeSequence),
         assetIds: result.assetIds,
       };
     }
@@ -4641,6 +4665,25 @@ function requestIdFrom(input: unknown): string | undefined {
     : undefined;
 }
 
+function browseCatalogSequenceStale(
+  sessionId: string,
+  changeSequence: number,
+  minCatalogSequence: number | undefined,
+): Extract<WorkerResult, { type: 'browse.session.stale' }> | undefined {
+  if (resolveCatalogReadAdmission(
+    catalogSequenceFromBrowseChangeSequence(changeSequence),
+    minCatalogSequence,
+  ) !== 'stale') {
+    return undefined;
+  }
+  return {
+    ok: true,
+    type: 'browse.session.stale',
+    sessionId,
+    reason: 'catalog-sequence',
+  };
+}
+
 function performanceEnvelopeForRequest(request: WorkerRequest): PerformanceRequestEnvelope {
   if (request.performance) return request.performance;
   const libraryId = 'libraryId' in request.command && typeof request.command.libraryId === 'string'
@@ -4825,6 +4868,9 @@ parentPort.on('message', async (event) => {
       ...(performanceEnvelope.libraryGeneration === undefined
         ? {}
         : { libraryGeneration: performanceEnvelope.libraryGeneration }),
+      ...(performanceEnvelope.consumerId === undefined
+        ? {}
+        : { consumerId: performanceEnvelope.consumerId }),
       ...(performanceEnvelope.interactionKey === undefined
         ? {}
         : { interactionKey: performanceEnvelope.interactionKey }),

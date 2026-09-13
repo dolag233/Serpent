@@ -2,6 +2,7 @@ import type { WorkerCommand } from '../shared/protocol/requests';
 import type { WorkerResult } from '../shared/protocol/responses';
 import type { LibraryService } from './library-service';
 import type { WorkerHistoryContext } from '../shared/protocol/requests';
+import { catalogSequenceFromBrowseChangeSequence } from '../shared/performance-contract';
 
 /**
  * Commands whose complete mutation is transaction-only. They execute under a
@@ -247,7 +248,25 @@ export function executeBoundedWriteWorkerCommand(
         source: historyContext?.source,
         sourceReference: historyContext?.sourceReference,
       }).historyEntryId;
-      return { ok: true, type: 'folder.created', folder, historyEntryId };
+      return {
+        ok: true,
+        type: 'folder.created',
+        folder,
+        historyEntryId,
+        mutationReceipt: {
+          operationId: historyEntryId,
+          historyEntryId,
+          committedCatalogSequence: catalogSequenceFromBrowseChangeSequence(
+            libraryService.getBrowseChangeSequence(command.libraryId),
+          ),
+          changes: {
+            folders: [folder],
+            affectedFolderIds: folder.parentFolderId
+              ? [folder.folderId, folder.parentFolderId]
+              : [folder.folderId],
+          },
+        },
+      };
     }
     case 'collection.create': {
       const collection = libraryService.createCollection(command);

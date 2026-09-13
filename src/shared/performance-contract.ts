@@ -27,6 +27,59 @@ export const performanceReadinessSchema = z.enum([
 
 export type PerformanceReadiness = z.infer<typeof performanceReadinessSchema>;
 
+/** Window or browse-surface identity. Must not be a library-wide key. */
+export const performanceConsumerIdSchema = z.string().min(1).max(128);
+
+/**
+ * Catalog visibility version. Local reads omit snapshotGeneration; NAS
+ * snapshots populate it after the owner publishes an immutable generation.
+ */
+export const catalogReadVersionSchema = z.strictObject({
+  libraryGeneration: z.number().int().nonnegative(),
+  catalogSequence: z.number().int().nonnegative(),
+  snapshotGeneration: z.number().int().nonnegative().nullable().optional(),
+});
+
+export type CatalogReadVersion = z.infer<typeof catalogReadVersionSchema>;
+
+export const catalogReadAdmissionSchema = z.enum(['ok', 'stale']);
+export type CatalogReadAdmission = z.infer<typeof catalogReadAdmissionSchema>;
+
+/** Input ack vs durable commit vs UI catching up must not be mixed. */
+export const performanceTimingPhaseSchema = z.enum([
+  'input-ack',
+  'persist',
+  'ui-converge',
+]);
+
+export type PerformanceTimingPhase = z.infer<typeof performanceTimingPhaseSchema>;
+
+export const MUTATION_RECEIPT_MAX_ENTITY_IDS = 256;
+
+const boundedIdListSchema = z.array(z.string().min(1).max(255)).max(MUTATION_RECEIPT_MAX_ENTITY_IDS);
+
+export const mutationReceiptChangesSchema = z.strictObject({
+  folders: z.array(z.unknown()).max(MUTATION_RECEIPT_MAX_ENTITY_IDS).optional(),
+  assets: z.array(z.unknown()).max(MUTATION_RECEIPT_MAX_ENTITY_IDS).optional(),
+  deletedFolderIds: boundedIdListSchema.optional(),
+  deletedAssetIds: boundedIdListSchema.optional(),
+  affectedFolderIds: boundedIdListSchema.optional(),
+  affectedCollectionIds: boundedIdListSchema.optional(),
+  affectedTagIds: boundedIdListSchema.optional(),
+  affectedScopeKeys: z.array(z.string().min(1).max(512)).max(MUTATION_RECEIPT_MAX_ENTITY_IDS).optional(),
+});
+
+export const mutationReceiptSchema = z.strictObject({
+  operationId: z.string().min(1).max(255),
+  historyEntryId: z.string().min(1).max(255).optional(),
+  committedCatalogSequence: z.number().int().nonnegative(),
+  libraryGeneration: z.number().int().nonnegative().optional(),
+  snapshotGeneration: z.number().int().nonnegative().nullable().optional(),
+  changes: mutationReceiptChangesSchema,
+});
+
+export type MutationReceipt = z.infer<typeof mutationReceiptSchema>;
+
 /** Metadata attached by Main to every request sent to the Worker. */
 export const performanceRequestEnvelopeSchema = z.strictObject({
   lane: performanceLaneSchema,
@@ -34,8 +87,12 @@ export const performanceRequestEnvelopeSchema = z.strictObject({
   deadlineAtEpochMs: z.number().int().nonnegative().optional(),
   libraryId: z.string().min(1).max(255).optional(),
   libraryGeneration: z.number().int().nonnegative().optional(),
+  consumerId: performanceConsumerIdSchema.optional(),
   interactionKey: z.string().min(1).max(512).optional(),
   interactionGeneration: z.number().int().positive().optional(),
+  catalogSequence: z.number().int().nonnegative().optional(),
+  snapshotGeneration: z.number().int().nonnegative().nullable().optional(),
+  minCatalogSequence: z.number().int().nonnegative().optional(),
 });
 
 export type PerformanceRequestEnvelope = z.infer<typeof performanceRequestEnvelopeSchema>;
@@ -308,4 +365,129 @@ export function isBackgroundPerformanceLane(lane: PerformanceLane): boolean {
   return lane === 'background-primary'
     || lane === 'background-secondary'
     || lane === 'maintenance';
+}
+
+/**
+ * catalogSequence is the narrowed browse-change fence, not library_change_sequence
+ * or a job/artifact cursor.
+ */
+export function catalogSequenceFromBrowseChangeSequence(changeSequence: number): number {
+  if (!Number.isInteger(changeSequence) || changeSequence < 0) {
+    throw new RangeError('catalogSequence requires a non-negative integer browse change sequence.');
+  }
+  return changeSequence;
+}
+
+export function resolveCatalogReadAdmission(
+  actualCatalogSequence: number,
+  minCatalogSequence: number | undefined,
+): CatalogReadAdmission {
+  if (minCatalogSequence === undefined) return 'ok';
+  if (!Number.isInteger(minCatalogSequence) || minCatalogSequence < 0) {
+    throw new RangeError('minCatalogSequence must be a non-negative integer.');
+  }
+  return actualCatalogSequence >= minCatalogSequence ? 'ok' : 'stale';
+}
+
+export function catalogReadVersionFields(
+  libraryGeneration: number,
+  browseChangeSequence: number,
+  snapshotGeneration?: number | null,
+): CatalogReadVersion {
+  return {
+    libraryGeneration,
+    catalogSequence: catalogSequenceFromBrowseChangeSequence(browseChangeSequence),
+    ...(snapshotGeneration === undefined ? {} : { snapshotGeneration }),
+  };
+}
+
+export type BrokerRoundTripCorrelation = {
+  requestId: string;
+  sentAtEpochMs: number;
+  completedAtEpochMs: number;
+  roundTripMs: number;
+};
+
+/** Correlate two process clocks by envelope send time, never by subtracting now() values. */
+export function correlateBrokerRoundTrip(input: {
+  requestId: string;
+  sentAtEpochMs: number;
+  completedAtEpochMs: number;
+}): BrokerRoundTripCorrelation {
+  return {
+    requestId: input.requestId,
+    sentAtEpochMs: input.sentAtEpochMs,
+    completedAtEpochMs: input.completedAtEpochMs,
+    roundTripMs: Math.max(0, input.completedAtEpochMs - input.sentAtEpochMs),
+  };
+}
+
+export const DEFAULT_PERFORMANCE_CONSUMER_ID = 'window:default';
+
+export type PerformanceTimingSummary = {
+  count: number;
+  p50Ms: number;
+  p95Ms: number;
+  maxMs: number;
+};
+
+export const performanceTimingReportSchema = z.strictObject({
+  scenario: z.string().min(1).max(128),
+  phase: performanceTimingPhaseSchema,
+  count: z.number().int().nonnegative(),
+  p50Ms: z.number().nonnegative(),
+  p95Ms: z.number().nonnegative(),
+  maxMs: z.number().nonnegative(),
+});
+
+export type PerformanceTimingReport = z.infer<typeof performanceTimingReportSchema>;
+
+/** Nearest-rank percentiles; empty input is a defined zero summary, not a missing measurement. */
+export function summarizeTimingSamples(samplesMs: number[]): PerformanceTimingSummary {
+  if (samplesMs.length === 0) {
+    return { count: 0, p50Ms: 0, p95Ms: 0, maxMs: 0 };
+  }
+  const ordered = [...samplesMs].sort((left, right) => left - right);
+  const at = (percentileValue: number): number => {
+    const index = Math.min(
+      ordered.length - 1,
+      Math.max(0, Math.ceil(ordered.length * percentileValue) - 1),
+    );
+    return ordered[index]!;
+  };
+  return {
+    count: ordered.length,
+    p50Ms: at(0.5),
+    p95Ms: at(0.95),
+    maxMs: ordered[ordered.length - 1]!,
+  };
+}
+
+/**
+ * Visible-image decode coverage uses the expected visible image set as the
+ * denominator. Mounted <img> nodes that never decoded must not shrink it.
+ */
+export function visibleImageDecodeCoverage(input: {
+  expectedVisibleImageCount: number;
+  decodedCompleteNaturalWidthPositive: number;
+}): { denominator: number; decoded: number; ratio: number } {
+  if (!Number.isInteger(input.expectedVisibleImageCount) || input.expectedVisibleImageCount < 0) {
+    throw new RangeError('expectedVisibleImageCount must be a non-negative integer.');
+  }
+  if (
+    !Number.isInteger(input.decodedCompleteNaturalWidthPositive)
+    || input.decodedCompleteNaturalWidthPositive < 0
+  ) {
+    throw new RangeError('decodedCompleteNaturalWidthPositive must be a non-negative integer.');
+  }
+  if (input.decodedCompleteNaturalWidthPositive > input.expectedVisibleImageCount) {
+    throw new RangeError('decoded count cannot exceed the visible-image denominator.');
+  }
+  return {
+    denominator: input.expectedVisibleImageCount,
+    decoded: input.decodedCompleteNaturalWidthPositive,
+    ratio: input.expectedVisibleImageCount === 0
+      ? 1
+      : input.decodedCompleteNaturalWidthPositive / input.expectedVisibleImageCount,
+  };
 }

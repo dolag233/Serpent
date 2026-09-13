@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 import type { AiJobStatus, LibraryApiResult, LinkedAssetDeleteResult, MediaJobStatus, PluginJobStatus, PreviewResolution, RelinkAssetResult, SerpentLibraryApi, SyncCapabilities, SyncReport } from '../shared/library-api';
+import type { MutationReceipt } from '../shared/performance-contract';
 import { summarizePluginJobs } from '../shared/plugin-job-status';
 import type { RecentLibraryEntry } from '../shared/recent-libraries';
 import type { AiApiFormat } from '../shared/ai-endpoints';
@@ -468,7 +469,7 @@ const library: SerpentLibraryApi = Object.freeze({
     libraryId: string;
     parentFolderId?: string;
     name: string;
-  }): Promise<LibraryApiResult<ManagedFolderSummary & { historyEntryId?: string }>> {
+  }): Promise<LibraryApiResult<ManagedFolderSummary & { historyEntryId?: string; mutationReceipt?: MutationReceipt }>> {
     const result = await request({ type: 'folder.create.request', ...input });
     if (!result.ok) return failure(result);
     if (result.type !== 'folder.created') throw new Error('Unexpected create-folder response.');
@@ -477,6 +478,7 @@ const library: SerpentLibraryApi = Object.freeze({
       value: {
         ...result.folder,
         ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+        ...(result.mutationReceipt ? { mutationReceipt: result.mutationReceipt } : {}),
       },
     };
   },
@@ -1355,6 +1357,8 @@ const library: SerpentLibraryApi = Object.freeze({
         sessionId: result.sessionId,
         libraryGeneration: result.libraryGeneration,
         changeSequence: result.changeSequence,
+        ...(result.catalogSequence === undefined ? {} : { catalogSequence: result.catalogSequence }),
+        ...(result.snapshotGeneration === undefined ? {} : { snapshotGeneration: result.snapshotGeneration }),
         queryFingerprint: result.queryFingerprint,
         items: result.items,
         total: result.total,
@@ -1383,6 +1387,7 @@ const library: SerpentLibraryApi = Object.freeze({
       value: {
         sessionId: result.sessionId,
         changeSequence: result.changeSequence,
+        ...(result.catalogSequence === undefined ? {} : { catalogSequence: result.catalogSequence }),
         items: result.items,
         total: result.total,
         offset: result.offset,
@@ -1411,6 +1416,7 @@ const library: SerpentLibraryApi = Object.freeze({
         sessionId: result.sessionId,
         startIndex: result.startIndex,
         changeSequence: result.changeSequence,
+        ...(result.catalogSequence === undefined ? {} : { catalogSequence: result.catalogSequence }),
         entries: result.entries,
       },
     };

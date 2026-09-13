@@ -1,6 +1,8 @@
 # Serpent 项目状态
 
-- **2026-09-13 交互性能设计与拆分**：针对文件夹切换、NAS、资源加载和新建文件夹反馈慢，形成[第二阶段顶层设计](implementation/2026-09-13-interactive-performance-design.md)与[执行安排](development/2026-09-13-interactive-performance-execution.md)。采用受控只读执行隔离、有界首屏、NAS版本化快照、提交后局部投影及定向刷新。仅设计完成，本轮性能/功能验收未执行；不替代历史用户工单关闭证据。开发全交Luna Extra High，主设计agent只协调。
+- **2026-09-13 PERF2-01 协议与基线**：`codex/performance-20260913` 上落地 `consumerId` / `catalogSequence` / `minCatalogSequence` / 有界 `mutationReceipt` 与 persist 计时入口。同步自旋 barrier 证明已开始的 mutation 不能被 browse 抢占。20k 合集 SQL persist 与一次真实 SMB 空库 persist 已记入[开发日志](development/2026-09-13-perf2-01-catalog-protocol-development-log.md)；UI 首屏、解码分母、packaged 未执行。不关闭 `Serpent-3kfe` / `Serpent-sa65`。
+
+- **2026-09-13 交互性能设计与拆分**：针对文件夹切换、NAS、资源加载和新建文件夹反馈慢，形成[第二阶段顶层设计](implementation/2026-09-13-interactive-performance-design.md)与[执行安排](development/2026-09-13-interactive-performance-execution.md)。采用受控只读执行隔离、有界首屏、NAS版本化快照、提交后局部投影及定向刷新。PERF2-01 协议已开始实施；产品能力验收仍未执行；不替代历史用户工单关闭证据。
 
 > 更新时间：2026-09-13
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档

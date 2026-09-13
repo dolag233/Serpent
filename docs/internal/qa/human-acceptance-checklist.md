@@ -1,6 +1,6 @@
 # Serpent 人类功能验收清单
 
-> 2026-09-13 交互性能计划：见[第二阶段设计](../implementation/2026-09-13-interactive-performance-design.md)与[工单索引](../development/2026-09-13-interactive-performance-execution.md)，总工单 `Serpent-e9a66b`。`PERF2-NAV` / `PERF2-NAS` / `PERF2-MEDIA` / `PERF2-MUT` / `PERF2-REFRESH` 目前仅规划、均未实现/未验证，不进入「待人类验收」队列。后续由Luna集成者按可操作增量和实际测试证据登记；历史验收状态不因本设计改变。
+> 2026-09-13 交互性能计划：见[第二阶段设计](../implementation/2026-09-13-interactive-performance-design.md)与[工单索引](../development/2026-09-13-interactive-performance-execution.md)，总工单 `Serpent-e9a66b`。PERF2-01 只交付读版本/回执协议与 Worker persist 基线入口，没有可独立操作的 UI 增量。`PERF2-NAV` / `PERF2-NAS` / `PERF2-MEDIA` / `PERF2-MUT` / `PERF2-REFRESH` 目前仅规划、均未实现/未验证，不进入「待人类验收」队列。后续由集成者按可操作增量和实际测试证据登记；历史验收状态不因本设计改变。
 
 > 状态：持续维护
 >

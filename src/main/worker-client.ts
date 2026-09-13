@@ -305,7 +305,14 @@ export class LibraryWorkerClient {
 
   request(
     command: WorkerCommand,
-    options: { dispatch?: 'automation-readonly'; historyContext?: WorkerHistoryContext } = {},
+    options: {
+      dispatch?: 'automation-readonly';
+      historyContext?: WorkerHistoryContext;
+      consumerId?: string;
+      catalogSequence?: number;
+      snapshotGeneration?: number | null;
+      minCatalogSequence?: number;
+    } = {},
   ): Promise<WorkerResult> {
     const child = this.#child;
     if (!child || !this.#ready) return Promise.reject(new Error('Library Worker is unavailable.'));
@@ -317,6 +324,14 @@ export class LibraryWorkerClient {
       const performanceEnvelope = this.#requestBroker.envelopeFor(command, {
         sentAtEpochMs,
         timeoutMs: baseTimeout,
+        ...(options.consumerId === undefined ? {} : { consumerId: options.consumerId }),
+        ...(options.catalogSequence === undefined ? {} : { catalogSequence: options.catalogSequence }),
+        ...(options.snapshotGeneration === undefined
+          ? {}
+          : { snapshotGeneration: options.snapshotGeneration }),
+        ...(options.minCatalogSequence === undefined
+          ? {}
+          : { minCatalogSequence: options.minCatalogSequence }),
       });
       const timer = baseTimeout == null
         ? undefined

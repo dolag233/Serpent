@@ -7,6 +7,7 @@ import { performance } from "node:perf_hooks";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { LibraryService } from "../../src/worker/library-service";
+import { summarizeTimingSamples } from "../../src/shared/performance-contract";
 
 interface TestDatabase {
   close(): void;
@@ -33,15 +34,13 @@ function newService(onDbStatement?: (sql: string) => void): LibraryService {
   return service;
 }
 
-function benchmark(operation: () => unknown): number {
+function benchmarkSamples(operation: () => unknown): number[] {
   operation();
-  const samples = Array.from({ length: 5 }, () => {
+  return Array.from({ length: 5 }, () => {
     const startedAt = performance.now();
     operation();
     return performance.now() - startedAt;
   });
-  samples.sort((left, right) => left - right);
-  return samples[Math.floor(samples.length / 2)]!;
 }
 
 function captureCollectionScopeQueries<T>(
@@ -182,34 +181,34 @@ describe("collection switch performance", () => {
     const fixture = createLargeCollectionFixture();
     const service = services.at(-1)!;
 
-    const allMs = benchmark(() => service.searchAssets({
+    const allTiming = summarizeTimingSamples(benchmarkSamples(() => service.searchAssets({
       libraryId: fixture.libraryId,
       limit: 100,
       offset: 0,
-    }));
-    const folderMs = benchmark(() => service.searchAssets({
+    })));
+    const folderTiming = summarizeTimingSamples(benchmarkSamples(() => service.searchAssets({
       libraryId: fixture.libraryId,
       scope: { kind: "folder", folderId: fixture.folderId, recursive: false },
       limit: 100,
       offset: 0,
-    }));
-    const directMs = benchmark(() => service.searchAssets({
+    })));
+    const directTiming = summarizeTimingSamples(benchmarkSamples(() => service.searchAssets({
       libraryId: fixture.libraryId,
       scope: { kind: "collection", collectionId: fixture.directCollectionId, recursive: false },
       limit: 100,
       offset: 0,
-    }));
-    const recursiveMs = benchmark(() => service.searchAssets({
+    })));
+    const recursiveTiming = summarizeTimingSamples(benchmarkSamples(() => service.searchAssets({
       libraryId: fixture.libraryId,
       scope: { kind: "collection", collectionId: fixture.rootCollectionId, recursive: true },
       limit: 100,
       offset: 0,
-    }));
-    const recursiveLayoutMs = benchmark(() => service.searchAssets({
+    })));
+    const recursiveLayoutTiming = summarizeTimingSamples(benchmarkSamples(() => service.searchAssets({
       libraryId: fixture.libraryId,
       scope: { kind: "collection", collectionId: fixture.rootCollectionId, recursive: true },
       layoutOnly: true,
-    }));
+    })));
 
     const recursivePage = captureCollectionScopeQueries(
       fixture.statements,
@@ -248,11 +247,12 @@ describe("collection switch performance", () => {
 
     console.info("[collection-switch-performance]", JSON.stringify({
       assets: ASSET_COUNT,
-      allMs: Number(allMs.toFixed(1)),
-      folderMs: Number(folderMs.toFixed(1)),
-      directMs: Number(directMs.toFixed(1)),
-      recursiveMs: Number(recursiveMs.toFixed(1)),
-      recursiveLayoutMs: Number(recursiveLayoutMs.toFixed(1)),
+      phase: "persist",
+      all: allTiming,
+      folder: folderTiming,
+      direct: directTiming,
+      recursive: recursiveTiming,
+      recursiveLayout: recursiveLayoutTiming,
     }));
     expect(folderPage.total).toBe(ASSET_COUNT);
     expect(folderPage.items).toHaveLength(100);
@@ -260,6 +260,6 @@ describe("collection switch performance", () => {
     expect(recursivePage.items).toHaveLength(100);
     expect(recursiveLayout.layout).toHaveLength(ASSET_COUNT);
     expect(recursiveIds.assetIds).toHaveLength(ASSET_COUNT);
-    expect(recursiveMs).toBeLessThan(500);
+    expect(recursiveTiming.p50Ms).toBeLessThan(500);
   });
 });

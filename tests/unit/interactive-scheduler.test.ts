@@ -432,4 +432,101 @@ describe('InteractiveScheduler', () => {
     await expect(background).resolves.toBe('done');
     await expect(mutation).resolves.toBe('imported');
   });
+
+  it('keeps interaction latest-wins keys isolated per consumerId', async () => {
+    const scheduler = new InteractiveScheduler();
+    let releaseBlocking!: () => void;
+    const blocking = scheduler.schedule(
+      {
+        requestId: 'blocking-read',
+        lane: 'interactive-control',
+        libraryId: 'library-1',
+      },
+      () => new Promise<void>((resolve) => { releaseBlocking = resolve; }),
+    );
+    const firstA = scheduler.schedule(
+      {
+        requestId: 'a-1',
+        lane: 'interactive-control',
+        libraryId: 'library-1',
+        consumerId: 'window:a',
+        interactionKey: 'browse',
+        interactionGeneration: 1,
+      },
+      () => 'a-1',
+    );
+    const secondA = scheduler.schedule(
+      {
+        requestId: 'a-2',
+        lane: 'interactive-control',
+        libraryId: 'library-1',
+        consumerId: 'window:a',
+        interactionKey: 'browse',
+        interactionGeneration: 2,
+      },
+      () => 'a-2',
+    );
+    const firstB = scheduler.schedule(
+      {
+        requestId: 'b-1',
+        lane: 'interactive-control',
+        libraryId: 'library-1',
+        consumerId: 'window:b',
+        interactionKey: 'browse',
+        interactionGeneration: 1,
+      },
+      () => 'b-1',
+    );
+
+    await expect(firstA).rejects.toBeInstanceOf(SchedulerCancelledError);
+    releaseBlocking();
+    await expect(blocking).resolves.toBeUndefined();
+    await expect(secondA).resolves.toBe('a-2');
+    await expect(firstB).resolves.toBe('b-1');
+  });
+
+  it('does not admit browse while a started mutation is in a synchronous wait', async () => {
+    const scheduler = new InteractiveScheduler();
+    const events: string[] = [];
+    let releaseMutation!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      releaseMutation = resolve;
+    });
+
+    const mutation = scheduler.schedule(
+      { requestId: 'write', lane: 'mutation', libraryId: 'library-1' },
+      async () => {
+        events.push('mutation-start');
+        const startedAt = Date.now();
+        while (Date.now() - startedAt < 20) {
+          // Synchronous stall: not setTimeout and not an async sleep.
+        }
+        events.push('mutation-blocked');
+        await hold;
+        events.push('mutation-end');
+      },
+    );
+
+    await Promise.resolve();
+    expect(events).toEqual(['mutation-start', 'mutation-blocked']);
+
+    let browseStarted = false;
+    const browse = scheduler.schedule(
+      { requestId: 'browse', lane: 'interactive-control', libraryId: 'library-1' },
+      () => {
+        browseStarted = true;
+        events.push('browse');
+      },
+    );
+    expect(browseStarted).toBe(false);
+
+    releaseMutation();
+    await Promise.all([mutation, browse]);
+    expect(events).toEqual([
+      'mutation-start',
+      'mutation-blocked',
+      'mutation-end',
+      'browse',
+    ]);
+  });
 });

@@ -14,6 +14,7 @@ export type ScheduledRequest = {
   deadlineAtEpochMs?: number;
   libraryId?: string;
   libraryGeneration?: number;
+  consumerId?: string;
   interactionKey?: string;
   interactionGeneration?: number;
   /** Lifecycle cleanup owns one library and may coexist with other-library reads. */
@@ -191,7 +192,7 @@ export class InteractiveScheduler {
 
   private latestKey(request: ScheduledRequest): string | undefined {
     if (request.interactionKey === undefined || request.interactionGeneration === undefined) return undefined;
-    return `${request.libraryId ?? ''}\u0000${request.interactionKey}`;
+    return `${request.libraryId ?? ''}\u0000${request.consumerId ?? ''}\u0000${request.interactionKey}`;
   }
 
   private drain(): void {

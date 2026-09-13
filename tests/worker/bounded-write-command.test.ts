@@ -133,6 +133,7 @@ describe('boundedWriteLibraryId', () => {
     const getTagHistorySnapshot = vi.fn().mockReturnValue([]);
     const getHumanTagRelations = vi.fn().mockReturnValue([]);
     const getManagedFolderHistorySnapshot = vi.fn().mockReturnValue([]);
+    const getBrowseChangeSequence = vi.fn().mockReturnValue(7);
     const getCollectionHistorySnapshot = vi.fn().mockReturnValue([]);
     const getCollectionMembershipHistorySnapshot = vi.fn().mockReturnValue([]);
     const getCollectionAssetMemberships = vi.fn().mockReturnValue([]);
@@ -157,6 +158,7 @@ describe('boundedWriteLibraryId', () => {
       getTagHistorySnapshot,
       getHumanTagRelations,
       getManagedFolderHistorySnapshot,
+      getBrowseChangeSequence,
       getCollectionHistorySnapshot,
       getCollectionMembershipHistorySnapshot,
       getCollectionAssetMemberships,
@@ -219,6 +221,19 @@ describe('boundedWriteLibraryId', () => {
         name: 'Empty',
       },
       historyEntryId: 'history',
+      mutationReceipt: {
+        operationId: 'history',
+        historyEntryId: 'history',
+        committedCatalogSequence: 7,
+        changes: {
+          folders: [{
+            folderId: '55555555-5555-4555-8555-555555555555',
+            parentFolderId: null,
+            name: 'Empty',
+          }],
+          affectedFolderIds: ['55555555-5555-4555-8555-555555555555'],
+        },
+      },
     });
     expect(executeBoundedWriteWorkerCommand(libraryService, {
       type: 'asset.metadata.set',

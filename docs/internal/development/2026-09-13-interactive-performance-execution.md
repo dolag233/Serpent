@@ -2,12 +2,11 @@
 
 ## 当前状态
 
-- 用户要求先深入设计、沉淀文档并拆单；全部开发指定 **Luna Extra High**。高成本主 agent 只安排 agent，不实现、不审代码。
+- 用户 2026-09-13 要求在性能分支上开始实施。PERF2-01 已在本分支落地协议与基线入口（见 [PERF2-01 开发日志](2026-09-13-perf2-01-catalog-protocol-development-log.md)）；未实现读隔离或 UI 优化。
 - 设计基线 dev `b2ece599`，0.2.1；性能分支 `codex/performance-20260913`。
-- [顶层设计](../implementation/2026-09-13-interactive-performance-design.md) / [ADR-0033](../adr/0033-isolated-catalog-reads.md)。代码事实、历史性能与本轮待测证据分开记录。
-- 设计阶段未运行性能、功能、Electron 或真实NAS测试；未宣称修复完成，未新增待人类验收功能。
-- 三个 **Luna High** 资料整理 agent 均在执行前返回用量限额错误，没有交付。设计主 agent 完成资料核对，不代替后续开发。
-- 设计检查：`git diff --check` 通过；本轮文档相对链接/隐私模式检查通过；JSONL解析与依赖图检查为1个总单+10个实施单、无环；`node scripts/ticket.mjs ready --fields id,title,status --json` 确认本计划初始仅 PERF2-01 就绪。以上是文档/工单检查，不是软件测试。
+- [顶层设计](../implementation/2026-09-13-interactive-performance-design.md) / [ADR-0033](../adr/0033-isolated-catalog-reads.md)。
+- PERF2-NAV / NAS / MEDIA / MUT / REFRESH 产品能力仍未实现，不进入人类验收队列。
+- 设计阶段指定 Luna Extra High 实现；本轮 PERF2-01 由当前会话在性能分支直接实施。后续工单仍按索引串行，JSONL 只经 `node scripts/ticket.mjs` 更新。
 
 ## 工单索引
 
@@ -16,7 +15,7 @@
 
 | 编号 / 工单 | 交付边界 | 技术前置 | 模型 / 状态 |
 | --- | --- | --- | --- |
-| PERF2-01 / `Serpent-41426d` | 端到端性能基线与读版本/提交回执协议 | 无 | Luna Extra High；执行中，已确认环境与设计 |
+| PERF2-01 / `Serpent-41426d` | 端到端性能基线与读版本/提交回执协议 | 无 | 协议与基线已交付；见 PERF2-01 开发日志。读隔离未做 |
 | PERF2-02 / `Serpent-6dc70b` | 提取共享纯读目录服务，分离隐藏物化写入 | PERF2-01 | Luna Extra High；未开始 |
 | PERF2-03 / `Serpent-0ecab5` | 只读UtilityProcess直达路由与真正的导航抢占 | PERF2-02 | Luna Extra High；未开始 |
 | PERF2-04 / `Serpent-078a15` | 首屏优先的两阶段BrowseSession与稳定顺序 | PERF2-03 | Luna Extra High；未开始 |
