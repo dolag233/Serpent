@@ -5,7 +5,7 @@
 - 用户要求先深入设计、沉淀文档并拆单；全部开发指定 **Luna Extra High**。高成本主 agent 只安排 agent，不实现、不审代码。
 - 设计基线 dev `b2ece599`，0.2.1；性能分支 `codex/performance-20260913`。
 - [顶层设计](../implementation/2026-09-13-interactive-performance-design.md) / [ADR-0033](../adr/0033-isolated-catalog-reads.md)。代码事实、历史性能与本轮待测证据分开记录。
-- 本轮未运行性能、功能、Electron 或真实NAS测试；未宣称修复完成，未新增待人类验收功能。
+- 设计阶段未运行性能、功能、Electron 或真实NAS测试；未宣称修复完成，未新增待人类验收功能。
 - 三个 **Luna High** 资料整理 agent 均在执行前返回用量限额错误，没有交付。设计主 agent 完成资料核对，不代替后续开发。
 - 设计检查：`git diff --check` 通过；本轮文档相对链接/隐私模式检查通过；JSONL解析与依赖图检查为1个总单+10个实施单、无环；`node scripts/ticket.mjs ready --fields id,title,status --json` 确认本计划初始仅 PERF2-01 就绪。以上是文档/工单检查，不是软件测试。
 
@@ -16,7 +16,7 @@
 
 | 编号 / 工单 | 交付边界 | 技术前置 | 模型 / 状态 |
 | --- | --- | --- | --- |
-| PERF2-01 / `Serpent-41426d` | 端到端性能基线与读版本/提交回执协议 | 无 | Luna Extra High；未开始 |
+| PERF2-01 / `Serpent-41426d` | 端到端性能基线与读版本/提交回执协议 | 无 | Luna Extra High；执行中，已确认环境与设计 |
 | PERF2-02 / `Serpent-6dc70b` | 提取共享纯读目录服务，分离隐藏物化写入 | PERF2-01 | Luna Extra High；未开始 |
 | PERF2-03 / `Serpent-0ecab5` | 只读UtilityProcess直达路由与真正的导航抢占 | PERF2-02 | Luna Extra High；未开始 |
 | PERF2-04 / `Serpent-078a15` | 首屏优先的两阶段BrowseSession与稳定顺序 | PERF2-03 | Luna Extra High；未开始 |
@@ -60,3 +60,7 @@ Luna集成者运行最终 `verify:mainline` 和串行E2E。真实SMB/Windows无�
 查询 `performance-v2` 标签与依赖，读此索引和交付评论，核对分支状态。从第一个未交付的技术前置安排单个有界Luna xhigh任务。派发须包含工单、设计章节、可写范围、共享文件时段、测试边界和交付合同。
 
 额度不足时保存失败事实与待派任务，不循环重试、不改变模型、不让主设计模型代写。恢复后继续现有工单，不重做设计或重复开单。
+
+## 首轮派发记录
+
+设计提交 `8fd09dbc` 已推送性能分支。PERF2-01 已由 Luna Extra High 确认读取工作树/工单/设计并开始执行，未遇额度错误；其余任务等待技术前置。此前Luna High资料任务的额度错误不代表Luna Extra High开发不可用。
