@@ -802,7 +802,11 @@ const library: SerpentLibraryApi = Object.freeze({
     showIgnored?: boolean;
     assetIds?: readonly string[];
   }): Promise<LibraryApiResult<AssetSummary[]>> {
-    const result = await request({ type: 'asset.list.request', ...input });
+    const result = await request({
+      type: 'asset.list.request',
+      ...input,
+      assetIds: input.assetIds ? [...input.assetIds] : undefined,
+    });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.list') throw new Error('Unexpected list-assets response.');
     return { ok: true, value: result.assets };

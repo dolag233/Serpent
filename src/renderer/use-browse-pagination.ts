@@ -351,9 +351,15 @@ export function browseWindowQueryMode(input: {
 }
 
 export function isBrowseSessionPageUnusable(
-  result: { ok: boolean; value?: { stale?: boolean } },
+  result: { ok: boolean; value?: unknown },
 ): boolean {
-  return result.ok === true && result.value?.stale === true;
+  return (
+    result.ok === true &&
+    typeof result.value === "object" &&
+    result.value !== null &&
+    "stale" in result.value &&
+    (result.value as { stale?: unknown }).stale === true
+  );
 }
 
 export function useBrowsePagination(

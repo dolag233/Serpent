@@ -27,14 +27,18 @@ describe("ColorFilterPopover", () => {
 
   function renderPopover(options: {
     initialFilter?: string;
-    onColorFilter?: ReturnType<typeof vi.fn>;
-    onColorFilterPrefsChange?: ReturnType<typeof vi.fn>;
+    onColorFilter?: ReturnType<typeof vi.fn<(value: string) => void>>;
+    onColorFilterPrefsChange?: ReturnType<
+      typeof vi.fn<(prefs: ColorFilterPreferences) => void>
+    >;
   } = {}) {
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
-    const onColorFilter = options.onColorFilter ?? vi.fn();
-    const onColorFilterPrefsChange = options.onColorFilterPrefsChange ?? vi.fn();
+    const onColorFilter = options.onColorFilter ?? vi.fn<(value: string) => void>();
+    const onColorFilterPrefsChange =
+      options.onColorFilterPrefsChange ??
+      vi.fn<(prefs: ColorFilterPreferences) => void>();
 
     function Harness() {
       const [colorFilter, setColorFilter] = useState(options.initialFilter ?? "");
@@ -118,8 +122,11 @@ describe("ColorFilterPopover", () => {
     const cancel = [...container!.querySelectorAll("[data-color-add-draft] button")].find(
       (button) => button.textContent?.includes("Cancel"),
     );
+    if (!(cancel instanceof HTMLElement)) {
+      throw new Error("expected Cancel button");
+    }
     act(() => {
-      cancel!.click();
+      cancel.click();
     });
     expect(onColorFilter).toHaveBeenLastCalledWith("red");
     expect(onColorFilterPrefsChange).not.toHaveBeenCalled();
@@ -135,11 +142,16 @@ describe("ColorFilterPopover", () => {
     const confirm = [...container!.querySelectorAll("[data-color-add-draft] button")].find(
       (button) => button.textContent?.includes("Confirm"),
     );
+    if (!(confirm instanceof HTMLElement)) {
+      throw new Error("expected Confirm button");
+    }
     act(() => {
-      confirm!.click();
+      confirm.click();
     });
     expect(onColorFilterPrefsChange).toHaveBeenCalledTimes(1);
-    expect(onColorFilterPrefsChange.mock.calls[0][0].customColors).toEqual(["#888888"]);
+    expect(onColorFilterPrefsChange.mock.calls[0]?.[0]?.customColors).toEqual([
+      "#888888",
+    ]);
     expect(onColorFilter).toHaveBeenCalledWith("#888888");
     expect(container!.querySelector("[data-color-add-draft]")).toBeNull();
     expect(container!.querySelector("[data-color-custom] [data-color='#888888']")).not.toBeNull();
