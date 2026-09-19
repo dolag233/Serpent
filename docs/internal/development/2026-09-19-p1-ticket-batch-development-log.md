@@ -328,3 +328,39 @@ Windows 与 macOS 的真机字形观感列入人类验收。
 **验证**：`node scripts/run-e2e.mjs tests/e2e/folder-batch-actions.test.ts` → **3 passed（34.9 s，含新用例 9.6 s）**；`npx vitest run tests/unit/folder-selection-toggle.test.ts` → 6 passed；全量单测与 font/critical-confirmation E2E 见下（同一提交内复跑）。
 
 **边界**：链接**子目录**的 id 由侧栏按规则派生，`isSelectable` 只认托管文件夹与链接根，因此「正在浏览链接子目录时 Ctrl 点 B」不会把该子目录带进选区（宁可不选，也不塞未知 id）；如需覆盖，需要把侧栏的链接子目录 id 一并回传给 App。
+
+## 9. 0.2.6 发布记录（2026-09-19）
+
+按 `docs/internal/development/release-process-and-distribution.md` 执行（Windows 侧）。
+
+**版本**：`a489ae3c chore(release): 版本号 0.2.5 → 0.2.6` 已在 dev（package.json / package-lock 均 0.2.6）。
+
+**打包（dev 分支）**
+
+| 步骤 | 命令 | 结果 |
+| --- | --- | --- |
+| 媒体二进制 | `npm run release:media` | media:acquire + media:verify **通过**（win32-x64 bundle-lock 校验 OK） |
+| 打包 + 门禁 | `npm run release:package` | package + **verify:package 通过**；prepackage 的 ufbx WASM 哈希、扩展重建、ASAR 运行时文件与 Host utilities 校验全绿 |
+| 分发产物 | `npm run release:make` | Forge ZIP 产出（`out/make/zip/win32/x64/Serpent-win32-x64-0.2.6.zip`，406,644,736 B） |
+| 安装器 | `npm run make:inno` | `out/make/inno/SerpentSetup.exe`（293.7 MB），Inno 编译成功（153.7 s / 复核 134.1 s） |
+
+**main 合流（单一提交）**：`git merge --no-commit --no-ff dev` → 7 处 modify/delete 冲突（`.beads/issues.jsonl`、6 个 `docs/internal/**`）全部以删除收口 → `git rm -r -f` 剥离 `.beads`/`.github`/`.codex`/`.cursor`/`AGENTS.md`/`CLAUDE.md`/`CONTEXT.md`/`docs/internal`/`benchmark.md` → **一次提交 `4661e17e`**（180 files changed, +13825/−859）。核对：`git diff main dev -- src tests package.json package-lock.json` 为空；main 无内部文件；`docs/developer/` 18 个文件保留。`scripts/hooks/pre-commit` 守卫通过。
+
+**首次发布尝试与绕过**：388 MB 资产在 GitHub http2 上传时被断开（`http2: client connection force closed`）；改 `GODEBUG=http2client=0` 强制 HTTP/1.1 后 portable 与 setup 均一次成功。
+
+**发布结果**
+
+| 项 | 值 |
+| --- | --- |
+| tag | `v0.2.6`（annotated）→ `4661e17e`，指向 main 发布基线 |
+| Release | https://github.com/dolag233/Serpent/releases/tag/v0.2.6（`target=main`、非 draft/prerelease、当前 Latest） |
+| Windows 便携版 | `Serpent-win-x86-64-0.2.6-portable.zip` 406,644,736 B，sha256 `0ac077d217f4b14d6be03d90031161a937070c1eb895ed362f3199de44499ba3` |
+| Windows 安装器 | `Serpent-win-x86-64-0.2.6-setup.zip` 307,477,435 B（内含 `SerpentSetup.exe`），sha256 `5c549866ced0f4ea285836cc53c02dc95d0862a34ab67dbb81d02eeebc80e391` |
+| 更新日志元信息 | `release-meta.json` + `release-meta-0.2.6.json`（`version` = 0.2.6，中英双语条目） |
+| macOS 4 个资产 | 由用户在本机（macOS）构建后上传（`.sha256` sidecar 已出现，dmg/portable.zip 传完为准） |
+
+**按用户指示跳过**：`release:verify`（rebuild:native + verify:mainline：lint / typecheck / 全量单测 / 库可用性 / 性能 / E2E）与 `release:e2e`（packaged 启动 E2E）——本机另有 5 条**预存在**红项（2 lint + 4 typecheck + `tests/worker/thumbnails.test.ts` 的 missing-primary 用例，见 `Serpent-308961`）。打包门禁（media verify / ufbx / verify-package）均已执行且通过。
+
+**环境恢复**：`npm run rebuild:native` → better-sqlite3 重编 + **FTS5 probe OK**；已切回 `dev`（HEAD = origin/dev = `0b40b717`）。
+
+**遗留**：`out/`（打包目录、Forge ZIP、Inno exe、发布暂存副本）约 2 GB 未清理，保留供本机复验安装器与便携包；确认不再需要时可整体删除（可再生）。
