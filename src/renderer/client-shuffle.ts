@@ -31,3 +31,13 @@ export function shuffleBrowseItems<T>(
   if (!enabled || seed === null) return items.slice();
   return shuffleArray(items, seed);
 }
+
+/** Display index → original rank for a scoped shuffle. */
+export function shuffledIndexOrder(total: number, seed: number): number[] {
+  const count = Math.max(0, Math.trunc(total));
+  if (count === 0) return [];
+  return shuffleArray(
+    Array.from({ length: count }, (_, index) => index),
+    seed,
+  );
+}

@@ -435,7 +435,7 @@ import { invertSelection } from "./invert-selection";
 import { trashedFoldersToBrowseEntries } from "./trashed-folder-entries";
 import { computeMasonrySelectionAssetIds } from "./masonry-selection-order";
 import { resolveMasonryTabTarget } from "./masonry-focus-order";
-import { shuffleBrowseItems } from "./client-shuffle";
+import { shuffleBrowseItems, shuffledIndexOrder } from "./client-shuffle";
 import {
   toMessage,
   messageForPublicError,
@@ -535,6 +535,7 @@ import { assetSummaryFromLayoutEntry, browseRankFromPublishedId } from "./browse
 import { isGeometryPlaceholder } from "./browse/use-virtual-browse-session";
 import { deferNavigationHydration } from "./browse/defer-navigation-hydration";
 import {
+  permuteVirtualBrowseLayout,
   virtualLayoutEntryForAsset,
   virtualLayoutPublishedId,
   type VirtualBrowseLayout,
@@ -1552,6 +1553,7 @@ function AppInner() {
   const {
     beginPage: beginBrowsePage,
     ensureVisibleRange: ensureBrowseVisibleRange,
+    ensureVisibleIndices: ensureBrowseVisibleIndices,
     fetchScopeAssetIds: fetchBrowseScopeAssetIds,
     removeLocally: removeLocallyFromBrowse,
     applyGeometryPatches: applyBrowseGeometryPatches,
@@ -2721,6 +2723,17 @@ function AppInner() {
   const visibleBrowseLayout = useMemo(() => {
     return shuffleBrowseItems(browseLayout, shuffleSeed, !showTrash);
   }, [browseLayout, showTrash, shuffleSeed]);
+  const shuffleOrder = useMemo(() => {
+    if (shuffleSeed === null || showTrash) return null;
+    const total = virtualBrowseLayout?.total ?? 0;
+    if (total <= 0) return null;
+    return shuffledIndexOrder(total, shuffleSeed);
+  }, [shuffleSeed, showTrash, virtualBrowseLayout?.total]);
+  const visibleVirtualBrowseLayout = useMemo(() => {
+    if (!virtualBrowseLayout) return null;
+    if (!shuffleOrder) return virtualBrowseLayout;
+    return permuteVirtualBrowseLayout(virtualBrowseLayout, shuffleOrder);
+  }, [shuffleOrder, virtualBrowseLayout]);
 
   // Report mounted cards and real layout slots. A fresh scrollbar destination
   // can queue its thumbnail work before the page summaries mount, while the
@@ -2745,15 +2758,15 @@ function AppInner() {
       );
       const orderedIds = orderedIdsForViewportPriorityReport({
         visibleIds: intersectingIds,
-        ...(virtualBrowseLayout
+        ...(visibleVirtualBrowseLayout
           ? {
               virtualLayout: {
-                indexOf: (assetId) => virtualBrowseLayout.indexByAssetId.get(assetId),
+                indexOf: (assetId) => visibleVirtualBrowseLayout.indexByAssetId.get(assetId),
                 idAt: (index) => {
-                  const published = virtualLayoutPublishedId(virtualBrowseLayout, index);
+                  const published = virtualLayoutPublishedId(visibleVirtualBrowseLayout, index);
                   return isGeometryPlaceholder({ assetId: published }) ? undefined : published;
                 },
-                total: virtualBrowseLayout.total,
+                total: visibleVirtualBrowseLayout.total,
               },
             }
           : {}),
@@ -2806,7 +2819,7 @@ function AppInner() {
       if (frame !== undefined) window.cancelAnimationFrame(frame);
       if (debounceTimer !== undefined) window.clearTimeout(debounceTimer);
     };
-  }, [api, library, assetViewMode, browseLayout, virtualBrowseLayout]);
+  }, [api, library, assetViewMode, browseLayout, visibleVirtualBrowseLayout]);
 
   // Map the scrollbar to the compact real-asset index. One-frame coalescing
   // avoids request spam without spending 50ms of the 500ms loading budget.
@@ -2880,18 +2893,27 @@ function AppInner() {
           }
         }
         if (visibleRanks.length > 0) {
-          void ensureBrowseVisibleRange(
-            Math.min(...visibleRanks),
-            Math.max(...visibleRanks),
-          );
+          if (shuffleOrder) {
+            void ensureBrowseVisibleIndices(visibleRanks);
+          } else {
+            void ensureBrowseVisibleRange(
+              Math.min(...visibleRanks),
+              Math.max(...visibleRanks),
+            );
+          }
           return;
         }
         const maxScroll = Math.max(0, canvas.scrollHeight - canvas.clientHeight);
         const ratio = maxScroll <= 0 ? 0 : canvas.scrollTop / maxScroll;
-        const center = Math.round(ratio * Math.max(0, total - 1));
+        const displayCenter = Math.round(ratio * Math.max(0, total - 1));
+        const sourceCenter = shuffleOrder?.[displayCenter] ?? displayCenter;
         // Neighbor pages are added by browsePageOffsetsForRange. Passing a
         // ±page-size span here would queue 3–4 windows behind a jump.
-        void ensureBrowseVisibleRange(center, center);
+        if (shuffleOrder) {
+          void ensureBrowseVisibleIndices([sourceCenter]);
+        } else {
+          void ensureBrowseVisibleRange(sourceCenter, sourceCenter);
+        }
       });
     };
     canvas.addEventListener("scroll", schedule, { passive: true });
@@ -2904,7 +2926,9 @@ function AppInner() {
     api,
     browseLayout,
     ensureBrowseVisibleRange,
+    ensureBrowseVisibleIndices,
     library,
+    shuffleOrder,
     virtualBrowseLayout,
   ]);
 
@@ -14169,7 +14193,7 @@ function AppInner() {
                           <MasonryColumns
                             assets={section.assets}
                             layout={visibleBrowseLayout}
-                            virtualLayout={virtualBrowseLayout}
+                            virtualLayout={visibleVirtualBrowseLayout}
                             cardSize={assetCardSize}
                             renderCard={renderAssetCard}
                             renderLayoutPreview={(entry, renderOptions) =>
@@ -14204,7 +14228,7 @@ function AppInner() {
                           <JustifiedAssetRows
                             assets={section.assets}
                             layout={visibleBrowseLayout}
-                            virtualLayout={virtualBrowseLayout}
+                            virtualLayout={visibleVirtualBrowseLayout}
                             cardSize={assetCardSize}
                             captionFields={canvasPrefs.fields}
                             snippetLine={searchSnippets.size > 0}

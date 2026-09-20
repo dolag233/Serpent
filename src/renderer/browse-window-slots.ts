@@ -77,6 +77,29 @@ export function browsePageOffsetsForRange(input: {
 }
 
 /**
+ * Page offsets that cover a scattered set of ranks (client shuffle). Does not
+ * span min..max: that would pull the whole corpus when visible cards are
+ * spread across the original order.
+ */
+export function browsePageOffsetsForIndices(input: {
+  indices: readonly number[];
+  total: number;
+  pageSize: number;
+}): number[] {
+  const pageSize = Math.max(1, input.pageSize);
+  const total = Math.max(0, input.total);
+  if (total === 0 || input.indices.length === 0) return [];
+  const lastIndex = total - 1;
+  const pages = new Set<number>();
+  for (const raw of input.indices) {
+    if (!Number.isFinite(raw)) continue;
+    const index = Math.min(lastIndex, Math.max(0, Math.trunc(raw)));
+    pages.add(browsePageOffset(index, pageSize));
+  }
+  return [...pages].sort((left, right) => left - right);
+}
+
+/**
  * Merge real summaries only. The compact layout index owns full-scope order
  * and scrollbar geometry; unloaded assets never become fake AssetSummary
  * cards and therefore cannot flash `__pending:` placeholders.

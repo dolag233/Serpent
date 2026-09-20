@@ -44,6 +44,12 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-09-20 乱序排序
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| SORT-011 | 超过首页的浏览范围里「乱序」会打乱网格 | 人类验收通过 | ① **完全退出**后再打开含这次改动的构建。② 打开当前这个超过 100 项的范围（所有资产或大文件夹）。③ 排序面板选「乱序」，看卡片顺序是否变。④ 再点一次「乱序」。⑤ 再选回「名称」。⑥ 对照一个不足 100 项的小文件夹。 | 大范围第一次乱序即打乱当前结果，再点再打乱；切回名称恢复服务端序。小文件夹同样打乱。 | [client-shuffle](../../../src/renderer/client-shuffle.ts) / [virtual-browse-layout](../../../src/renderer/browse/virtual-browse-layout.ts) / [单测](../../../tests/unit/virtual-browse-session.test.ts) | 2026-09-20 用户报告当前打开的资源库选乱序后网格不变。根因：虚拟画布按服务端 rank 绘制，shuffle 只打乱 compact `browseLayout`。**2026-09-20 用户本人验收通过**（用户原话「可以」）。 |
+
 ### 2026-09-20 重命名选区与无分辨率卡片高度
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
@@ -1444,7 +1450,7 @@
 | SHELL-027 | info/notice 显示在工作区顶部居中 | 人类验收通过 | 触发普通成功 notice；再触发 warning 与 error；在标签管理页与资产预览打开时各试一次 | **成功/警告/错误均在应用顶栏下方的工作区空白带居中**（样式统一，无右下角分叉）；notice 可带撤销；设置面板、查看器和其他覆盖层打开时仍可见；fatal 仍为模态 | `Serpent-ss1k` / `Serpent-nlji` / [WorkspaceNoticeBanner](../../../src/renderer/WorkspaceNoticeBanner.tsx) / [开发日志](../development/2026-08-03-asset-workqueue-ux-development-log.md) | 2026-07-22 用户确认旧位置通过；2026-08-03 按用户反馈下移至顶栏下方空白带，用户确认新位置通过。 |
 | SHELL-028 | 通知关闭为字形而非按钮 | 待人类验收 | 触发一条成功 notice；观察右侧关闭 X、info 图标与文案中线；看 X 右侧留白 | X 无按钮边框/底；icon/文案/X **竖直对齐**；X 右侧无明显空档 | `Serpent-2wu4` / `Serpent-fvto` / `.workspace-notice` | 2026-07-23 功能通过；对齐与右侧留白不通过 → `fvto` 收紧 padding + actions 组。 |
 | SHELL-029 | 模态对话框垂直居中（创建资源库等） | 人类验收通过 | 无库启动与**已打开库**时菜单「创建资源库」；设置/冲突窗对照；量对话框中心 vs **整个窗口**中心 | **对话框几何中心 = 整个窗口中心**（禁止只在画布区居中）；背后壳层失焦；create/conflict/settings 一致 | `Serpent-kipk` / `Serpent-q3qu` / `.dialog-backdrop` / [CreateDialog](../../../src/renderer/CreateDialog.tsx) | 2026-07-24 用户验收通过。 |
-| SORT-008 | 排序支持乱序（客户端 shuffle） | 人类验收通过 | 打开排序面板 →「乱序」；观察网格；再点一次乱序；再选回名称 | 第一次打乱当前结果；再点重新打乱；不写库/不持久化；切回字段排序恢复服务端序 | `Serpent-hm28` / [client-shuffle](../../../src/renderer/client-shuffle.ts) | 2026-07-23 用户确认通过。 |
+| SORT-008 | 排序支持乱序（客户端 shuffle） | 人类验收通过 | 打开排序面板 →「乱序」；观察网格；再点一次乱序；再选回名称 | 第一次打乱当前结果；再点重新打乱；不写库/不持久化；切回字段排序恢复服务端序 | `Serpent-hm28` / [client-shuffle](../../../src/renderer/client-shuffle.ts) | 2026-07-23 用户确认通过。2026-09-20 大范围虚拟画布回归，见 SORT-011；**同日用户本人验收通过**（用户原话「可以」）。 |
 | SORT-010 / `Serpent-b963a9` | 过滤条件下乱序仍生效 | 待人类验收 | 先启用格式、颜色或标签过滤，再打开排序面板选择「乱序」；连续点击两次乱序，并切换平铺/瀑布流视图 | 过滤结果仍完整保留；每次乱序都改变当前过滤结果的卡片顺序；已加载卡片与未加载布局占位使用同一顺序；切回字段排序后恢复对应服务端排序 | [客户端乱序](../../../src/renderer/client-shuffle.ts) / [浏览画布](../../../src/renderer/App.tsx) / [乱序单测](../../../tests/unit/client-shuffle.test.ts) | 2026-08-22：修复过滤结果只打乱已加载摘要、完整布局仍沿用原序的问题；定向单测与 typecheck 通过，待用户验收。 |
 | SORT-009 | 浏览排序跨文件夹与重启记忆 | 待人类验收 | ① 在某一文件夹将排序改为「修改时间 · 降序」。② 切换到另一文件夹或「所有资产」。③ 完全退出 Serpent 后重新打开同一资源库 | 排序保持「修改时间 · 降序」；切换范围时**筛选条件仍被清空**（不记忆）；乱序模式不持久化 | [browse-sort-preferences](../../../src/renderer/browse-sort-preferences.ts) / `App.tsx` | 2026-07-24 P0：排序记忆；筛选不记忆。 |
 | CANVAS-032 | Ctrl+滚轮卡片缩放更细 | 已撤回 | — | — | `Serpent-i0ry` | 2026-07-23 用户反馈：Windows 分支 `fvpi`/CANVAS-018 已修每格一档；本项密度加密撤回，避免叠床架屋。若仍觉一格过粗另开单。 |

@@ -4,6 +4,7 @@ import type { AssetSummary } from "../../src/shared/asset-types";
 import {
   browsePageOffset,
   browsePageOffsetsForRange,
+  browsePageOffsetsForIndices,
   compactBrowseLayoutIsComplete,
   contiguousBrowsePageRuns,
   mergeLoadedBrowsePage,
@@ -57,6 +58,16 @@ describe("browse window virtualization (Serpent-sa65)", () => {
         pageSize: 100,
       }),
     ).toEqual([200, 100, 300]);
+  });
+
+  it("covers scattered shuffle ranks without spanning min..max", () => {
+    expect(
+      browsePageOffsetsForIndices({
+        indices: [5, 250, 251],
+        total: 700,
+        pageSize: 100,
+      }),
+    ).toEqual([0, 200]);
   });
 
   it("splits missing pages around an in-flight gap", () => {
