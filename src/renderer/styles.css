@@ -11446,6 +11446,11 @@ select.ai-config-input.ai-config-languages {
   display: flex;
   min-width: 0;
   flex-direction: column;
+  /* Masonry reserves a deterministic caption band for scrollbar geometry.
+     Font rasterization can make the actual line boxes a fraction shorter;
+     centering the remaining space keeps the visible top and bottom edge
+     breathing room equal instead of leaving all rounding at the bottom. */
+  justify-content: center;
   gap: calc(3px * var(--ui-font-scale));
   padding: calc(4px * var(--ui-font-scale))
     calc(8px * var(--ui-font-scale))
