@@ -17,6 +17,7 @@ export interface ConvertFbxInput {
   /** Absolute path of the source FBX file. */
   sourcePath: string;
   maxTriangles?: number;
+  signal?: AbortSignal;
 }
 
 export interface ConvertFbxOutput {
@@ -41,17 +42,21 @@ export async function convertFbxToGlb(
   input: ConvertFbxInput,
 ): Promise<{ ok: true; output: ConvertFbxOutput } | { ok: false; failure: ConvertFbxFailure }> {
   try {
+    throwIfAborted(input.signal);
     const stat = statSync(input.sourcePath);
     if (!stat.isFile()) {
       return { ok: false, failure: { errorCode: 'FBX_SOURCE_NOT_FOUND' } };
     }
     const sourceBytes = readFileSync(input.sourcePath);
+    throwIfAborted(input.signal);
     return await convertFbxBuffer(sourceBytes, {
       sourcePath: input.sourcePath,
       sourceBytes: sourceBytes.length,
+      signal: input.signal,
       ...(input.maxTriangles === undefined ? {} : { maxTriangles: input.maxTriangles }),
     });
   } catch (error) {
+    if (input.signal?.aborted) throw error;
     if (isMissingFileError(error)) {
       return { ok: false, failure: { errorCode: 'FBX_SOURCE_NOT_FOUND' } };
     }
@@ -68,15 +73,18 @@ export async function convertFbxToGlb(
 /** Convert in-memory FBX bytes (used by tests and the file-based entrypoint). */
 export async function convertFbxBuffer(
   fbxBytes: Buffer,
-  input: { sourcePath: string; sourceBytes?: number; maxTriangles?: number },
+  input: { sourcePath: string; sourceBytes?: number; maxTriangles?: number; signal?: AbortSignal },
 ): Promise<{ ok: true; output: ConvertFbxOutput } | { ok: false; failure: ConvertFbxFailure }> {
   let packed: Buffer;
   try {
+    throwIfAborted(input.signal);
     packed = await parseFbxBytes(fbxBytes, {
       filename: input.sourcePath,
       ...(input.maxTriangles === undefined ? {} : { maxTriangles: input.maxTriangles }),
     });
+    throwIfAborted(input.signal);
   } catch (error) {
+    if (input.signal?.aborted) throw error;
     return mapBridgeFailure(error);
   }
 
@@ -99,13 +107,14 @@ export async function convertFbxBuffer(
     };
   }
 
-  const textures = resolveExternalTextures(descriptor, input.sourcePath);
+  const textures = resolveExternalTextures(descriptor, input.sourcePath, input.signal);
   const built = await buildGlb({
     descriptor,
     packed,
     textures,
     sourceBytes: input.sourceBytes ?? fbxBytes.length,
   });
+  throwIfAborted(input.signal);
 
   return {
     ok: true,
@@ -117,6 +126,12 @@ export async function convertFbxBuffer(
       sourceUnitMeters: descriptor.meta.unitMeters,
     },
   };
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error ? signal.reason : new Error('FBX conversion aborted.');
+  }
 }
 
 function mapBridgeFailure(
@@ -179,12 +194,14 @@ function decodeDescriptor(packed: Buffer): FbxDescriptor {
 function resolveExternalTextures(
   descriptor: FbxDescriptor,
   sourcePath: string,
+  signal?: AbortSignal,
 ): Map<number, ResolvedTexture> {
   // Embedded textures are read directly from the bridge output by the GLB
   // builder; only external files are resolved here.
   const resolved = new Map<number, ResolvedTexture>();
   const modelDir = path.dirname(sourcePath);
   for (const tex of descriptor.textures) {
+    throwIfAborted(signal);
     if (tex.embedded) continue;
     const relativePath = tex.relativeFilename.replaceAll('\\', '/');
     if (!isSafeRelativeTexturePath(relativePath)) continue;

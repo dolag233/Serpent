@@ -150,6 +150,7 @@ import { RawMetadataBackfillAdmissionGate } from './raw-metadata-backfill-gate';
 
 const parentPort: ParentPort | undefined = process.parentPort;
 const aiJobAbortRegistry = new AiJobAbortRegistry();
+const aiProcessBatchAbortControllers = new Map<string, AbortController>();
 const libraryGenerationRegistry = new LibraryGenerationRegistry();
 const providerConcurrencyLimiter = new ProviderConcurrencyLimiter(
   DEFAULT_AI_ANALYSIS_CONCURRENCY,
@@ -160,6 +161,12 @@ const analysisControls = new Map<string, {
   signal: AbortSignal;
   canWrite: () => boolean;
   requestTimeoutMs: number;
+  /**
+   * Release the outer ai.process-queue admission while doing media/provider
+   * work, then reacquire it before the caller continues to its next short
+   * claim/commit section. Direct asset.analyze requests leave this undefined.
+   */
+  runExternal?: <T>(work: () => Promise<T> | T) => Promise<T>;
 }>();
 const activeThumbnailQueues = new Set<string>();
 const rescheduledThumbnailQueues = new Set<string>();
@@ -369,8 +376,16 @@ function requestModelThumbnailRender(
   return new Promise((resolve, reject) => {
     const onAbort = (): void => {
       pendingModelThumbnailRenders.delete(requestId);
+      parentPort?.postMessage({
+        type: 'model-thumbnail.render-cancel',
+        requestId,
+      });
       reject(new DOMException('Model thumbnail render request aborted.', 'AbortError'));
     };
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
     const cleanup = (): void => signal?.removeEventListener('abort', onAbort);
     signal?.addEventListener('abort', onAbort, { once: true });
     pendingModelThumbnailRenders.set(requestId, { resolve, cleanup });
@@ -464,16 +479,50 @@ async function withModelRenderGate<T>(
   modelRenderTail = new Promise<void>((resolve) => {
     release = resolve;
   });
-  await previous;
-  if (signal?.aborted) {
-    release();
-    throw new DOMException('Model render cancelled before acquiring the render gate.', 'AbortError');
-  }
+  let acquired = false;
   try {
+    await waitForAbortable(previous, signal);
+    acquired = true;
+    if (signal?.aborted) {
+      throw new DOMException('Model render cancelled before acquiring the render gate.', 'AbortError');
+    }
     return await fn();
   } finally {
-    release();
+    if (acquired) {
+      release();
+    } else {
+      // A queued cancellation must not resolve its tail before the previous
+      // owner releases the gate, otherwise a later request can enter while
+      // that owner is still rendering. Keep the chain intact and settle this
+      // node only after the predecessor (which never rejects) completes.
+      void previous.then(release, release);
+    }
   }
+}
+
+function waitForAbortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) {
+    return Promise.reject(new DOMException('Operation aborted.', 'AbortError'));
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => {
+      cleanup();
+      reject(new DOMException('Operation aborted.', 'AbortError'));
+    };
+    const cleanup = (): void => signal.removeEventListener('abort', onAbort);
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
 }
 
 /** URL builders mirror 3d-viewer/url-remap (kept local to avoid a renderer import). */
@@ -566,7 +615,7 @@ async function orchestrateRender(input: {
       const conversion = await handleFbxConvertCommand(libraryService, {
         libraryId: input.libraryId,
         assetId: input.assetId,
-      });
+      }, input.signal);
       if (conversion.status !== 'ready') {
         return {
           status: 'failed',
@@ -610,6 +659,7 @@ async function orchestrateRender(input: {
           extension: companion.extension,
         })),
         hdriPresetId: BUNDLED_HDRI_PRESET_IDS[0]!,
+        enableHdri: false,
         width: MODEL_THUMBNAIL_DEFAULT_EDGE,
         height: MODEL_THUMBNAIL_DEFAULT_EDGE,
         sourceAuthorizations,
@@ -1286,6 +1336,27 @@ function scheduleReconciledMissingPrimaryQueue(
 
 // Serpent-onch/9e1d8d: per-command timing log, off by default.
 const WORKER_CMD_LOG = process.env.SERPENT_WORKER_CMD_LOG === '1';
+
+function logAiProcessPhase(input: {
+  phase: 'claim' | 'prepare' | 'external-await' | 'commit';
+  requestId: string;
+  libraryId: string;
+  jobId?: string;
+  startedAt: number;
+  outcome?: string;
+}): void {
+  if (!WORKER_CMD_LOG) return;
+  console.error(JSON.stringify({
+    timestamp: new Date().toISOString(),
+    scope: 'worker.ai.phase',
+    phase: input.phase,
+    requestId: input.requestId,
+    libraryId: input.libraryId,
+    ...(input.jobId === undefined ? {} : { jobId: input.jobId }),
+    durationMs: Math.round((performance.now() - input.startedAt) * 100) / 100,
+    ...(input.outcome === undefined ? {} : { outcome: input.outcome }),
+  }));
+}
 // Serpent-288cd9: RAW metadata 回填的「扫完即停」游标。置 0 即回到「只按 2 秒节流重扫」
 // 的旧行为，用于同树 A/B 归因（生产不设即启用）。
 const RAW_METADATA_EXHAUSTION_ENABLED = process.env.SERPENT_RAW_METADATA_EXHAUSTION !== '0';
@@ -4191,6 +4262,9 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         ratingEnabled: enabledFields.rating,
       });
       const controls = analysisControls.get(request.requestId);
+      const prepareStartedAt = performance.now();
+      const runExternal = <T>(work: () => Promise<T> | T): Promise<T> =>
+        controls?.runExternal ? controls.runExternal(work) : Promise.resolve().then(work);
 
       // Resolve asset file path + mime.
       const { filePath, mime, isVideo } = libraryService.resolveAssetFilePath(
@@ -4208,20 +4282,24 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         // Serpent-140fe2: contact sheets are generated lazily at analysis time
         // (never proactively scheduled), so materialize it for this video now.
         try {
-          await libraryService.ensureVideoContactSheet(libraryId, assetId);
+          await runExternal(() => libraryService.ensureVideoContactSheet(libraryId, assetId, {
+            signal: controls?.signal,
+          }));
         } catch (error) {
+          if (controls?.signal.aborted) throw error;
           libraryService.reportDiagnostic('ai.contact-sheet.ensure', error, {
             libraryId,
             assetId,
           });
         }
         try {
-          const input = await loadVideoAiInput({
-            libraryId,
-            assetId,
-            maxEdgePx: maxAnalysisImageEdgePx,
-            service: libraryService,
-          });
+          const input = await runExternal(() => loadVideoAiInput({
+              libraryId,
+              assetId,
+              maxEdgePx: maxAnalysisImageEdgePx,
+              service: libraryService,
+              signal: controls?.signal,
+            }));
           contactSheetBase64 = input.contactSheetBase64;
           contactSheetMime = input.contactSheetMime;
           contactSheetDescription = input.contactSheetDescription;
@@ -4238,15 +4316,16 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         // Resize source to the configured longest-edge cap (default 2K).
         // Unreadable originals (e.g. some EXR) fall back to the thumbnail.
         try {
-          const imageInput = await loadAiImageInput(
-            libraryService,
-            libraryId,
-            assetId,
-            {
-              sourcePath: filePath,
-              maxEdgePx: maxAnalysisImageEdgePx,
-            },
-          );
+          const imageInput = await runExternal(() => loadAiImageInput(
+              libraryService,
+              libraryId,
+              assetId,
+              {
+                sourcePath: filePath,
+                maxEdgePx: maxAnalysisImageEdgePx,
+                signal: controls?.signal,
+              },
+            ));
           imageBase64 = imageInput.imageBase64;
           requestMime = imageInput.mime;
         } catch (error) {
@@ -4261,10 +4340,10 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         // Serpent-6w40: 3D models get an AI four-view sheet — render the
         // views offscreen, tile them, then analyze the strip.
         try {
-          const sheet = await libraryService.renderModelViewsSheet(
-            { libraryId, assetId },
-            new AbortController().signal,
-          );
+          const sheet = await runExternal(() => libraryService.renderModelViewsSheet(
+              { libraryId, assetId },
+              controls?.signal ?? new AbortController().signal,
+            ));
           // The strip is already ≤2048 wide (4×512) — send it as-is.
           imageBase64 = Buffer.from(sheet.pngBytes).toString('base64');
           requestMime = sheet.mime;
@@ -4333,6 +4412,15 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         analysisSettings,
       };
 
+      logAiProcessPhase({
+        phase: 'prepare',
+        requestId: request.requestId,
+        libraryId,
+        ...(controls?.jobId === undefined ? {} : { jobId: controls.jobId }),
+        startedAt: prepareStartedAt,
+        outcome: 'ready',
+      });
+
       // Create adapter based on CC Switch wire apiFormat.
       let adapter: VendorAdapter;
       switch (apiFormat) {
@@ -4373,16 +4461,33 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       }
 
       let analysisResult;
+      const externalStartedAt = performance.now();
       try {
-        analysisResult = await runLimitedAiRequest(
-          providerConcurrencyLimiter,
-          apiFormatLimiterKey(apiFormat),
-          controls?.signal,
-          controls?.requestTimeoutMs
-            ?? DEFAULT_AI_RELIABILITY_SETTINGS.requestTimeoutMs,
-          (requestSignal) => adapter.analyze(aiRequest, requestSignal),
-        );
+        analysisResult = await runExternal(() => runLimitedAiRequest(
+            providerConcurrencyLimiter,
+            apiFormatLimiterKey(apiFormat),
+            controls?.signal,
+            controls?.requestTimeoutMs
+              ?? DEFAULT_AI_RELIABILITY_SETTINGS.requestTimeoutMs,
+            (requestSignal) => adapter.analyze(aiRequest, requestSignal),
+          ));
+        logAiProcessPhase({
+          phase: 'external-await',
+          requestId: request.requestId,
+          libraryId,
+          ...(controls?.jobId === undefined ? {} : { jobId: controls.jobId }),
+          startedAt: externalStartedAt,
+          outcome: 'completed',
+        });
       } catch (error) {
+        logAiProcessPhase({
+          phase: 'external-await',
+          requestId: request.requestId,
+          libraryId,
+          ...(controls?.jobId === undefined ? {} : { jobId: controls.jobId }),
+          startedAt: externalStartedAt,
+          outcome: controls?.signal.aborted ? 'aborted' : 'error',
+        });
         if (error instanceof VendorAdapterError) {
           const failure = vendorFailure(error);
           throw new LibraryServiceError('AI_ANALYSIS_FAILED', {
@@ -4409,6 +4514,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         language,
       });
 
+      const commitStartedAt = performance.now();
       const { tagsWritten, fieldsWritten, committed } = libraryService.writeAiAnalysisResult({
         libraryId,
         assetId,
@@ -4419,6 +4525,14 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         modelVersion: analysisResult.modelVersion,
         guardJobId: controls?.jobId,
         enabledFields: effectiveEnabled,
+      });
+      logAiProcessPhase({
+        phase: 'commit',
+        requestId: request.requestId,
+        libraryId,
+        ...(controls?.jobId === undefined ? {} : { jobId: controls.jobId }),
+        startedAt: commitStartedAt,
+        outcome: committed ? 'completed' : 'rejected',
       });
 
       if (!committed || (controls && (controls.signal.aborted || !controls.canWrite()))) {
@@ -5193,10 +5307,21 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       let failed = 0;
       let requeued = 0;
       const attemptedJobIds: string[] = [];
+      const batchAbortController = new AbortController();
+      aiProcessBatchAbortControllers.set(request.requestId, batchAbortController);
 
       const processLane = async (): Promise<void> => {
-        while (processed < maxJobs) {
+        while (processed < maxJobs && !batchAbortController.signal.aborted) {
+          const claimStartedAt = performance.now();
           const job = libraryService.claimNextAiJob(libraryId, attemptedJobIds);
+          logAiProcessPhase({
+            phase: 'claim',
+            requestId: request.requestId,
+            libraryId,
+            ...(job === null ? {} : { jobId: job.jobId }),
+            startedAt: claimStartedAt,
+            outcome: job === null ? 'empty' : 'claimed',
+          });
           if (!job) break;
           attemptedJobIds.push(job.jobId);
           processed++;
@@ -5208,6 +5333,8 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
             signal: controller.signal,
             canWrite: () => safeAiJobState(libraryId, job.jobId) === 'running',
             requestTimeoutMs,
+            runExternal: <T>(work: () => Promise<T> | T) =>
+              interactiveScheduler.runWithoutAdmission(request.requestId, work),
           });
           try {
             const result = await handleRequest({
@@ -5249,6 +5376,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
                 safeAiDiagnostic(errorCode),
                 { libraryId, jobId: job.jobId, assetId: job.assetId, errorCode },
               );
+              const commitStartedAt = performance.now();
               const failure = libraryService.failAiJob(libraryId, job.jobId, {
                 errorCode,
                 retryable: artifactPending,
@@ -5256,6 +5384,14 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
                   ? AI_ARTIFACT_PENDING_MAX_ATTEMPTS
                   : maxAttempts,
                 errorDetail: detail,
+              });
+              logAiProcessPhase({
+                phase: 'commit',
+                requestId: request.requestId,
+                libraryId,
+                jobId: job.jobId,
+                startedAt: commitStartedAt,
+                outcome: `job-state-${failure.status}`,
               });
               if (failure.status === 'queued') requeued++;
               else failed++;
@@ -5266,7 +5402,16 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
               });
               continue;
             }
+            const commitStartedAt = performance.now();
             libraryService.completeAiJob(libraryId, job.jobId);
+            logAiProcessPhase({
+              phase: 'commit',
+              requestId: request.requestId,
+              libraryId,
+              jobId: job.jobId,
+              startedAt: commitStartedAt,
+              outcome: 'job-state-completed',
+            });
             succeeded++;
             publishAiProgress(libraryId, { jobId: job.jobId, status: 'succeeded' });
           } catch (error) {
@@ -5279,10 +5424,19 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
               safeAiDiagnostic(classification.errorCode, error),
               { libraryId, jobId: job.jobId, assetId: job.assetId, errorCode: classification.errorCode },
             );
+            const commitStartedAt = performance.now();
             const failure = libraryService.failAiJob(libraryId, job.jobId, {
               ...classification,
               maxAttempts: classification.maxAttempts ?? maxAttempts,
               errorDetail: safeAiErrorDetail(classification.errorCode, error),
+            });
+            logAiProcessPhase({
+              phase: 'commit',
+              requestId: request.requestId,
+              libraryId,
+              jobId: job.jobId,
+              startedAt: commitStartedAt,
+              outcome: `job-state-${failure.status}`,
             });
             if (failure.status === 'queued') requeued++;
             else failed++;
@@ -5298,18 +5452,28 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         }
       };
 
-      await Promise.all(
-        Array.from({ length: Math.min(concurrencyLimit, maxJobs) }, () => processLane()),
-      );
-      return {
-        ok: true,
-        type: 'ai.jobs.processed' as const,
-        libraryId,
-        processed,
-        succeeded,
-        failed,
-        requeued,
-      };
+      // Keep the outer request admitted so claim and commit stay short,
+      // scheduler-accounted sections. Each media/provider await uses the
+      // per-analysis runExternal callback above to release this admission and
+      // reacquire it before the next local section. This prevents a whole
+      // bounded wave from becoming one opaque owner while preserving the
+      // single-threaded claim/commit ordering.
+      try {
+        await Promise.all(
+          Array.from({ length: Math.min(concurrencyLimit, maxJobs) }, () => processLane()),
+        );
+        return {
+          ok: true,
+          type: 'ai.jobs.processed' as const,
+          libraryId,
+          processed,
+          succeeded,
+          failed,
+          requeued,
+        };
+      } finally {
+        aiProcessBatchAbortControllers.delete(request.requestId);
+      }
     }
     case 'ai.set-concurrency-limit': {
       providerConcurrencyLimiter.setLimit(request.command.concurrencyLimit);
@@ -5788,6 +5952,9 @@ const handleLibraryWorkerMessage = async (event: { data: unknown }): Promise<voi
         request.command.type === 'library.import-cancel'
         || request.command.type === 'library.export-cancel'
         || request.command.type === 'asset.delete-cancel';
+      const aiProcessLibraryId = request.command.type === 'ai.process-queue'
+        ? request.command.libraryId
+        : undefined;
       response = {
         requestId: request.requestId,
         result: cancelWhileTransferRuns
@@ -5796,6 +5963,14 @@ const handleLibraryWorkerMessage = async (event: { data: unknown }): Promise<voi
             ...(lifecycleBoundary
               ? { cancelQueuedForLibrary: lifecycleLibraryId! }
               : {}),
+            ...(aiProcessLibraryId === undefined
+              ? {}
+              : {
+                cancel: () => {
+                  aiProcessBatchAbortControllers.get(request.requestId)?.abort();
+                  aiJobAbortRegistry.abort(aiProcessLibraryId);
+                },
+              }),
             onAdmitted,
           }),
       };

@@ -44,6 +44,11 @@ export interface LoadAiImageInputOptions {
   /** Longest edge in px; defaults to 2048 (2K). */
   maxEdgePx?: number;
   sharpFn?: AiAnalysisSharpFactory;
+  signal?: AbortSignal;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new DOMException('AI image preparation aborted.', 'AbortError');
 }
 
 function requireDefaultSharp(): AiAnalysisSharpFactory {
@@ -85,12 +90,16 @@ async function loadReadyThumbnail(
   service: AiImageArtifactService,
   libraryId: string,
   assetId: string,
+  signal?: AbortSignal,
 ): Promise<{ imageBase64: string; mime: string; artifactId: string }> {
+  throwIfAborted(signal);
   let artifact = service.getCurrentArtifact(libraryId, assetId, 'thumbnail');
   if (!artifact || artifact.status !== 'ready') {
     try {
       await service.generateThumbnail({ libraryId, assetId });
+      throwIfAborted(signal);
     } catch (error) {
+      if (signal?.aborted) throw error;
       // Automatic media scheduling may have won the same asset race. Reuse
       // its ready derivative; otherwise preserve the real decoder failure.
       artifact = service.getCurrentArtifact(libraryId, assetId, 'thumbnail');
@@ -105,7 +114,9 @@ async function loadReadyThumbnail(
   }
 
   const artifactPath = service.getArtifactAbsolutePath(libraryId, artifact.artifactId);
+  throwIfAborted(signal);
   const bytes = await readFile(artifactPath);
+  throwIfAborted(signal);
   return {
     imageBase64: bytes.toString('base64'),
     mime: artifact.mimeType,
@@ -128,20 +139,26 @@ export async function loadAiImageInput(
     options.maxEdgePx ?? DEFAULT_AI_ANALYSIS_IMAGE_EDGE_PX,
   );
   const sharpFn = options.sharpFn ?? requireDefaultSharp();
+  throwIfAborted(options.signal);
 
   try {
-    return await encodeAiAnalysisImage(options.sourcePath, maxEdgePx, sharpFn);
+    const encoded = await encodeAiAnalysisImage(options.sourcePath, maxEdgePx, sharpFn);
+    throwIfAborted(options.signal);
+    return encoded;
   } catch {
     // TIFF/EXR/odd codecs may fail; the 512px thumbnail is the safe fallback.
-    const thumbnail = await loadReadyThumbnail(service, libraryId, assetId);
+    throwIfAborted(options.signal);
+    const thumbnail = await loadReadyThumbnail(service, libraryId, assetId, options.signal);
     try {
       const encoded = await encodeAiAnalysisImage(
         Buffer.from(thumbnail.imageBase64, 'base64'),
         maxEdgePx,
         sharpFn,
       );
+      throwIfAborted(options.signal);
       return { ...encoded, artifactId: thumbnail.artifactId };
     } catch {
+      throwIfAborted(options.signal);
       return thumbnail;
     }
   }

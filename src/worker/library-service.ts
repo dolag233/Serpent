@@ -4705,6 +4705,52 @@ interface MediaExecutionContext {
   sourceHeight?: number | null;
 }
 
+function throwIfMediaExecutionAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error ? signal.reason : new Error('Media operation aborted.');
+  }
+}
+
+async function waitForSharedMediaOperation(
+  entry: {
+    controller: AbortController;
+    promise: Promise<boolean>;
+    waiters: number;
+  },
+  signal: AbortSignal | undefined,
+): Promise<boolean> {
+  entry.waiters += 1;
+  try {
+    if (!signal) return await entry.promise;
+    if (signal.aborted) {
+      throw signal.reason instanceof Error ? signal.reason : new Error('Media operation aborted.');
+    }
+    return await new Promise<boolean>((resolve, reject) => {
+      const onAbort = (): void => {
+        cleanup();
+        reject(signal.reason instanceof Error ? signal.reason : new Error('Media operation aborted.'));
+      };
+      const cleanup = (): void => signal.removeEventListener('abort', onAbort);
+      signal.addEventListener('abort', onAbort, { once: true });
+      entry.promise.then(
+        (value) => {
+          cleanup();
+          resolve(value);
+        },
+        (error) => {
+          cleanup();
+          reject(error);
+        },
+      );
+    });
+  } finally {
+    entry.waiters -= 1;
+    if (entry.waiters === 0 && !entry.controller.signal.aborted) {
+      entry.controller.abort(new Error('All media operation waiters cancelled.'));
+    }
+  }
+}
+
 /**
  * Slice E (Serpent-hnmg): offscreen model-thumbnail renderer contract. The
  * Worker stays the queue/artifact owner; Main (via worker/index.ts) performs
@@ -6670,7 +6716,11 @@ export class LibraryService {
   /** Eagle imports keep their media previews but never enter auto-AI later. */
   private readonly autoAnalysisSuppressedAssetIds = new Map<string, Set<string>>();
   /** Serpent-140fe2 review fix: coalesce overlapping lazy contact-sheet generations. */
-  private readonly videoContactSheetInFlight = new Map<string, Promise<boolean>>();
+  private readonly videoContactSheetInFlight = new Map<string, {
+    controller: AbortController;
+    promise: Promise<boolean>;
+    waiters: number;
+  }>();
   /** Avoid synchronously probing missing tools on every visible-range request. */
   private readonly autoRepairProbeFailedAtByLibrary = new Map<
     string,
@@ -26287,6 +26337,7 @@ export class LibraryService {
     assetId: string,
     execution: MediaExecutionContext = { signal: undefined },
   ): Promise<boolean> {
+    throwIfMediaExecutionAborted(execution.signal);
     const openLibrary = this.requireOpenLibrary(libraryId);
     const assetRow = openLibrary.connection
       .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ?')
@@ -26304,7 +26355,7 @@ export class LibraryService {
     // UNIQUE(revision_id, kind) and mask the real outcome.
     const inFlightKey = `${libraryId}\u0000${revisionId}`;
     const inFlight = this.videoContactSheetInFlight.get(inFlightKey);
-    if (inFlight) return inFlight;
+    if (inFlight) return await waitForSharedMediaOperation(inFlight, execution.signal);
     if (existing) {
       // Explicit retry: clear the previous terminal row so either outcome —
       // a fresh ready sheet or a renewed failed marker — can register without
@@ -26315,17 +26366,33 @@ export class LibraryService {
         )
         .run(revisionId);
     }
-    const generation = (async () => {
+    const controller = new AbortController();
+    const entry: {
+      controller: AbortController;
+      promise: Promise<boolean>;
+      waiters: number;
+    } = {
+      controller,
+      promise: Promise.resolve(false),
+      waiters: 0,
+    };
+    entry.promise = (async () => {
       try {
         return await this.generateQueuedVideoArtifact(
-          libraryId, assetId, revisionId, 'generate_contact_sheet', execution,
+          libraryId,
+          assetId,
+          revisionId,
+          'generate_contact_sheet',
+          { ...execution, signal: controller.signal },
         );
       } finally {
-        this.videoContactSheetInFlight.delete(inFlightKey);
+        if (this.videoContactSheetInFlight.get(inFlightKey) === entry) {
+          this.videoContactSheetInFlight.delete(inFlightKey);
+        }
       }
     })();
-    this.videoContactSheetInFlight.set(inFlightKey, generation);
-    return generation;
+    this.videoContactSheetInFlight.set(inFlightKey, entry);
+    return await waitForSharedMediaOperation(entry, execution.signal);
   }
 
   private async generateQueuedVideoArtifact(
@@ -26399,6 +26466,7 @@ export class LibraryService {
         Math.max(durationSec, 0.1), dimensions, ffprobePath, execution,
       );
     } catch (error) {
+      if (execution.signal?.aborted) throw error;
       // Serpent-140fe2: persist the terminal failure so the terminal-artifact
       // guard in ensureVideoContactSheet stops regenerating this sheet. The
       // next revision change resets it naturally.
@@ -26608,8 +26676,10 @@ export class LibraryService {
         containerBitrate: probeJson.format?.bit_rate || null,
       };
 
+      throwIfMediaExecutionAborted(execution.signal);
       writeFileSync(artifactAbsPath, JSON.stringify(metadata, null, 2), 'utf-8');
       const outputStat = statSync(artifactAbsPath);
+      throwIfMediaExecutionAborted(execution.signal);
 
       // Serpent-140fe2: replace any prior extracted_metadata row (e.g. a
       // width/height-only row written by an external conversion) in the same
@@ -26641,6 +26711,10 @@ export class LibraryService {
 
       return { durationSec, width, height, hasAttachedPicture };
     } catch (error) {
+      if (execution.signal?.aborted) {
+        rmSync(artifactAbsPath, { force: true });
+        throw error;
+      }
       // Write failed artifact
       this.writeFailedArtifact(openLibrary, artifactId, revisionId, 'extracted_metadata',
         'application/json', artifactRelPath, `ffprobe@${FFMPEG_VERSION}`, error);
@@ -26704,6 +26778,10 @@ export class LibraryService {
 
       return artifactId;
     } catch (error) {
+      if (execution.signal?.aborted) {
+        rmSync(artifactAbsPath, { force: true });
+        throw error;
+      }
       this.writeFailedArtifact(openLibrary, artifactId, revisionId, 'video_poster',
         'image/jpeg', artifactRelPath, `ffmpeg@${FFMPEG_VERSION}`, error);
       throw error;
@@ -26796,6 +26874,10 @@ export class LibraryService {
 
       return artifactId;
     } catch (error) {
+      if (execution.signal?.aborted) {
+        rmSync(artifactAbsPath, { force: true });
+        throw error;
+      }
       this.writeFailedArtifact(openLibrary, artifactId, revisionId, 'contact_sheet',
         'image/jpeg', artifactRelPath, `ffmpeg@${FFMPEG_VERSION}`, error);
       throw error;

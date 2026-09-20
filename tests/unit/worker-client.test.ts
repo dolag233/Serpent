@@ -274,6 +274,54 @@ describe('requestTimeoutForCommand', () => {
     else process.env.SERPENT_OIIO_PATH = previousOiioPath;
   });
 
+  it('forwards model render cancellation to Main without treating it as a Worker response', async () => {
+    const child = new FakeUtilityProcess();
+    utilityProcessFork.mockReturnValueOnce(child);
+    const logger = {
+      worker: vi.fn(),
+      error: vi.fn(),
+      info: vi.fn(),
+    } as unknown as AppLogger;
+    const client = new LibraryWorkerClient('/tmp/library-worker.js', logger);
+    const previousFfmpegPath = process.env.SERPENT_FFMPEG_PATH;
+    const previousOiioPath = process.env.SERPENT_OIIO_PATH;
+    process.env.SERPENT_FFMPEG_PATH = '/usr/bin/true';
+    process.env.SERPENT_OIIO_PATH = '/usr/bin/true';
+    try {
+      const start = client.start();
+      child.emit('message', { type: 'worker.ready' });
+      await start;
+
+      const cancelled: string[] = [];
+      client.onModelThumbnailRenderCancel((requestId) => cancelled.push(requestId));
+      child.emit('message', {
+        type: 'model-thumbnail.render-cancel',
+        requestId: 'model-request-1',
+      });
+
+      expect(cancelled).toEqual(['model-request-1']);
+      expect(child.kill).not.toHaveBeenCalled();
+
+      child.emit('message', {
+        type: 'model-thumbnail.render-cancel',
+        requestId: ' ',
+      });
+      expect(logger.error).toHaveBeenCalledWith(
+        'worker.model-thumbnail.invalid-cancel',
+        expect.anything(),
+      );
+
+      const shutdown = client.shutdown();
+      child.emit('message', { type: 'worker.shutdown.ack' });
+      await shutdown;
+    } finally {
+      if (previousFfmpegPath === undefined) delete process.env.SERPENT_FFMPEG_PATH;
+      else process.env.SERPENT_FFMPEG_PATH = previousFfmpegPath;
+      if (previousOiioPath === undefined) delete process.env.SERPENT_OIIO_PATH;
+      else process.env.SERPENT_OIIO_PATH = previousOiioPath;
+    }
+  });
+
   it('passes an explicit missing FFmpeg path to the Worker unchanged', async () => {
     const child = new FakeUtilityProcess();
     utilityProcessFork.mockReturnValueOnce(child);

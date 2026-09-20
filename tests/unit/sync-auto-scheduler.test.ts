@@ -9,6 +9,7 @@ import {
 interface PostedCommand {
   type: string;
   libraryId?: string;
+  directoryName?: string;
 }
 
 class FakeWorkerClient {
@@ -257,5 +258,119 @@ describe('SyncAutoScheduler (Serpent-bfsb 后续)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('coalesces timer ticks while a remote poll is in flight', async () => {
+    vi.useFakeTimers();
+    try {
+      const { options, client } = makeOptions({ pollIntervalMs: 1, pollTickMs: 1 });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      client.request = async (command: PostedCommand) => {
+        client.posts.push(command);
+        if (command.type === 'sync.poll-remote') await gate;
+        return { ok: true, type: 'sync.poll-remote.result', changed: false };
+      };
+      const scheduler = new SyncAutoScheduler(options);
+      scheduler.start();
+      await vi.advanceTimersByTimeAsync(25);
+      expect(client.posts.filter((post) => post.type === 'sync.poll-remote')).toHaveLength(1);
+
+      release();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(client.posts.filter((post) => post.type === 'sync.poll-remote').length)
+        .toBeGreaterThanOrEqual(2);
+      scheduler.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores a late remote response after the scheduler stops', async () => {
+    const { options, client } = makeOptions({ pollIntervalMs: 1, pollTickMs: 1 });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    client.request = async (command: PostedCommand) => {
+      client.posts.push(command);
+      if (command.type === 'sync.poll-remote') {
+        await gate;
+        return { ok: true, type: 'sync.poll-remote.result', changed: true };
+      }
+      return { ok: true, type: 'sync.completed' };
+    };
+    const scheduler = new SyncAutoScheduler(options);
+    scheduler.start();
+    await Promise.resolve();
+    scheduler.stop();
+    release();
+    await settle();
+
+    expect(client.posts.filter((post) => post.type === 'sync.run')).toHaveLength(0);
+  });
+
+  it('ignores a response for an old binding after it is rebound', async () => {
+    const { options, client } = makeOptions({ pollIntervalMs: 1, pollTickMs: 1 });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    client.request = async (command: PostedCommand) => {
+      client.posts.push(command);
+      if (command.type === 'sync.poll-remote') {
+        await gate;
+        return { ok: true, type: 'sync.poll-remote.result', changed: true };
+      }
+      return { ok: true, type: 'sync.completed' };
+    };
+    let rebound = false;
+    options.readBindings = () => ({
+      'lib-enabled': {
+        serverId: 'server-1',
+        directoryName: rebound ? 'new-directory' : '目录',
+        enabled: true,
+      },
+    });
+    const scheduler = new SyncAutoScheduler(options);
+    scheduler.start();
+    await Promise.resolve();
+    rebound = true;
+    scheduler.stop();
+    release();
+    await settle();
+
+    expect(client.posts.filter((post) => post.type === 'sync.run')).toHaveLength(0);
+  });
+
+  it('trails a sync for the latest binding when a rebind happens in flight', async () => {
+    const { options, client } = makeOptions({ pollIntervalMs: 60_000 });
+    let directoryName = '目录';
+    options.readBindings = () => ({
+      'lib-enabled': { serverId: 'server-1', directoryName, enabled: true },
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let syncRuns = 0;
+    client.request = async (command: PostedCommand) => {
+      client.posts.push(command);
+      if (command.type === 'sync.run') {
+        syncRuns += 1;
+        if (syncRuns === 1) await gate;
+        return { ok: true, type: 'sync.completed' };
+      }
+      return { ok: true, type: 'sync.poll-remote.result', changed: false };
+    };
+    const scheduler = new SyncAutoScheduler(options);
+    scheduler.start();
+    scheduler.syncNow('lib-enabled');
+    await settle();
+    directoryName = 'new-directory';
+    scheduler.syncNow('lib-enabled');
+    release();
+    await settle();
+    await settle();
+
+    const runs = client.posts.filter((post) => post.type === 'sync.run');
+    expect(runs).toHaveLength(2);
+    expect(runs[1]?.directoryName).toBe('new-directory');
+    scheduler.stop();
   });
 });

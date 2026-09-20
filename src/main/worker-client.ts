@@ -38,6 +38,7 @@ import {
   type PluginMediaProviderResult,
 } from '../shared/plugin-media-protocol';
 import {
+  parseModelThumbnailRenderCancel,
   parseModelThumbnailMainRenderRequest,
   type ModelThumbnailSourceAuthorization,
   type ModelThumbnailRenderRequest,
@@ -200,6 +201,7 @@ export class LibraryWorkerClient {
       request: ModelThumbnailRenderRequest,
       sourceAuthorizations: readonly ModelThumbnailSourceAuthorization[],
     ) => Promise<ModelThumbnailRenderResult>) | undefined;
+  #modelThumbnailRenderCancelListener: ((requestId: string) => void) | undefined;
   #documentThumbnailRenderListener:
     ((request: DocumentThumbnailRenderRequest) => Promise<DocumentThumbnailRenderResponse["result"]>) | undefined;
 
@@ -444,6 +446,16 @@ export class LibraryWorkerClient {
     };
   }
 
+  /** Cancel a queued or active model render in Main's offscreen queue. */
+  onModelThumbnailRenderCancel(listener: (requestId: string) => void): () => void {
+    this.#modelThumbnailRenderCancelListener = listener;
+    return () => {
+      if (this.#modelThumbnailRenderCancelListener === listener) {
+        this.#modelThumbnailRenderCancelListener = undefined;
+      }
+    };
+  }
+
   /** Serpent-8ca259: worker asks Main to capture an HTML document thumbnail. */
   onDocumentThumbnailRenderRequest(
     listener: (request: DocumentThumbnailRenderRequest) => Promise<DocumentThumbnailRenderResponse["result"]>,
@@ -528,6 +540,21 @@ export class LibraryWorkerClient {
           result,
         });
       });
+    return true;
+  }
+
+  #dispatchModelThumbnailRenderCancel(message: unknown): boolean {
+    if (typeof message !== 'object' || message === null || !('type' in message)) return false;
+    if (message.type !== 'model-thumbnail.render-cancel') return false;
+    try {
+      const { requestId } = parseModelThumbnailRenderCancel(message);
+      this.#modelThumbnailRenderCancelListener?.(requestId);
+    } catch {
+      this.logger.error(
+        'worker.model-thumbnail.invalid-cancel',
+        new Error('Malformed model thumbnail cancellation request.'),
+      );
+    }
     return true;
   }
 
@@ -624,6 +651,7 @@ export class LibraryWorkerClient {
   readonly #onMessage = (message: unknown) => {
     // Slice E render requests must be handled before the generic event
     // parsers: the request is answered with a typed response, not forwarded.
+    if (this.#dispatchModelThumbnailRenderCancel(message)) return;
     if (this.#dispatchModelThumbnailRenderRequest(message)) return;
     // Serpent-8ca259: HTML document thumbnail capture, same request/response
     // pattern as model thumbnails.

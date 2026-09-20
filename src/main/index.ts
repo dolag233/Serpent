@@ -2149,41 +2149,54 @@ async function processAiQueueBatch(
   if (!config.hasKey || !workerClient) return { processed: 0, requeued: 0 };
   try {
     const apiKey = getDecryptedApiKey();
-    const result = await workerClient.request({
-      type: "ai.process-queue",
-      libraryId,
-      apiFormat: config.apiFormat,
-      model: config.model,
-      apiKey,
-      ...(config.baseUrl.trim() ? { baseUrl: config.baseUrl.trim() } : {}),
-      enabledFields: {
-        description: config.descriptionEnabled,
-        tags: config.tagEnabled,
-        rating: config.ratingEnabled,
-      },
-      analysisSettings: toWireAiAnalysisSettings(config.analysisSettings),
-      languages: config.languages,
-      concurrencyLimit: config.concurrencyLimit,
-      maxAnalysisImageEdgePx: config.maxAnalysisImageEdgePx,
-      requestTimeoutMs: config.reliabilitySettings.requestTimeoutMs,
-      maxAttempts: config.reliabilitySettings.maxAttempts,
-      maxJobs,
-    });
-    if (!result.ok) {
-      logger?.error(
-        "ai.queue.process",
-        new Error(`Worker rejected AI queue batch: ${result.error.code}`),
-      );
-      return { processed: 0, requeued: 0 };
+    // Keep each Worker admission bounded. A 32-job batch with 16 external
+    // waits used to be one long scheduler request; slice it into short
+    // continuations so claim/commit ownership is reacquired between waves.
+    const sliceSize = Math.max(1, Math.min(config.concurrencyLimit, 8));
+    let processed = 0;
+    let requeued = 0;
+    while (processed < maxJobs) {
+      const requested = Math.min(sliceSize, maxJobs - processed);
+      const result = await workerClient.request({
+        type: "ai.process-queue",
+        libraryId,
+        apiFormat: config.apiFormat,
+        model: config.model,
+        apiKey,
+        ...(config.baseUrl.trim() ? { baseUrl: config.baseUrl.trim() } : {}),
+        enabledFields: {
+          description: config.descriptionEnabled,
+          tags: config.tagEnabled,
+          rating: config.ratingEnabled,
+        },
+        analysisSettings: toWireAiAnalysisSettings(config.analysisSettings),
+        languages: config.languages,
+        concurrencyLimit: config.concurrencyLimit,
+        maxAnalysisImageEdgePx: config.maxAnalysisImageEdgePx,
+        requestTimeoutMs: config.reliabilitySettings.requestTimeoutMs,
+        maxAttempts: config.reliabilitySettings.maxAttempts,
+        maxJobs: requested,
+      });
+      if (!result.ok) {
+        logger?.error(
+          "ai.queue.process",
+          new Error(`Worker rejected AI queue batch: ${result.error.code}`),
+        );
+        break;
+      }
+      if (result.type !== "ai.jobs.processed") {
+        logger?.error(
+          "ai.queue.process",
+          new Error(`Unexpected AI queue result: ${result.type}`),
+        );
+        break;
+      }
+      processed += result.processed;
+      requeued += result.requeued;
+      if (result.requeued > 0 || result.processed < requested) break;
+      await new Promise<void>((resolve) => setImmediate(resolve));
     }
-    if (result.type !== "ai.jobs.processed") {
-      logger?.error(
-        "ai.queue.process",
-        new Error(`Unexpected AI queue result: ${result.type}`),
-      );
-      return { processed: 0, requeued: 0 };
-    }
-    return { processed: result.processed, requeued: result.requeued };
+    return { processed, requeued };
   } catch (error) {
     logger?.error("ai.queue.process", error);
     return { processed: 0, requeued: 0 };
@@ -6596,6 +6609,9 @@ async function startApplication(): Promise<void> {
     return renderer.renderModelThumbnail(request).finally(() => {
       clearModelThumbnailSourceAuthorizations(sourceAuthorizations);
     });
+  });
+  workerClient.onModelThumbnailRenderCancel((requestId) => {
+    offscreenThumbnailRenderer?.cancelModelThumbnail(requestId);
   });
   // Serpent-8ca259: HTML document thumbnails capture the source in a fresh
   // offscreen window in Main; the Worker persists the artifact bytes.

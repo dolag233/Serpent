@@ -116,6 +116,48 @@ describe('offscreen thumbnail frame pipeline (slice E, page side)', () => {
     expect(outcome.status).toBe('ok');
   });
 
+  it('fails open to the key light when HDRI loading never settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const deps = makeDeps({
+        loadHdrData: vi.fn(() => new Promise<never>(() => {})),
+      });
+      const outcomePromise = renderModelThumbnailFrame(makeJob(), deps);
+      await vi.advanceTimersByTimeAsync(1_500);
+      await expect(outcomePromise).resolves.toMatchObject({ status: 'ok' });
+      expect(deps.loadModel).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('disposes a late HDRI result after the fail-open timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveHdr!: (texture: never) => void;
+      const hdrTexture = { dispose: vi.fn() };
+      const pmremTarget = { texture: {} as never, dispose: vi.fn() };
+      const deps = makeDeps({
+        loadHdrData: vi.fn(() => new Promise<never>((resolve) => { resolveHdr = resolve; })),
+        pmrem: {
+          fromEquirectangular: vi.fn(() => pmremTarget),
+          dispose: vi.fn(),
+        },
+      });
+      const outcomePromise = renderModelThumbnailFrame(makeJob(), deps);
+      await vi.advanceTimersByTimeAsync(1_500);
+      await expect(outcomePromise).resolves.toMatchObject({ status: 'ok' });
+
+      resolveHdr(hdrTexture as never);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(hdrTexture.dispose).toHaveBeenCalled();
+      expect(pmremTarget.dispose).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reports MODEL_LOAD_FAILED when the model cannot be parsed', async () => {
     const deps = makeDeps({
       loadModel: vi.fn(async () => {

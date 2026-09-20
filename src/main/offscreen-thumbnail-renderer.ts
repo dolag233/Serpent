@@ -94,6 +94,8 @@ export interface OffscreenThumbnailRendererDeps {
 export interface OffscreenThumbnailRenderer {
   /** Enqueue a render; resolves with bytes or a typed failure. Never rejects. */
   renderModelThumbnail(job: ModelThumbnailRenderRequest): Promise<ModelThumbnailRenderResult>;
+  /** Cancel a queued or active request and recycle a poisoned active window. */
+  cancelModelThumbnail(requestId: string): void;
   /** Fail queued + active jobs and destroy the window. Idempotent. */
   dispose(): void;
 }
@@ -238,7 +240,14 @@ interface ActiveJob extends QueuedJob {
   /** Latest composited paint for the active job (fallback capture source). */
   paint: PaintImageLike | null;
   settled: boolean;
+  window: OffscreenWindowLike | null;
+  /** Resolves when cancellation/watchdog/dispose lets runJob leave a pending load. */
+  cancelWait: Promise<void>;
+  resolveCancelWait: () => void;
+  watchdogTimer?: ReturnType<typeof setTimeout>;
 }
+
+const OFFSCREEN_RENDER_WATCHDOG_MS = 20_000;
 
 export function createOffscreenThumbnailRenderer(
   deps: OffscreenThumbnailRendererDeps,
@@ -251,20 +260,31 @@ export function createOffscreenThumbnailRenderer(
   let windowPromise: Promise<OffscreenWindowLike> | null = null;
   let unsubscribeFrames: (() => void) | null = null;
 
+  const destroyWindow = (target: OffscreenWindowLike | null): void => {
+    if (!target) return;
+    if (window === target) {
+      window = null;
+      windowPromise = null;
+    }
+    try {
+      if (!target.isDestroyed()) target.destroy();
+    } catch {
+      // A renderer that is already gone is still considered recycled.
+    }
+  };
+
   const settleActive = (result: ModelThumbnailRenderResult): void => {
     const current = active;
     if (!current || current.settled) return;
+    if (current.watchdogTimer !== undefined) {
+      clearTimeout(current.watchdogTimer);
+      current.watchdogTimer = undefined;
+    }
     current.settled = true;
     active = null;
+    current.resolveCancelWait();
     current.resolve(result);
     void drain();
-  };
-
-  // Electron's paint listener is (details, dirtyRect, image) — image is the
-  // third argument.
-  const onPaint = (_event: unknown, _dirtyRect: unknown, image: PaintImageLike): void => {
-    if (!active) return;
-    active.paint = image;
   };
 
   const onFrameMessage = (payload: unknown): void => {
@@ -376,8 +396,14 @@ export function createOffscreenThumbnailRenderer(
     });
   };
 
-  const onWindowGone = (reason: string): void => {
-    window = null;
+  const onWindowGone = (goneWindow: OffscreenWindowLike, reason: string): void => {
+    if (window === goneWindow) {
+      window = null;
+      // The load promise may never reject after a renderer crash. Detach it
+      // from ensureWindow so the next queued job can create a fresh window.
+      windowPromise = null;
+    }
+    if (active?.window !== goneWindow) return;
     settleActive({
       status: 'failed',
       errorCode: 'MODEL_WINDOW_FAILED',
@@ -394,10 +420,20 @@ export function createOffscreenThumbnailRenderer(
       }),
     );
     const contents = created.webContents;
-    contents.on('paint', onPaint);
+    // Publish the handle before load completes so a watchdog/cancel can tear
+    // down a page whose navigation itself is stuck.
+    window = created;
+    if (active && active.window === null) active.window = created;
+    // Electron's paint listener is (details, dirtyRect, image). Bind the
+    // window identity so a late paint from a recycled window cannot become a
+    // blank-frame rescue for the next model.
+    contents.on('paint', (_event: unknown, _dirtyRect: unknown, image: PaintImageLike) => {
+      if (!active || active.window !== created || active.settled) return;
+      active.paint = image;
+    });
     // A crashed/hung renderer must not strand the queue: fail the active job;
     // the next job recreates the window from scratch.
-    const onRenderProcessGone = (): void => onWindowGone('offscreen renderer process gone');
+    const onRenderProcessGone = (): void => onWindowGone(created, 'offscreen renderer process gone');
     contents.on('render-process-gone', onRenderProcessGone);
     try {
       if (/^https?:\/\//iu.test(deps.pageUrl)) {
@@ -407,14 +443,9 @@ export function createOffscreenThumbnailRenderer(
       }
     } catch (error) {
       deps.logger.error('offscreen-thumbnail.page-load', error, { pageUrl: deps.pageUrl });
-      try {
-        created.destroy();
-      } catch {
-        // Already destroyed.
-      }
+      destroyWindow(created);
       throw error;
     }
-    window = created;
     deps.logger.info('offscreen-thumbnail.window-ready', 'Offscreen renderer window ready.', {
       pageUrl: deps.pageUrl,
     });
@@ -432,11 +463,46 @@ export function createOffscreenThumbnailRenderer(
   };
 
   const runJob = async (entry: QueuedJob): Promise<void> => {
-    const current: ActiveJob = { ...entry, paint: null, settled: false };
+    let resolveCancelWait!: () => void;
+    const cancelWait = new Promise<void>((resolve) => {
+      resolveCancelWait = resolve;
+    });
+    const current: ActiveJob = {
+      ...entry,
+      paint: null,
+      settled: false,
+      window: null,
+      cancelWait,
+      resolveCancelWait,
+    };
     active = current;
+    current.watchdogTimer = setTimeout(() => {
+      if (active !== current || current.settled) return;
+      deps.logger.error(
+        'offscreen-thumbnail.watchdog',
+        new Error('Offscreen model render exceeded its liveness budget.'),
+        { requestId: entry.job.requestId, libraryId: entry.job.libraryId, assetId: entry.job.assetId },
+      );
+      destroyWindow(current.window ?? window);
+      settleActive({
+        status: 'failed',
+        errorCode: 'MODEL_WINDOW_FAILED',
+        reason: 'offscreen render watchdog expired',
+      });
+    }, OFFSCREEN_RENDER_WATCHDOG_MS);
+    (current.watchdogTimer as { unref?: () => void }).unref?.();
 
     try {
-      const target = await ensureWindow();
+      const target = await Promise.race([
+        ensureWindow(),
+        current.cancelWait.then(() => null),
+      ]);
+      if (target === null) return;
+      current.window = target;
+      // Cancellation can arrive while the page is still loading.  The
+      // promise returned to the worker has already been settled in that case;
+      // do not send a late render request into the recycled/shared window.
+      if (current.settled) return;
       if (disposed || target.webContents.isDestroyed()) {
         settleActive({
           status: 'failed',
@@ -490,6 +556,31 @@ export function createOffscreenThumbnailRenderer(
         void drain();
       });
     },
+    cancelModelThumbnail(requestId) {
+      if (disposed) return;
+      const queuedIndex = queue.findIndex((entry) => entry.job.requestId === requestId);
+      if (queuedIndex >= 0) {
+        const [entry] = queue.splice(queuedIndex, 1);
+        entry?.resolve({
+          status: 'failed',
+          errorCode: 'MODEL_RENDER_ABORTED',
+          reason: 'offscreen render cancelled before dispatch',
+        });
+        void drain();
+        return;
+      }
+      if (active?.job.requestId !== requestId) return;
+      const currentWindow = active.window ?? window;
+      // A page-level loader may not implement AbortSignal. Recycling the
+      // shared window is the only reliable way to release a stuck request and
+      // ensures the next job gets a clean WebGL context.
+      destroyWindow(currentWindow);
+      settleActive({
+        status: 'failed',
+        errorCode: 'MODEL_RENDER_ABORTED',
+        reason: 'offscreen render cancelled',
+      });
+    },
     dispose() {
       disposed = true;
       unsubscribeFrames?.();
@@ -507,13 +598,7 @@ export function createOffscreenThumbnailRenderer(
         });
       }
       windowPromise = null;
-      if (window && !window.isDestroyed()) {
-        try {
-          window.destroy();
-        } catch {
-          // Already destroyed.
-        }
-      }
+      destroyWindow(window);
       window = null;
     },
   };

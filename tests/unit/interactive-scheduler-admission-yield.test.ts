@@ -151,4 +151,124 @@ describe('InteractiveScheduler admission yield', () => {
     // The yielded owner was resumed even though it left the active set.
     expect(scheduler.cancelActiveBackgroundOwners()).toBe(0);
   });
+
+  it('lets another background request run while an external wait is pending', async () => {
+    const events: string[] = [];
+    const scheduler = new InteractiveScheduler();
+    let releaseExternal!: () => void;
+
+    const ai = scheduler.schedule(
+      { requestId: 'ai.process-queue', lane: 'background-secondary', label: 'ai.process-queue' },
+      async () => {
+        await scheduler.runWithoutAdmission('ai.process-queue', () => new Promise<void>((resolve) => {
+          events.push('ai:external-start');
+          releaseExternal = resolve;
+        }));
+        events.push('ai:resumed');
+      },
+    );
+    await vi.waitFor(() => expect(events).toContain('ai:external-start'));
+
+    const media = scheduler.schedule(
+      { requestId: 'thumbnail-wave', lane: 'background-primary', label: 'media.thumbnail' },
+      () => {
+        events.push('media:started');
+      },
+    );
+    await media;
+    expect(events).toEqual(['ai:external-start', 'media:started']);
+
+    releaseExternal();
+    await ai;
+    expect(events).toEqual(['ai:external-start', 'media:started', 'ai:resumed']);
+  });
+
+  it('releases and reacquires around each external stage, not only once per wave', async () => {
+    const events: string[] = [];
+    const scheduler = new InteractiveScheduler();
+    let releasePrepare!: () => void;
+    let releaseProvider!: () => void;
+
+    const ai = scheduler.schedule(
+      { requestId: 'ai.process-queue', lane: 'background-secondary', label: 'ai.process-queue' },
+      async () => {
+        events.push('claim');
+        await scheduler.runWithoutAdmission('ai.process-queue', () => new Promise<void>((resolve) => {
+          events.push('prepare-external');
+          releasePrepare = resolve;
+        }));
+        events.push('prepare-commit');
+        await scheduler.runWithoutAdmission('ai.process-queue', () => new Promise<void>((resolve) => {
+          events.push('provider-external');
+          releaseProvider = resolve;
+        }));
+        events.push('commit');
+      },
+    );
+    await vi.waitFor(() => expect(events).toContain('prepare-external'));
+
+    const foreground = scheduler.schedule(
+      { requestId: 'browse-open', lane: 'interactive-control', label: 'browse.session.open' },
+      () => { events.push('foreground'); },
+    );
+    await foreground;
+    expect(events).toEqual(['claim', 'prepare-external', 'foreground']);
+
+    releasePrepare();
+    await vi.waitFor(() => expect(events).toContain('provider-external'));
+    const secondForeground = scheduler.schedule(
+      { requestId: 'folder-open', lane: 'interactive-control', label: 'folder.browse' },
+      () => { events.push('second-foreground'); },
+    );
+    await secondForeground;
+    expect(events).toContain('second-foreground');
+
+    releaseProvider();
+    await ai;
+    expect(events.at(-1)).toBe('commit');
+  });
+
+  it('shares one released scope across concurrent lanes without letting one lane reacquire early', async () => {
+    const events: string[] = [];
+    const scheduler = new InteractiveScheduler();
+    let releaseA!: () => void;
+    let releaseB!: () => void;
+
+    const ai = scheduler.schedule(
+      { requestId: 'ai.process-queue', lane: 'background-secondary', label: 'ai.process-queue' },
+      async () => {
+        const laneA = scheduler.runWithoutAdmission(
+          'ai.process-queue',
+          () => new Promise<void>((resolve) => {
+            events.push('lane-a-external');
+            releaseA = resolve;
+          }),
+        ).then(() => events.push('lane-a-commit'));
+        const laneB = scheduler.runWithoutAdmission(
+          'ai.process-queue',
+          () => new Promise<void>((resolve) => {
+            events.push('lane-b-external');
+            releaseB = resolve;
+          }),
+        ).then(() => events.push('lane-b-commit'));
+        await Promise.all([laneA, laneB]);
+      },
+    );
+    await vi.waitFor(() => expect(events).toEqual(['lane-a-external', 'lane-b-external']));
+
+    const foreground = scheduler.schedule(
+      { requestId: 'browse-open', lane: 'interactive-control', label: 'browse.session.open' },
+      () => { events.push('foreground'); },
+    );
+    await foreground;
+    expect(events).toEqual(['lane-a-external', 'lane-b-external', 'foreground']);
+
+    releaseA();
+    await delay(0);
+    expect(events).not.toContain('lane-a-commit');
+    releaseB();
+    await ai;
+    expect(events).toContain('lane-a-commit');
+    expect(events).toContain('lane-b-commit');
+  });
 });

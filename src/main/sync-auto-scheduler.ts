@@ -73,6 +73,13 @@ export class SyncAutoScheduler {
   #lastPolledAt = new Map<string, number>();
   /** 进行中的自动同步（libraryId → promise），避免同一库叠加。 */
   #running = new Map<string, Promise<void>>();
+  /** One remote-manifest request per library; a timer tick keeps one trailing request. */
+  #pollInFlight = new Map<string, { generation: number; bindingKey: string }>();
+  #pollPending = new Set<string>();
+  /** Lifecycle token prevents late poll responses from a stopped/rebound scheduler. */
+  #lifecycleGeneration = 0;
+  /** Binding identity captured by each in-flight poll (credentials excluded). */
+  #pollBindingKeys = new Map<string, string>();
   /** 同步进行中又收到本地变更：本轮结束后再跑一次。 */
   #pendingLocal = new Set<string>();
   #unsubscribeAssetsChanged: (() => void) | undefined;
@@ -88,6 +95,7 @@ export class SyncAutoScheduler {
 
   start(): void {
     if (this.#pollTimer !== undefined) return;
+    const generation = ++this.#lifecycleGeneration;
     this.#unsubscribeAssetsChanged = this.#options.workerClient.onAssetsChanged((event) => {
       // 同步回放写入也会广播 asset.changed（source=sync），只用于刷新 UI。
       if (event.source === 'sync') return;
@@ -100,7 +108,7 @@ export class SyncAutoScheduler {
     }, this.#pollTickMs);
     this.#pollTimer.unref?.();
     // 启动立即查一次云端，避免重启后对已存在的远端变化毫无感知。
-    void this.#pollRemoteChanges();
+    void this.#pollRemoteChanges(generation);
   }
 
   /**
@@ -112,6 +120,7 @@ export class SyncAutoScheduler {
   }
 
   stop(): void {
+    this.#lifecycleGeneration++;
     if (this.#pollTimer !== undefined) {
       clearInterval(this.#pollTimer);
       this.#pollTimer = undefined;
@@ -121,6 +130,9 @@ export class SyncAutoScheduler {
     for (const timer of this.#debounceTimers.values()) clearTimeout(timer);
     this.#debounceTimers.clear();
     this.#pendingLocal.clear();
+    this.#pollPending.clear();
+    this.#pollBindingKeys.clear();
+    this.#pollInFlight.clear();
   }
 
   #scheduleLocalSync(libraryId: string): void {
@@ -137,42 +149,97 @@ export class SyncAutoScheduler {
     this.#debounceTimers.set(libraryId, timer);
   }
 
-  async #pollRemoteChanges(): Promise<void> {
+  async #pollRemoteChanges(generation = this.#lifecycleGeneration): Promise<void> {
+    if (generation !== this.#lifecycleGeneration || this.#pollTimer === undefined) return;
     const bindings = this.#options.readBindings();
     const now = Date.now();
     for (const [libraryId, binding] of Object.entries(bindings)) {
       if (!binding.enabled) continue;
       // 每库独立轮询间隔（用户可设置；大库建议更长，见 UI 提示）。
       const intervalMs = binding.pollIntervalMs ?? this.#pollIntervalMs;
+      const bindingKey = this.#pollBindingKey(binding, intervalMs);
+      if (this.#pollBindingKeys.get(libraryId) !== bindingKey) {
+        this.#pollBindingKeys.set(libraryId, bindingKey);
+        this.#lastPolledAt.delete(libraryId);
+      }
       const last = this.#lastPolledAt.get(libraryId) ?? 0;
       if (now - last < intervalMs) continue;
+      if (this.#pollInFlight.has(libraryId)) {
+        this.#pollPending.add(libraryId);
+        continue;
+      }
       this.#lastPolledAt.set(libraryId, now);
+      this.#pollInFlight.set(libraryId, { generation, bindingKey });
+      void this.#pollOne(libraryId, binding, bindingKey, generation);
+    }
+  }
+
+  async #pollOne(
+    libraryId: string,
+    binding: SyncBindingLike,
+    bindingKey: string,
+    generation: number,
+  ): Promise<void> {
+    try {
       const credentials = this.#options.resolveCredentials(binding.serverId);
-      if (!credentials) continue;
+      if (!credentials) return;
       const directoryName = effectiveDirectoryName(binding);
-      try {
-        const result = await this.#options.workerClient.request({
-          type: 'sync.poll-remote',
-          libraryId,
-          deviceId: this.#options.deviceId(),
-          baseUrl: credentials.baseUrl,
-          username: credentials.username,
-          password: credentials.password,
-          allowInsecureTls: credentials.allowInsecureTls,
-          ...(directoryName === undefined ? {} : { directoryName }),
-        });
-        if (result.ok && result.type === 'sync.poll-remote.result' && result.changed) {
-          await this.#autoSync(libraryId, 'remote-change');
-        }
-      } catch (error) {
-        this.#options.logger.error('sync-auto.poll', error, { libraryId });
+      const result = await this.#options.workerClient.request({
+        type: 'sync.poll-remote',
+        libraryId,
+        deviceId: this.#options.deviceId(),
+        baseUrl: credentials.baseUrl,
+        username: credentials.username,
+        password: credentials.password,
+        allowInsecureTls: credentials.allowInsecureTls,
+        ...(directoryName === undefined ? {} : { directoryName }),
+      });
+      const currentBinding = this.#options.readBindings()[libraryId];
+      const currentInterval = currentBinding?.pollIntervalMs ?? this.#pollIntervalMs;
+      const currentKey = currentBinding?.enabled
+        ? this.#pollBindingKey(currentBinding, currentInterval)
+        : undefined;
+      if (
+        generation === this.#lifecycleGeneration &&
+        currentKey === bindingKey &&
+        result.ok &&
+        result.type === 'sync.poll-remote.result' &&
+        result.changed
+      ) {
+        await this.#autoSync(libraryId, 'remote-change');
+      }
+    } catch (error) {
+      this.#options.logger.error('sync-auto.poll', error, { libraryId });
+    } finally {
+      const token = this.#pollInFlight.get(libraryId);
+      const ownsToken = token?.generation === generation && token.bindingKey === bindingKey;
+      if (ownsToken) this.#pollInFlight.delete(libraryId);
+      const currentBinding = this.#options.readBindings()[libraryId];
+      const currentInterval = currentBinding?.pollIntervalMs ?? this.#pollIntervalMs;
+      const currentKey = currentBinding?.enabled
+        ? this.#pollBindingKey(currentBinding, currentInterval)
+        : undefined;
+      if (
+        ownsToken &&
+        this.#pollPending.delete(libraryId) &&
+        this.#pollTimer !== undefined &&
+        generation === this.#lifecycleGeneration &&
+        currentKey === bindingKey
+      ) {
+        // Read the latest binding/credentials once the current request ends;
+        // #lastPolledAt still enforces the configured interval.
+        void this.#pollRemoteChanges(generation);
       }
     }
   }
 
+  #pollBindingKey(binding: SyncBindingLike, intervalMs: number): string {
+    return `${binding.serverId}\u0000${effectiveDirectoryName(binding) ?? ''}\u0000${intervalMs}`;
+  }
+
   async #autoSync(libraryId: string, reason: SyncReason): Promise<void> {
     if (this.#running.has(libraryId)) {
-      if (reason === 'local-change') this.#pendingLocal.add(libraryId);
+      this.#pendingLocal.add(libraryId);
       return;
     }
     const binding = this.#options.readBindings()[libraryId];
@@ -180,6 +247,11 @@ export class SyncAutoScheduler {
     const credentials = this.#options.resolveCredentials(binding.serverId);
     if (!credentials) return;
     const directoryName = effectiveDirectoryName(binding);
+    const lifecycleGeneration = this.#lifecycleGeneration;
+    const bindingKey = this.#pollBindingKey(
+      binding,
+      binding.pollIntervalMs ?? this.#pollIntervalMs,
+    );
 
     const run = (async () => {
       try {
@@ -196,7 +268,13 @@ export class SyncAutoScheduler {
         if (result.ok) {
           const bindings = this.#options.readBindings();
           const current = bindings[libraryId];
-          if (current) {
+          const currentKey = current?.enabled
+            ? this.#pollBindingKey(
+              current,
+              current.pollIntervalMs ?? this.#pollIntervalMs,
+            )
+            : undefined;
+          if (current && lifecycleGeneration === this.#lifecycleGeneration && currentKey === bindingKey) {
             bindings[libraryId] = {
               ...current,
               serverId: current.serverId,
@@ -204,6 +282,16 @@ export class SyncAutoScheduler {
               lastSyncedAt: new Date().toISOString(),
             };
             this.#options.writeBindings(bindings);
+          } else if (
+            current?.enabled &&
+            lifecycleGeneration === this.#lifecycleGeneration &&
+            this.#pollTimer !== undefined
+          ) {
+            // A binding-save/rebind landed while the old request was running;
+            // finish the old request without stamping its timestamp onto the
+            // new server/directory, then run one trailing sync for the latest
+            // binding after this promise releases the per-library guard.
+            this.#pendingLocal.add(libraryId);
           }
           this.#options.logger.info('sync-auto.completed', '自动同步完成。', {
             libraryId,
@@ -229,7 +317,7 @@ export class SyncAutoScheduler {
       await run;
     } finally {
       this.#running.delete(libraryId);
-      if (this.#pendingLocal.has(libraryId)) {
+      if (this.#pendingLocal.has(libraryId) && this.#pollTimer !== undefined) {
         this.#pendingLocal.delete(libraryId);
         void this.#autoSync(libraryId, 'local-change');
       }
