@@ -11,7 +11,7 @@
 
 /** Padding-top override on justified captions (base caption uses 7px). */
 export const JUSTIFIED_CAPTION_PAD_TOP_PX = 4;
-export const JUSTIFIED_CAPTION_PAD_BOTTOM_PX = 8;
+export const JUSTIFIED_CAPTION_PAD_BOTTOM_PX = 4;
 export const JUSTIFIED_CAPTION_GAP_PX = 3;
 
 /** `.asset-dimensions`: 11px / line-height 1.2 */

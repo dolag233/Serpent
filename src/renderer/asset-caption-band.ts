@@ -94,13 +94,13 @@ export function resolveCardCaptionLines(
 
 /**
  * Masonry caption metrics, mirroring `.masonry-card-slot .asset-caption`:
- * 7px top + 8px bottom padding, an 11px name line, a 9px meta line and an 11px
+ * 7px top + 4px bottom padding, an 11px name line, a 9px meta line and an 11px
  * resolution line at the default typography tier. A two-line band equals
- * `MASONRY_CAPTION_BAND_PX` (42) and a three-line band equals
- * `MASONRY_DIMENSIONS_CAPTION_BAND_PX` (56); a unit test locks that equality so
+ * `MASONRY_CAPTION_BAND_PX` (38) and a three-line band equals
+ * `MASONRY_DIMENSIONS_CAPTION_BAND_PX` (52); a unit test locks that equality so
  * the constants cannot silently drift.
  */
-export const MASONRY_CAPTION_PAD_PX = 15;
+export const MASONRY_CAPTION_PAD_PX = 11;
 export const MASONRY_CAPTION_DIMENSIONS_LINE_PX = 14;
 export const MASONRY_CAPTION_NAME_LINE_PX = 14;
 export const MASONRY_CAPTION_SECONDARY_LINE_PX = 12;

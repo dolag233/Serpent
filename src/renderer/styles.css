@@ -11449,7 +11449,7 @@ select.ai-config-input.ai-config-languages {
   gap: calc(3px * var(--ui-font-scale));
   padding: calc(7px * var(--ui-font-scale))
     calc(8px * var(--ui-font-scale))
-    calc(8px * var(--ui-font-scale));
+    calc(4px * var(--ui-font-scale));
   /* Keep filename/meta above any preview overflow on tall portraits. */
   background: transparent;
 }

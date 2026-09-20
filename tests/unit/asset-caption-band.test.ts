@@ -80,6 +80,8 @@ describe("masonry caption band (Serpent-b1b0f2)", () => {
     expect(
       resolveMasonryCaptionBandPx({ dimensions: true, name: true, secondary: true }),
     ).toBe(MASONRY_DIMENSIONS_CAPTION_BAND_PX);
+    expect(MASONRY_CAPTION_BAND_PX).toBe(38);
+    expect(MASONRY_DIMENSIONS_CAPTION_BAND_PX).toBe(52);
   });
 
   it("returns no band when every caption line is off", () => {
