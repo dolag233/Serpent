@@ -11447,7 +11447,7 @@ select.ai-config-input.ai-config-languages {
   min-width: 0;
   flex-direction: column;
   gap: calc(3px * var(--ui-font-scale));
-  padding: calc(7px * var(--ui-font-scale))
+  padding: calc(4px * var(--ui-font-scale))
     calc(8px * var(--ui-font-scale))
     calc(4px * var(--ui-font-scale));
   /* Keep filename/meta above any preview overflow on tall portraits. */
@@ -11481,6 +11481,7 @@ select.ai-config-input.ai-config-languages {
   color: var(--text);
   font-size: calc(11px * var(--ui-font-scale));
   font-weight: var(--ui-font-weight-medium);
+  line-height: calc(14px * var(--ui-font-scale));
   letter-spacing: 0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -11512,6 +11513,10 @@ select.ai-config-input.ai-config-languages {
   color: var(--tertiary);
   font-family: "IBM Plex Mono", monospace;
   font-size: calc(9px * var(--ui-font-scale));
+  line-height: calc(12px * var(--ui-font-scale));
+}
+.asset-caption .asset-dimensions {
+  line-height: calc(14px * var(--ui-font-scale));
 }
 .asset-caption strong.asset-caption-filename span {
   color: inherit;

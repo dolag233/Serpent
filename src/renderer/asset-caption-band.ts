@@ -18,6 +18,7 @@
 
 import { shouldShowGridDimensions } from "./canvas-preferences";
 import {
+  JUSTIFIED_CAPTION_GAP_PX,
   resolveJustifiedCaptionBandPx,
   type JustifiedCaptionLines,
 } from "./justified-caption-band";
@@ -94,13 +95,14 @@ export function resolveCardCaptionLines(
 
 /**
  * Masonry caption metrics, mirroring `.masonry-card-slot .asset-caption`:
- * 7px top + 4px bottom padding, an 11px name line, a 9px meta line and an 11px
- * resolution line at the default typography tier. A two-line band equals
- * `MASONRY_CAPTION_BAND_PX` (38) and a three-line band equals
- * `MASONRY_DIMENSIONS_CAPTION_BAND_PX` (52); a unit test locks that equality so
+ * 4px top + 4px bottom padding, 3px gaps, an 11px name line, a 9px meta line
+ * and an 11px resolution line at the default typography tier. A two-line band
+ * equals `MASONRY_CAPTION_BAND_PX` (37) and a three-line band equals
+ * `MASONRY_DIMENSIONS_CAPTION_BAND_PX` (54); a unit test locks that equality so
  * the constants cannot silently drift.
  */
-export const MASONRY_CAPTION_PAD_PX = 11;
+const MASONRY_CAPTION_PAD_TOP_PX = 4;
+const MASONRY_CAPTION_PAD_BOTTOM_PX = 4;
 export const MASONRY_CAPTION_DIMENSIONS_LINE_PX = 14;
 export const MASONRY_CAPTION_NAME_LINE_PX = 14;
 export const MASONRY_CAPTION_SECONDARY_LINE_PX = 12;
@@ -115,11 +117,14 @@ export function resolveMasonryCaptionBandPx(
   if (lines.name) heights.push(MASONRY_CAPTION_NAME_LINE_PX);
   if (lines.secondary) heights.push(MASONRY_CAPTION_SECONDARY_LINE_PX);
   if (heights.length === 0) return 0;
-  const content = heights.reduce((sum, height) => sum + height, 0);
-  // Multi-line captions round up once, which is what the audited 42/56
-  // constants encode.
-  const rounding = heights.length > 1 ? 1 : 0;
-  return Math.ceil((MASONRY_CAPTION_PAD_PX + content + rounding) * scale);
+  const content = heights.reduce((sum, height) => sum + Math.ceil(height * scale), 0);
+  const gaps = Math.ceil((heights.length - 1) * JUSTIFIED_CAPTION_GAP_PX * scale);
+  return (
+    Math.ceil(MASONRY_CAPTION_PAD_TOP_PX * scale) +
+    content +
+    gaps +
+    Math.ceil(MASONRY_CAPTION_PAD_BOTTOM_PX * scale)
+  );
 }
 
 /** Caption band for one asset in the given view mode. */
