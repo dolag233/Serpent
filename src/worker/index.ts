@@ -12,6 +12,7 @@ import {
   type ImportCompletion,
   type ImportConflictPlan,
   type ImportSourceFailurePlan,
+  type AiProgressEvent,
 } from '../shared/protocol/responses';
 import { stopOutgoingLibrariesForOpen } from './library-open-stop';
 import type { ParentPort } from 'electron';
@@ -2164,7 +2165,10 @@ function safeAiJobState(libraryId: string, jobId: string): string | null {
   }
 }
 
-function publishAiProgress(libraryId: string): void {
+function publishAiProgress(
+  libraryId: string,
+  changedJob?: NonNullable<AiProgressEvent['changedJobs']>[number],
+): void {
   try {
     const status = libraryService.getAiJobStatus(libraryId);
     aiProgressThrottler.publish({
@@ -2174,6 +2178,7 @@ function publishAiProgress(libraryId: string): void {
       running: status.running,
       succeeded: status.succeeded,
       failed: status.failed,
+      ...(changedJob ? { changedJobs: [changedJob] } : {}),
     });
   } catch (error) {
     if (!(error instanceof LibraryServiceError && error.code === 'LIBRARY_NOT_OPEN')) throw error;
@@ -5195,7 +5200,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
           if (!job) break;
           attemptedJobIds.push(job.jobId);
           processed++;
-          publishAiProgress(libraryId);
+          publishAiProgress(libraryId, { jobId: job.jobId, status: 'running' });
           const controller = aiJobAbortRegistry.register(libraryId, job.jobId);
           const nestedRequestId = `${request.requestId}:${job.jobId}`;
           analysisControls.set(nestedRequestId, {
@@ -5254,12 +5259,16 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
               });
               if (failure.status === 'queued') requeued++;
               else failed++;
-              publishAiProgress(libraryId);
+              publishAiProgress(libraryId, {
+                jobId: job.jobId,
+                status: failure.status,
+                errorCode,
+              });
               continue;
             }
             libraryService.completeAiJob(libraryId, job.jobId);
             succeeded++;
-            publishAiProgress(libraryId);
+            publishAiProgress(libraryId, { jobId: job.jobId, status: 'succeeded' });
           } catch (error) {
             if (controller.signal.aborted || safeAiJobState(libraryId, job.jobId) !== 'running') {
               continue;
@@ -5277,7 +5286,11 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
             });
             if (failure.status === 'queued') requeued++;
             else failed++;
-            publishAiProgress(libraryId);
+            publishAiProgress(libraryId, {
+              jobId: job.jobId,
+              status: failure.status,
+              errorCode: classification.errorCode,
+            });
           } finally {
             analysisControls.delete(nestedRequestId);
             aiJobAbortRegistry.unregister(job.jobId);

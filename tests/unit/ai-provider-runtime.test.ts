@@ -162,16 +162,23 @@ describe('AiProgressThrottler', () => {
       failed: 0,
     };
 
-    throttler.publish({ ...base, queued: 3 });
-    throttler.publish({ ...base, queued: 2, running: 1 });
-    throttler.publish({ ...base, queued: 1, running: 2 });
+    throttler.publish({ ...base, queued: 3, changedJobs: [{ jobId: 'job-a', status: 'running' }] });
+    throttler.publish({ ...base, queued: 2, running: 1, changedJobs: [{ jobId: 'job-b', status: 'succeeded' }] });
+    throttler.publish({ ...base, queued: 1, running: 2, changedJobs: [{ jobId: 'job-c', status: 'failed' }] });
     expect(emit).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(999);
     expect(emit).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(emit).toHaveBeenCalledTimes(2);
-    expect(emit).toHaveBeenLastCalledWith(expect.objectContaining({ queued: 1, running: 2 }));
+    expect(emit).toHaveBeenLastCalledWith(expect.objectContaining({
+      queued: 1,
+      running: 2,
+      changedJobs: [
+        { jobId: 'job-b', status: 'succeeded' },
+        { jobId: 'job-c', status: 'failed' },
+      ],
+    }));
 
     throttler.clearAll();
     vi.useRealTimers();

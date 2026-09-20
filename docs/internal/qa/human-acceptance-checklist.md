@@ -112,6 +112,24 @@
 | SEQ-DETECT-001 / `Serpent-036065` | 序列帧检测总开关与导入后确认 | 人类验收通过 | ① **完全退出**后再打开含这次改动的构建。② 设置 → 资产：应有「启用序列帧检测」和「导入时自动检测序列帧」。③ 打开总开关、关闭自动检测。④ 导入一组连续编号图片（至少 3 张、尺寸一致）。等进度结束后应弹出序列帧窗口。⑤ 可做成序列或保持单独文件。⑥ 再打开自动检测，导入另一组：进度结束后应直接变成序列帧，不再弹窗。⑦ 关闭总开关后再导入一组：既不弹窗也不自动做成序列。总开关关闭时，自动检测那一行不可改。 | 总开关关闭：完全不检测。只开总开关：导入完成后弹窗。两个都开：直接当序列帧处理。 | [开发日志](../development/2026-09-18-format-folder-sequence-detect-development-log.md) / `image-sequence-preferences.ts` / `post-import-image-sequences.ts` | 2026-09-18 用户本人验收通过（用户原话「通过」）。随后反馈两行开关太近，以及默认应为检测开、自动关，见 SEQ-DETECT-002。 |
 | SEQ-DETECT-002 / `Serpent-be0c52` | 序列帧设置行距与出厂默认 | 人类验收通过 | ① **完全退出**后再打开含这次改动的构建。② 设置 → 资产。③ 看「启用序列帧检测」和「导入时自动检测序列帧」两行之间是否分开。④ 若本机从未改过这项：检测应为开，自动检测应为关。 | 两行标题和说明之间有明显空隙，不会贴在一起。新环境默认：检测开、自动关。已经保存过的开关保持原值。 | [开发日志](../development/2026-09-18-sequence-settings-spacing-defaults-development-log.md) / `styles.css` / `image-sequence-preferences.ts` | 2026-09-18 用户本人验收通过（用户原话「通过。先这样吧」）。 |
 
+### 2026-09-20 资源库主连接与 AI 分析秒失败
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| LIB-OPEN-CONN-001 / `Serpent-1cf203` | 当前资源库打开时，分析/预览不应因内部 SQLite 句柄已关而瞬间失败 | 待人类验收 | ① **完全退出**后再打开含这次改动的构建。② 打开平时用的资源库，等侧栏身份稳定。③ 选一张图点「分析」。④ 滚动画布，确认卡片仍能出预览。⑤ 若最近列表里同一库有另一条路径，再打开那条：应提示库已打开，确认或取消后当前库仍能浏览。 | 库还在用时，分析不应在约 0.1 秒内因「数据库未打开」失败。预览仍能解码。同一目录换路径打开时，当前库不能变成假开着、实际已关。若分析仍失败，失败原因应是模型/接口配置，而不是库连接已关。 | [开发日志](../development/2026-09-20-zombie-library-sqlite-handle-development-log.md) / `network-metadata-cache.ts` / `library-service.ts` | 自动化：`network-metadata-cache` 单测 + worker 2 files / 24 passed；`test:library-availability` 228 passed / 1 skipped。packaged / Computer Use / 真实网络库切路径未执行。 |
+
+### 2026-09-20 AI 失败阻塞窗
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| JOBS-006-UI / `Serpent-c7d64e` | AI 失败阻塞窗与其它提示同一套样式；限流不说成连不上 | 人类验收通过 | ① **完全退出**后再打开含这次改动的构建。② 多选一批图启动分析，让供应商限流（可把设置 → AI → 并发上限调高后一次分析较多项）。③ 等自动重试结束后看阻塞窗。④ 看标题、正文、按钮之间：标题下不应再多一条空分割线。⑤ 对照正文是否写「请求过于频繁」，而不是「无法连接 AI 供应商」。⑥ 点「重试」或「终止剩余任务」。 | 窗体与「资源库已打开」一类阻塞提示相同（标题、正文、底部分割线、按钮）。限流时正文说明过于频繁，并提示可稍后重试、终止剩余任务或在设置里降低并发。断网时才写连不上供应商。 | [开发日志](../development/2026-09-20-ai-connection-failure-dialog-ui-development-log.md) / `AiConnectionFailureDialog.tsx` / `FatalAlertDialog.tsx` / [单测](../../../tests/unit/ai-connection-failure.test.ts) / [对话框单测](../../../tests/unit/ai-connection-failure-dialog.test.ts) | 2026-09-20 用户报告未测僵尸句柄修复时弹出此窗：多一条无效分割线，且把限流写成无法连接。根因是 DialogShell header 底边框叠在 dialog-actions 顶边框上；该波任务日志全是 `AI_RATE_LIMIT`。packaged / Computer Use 未执行。**2026-09-20 用户本人验收通过**（用户原话「AI分析相关的通过」）。 |
+
+### 2026-09-20 AI 分析进度条
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| JOBS-004-LIVE / `Serpent-f01d8e` | 分析进行中顶部进度条随完成数前进 | 待人类验收 | ① **完全退出**后再打开含这次改动的构建。② 多选若干可分析图片启动 AI 分析（至少 5 张，分析时间要够看进度）。③ 看工作区顶部进度：开始可以是 `0/N`，之后应随完成变成 `1/N`、`2/N`…，条也跟着变长。④ 不要打开后台任务面板。 | 分析还在跑时，完成一项数字就加一，不要全程停在 `0/N` 直到结束才突然消失。开始为 0 是正常的。 | [开发日志](../development/2026-09-20-ai-analysis-progress-bar-stuck-development-log.md) / `ai-analyze-progress.ts` / `App.tsx` / [进度单测](../../../tests/unit/ai-analyze-progress.test.ts) / [节流单测](../../../tests/unit/ai-provider-runtime.test.ts) | 2026-09-20 用户报告进度条永远是 0。根因是横幅只靠 `ai.status` RPC，而它和整批 `ai.process-queue` 抢同一条 Worker 车道。 |
+
 ### 2026-09-18 查看器中键拖移画面
 
 
@@ -1364,7 +1382,7 @@
 | DIAG-RENDERER-001 | Renderer 崩溃、卡死与子进程退出进入诊断日志 | 待人类验收 | ① 启动当前构建并打开资源库；② 通过开发诊断方式触发/模拟 Renderer `unresponsive`、`responsive` 或 `render-process-gone`，必要时观察 GPU/Utility child process；③ 打开诊断日志查看 scope、windowId、reason、exitCode；④ 对照磁盘 `serpent.log` | Renderer 崩溃/卡死/恢复和 App child-process 异常都有结构化日志；控制台 error 带 source/line，普通 info 不制造噪音；日志不泄漏未脱敏路径或密钥；空闲时不持续写入 | `Serpent-lyf8` / [renderer-diagnostics 单测](../../../tests/unit/renderer-diagnostics.test.ts) / [开发日志](../development/2026-08-04-renderer-diagnostics-development-log.md) | 2026-08-04：开发态自动化 2 tests、lint、typecheck 通过；真实崩溃、GPU、Windows packaged 与 Computer Use 未执行。 |
 | AICFG-011 | AI 语言约束标签语言 | 人类验收不通过 | AI 语言设中文；对图分析；看标签 | 标签为中文（非 portrait 等纯英文），与描述同语言 | `Serpent-sbnt` | 2026-07-21：标签通过；描述过短（默认 100 字上限）。2026-07-25：agent 曾擅自把默认上限改为 220，用户明确否认提出过该需求，已回退（3832d00），默认恢复 100。描述长度是否调整属产品决策，未经用户确认不得改动。 |
 | SHELL-011 | Toast 不随画布滚动 | 人类验收通过 | 触发任意 toast；滚动资产画布 | toast 仍钉在窗口右下角可见 | `Serpent-qpy8` | 2026-07-21 用户确认通过。 |
-| JOBS-004 | 多文件 AI 分析进度条 | 待人类验收 | 多选若干资产 → AI 分析 | 仅总进度 done/total + 条；有停止；右侧两按钮对齐 | `Serpent-k3dw` | 2026-07-21 复修：对齐停止/后台任务。 |
+| JOBS-004 | 多文件 AI 分析进度条 | 人类验收不通过 | 多选若干资产 → AI 分析 | 仅总进度 done/total + 条；有停止；右侧两按钮对齐；分析进行中数字应前进，不能一直停在 0 | `Serpent-k3dw` / `Serpent-f01d8e` | 2026-07-21 复修：对齐停止/后台任务。**2026-09-20 用户本人验收不通过**：进度条永远是 0。见 JOBS-004-LIVE。 |
 | TOAST-001 | 自动搜索不顶掉完成/错误 toast | 人类验收通过 | 有过滤/非默认排序时多选 AI 分析至完成 | 应看到 AI 完成/失败 toast，不应再弹「搜索完成：找到 N 项」 | `Serpent-huvw` | 2026-07-21 用户确认通过。 |
 | TOAST-002 | warning/error 不被 info 顶掉 | 人类验收通过 | 先触发 error toast；再触发普通 notice | error 仍显示；notice 不抢占 | `Serpent-99lv`（分级首步） | 2026-07-21 用户确认通过。 |
 | TOAST-003 | 阻塞错误弹窗用具体操作标题 | 待人类验收 | ① 开库/建库失败（取消选择除外）。② 导入失败（拖入/文件选择/继续导入）。③ 多选 AI 分析全部失败 | 对话框标题为「无法打开资源库」「导入失败」「AI 分析失败」等具体操作名；**不得**出现「严重错误」/ Critical error；**正文必须写清原因和至少一条解法**，不得只显示「无法完成这项操作」「资源库操作失败」 | `Serpent-99lv` / `Serpent-n5iu` / `FatalAlertDialog` / [0004 原则](../ui/0004-calm-error-and-copy-ux-principles.md) | 2026-07-25：按 0004 改为 `dialog.blockingError.*`。2026-08-18：正文补上原因+解法，资源库错误优先。 |
@@ -1379,7 +1397,7 @@
 | JOBS-010 | 后台任务工具栏图标活动指示点 | 人类验收通过 | 启动 AI 分析或缩略图/导入等媒体任务后，将进度条「转到后台」或关闭任务面板 | 画布工具栏最右侧「后台任务」图标右上角出现 accent 小圆点；任务全部结束后圆点消失 | `CanvasToolbarControls` `backgroundJobsActive` | 2026-07-26 用户验收通过。 |
 | VIEWER-020 | 查看器 chrome 不参与 Tab 焦点环 | 人类验收通过 | 打开图片/视频/音频查看器；连按 Tab | 焦点不会进入播放/音量/进度/缩放/导航等查看器控件；Space/D/F 等查看器快捷键仍可用 | `viewer-focus-policy.ts` / `Serpent-ek9t` | 2026-07-26 用户验收通过。 |
 | VIEWER-021 | 查看器音量滑块可连续拖拽 | 人类验收通过 | 打开视频或音频查看器；用鼠标拖动音量滑块到中间再松开；再测静音按钮 | 拖动过程与松开后均保持中间音量（非跳回最大/静音）；实际听感随滑块连续变化；静音后可再点恢复 | `useViewerVolume` 函数式更新 + 拖动只调 `setVolume` / `Serpent-v7jw` | 2026-07-26 用户验收通过（第四轮修复后）。 |
-| JOBS-006 | AI 连接失败自动重试后弹窗 | 待人类验收 | ① 断网或故意用无效代理后，多选若干资产启动 AI 分析。② 等待 Worker 对网络类错误自动重试约 3 次。③ 出现对话框后分别试「重试」与「终止剩余任务」。④ 同一批失败不应每个资产各弹一次。 | 标题为中性「AI 分析失败」（非「连接失败/严重错误」恐吓感）；网络类失败弹一次；「重试」/「终止」行为正确；非连接类失败不弹此窗 | `Serpent-kdnm` / `Serpent-4sw0` | 2026-07-21 实现。2026-07-22：`Serpent-4sw0` 标题改为「AI 分析失败」。 |
+| JOBS-006 | AI 连接失败自动重试后弹窗 | 人类验收不通过 | ① 断网或故意用无效代理后，多选若干资产启动 AI 分析。② 等待 Worker 对网络类错误自动重试约 3 次。③ 出现对话框后分别试「重试」与「终止剩余任务」。④ 同一批失败不应每个资产各弹一次。 | 标题为中性「AI 分析失败」（非「连接失败/严重错误」恐吓感）；网络类失败弹一次；「重试」/「终止」行为正确；非连接类失败不弹此窗；限流不得写成「无法连接」；标题与正文之间不得多一条空分割线 | `Serpent-kdnm` / `Serpent-4sw0` / `Serpent-c7d64e` | 2026-07-21 实现。2026-07-22：`Serpent-4sw0` 标题改为「AI 分析失败」。**2026-09-20 用户本人验收不通过**：窗体多一条无效分割线；限流被写成无法连接供应商。见 JOBS-006-UI。 |
 | JOBS-007 | 导入自动 AI 分析进度条 | 已撤回 | — | — | `Serpent-qabe` / `Serpent-u0tn` | 2026-07-22 用户要求回退本提交 AI 相关增量；`inferAutoAnalyzeBatchTotal` 已移除。同日补丁：去掉 `batchSize===0` 半拉起 analyzing 横幅残留（`Serpent-u0tn`）。 |
 | JOBS-002 | AI 分析完成有明确 toast | 人类验收通过 | 对一项或多项资产启动 AI 分析；等进度条结束 | 队列清空后出现成功/失败汇总 toast，不只是进度条消失 | `Serpent-4i18` | 2026-07-20 用户确认通过。 |
 | MENU-AI-002 | 多选右键批量 AI 分析 | 人类验收通过 | 多选资产；右键「AI 分析」 | 可见并可入队；进度/完成反馈与单选一致 | `Serpent-g2qh` | 2026-07-20 用户确认通过。 |

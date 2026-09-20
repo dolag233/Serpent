@@ -3721,6 +3721,7 @@ interface OpenLibrary {
     databasePath: string;
     schemaVersion: number;
     readThrough: NetworkReadThroughConnection;
+    writeThrough: NetworkReadThroughConnection;
     manifest?: NetworkMetadataCacheManifest;
     /** Fingerprint observed by this open generation; manifest mtime is advisory across opens. */
     observedSourceFingerprint?: NetworkMetadataSourceFingerprint;
@@ -9582,8 +9583,100 @@ export class LibraryService {
   private requireOpenLibrary(libraryId: string): OpenLibrary {
     const openLibrary = this.openById.get(libraryId);
     if (!openLibrary) throw new LibraryServiceError('LIBRARY_NOT_OPEN');
+    if (!this.sqlitePrimaryIsOpen(openLibrary)) {
+      this.evictDeadOpenLibrary(libraryId, openLibrary);
+      throw new LibraryServiceError('LIBRARY_NOT_OPEN');
+    }
     this.syncGitignore(openLibrary);
     return openLibrary;
+  }
+
+  /**
+   * `openById` membership must mean the better-sqlite3 primary is still open.
+   * Network libraries wrap that primary in two adapters; checking the wrapper
+   * object's own `open` flag is not enough because the wrapper does not
+   * forward it.
+   */
+  private sqlitePrimaryIsOpen(openLibrary: OpenLibrary): boolean {
+    const primary = openLibrary.networkMetadataCache?.readThrough.primaryConnection
+      ?? openLibrary.connection;
+    return (primary as { open?: boolean }).open !== false;
+  }
+
+  private sqliteConnectionIsRegisteredPrimary(connection: DatabaseConnection | undefined): boolean {
+    if (!connection) return false;
+    for (const openLibrary of this.openById.values()) {
+      if (openLibrary.connection === connection || openLibrary.writeConnection === connection) {
+        return true;
+      }
+      const primary = openLibrary.networkMetadataCache?.readThrough.primaryConnection;
+      if (primary === connection) return true;
+    }
+    return false;
+  }
+
+  private findLibraryIdOwningSqliteConnection(
+    connection: DatabaseConnection | undefined,
+  ): string | undefined {
+    if (!connection) return undefined;
+    for (const [libraryId, openLibrary] of this.openById) {
+      if (openLibrary.connection === connection || openLibrary.writeConnection === connection) {
+        return libraryId;
+      }
+      if (openLibrary.networkMetadataCache?.readThrough.primaryConnection === connection) {
+        return libraryId;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Drop a handle whose SQLite primary is already closed. Do not run cancelJobs
+   * or checkpoint — those need a live connection and would throw TypeError.
+   */
+  private evictDeadOpenLibrary(libraryId: string, openLibrary: OpenLibrary): void {
+    this.cancelDeferredOpenMaintenance(libraryId);
+    this.cancelOpenBackgroundReconciliation(libraryId);
+    const backupTimer = this.databaseBackupTimers.get(libraryId);
+    if (backupTimer) {
+      clearTimeout(backupTimer);
+      this.databaseBackupTimers.delete(libraryId);
+    }
+    try { this.stopAssetWatcher(libraryId); } catch { /* handle is already unusable */ }
+    try { this.stopLinkedWatchers(libraryId); } catch { /* handle is already unusable */ }
+    try { openLibrary.changeSubscription.stop(); } catch { /* handle is already unusable */ }
+    this.openById.delete(libraryId);
+    this.openIdByPath.delete(openLibrary.summary.libraryPath);
+    this.invalidateArtifactPathCache(libraryId);
+    this.artifactDescriptorCache.invalidateLibrary(libraryId);
+    this.browseSessionStore.invalidateLibrary(libraryId);
+    this.dropPreparedStatementCache(libraryId);
+    this.clearTextAssetPreviewCache(libraryId);
+    this.autoRepairAttemptedByLibrary.delete(libraryId);
+    this.autoRepairProbeFailedAtByLibrary.delete(libraryId);
+    this.autoAnalysisSuppressedAssetIds.delete(libraryId);
+    this.interactiveIdleUntilByLibrary.delete(libraryId);
+    this.diagnose(
+      'library.handle.evicted-closed-primary',
+      new LibraryServiceError('LIBRARY_NOT_OPEN'),
+      { libraryId },
+    );
+  }
+
+  private probeCatalogIdentity(canonicalPath: string): string | undefined {
+    let probe: DatabaseConnection | undefined;
+    try {
+      probe = openConfiguredDatabase(
+        databasePath(canonicalPath),
+        this.options.sqliteBusyTimeoutMsForTests,
+        { readonly: true },
+      );
+      return readLibraryIdentity(probe, { skipQuickCheck: true }).library_id;
+    } catch {
+      return undefined;
+    } finally {
+      closeIgnoringFailure(probe);
+    }
   }
 
   /**
@@ -29588,6 +29681,7 @@ export class LibraryService {
       undefined,
       {
         allowSnapshotReads: false,
+        ownsPrimary: false,
         onPrimaryMutation: () => readThrough.invalidateReadConnection(),
       },
     );
@@ -29607,6 +29701,7 @@ export class LibraryService {
         databasePath: sourceDatabasePath,
         schemaVersion: input.primarySchemaVersion,
         readThrough,
+        writeThrough,
         ...(loaded ? { observedSourceFingerprint: loaded.manifest.sourceFingerprint } : {}),
         observedSourceChangeSequence: loaded?.manifest.sourceChangeSequence,
         ...(loaded ? { manifest: loaded.manifest } : {}),
@@ -29848,6 +29943,8 @@ export class LibraryService {
       expectedSourceChangeSequence,
     });
     if (rebound.state?.readThrough.readCacheActive) {
+      state.readThrough.release();
+      state.writeThrough.release();
       openLibrary.connection = rebound.connection;
       openLibrary.writeConnection = rebound.writeConnection;
       openLibrary.networkMetadataCache = rebound.state;
@@ -43839,6 +43936,7 @@ export class LibraryService {
       task.controller.signal.aborted
       || this.reconciliationByLibrary.get(task.libraryId) !== task
       || this.openById.get(task.libraryId) !== task.openLibrary
+      || !this.sqlitePrimaryIsOpen(task.openLibrary)
     ) {
       throw this.reconciliationAbortError();
     }
@@ -45476,12 +45574,16 @@ export class LibraryService {
     const existingOpen = this.openById.get(input.libraryId);
     if (!existingOpen) return undefined;
     if (existingOpen.summary.libraryPath === input.canonicalPath) {
-      closeIgnoringFailure(input.connection);
+      if (!this.sqliteConnectionIsRegisteredPrimary(input.connection)) {
+        closeIgnoringFailure(input.connection);
+      }
       this.openIdByPath.set(input.canonicalPath, existingOpen.summary.libraryId);
       return existingOpen.summary;
     }
     if (input.replaceExisting !== true) {
-      closeIgnoringFailure(input.connection);
+      if (!this.sqliteConnectionIsRegisteredPrimary(input.connection)) {
+        closeIgnoringFailure(input.connection);
+      }
       throw new LibraryServiceError('LIBRARY_ALREADY_OPEN');
     }
     // Keep the already-opened connection for the chosen path. Release the
@@ -45702,6 +45804,8 @@ export class LibraryService {
           expectedSourceChangeSequence,
         });
         if (rebound.state?.readThrough.readCacheActive) {
+          activeNetworkMetadataCache.readThrough.release();
+          activeNetworkMetadataCache.writeThrough.release();
           openLibrary.connection = rebound.connection;
           openLibrary.writeConnection = rebound.writeConnection;
           openLibrary.networkMetadataCache = rebound.state;
@@ -45793,7 +45897,11 @@ export class LibraryService {
     }
     markStage('path-resolution');
     const alreadyOpenId = this.openIdByPath.get(canonicalPath);
-    if (alreadyOpenId) return this.openById.get(alreadyOpenId)!.summary;
+    if (alreadyOpenId) {
+      const existing = this.openById.get(alreadyOpenId);
+      if (existing && this.sqlitePrimaryIsOpen(existing)) return existing.summary;
+      if (existing) this.evictDeadOpenLibrary(alreadyOpenId, existing);
+    }
 
     for (const directoryName of REQUIRED_DIRECTORIES) {
       if (!realDirectoryExists(path.join(canonicalPath, directoryName))) {
@@ -45808,6 +45916,26 @@ export class LibraryService {
       ?? classifyLibraryStorage(canonicalPath);
     const networkStorage = storageKind === 'network';
     markStage('storage-classification');
+
+    // Identity check before a second writable SQLite connection. Opening and
+    // migrating a catalog that this Worker already holds is undefined on
+    // rollback-journal NAS volumes and is how a live primary can be closed
+    // while openById still points at the wrapper.
+    if (this.openById.size > 0) {
+      const probedCatalogId = this.probeCatalogIdentity(canonicalPath);
+      if (probedCatalogId) {
+        const existing = this.openById.get(probedCatalogId);
+        if (existing && this.sqlitePrimaryIsOpen(existing)) {
+          if (existing.summary.libraryPath === canonicalPath) return existing.summary;
+          if (options?.replaceExisting !== true) {
+            throw new LibraryServiceError('LIBRARY_ALREADY_OPEN');
+          }
+          this.closeLibrary(existing.summary.libraryId);
+        } else if (existing) {
+          this.evictDeadOpenLibrary(probedCatalogId, existing);
+        }
+      }
+    }
 
     let connection: DatabaseConnection | undefined;
     let migrationAttempted = false;
@@ -45923,7 +46051,17 @@ export class LibraryService {
           // The primary failure remains more useful than a record failure.
         }
       }
-      closeIgnoringFailure(connection);
+      const registeredId = this.findLibraryIdOwningSqliteConnection(connection);
+      if (registeredId) {
+        const registered = this.openById.get(registeredId);
+        try {
+          this.closeLibrary(registeredId);
+        } catch {
+          if (registered) this.evictDeadOpenLibrary(registeredId, registered);
+        }
+      } else {
+        closeIgnoringFailure(connection);
+      }
       throw serviceError(error, 'LIBRARY_CORRUPT');
     }
   }

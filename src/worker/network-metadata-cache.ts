@@ -128,6 +128,12 @@ export interface NetworkReadThroughConnection extends NetworkMetadataCacheDataba
   replaceReadConnection(connection: NetworkMetadataCacheDatabase): void;
   /** Stop serving the snapshot after a local or remote change is observed. */
   invalidateReadConnection(): void;
+  /**
+   * Drop the snapshot and mark this adapter closed without closing the shared
+   * primary. Used when a later generation takes ownership of the same SQLite
+   * handle (rebind). `close()` still closes the primary when this adapter owns it.
+   */
+  release(): void;
   /** Whether ordinary SELECT statements currently use the local snapshot. */
   readonly readCacheActive: boolean;
 }
@@ -141,6 +147,12 @@ export interface NetworkReadThroughConnectionOptions {
   disallowedSnapshotTables?: readonly string[];
   /** Invalidates a separate read adapter after a write-only SQL operation. */
   onPrimaryMutation?: () => void;
+  /**
+   * When false, `close()` releases only this adapter (and its snapshot).
+   * The write-only twin shares the primary with the read adapter; only the
+   * owner may close the SQLite handle. Defaults to true.
+   */
+  ownsPrimary?: boolean;
 }
 
 export type NetworkMetadataCacheEvent =
@@ -1186,6 +1198,7 @@ export function createNetworkReadThroughConnection(
   let forcePrimaryDepth = 0;
   let closed = false;
   const allowSnapshotReads = options.allowSnapshotReads !== false;
+  const ownsPrimary = options.ownsPrimary !== false;
   const allowedSnapshotTables = options.allowedSnapshotTables === undefined
     ? undefined
     : new Set(options.allowedSnapshotTables.map((table) => table.toLowerCase()));
@@ -1196,6 +1209,14 @@ export function createNetworkReadThroughConnection(
     const previous = readConnection;
     readConnection = undefined;
     if (previous && previous !== primary) closeQuietly(previous);
+  };
+
+  const markClosed = (): void => {
+    if (closed) return;
+    closed = true;
+    const snapshot = readConnection;
+    readConnection = undefined;
+    if (snapshot && snapshot !== primary) closeQuietly(snapshot);
   };
 
   const connection: NetworkReadThroughConnection = {
@@ -1213,14 +1234,14 @@ export function createNetworkReadThroughConnection(
       if (previous && previous !== primary && previous !== next) closeQuietly(previous);
     },
     invalidateReadConnection: invalidate,
+    release: (): void => {
+      markClosed();
+    },
     backup: (filename, options) => primary.backup(filename, options),
     close: (): void => {
-      if (closed) return;
-      closed = true;
-      const snapshot = readConnection;
-      readConnection = undefined;
-      if (snapshot && snapshot !== primary) closeQuietly(snapshot);
-      primary.close();
+      const alreadyClosed = closed;
+      markClosed();
+      if (!alreadyClosed && ownsPrimary) primary.close();
     },
     exec: (sql): void => {
       invalidate();

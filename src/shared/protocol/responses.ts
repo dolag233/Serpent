@@ -527,6 +527,12 @@ export function parseAiInputReadyEvent(input: unknown): AiInputReadyEvent {
   return aiInputReadyEventSchema.parse(input);
 }
 
+export const aiProgressJobUpdateSchema = z.strictObject({
+  jobId: nonBlankString,
+  status: z.enum(['queued', 'running', 'paused', 'succeeded', 'failed', 'cancelled']),
+  errorCode: z.string().nullable().optional(),
+});
+
 export const aiProgressEventSchema = z.strictObject({
   type: z.literal('ai.progress'),
   libraryId: nonBlankString,
@@ -534,6 +540,8 @@ export const aiProgressEventSchema = z.strictObject({
   running: z.number().int().nonnegative(),
   succeeded: z.number().int().nonnegative(),
   failed: z.number().int().nonnegative(),
+  /** Jobs that changed since the previous emit; used by the live analysis banner. */
+  changedJobs: z.array(aiProgressJobUpdateSchema).max(512).optional(),
 });
 
 export type AiProgressEvent = z.infer<typeof aiProgressEventSchema>;

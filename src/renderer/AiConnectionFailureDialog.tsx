@@ -1,63 +1,43 @@
 import React from "react";
-import { Icon } from "./Icons";
-import { iconActionAttrs } from "./icon-action-attrs";
+import { aiConnectionFailureBodyKey } from "./ai-connection-failure";
+import { FatalAlertDialog } from "./FatalAlertDialog";
 import { useT } from "./i18n";
-import { DialogShell } from "./ui/patterns";
 
 export interface AiConnectionFailureDialogProps {
   open: boolean;
   failedCount: number;
+  /** Dominant connection-class code for this wave; drives cause copy. */
+  failureCode?: string | null;
   onRetry: () => void;
   onAbort: () => void;
 }
 
 /**
- * Fatal modal after AI connection-class errors exhaust worker retries
- * (Serpent-kdnm). Retry requeues failed AI jobs; Abort cancels the rest.
+ * Blocking Retry/Abort after AI connection-class errors exhaust worker retries
+ * (Serpent-kdnm / Serpent-c7d64e). Same surface as other blocking alerts.
  */
 export function AiConnectionFailureDialog({
   open,
   failedCount,
+  failureCode = null,
   onRetry,
   onAbort,
 }: AiConnectionFailureDialogProps) {
   const t = useT();
   if (!open) return null;
 
+  const bodyKey = aiConnectionFailureBodyKey(failureCode);
   return (
-    <div className="dialog-backdrop" role="presentation">
-      <DialogShell
-        className="create-dialog"
-        dialogId="ai-connection-failure"
-        headerActions={
-          <button
-            className="dialog-close"
-            onClick={onAbort}
-            type="button"
-            {...iconActionAttrs(t("dialog.aiConnectionFailure.abort"))}
-          >
-            <Icon name="close" size={16} />
-          </button>
-        }
-        title={t("dialog.aiConnectionFailure.title")}
-        description={
-          <span className="dialog-body-copy">
-            {t("dialog.aiConnectionFailure.body", {
-              count: String(Math.max(1, failedCount)),
-            })}
-          </span>
-        }
-        style={{ padding: 0 }}
-      >
-        <div className="dialog-actions">
-          <button className="secondary-button" onClick={onAbort} type="button">
-            {t("dialog.aiConnectionFailure.abort")}
-          </button>
-          <button className="primary-button" onClick={onRetry} type="button">
-            {t("dialog.aiConnectionFailure.retry")}
-          </button>
-        </div>
-      </DialogShell>
-    </div>
+    <FatalAlertDialog
+      cancelLabel={t("dialog.aiConnectionFailure.abort")}
+      confirmLabel={t("dialog.aiConnectionFailure.retry")}
+      message={t(`dialog.aiConnectionFailure.${bodyKey}`, {
+        count: String(Math.max(1, failedCount)),
+      })}
+      title={t("dialog.aiConnectionFailure.title")}
+      onCancel={onAbort}
+      onConfirm={onRetry}
+      onDismiss={onAbort}
+    />
   );
 }

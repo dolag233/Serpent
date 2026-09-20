@@ -534,4 +534,34 @@ describe('network read-through connection', () => {
     expect(firstSnapshot.closed).toBe(true);
     expect(secondSnapshot.calls).toHaveLength(1);
   });
+
+  it('does not close the shared primary when the write-only adapter is closed', () => {
+    const primary = new FakeDatabase();
+    const snapshot = new FakeDatabase();
+    const read = createNetworkReadThroughConnection(primary, snapshot);
+    const write = createNetworkReadThroughConnection(primary, undefined, {
+      allowSnapshotReads: false,
+      ownsPrimary: false,
+      onPrimaryMutation: () => read.invalidateReadConnection(),
+    });
+
+    write.close();
+    expect(primary.closed).toBe(false);
+    expect(read.prepare('SELECT value FROM assets').get()).toEqual({ value: 1 });
+
+    read.close();
+    expect(primary.closed).toBe(true);
+  });
+
+  it('release drops the snapshot without closing a still-owned primary', () => {
+    const primary = new FakeDatabase();
+    const snapshot = new FakeDatabase();
+    const read = createNetworkReadThroughConnection(primary, snapshot);
+
+    read.release();
+    expect(snapshot.closed).toBe(true);
+    expect(primary.closed).toBe(false);
+    read.close();
+    expect(primary.closed).toBe(false);
+  });
 });

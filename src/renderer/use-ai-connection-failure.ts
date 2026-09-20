@@ -4,7 +4,8 @@ import type { SerpentLibraryApi } from "../shared/library-api";
 import type { AiJob } from "../shared/protocol/responses";
 import {
   INITIAL_CONNECTION_FAILURE_GATE,
-  listConnectionFailedJobIds,
+  dominantConnectionFailureCode,
+  listConnectionFailedJobs,
   listFailedJobIds,
   reduceConnectionFailureGate,
   type ConnectionFailureGateState,
@@ -74,9 +75,11 @@ export function useAiConnectionFailure({
     try {
       const result = await api.getAiJobStatus({ libraryId });
       if (!result.ok) return;
+      const failed = listConnectionFailedJobs(result.value.jobs);
       dispatch({
         type: "jobs_snapshot",
-        connectionFailedJobIds: listConnectionFailedJobIds(result.value.jobs),
+        connectionFailedJobIds: failed.map((job) => job.jobId),
+        failureCode: dominantConnectionFailureCode(failed),
       });
     } finally {
       busyRef.current = false;

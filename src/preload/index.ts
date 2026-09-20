@@ -2552,6 +2552,11 @@ const library: SerpentLibraryApi = Object.freeze({
     running: number;
     succeeded: number;
     failed: number;
+    changedJobs?: Array<{
+      jobId: string;
+      status: 'queued' | 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled';
+      errorCode?: string | null;
+    }>;
   }) => void) {
     const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
       try {

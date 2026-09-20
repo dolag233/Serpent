@@ -945,7 +945,11 @@ export const zhCN = {
     },
     aiConnectionFailure: {
       title: "AI 分析失败",
-      body: "多次重试后仍无法连接 AI 供应商（已失败 {count} 项）。可重试失败任务，或终止队列中剩余任务。",
+      body: "多次重试后仍无法完成分析（已失败 {count} 项）。可重试失败任务，或终止队列中剩余任务。",
+      bodyNetwork: "多次重试后仍无法连接 AI 供应商（已失败 {count} 项）。可重试失败任务，或终止队列中剩余任务。",
+      bodyTimeout: "多次重试后 AI 请求仍然超时（已失败 {count} 项）。可重试失败任务，或终止队列中剩余任务。",
+      bodyRateLimit: "请求过于频繁，多次重试后仍未完成（已失败 {count} 项）。可稍后再试，或先终止剩余任务。也可在设置里降低并发上限。",
+      bodyAuth: "无法通过 AI 供应商认证（已失败 {count} 项）。请检查 API Key 后重试，或终止剩余任务。",
       retry: "重试",
       abort: "终止剩余任务"
     },

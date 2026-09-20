@@ -1,5 +1,16 @@
 import type { AiProgressEvent } from '../../shared/protocol/responses';
 
+function mergeChangedJobs(
+  previous: AiProgressEvent['changedJobs'],
+  next: AiProgressEvent['changedJobs'],
+): AiProgressEvent['changedJobs'] {
+  if (!previous?.length) return next;
+  if (!next?.length) return previous;
+  const byId = new Map(previous.map((job) => [job.jobId, job]));
+  for (const job of next) byId.set(job.jobId, job);
+  return [...byId.values()].slice(-512);
+}
+
 /** Keeps the latest queue snapshot while limiting each library to one event/s. */
 export class AiProgressThrottler {
   readonly #lastSentAt = new Map<string, number>();
@@ -19,15 +30,20 @@ export class AiProgressThrottler {
       return;
     }
 
-    this.#pending.set(event.libraryId, event);
+    const pending = this.#pending.get(event.libraryId);
+    const changedJobs = mergeChangedJobs(pending?.changedJobs, event.changedJobs);
+    this.#pending.set(event.libraryId, {
+      ...event,
+      ...(changedJobs?.length ? { changedJobs } : {}),
+    });
     if (this.#timers.has(event.libraryId)) return;
     const remaining = Math.max(0, this.intervalMs - (now - lastSentAt));
     const timer = setTimeout(() => {
       this.#timers.delete(event.libraryId);
-      const pending = this.#pending.get(event.libraryId);
-      if (!pending) return;
+      const waiting = this.#pending.get(event.libraryId);
+      if (!waiting) return;
       this.#pending.delete(event.libraryId);
-      this.emitNow(pending, Date.now());
+      this.emitNow(waiting, Date.now());
     }, remaining);
     timer.unref?.();
     this.#timers.set(event.libraryId, timer);

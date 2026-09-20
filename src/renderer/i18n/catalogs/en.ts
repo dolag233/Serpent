@@ -961,7 +961,11 @@ export const en = {
     },
     aiConnectionFailure: {
       title: "AI analysis failed",
-      body: "Could not reach the AI provider after several retries ({count} job(s) failed). Retry the failed jobs, or abort the remaining queue.",
+      body: "Analysis still could not finish after several retries ({count} job(s) failed). Retry the failed jobs, or abort the remaining queue.",
+      bodyNetwork: "Could not reach the AI provider after several retries ({count} job(s) failed). Retry the failed jobs, or abort the remaining queue.",
+      bodyTimeout: "AI requests still timed out after several retries ({count} job(s) failed). Retry the failed jobs, or abort the remaining queue.",
+      bodyRateLimit: "The provider is rate-limiting requests, and analysis still could not finish ({count} job(s) failed). Retry later, abort the remaining queue, or lower the concurrent-analysis limit in Settings.",
+      bodyAuth: "Could not authenticate with the AI provider ({count} job(s) failed). Check the API key, then retry or abort the remaining queue.",
       retry: "Retry",
       abort: "Abort remaining"
     },

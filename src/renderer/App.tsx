@@ -248,7 +248,9 @@ import {
   cancellationAffectsAiBatch,
   collectRecentAiFailureCodes,
   computeAiBatchProgressForJobs,
+  progressFromAiProgressEvent,
   type AiBatchProgressSnapshot,
+  type AiProgressJobUpdate,
 } from "./ai-analyze-progress";
 import { summarizeAiFailureCodes } from "./ai-job-error-message";
 import {
@@ -2090,10 +2092,19 @@ function AppInner() {
   const analyzingBatchSizeRef = useRef(0);
   const aiBatchJobIdsRef = useRef<string[]>([]);
   const aiBatchSkippedCountRef = useRef(0);
+  const aiBatchKnownJobsRef = useRef<AiProgressJobUpdate[]>([]);
+  const aiBatchCounterBaselineRef = useRef({ succeeded: 0, failed: 0 });
   const lastAiBatchJobIdsRef = useRef<string[]>([]);
   const lastAiBatchAssetIdRef = useRef<string | null>(null);
   const aiBatchStatusRequestRef = useRef(0);
   const refreshAiBatchStatusRef = useRef<() => void>(() => undefined);
+  const applyLiveAiProgressRef = useRef<(event: {
+    queued: number;
+    running: number;
+    succeeded: number;
+    failed: number;
+    changedJobs?: AiProgressJobUpdate[];
+  }) => void>(() => undefined);
   const [aiBatchProgress, setAiBatchProgress] =
     useState<AiBatchProgressSnapshot | null>(null);
   const [aiUiPrefs, setAiUiPrefs] = useState<AiUiPreferences>(() =>
@@ -2591,6 +2602,11 @@ function AppInner() {
     aiBatchStatusRequestRef.current++;
     aiBatchJobIdsRef.current = retryJobIds;
     aiBatchSkippedCountRef.current = 0;
+    aiBatchKnownJobsRef.current = [];
+    aiBatchCounterBaselineRef.current = {
+      succeeded: aiJobs?.succeeded ?? 0,
+      failed: aiJobs?.failed ?? 0,
+    };
     analyzingAssetIdRef.current = lastAiBatchAssetIdRef.current;
     analyzingBatchSizeRef.current = retryJobIds.length;
     setAiBatchProgress(computeAiBatchProgressForJobs(retryJobIds, []));
@@ -2599,7 +2615,7 @@ function AppInner() {
       setAiAnalyzing(true);
       setAiProgressBannerVisible(true);
     });
-    void refreshAiBatchStatusRef.current();
+    // Progress events drive the banner; a status RPC would wait behind the queue.
   }, [aiConnectionFailureGate.failedJobIds, onAiConnectionFailureRetry]);
 
 
@@ -4874,7 +4890,7 @@ function AppInner() {
               jobs: [],
             },
       );
-      if (aiAnalyzingRef.current) refreshAiBatchStatusRef.current();
+      applyLiveAiProgressRef.current(event);
     });
     const unsubscribeCompleted = api.onAiCompleted((event) => {
       if (event.libraryId !== library.libraryId) return;
@@ -11753,10 +11769,18 @@ function AppInner() {
       void loadAiConfig();
       return;
     }
+    let counterBaseline = {
+      succeeded: aiJobs?.succeeded ?? 0,
+      failed: aiJobs?.failed ?? 0,
+    };
     try {
       const status = await api.getAiJobStatus({ libraryId: library.libraryId });
       if (status.ok) {
         setAiJobs(status.value);
+        counterBaseline = {
+          succeeded: status.value.succeeded,
+          failed: status.value.failed,
+        };
         notifyAiConnectionBatchStarted(status.value.jobs);
       } else {
         notifyAiConnectionBatchStarted(aiJobs?.jobs ?? []);
@@ -11791,6 +11815,8 @@ function AppInner() {
       analyzingAssetIdRef.current = targetIds[0] ?? null;
       lastAiBatchAssetIdRef.current = analyzingAssetIdRef.current;
       analyzingBatchSizeRef.current = jobIds.length + skippedCount;
+      aiBatchKnownJobsRef.current = [];
+      aiBatchCounterBaselineRef.current = counterBaseline;
       setAiBatchProgress(
         computeAiBatchProgressForJobs(jobIds, [], { skipped: skippedCount }),
       );
@@ -11799,10 +11825,8 @@ function AppInner() {
         setAiAnalyzing(true);
         setAiProgressBannerVisible(true);
       });
-      // The fixed workspace progress banner is the only in-progress signal.
-      // A transient notice duplicates it and can hide more important feedback.
-      void loadAiJobs(true);
-      void refreshAiBatchStatus();
+      // Live progress comes from ai.progress events. A status RPC here would
+      // sit behind ai.process-queue and freeze the banner at 0/total.
     } catch (caught) {
       setError(toMessage(caught, t("toast.aiAnalyzeFailed"), locale));
     }
@@ -11900,6 +11924,104 @@ function AppInner() {
     }
   }
 
+  function finishTrackedAiBatch(
+    progress: AiBatchProgressSnapshot,
+    jobs: ReadonlyArray<{ status: string; errorCode?: string | null }>,
+  ): void {
+    if (aiBatchJobIdsRef.current.length === 0) return;
+    aiBatchJobIdsRef.current = [];
+    aiBatchKnownJobsRef.current = [];
+    aiBatchStatusRequestRef.current++;
+    const pendingAssetId = analyzingAssetIdRef.current;
+    const batchSize = analyzingBatchSizeRef.current;
+    aiAnalyzingRef.current = false;
+    analyzingAssetIdRef.current = null;
+    analyzingBatchSizeRef.current = 0;
+    setAiAnalyzing(false);
+    setAiBatchProgress(null);
+
+    const detail = summarizeAiFailureCodes(
+      collectRecentAiFailureCodes(
+        jobs.map((job) => ({ status: job.status, errorCode: job.errorCode ?? null })),
+      ),
+      locale,
+    );
+    const showTotalFailure = () => {
+      showBlockingError(
+        t("dialog.aiAnalyzeFailure.title"),
+        detail
+          ? t("toast.aiAnalyzeFailedDetail", { detail })
+          : t("toast.aiAnalyzeFailed"),
+      );
+    };
+    const showSingleFailure = () => {
+      setError(
+        detail
+          ? t("toast.aiAnalyzeFailedDetail", { detail })
+          : t("toast.aiAnalyzeFailed"),
+      );
+    };
+
+    const failedOutcomes = progress.failed;
+    if (failedOutcomes > 0) {
+      if (progress.succeeded === 0 && progress.cancelled === 0) {
+        if (pendingAssetId && batchSize <= 1) showSingleFailure();
+        else showTotalFailure();
+      } else {
+        setNotice(
+          t("toast.aiAnalyzeDoneBatch", {
+            succeeded: progress.succeeded,
+            failed: failedOutcomes,
+          }) +
+            (progress.skipped > 0
+              ? t("toast.aiAnalyzeSkippedSuffix", { count: progress.skipped })
+              : "") +
+            (detail ? ` ${detail}` : ""),
+        );
+      }
+    } else if (progress.cancelled > 0) {
+      setNotice(t("toast.aiAnalyzeStopped"));
+    } else if (batchSize > 1) {
+      setNotice(
+        t("toast.aiAnalyzeDoneBatch", {
+          succeeded: progress.succeeded,
+          failed: 0,
+        }) +
+          (progress.skipped > 0
+            ? t("toast.aiAnalyzeSkippedSuffix", { count: progress.skipped })
+            : ""),
+      );
+    } else if (batchSize > 0) {
+      setNotice(t("toast.aiAnalyzeDone"));
+    }
+    void reloadCurrentContentRef.current();
+  }
+
+  function applyLiveAiProgress(event: {
+    queued: number;
+    running: number;
+    succeeded: number;
+    failed: number;
+    changedJobs?: AiProgressJobUpdate[];
+  }): void {
+    if (!aiAnalyzingRef.current) return;
+    const jobIds = aiBatchJobIdsRef.current;
+    if (jobIds.length === 0) return;
+    const applied = progressFromAiProgressEvent({
+      jobIds,
+      knownJobs: aiBatchKnownJobsRef.current,
+      changedJobs: event.changedJobs,
+      skipped: aiBatchSkippedCountRef.current,
+      baseline: aiBatchCounterBaselineRef.current,
+      counters: event,
+    });
+    aiBatchKnownJobsRef.current = applied.knownJobs;
+    setAiBatchProgress(applied.progress);
+    if (applied.progress.done >= applied.progress.batchTotal) {
+      finishTrackedAiBatch(applied.progress, applied.knownJobs);
+    }
+  }
+
   async function refreshAiBatchStatus() {
     if (!api || !library) return;
     const jobIds = aiBatchJobIdsRef.current;
@@ -11920,82 +12042,25 @@ function AppInner() {
       const progress = computeAiBatchProgressForJobs(jobIds, result.value.jobs, {
         skipped: aiBatchSkippedCountRef.current,
       });
+      aiBatchKnownJobsRef.current = result.value.jobs
+        .filter((job) => jobIds.includes(job.jobId))
+        .map((job) => ({
+          jobId: job.jobId,
+          status: job.status,
+          errorCode: job.errorCode,
+        }));
       setAiBatchProgress(progress);
       if (progress.done < progress.batchTotal) return;
-
-      // Completion is defined by this batch's durable job IDs, not by the
-      // whole library becoming idle. Other manual or automatic jobs may run.
-      aiBatchJobIdsRef.current = [];
-      aiBatchStatusRequestRef.current++;
-      const pendingAssetId = analyzingAssetIdRef.current;
-      const batchSize = analyzingBatchSizeRef.current;
-      aiAnalyzingRef.current = false;
-      analyzingAssetIdRef.current = null;
-      analyzingBatchSizeRef.current = 0;
-      setAiAnalyzing(false);
-      setAiBatchProgress(null);
-
-      const detail = summarizeAiFailureCodes(
-        collectRecentAiFailureCodes(result.value.jobs),
-        locale,
-      );
-      const showTotalFailure = () => {
-        showBlockingError(
-          t("dialog.aiAnalyzeFailure.title"),
-          detail
-            ? t("toast.aiAnalyzeFailedDetail", { detail })
-            : t("toast.aiAnalyzeFailed"),
-        );
-      };
-      const showSingleFailure = () => {
-        setError(
-          detail
-            ? t("toast.aiAnalyzeFailedDetail", { detail })
-            : t("toast.aiAnalyzeFailed"),
-        );
-      };
-
-      const failedOutcomes = progress.failed;
-      if (failedOutcomes > 0) {
-        if (progress.succeeded === 0 && progress.cancelled === 0) {
-          if (pendingAssetId && batchSize <= 1) showSingleFailure();
-          else showTotalFailure();
-        } else {
-          setNotice(
-            t("toast.aiAnalyzeDoneBatch", {
-              succeeded: progress.succeeded,
-              failed: failedOutcomes,
-            }) +
-              (progress.skipped > 0
-                ? t("toast.aiAnalyzeSkippedSuffix", { count: progress.skipped })
-                : "") +
-              (detail ? ` ${detail}` : ""),
-          );
-        }
-      } else if (progress.cancelled > 0) {
-        setNotice(t("toast.aiAnalyzeStopped"));
-      } else if (batchSize > 1) {
-        setNotice(
-          t("toast.aiAnalyzeDoneBatch", {
-            succeeded: progress.succeeded,
-            failed: 0,
-          }) +
-            (progress.skipped > 0
-              ? t("toast.aiAnalyzeSkippedSuffix", { count: progress.skipped })
-              : ""),
-        );
-      } else if (batchSize > 0) {
-        setNotice(t("toast.aiAnalyzeDone"));
-      }
-      void reloadCurrentContentRef.current();
+      finishTrackedAiBatch(progress, result.value.jobs);
     } catch {
       // A transient status query must not finish or miscount an active batch;
-      // the next throttled progress event will retry this refresh.
+      // the next progress event will retry this refresh.
     }
   }
   refreshAiBatchStatusRef.current = () => {
     void refreshAiBatchStatus();
   };
+  applyLiveAiProgressRef.current = applyLiveAiProgress;
 
   useEffect(() => {
     // Serpent-e97c00: one bounded, coalesced fallback stream per open library.
@@ -12143,6 +12208,7 @@ function AppInner() {
           // unrelated or partially cancelled batch tracking.
           aiBatchJobIdsRef.current = [];
           aiBatchSkippedCountRef.current = 0;
+          aiBatchKnownJobsRef.current = [];
           lastAiBatchJobIdsRef.current = [];
           lastAiBatchAssetIdRef.current = null;
           aiBatchStatusRequestRef.current++;
@@ -14992,6 +15058,7 @@ function AppInner() {
       />
       <AiConnectionFailureDialog
         failedCount={aiConnectionFailureGate.failedJobIds.length}
+        failureCode={aiConnectionFailureGate.failureCode}
         onAbort={onAiConnectionFailureAbort}
         onRetry={handleAiConnectionFailureRetry}
         open={aiConnectionFailureGate.open}
