@@ -158,7 +158,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
       element.selectionStart,
       element.selectionEnd,
     ]);
-    expect(collectionSelection).toEqual(['精选'.length, '精选'.length]);
+    expect(collectionSelection).toEqual([0, '精选'.length]);
     await renameCollectionInput.fill('收藏');
     await renameCollectionInput.press('Enter');
     await expect(window.getByRole('button', { name: /收藏/ })).toBeVisible();
@@ -298,7 +298,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
       element.selectionStart,
       element.selectionEnd,
     ]);
-    expect(smartCollectionSelection).toEqual(['英雄精选'.length, '英雄精选'.length]);
+    expect(smartCollectionSelection).toEqual([0, '英雄精选'.length]);
     await smartCollectionRenameInput.fill('英雄筛选');
     await window.getByRole('dialog').getByRole('button', { name: '保存名称' }).click();
     await expect(sidebarSmartCollectionRow(window, '英雄筛选')).toBeVisible();

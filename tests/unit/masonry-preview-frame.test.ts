@@ -35,6 +35,13 @@ describe("estimateMasonryPreviewHeightPx", () => {
     );
   });
 
+  it("uses the font specimen ratio when a font has no resolution", () => {
+    expect(estimateMasonryPreviewHeightPx(null, null, 160, "font")).toBeCloseTo(
+      158 / (16 / 9),
+      5,
+    );
+  });
+
   it("never collapses to zero when the column width is unknown", () => {
     expect(estimateMasonryPreviewHeightPx(1920, 1080, 0)).toBe(1);
     expect(estimateMasonryPreviewHeightPx(null, null, 0)).toBe(1);

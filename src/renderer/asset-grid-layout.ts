@@ -181,7 +181,11 @@ export function distributeIntegerRowWidths(
   return widths;
 }
 
-export function aspectRatioForAsset(width: number | null, height: number | null): number {
+export function aspectRatioForAsset(
+  width: number | null,
+  height: number | null,
+  mediaType?: string | null,
+): number {
   if (
     typeof width === "number" &&
     typeof height === "number" &&
@@ -190,7 +194,9 @@ export function aspectRatioForAsset(width: number | null, height: number | null)
   ) {
     return width / height;
   }
-  return DEFAULT_ASPECT;
+  // Font specimen covers are rendered as 16:9 even though the source font has
+  // no pixel dimensions. Keep justified geometry aligned with that CSS frame.
+  return mediaType === "font" ? 16 / 9 : DEFAULT_ASPECT;
 }
 
 /**

@@ -132,7 +132,12 @@ export function estimateMasonryCardBodyPx(
   captionBandPx: CaptionBandSource = MASONRY_CAPTION_BAND_PX,
 ): number {
   return (
-    estimateMasonryPreviewHeightPx(asset.width, asset.height, columnWidthPx) +
+    estimateMasonryPreviewHeightPx(
+      asset.width,
+      asset.height,
+      columnWidthPx,
+      asset.mediaType,
+    ) +
     (showCaption ? resolveCaptionBandSource(captionBandPx, asset) : 0)
   );
 }
@@ -202,7 +207,7 @@ export function layoutJustifiedAssetRects(
   const rows = layoutJustifiedRows(
     assets.map((asset) => ({
       id: asset.assetId,
-      aspectRatio: aspectRatioForAsset(asset.width, asset.height),
+      aspectRatio: aspectRatioForAsset(asset.width, asset.height, asset.mediaType),
     })),
     availableWidth,
     cardSize,

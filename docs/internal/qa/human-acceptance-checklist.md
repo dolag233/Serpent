@@ -44,6 +44,13 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-09-20 重命名选区与无分辨率卡片高度
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| RENAME-CARET-002 | 资产、文件夹、合集与智能合集重命名的默认选区 | 待人类验收 | ① 选中有扩展名的资产按 F2。② 分别从侧栏右键重命名文件夹、合集、智能合集。 | 资产只选中文件名主体，扩展名不被选中；文件夹、合集和智能合集选中完整名称，输入即可替换。 | `src/renderer/App.tsx`、`src/renderer/NavigationSidebar.tsx`、`src/renderer/RenameDialog.tsx` / `tests/e2e/asset-rename.test.ts`、`tests/e2e/folder-context-menu.test.ts`、`tests/e2e/collection-folder-hierarchy-regressions.test.ts`、`tests/e2e/organization-search-trash.test.ts` | 2026-09-20：定向单测通过；待人工复验。 |
+| CARD-META-002 | 无分辨率资产的卡片高度自适应 | 待人类验收 | 打开含字体资产的文件夹，分别查看平铺和瀑布流。 | 字体资产没有分辨率行，卡片预览使用 16:9 样张比例，整体高度不再保留多余空白。 | `src/renderer/masonry-preview-frame.ts`、`src/renderer/asset-grid-layout.ts`、`src/renderer/canvas-asset-layout.ts`、`src/renderer/browse/virtual-browse-canvas.tsx` / `tests/unit/masonry-preview-frame.test.ts`、`tests/unit/asset-grid-layout.test.ts`、既有 `tests/unit/asset-caption-band.test.ts` | 2026-09-20：定向单测通过；待人工复验。 |
+
 ### 2026-09-19 文本查看器
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

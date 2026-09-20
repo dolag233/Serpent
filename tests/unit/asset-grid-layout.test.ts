@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   ASSET_GRID_GAP_PX,
   assetGridLayoutStyle,
+  aspectRatioForAsset,
   countFittingColumns,
   distributeIntegerRowWidths,
   distributeMasonryItems,
@@ -32,6 +33,13 @@ describe("assetGridLayoutStyle", () => {
     expect(assetGridLayoutStyle("grid", 160)).toEqual({});
     expect(assetGridLayoutStyle("masonry", 96)).toEqual({});
     expect(assetGridLayoutStyle("masonry", 320)).toEqual({});
+  });
+});
+
+describe("missing asset dimensions", () => {
+  it("uses the font specimen ratio for justified layout", () => {
+    expect(aspectRatioForAsset(null, null, "font")).toBe(16 / 9);
+    expect(aspectRatioForAsset(null, null, "document")).toBe(1);
   });
 });
 

@@ -130,7 +130,7 @@ async function openFolderRenameInline(window: Page, folderName: string) {
     element.selectionStart,
     element.selectionEnd,
   ]);
-  expect(selection).toEqual([folderName.length, folderName.length]);
+  expect(selection).toEqual([0, folderName.length]);
   return input;
 }
 
@@ -276,8 +276,8 @@ test("renames a folder inline from the context menu and keeps its assets visible
     await expect(assetCard).toBeVisible({ timeout: 15_000 });
 
     const input = await openFolderRenameInline(window, "原画");
-    // The row becomes an input holding the current name, focused with the
-    // caret at the end so typing appends unless the user moves it.
+    // The row becomes an input holding the current name with the full name
+    // selected, so typing replaces it immediately.
     await expect(window.getByRole("dialog")).toHaveCount(0);
     await expect(input).toHaveValue("原画");
     await expect(input).toBeFocused();

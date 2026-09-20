@@ -14101,7 +14101,7 @@ function AppInner() {
                                         event.currentTarget.value,
                                       );
                                       event.currentTarget.setSelectionRange(
-                                        baseName.length,
+                                        0,
                                         baseName.length,
                                       );
                                     }}
