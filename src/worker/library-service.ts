@@ -772,6 +772,10 @@ import {
   type BrowseSessionSnapshot,
 } from './browse-session-store';
 import {
+  LibraryReconciliationOwner,
+  type LibraryReconciliationTask,
+} from './reconciliation-owner';
+import {
   MODEL_THUMBNAIL_GENERATOR_VERSION,
 } from '../shared/model-thumbnail-protocol';
 import { DOCUMENT_THUMBNAIL_GENERATOR_VERSION } from '../shared/document-thumbnail-protocol';
@@ -3813,24 +3817,7 @@ interface RefreshManagedAssetsDiscovery {
   movedLinkedAssetsReconciled?: boolean;
 }
 
-interface OpenReconciliationTask {
-  controller: AbortController;
-  generation: number;
-  libraryId: string;
-  openLibrary: OpenLibrary;
-  promise: Promise<void>;
-  reason: 'open' | 'watcher' | 'network';
-  triggerScope?: string;
-  linkedFolderIds?: string[];
-  /** Existing linked source paths proven by precise native file-change events. */
-  linkedFilePathsByFolder?: Map<string, Set<string>>;
-  /**
-   * Serpent-be29a9: release the scheduler's background admission at a safe
-   * point and take it back before the next batch. Supplied by the Worker, which
-   * owns the scheduler; absent for reconciliations the Worker did not schedule.
-   */
-  admissionYield?: () => Promise<void>;
-}
+type OpenReconciliationTask = LibraryReconciliationTask<OpenLibrary>;
 
 interface ArtifactPathCacheEntry {
   absolutePath: string;
@@ -6813,8 +6800,7 @@ export class LibraryService {
    */
   private readonly deferredOpenMaintenanceByLibrary = new Map<string, ReturnType<typeof setTimeout>>();
   /** One cancellable reconciliation owner per open library generation. */
-  private readonly reconciliationByLibrary = new Map<string, OpenReconciliationTask>();
-  private readonly reconciliationGenerationByLibrary = new Map<string, number>();
+  private readonly reconciliationOwner = new LibraryReconciliationOwner<OpenLibrary>();
   /**
    * Open automation groups are keyed by their Main-owned execution source.
    * The value is an in-memory reservation until the first real step is
@@ -7944,7 +7930,7 @@ export class LibraryService {
   ): Promise<void> {
     const initialLibrary = this.openById.get(libraryId);
     if (!initialLibrary || initialLibrary.readOnly) return;
-    const previous = this.reconciliationByLibrary.get(libraryId);
+    const previous = this.reconciliationOwner.current(libraryId);
     if (previous) {
       try {
         await previous.promise;
@@ -7957,20 +7943,14 @@ export class LibraryService {
     const openLibrary = this.openById.get(libraryId);
     if (!openLibrary || openLibrary !== initialLibrary || openLibrary.readOnly) return;
 
-    const generation = (this.reconciliationGenerationByLibrary.get(libraryId) ?? 0) + 1;
-    this.reconciliationGenerationByLibrary.set(libraryId, generation);
-    const task: OpenReconciliationTask = {
-      controller: new AbortController(),
-      generation,
+    const task = this.reconciliationOwner.register({
       libraryId,
       openLibrary,
-      promise: Promise.resolve(),
       reason,
       ...(triggerScope === undefined ? {} : { triggerScope }),
       ...(linkedFolderIds === undefined ? {} : { linkedFolderIds }),
       ...(linkedFilePathsByFolder === undefined ? {} : { linkedFilePathsByFolder }),
-    };
-    this.reconciliationByLibrary.set(libraryId, task);
+    });
     task.promise = (async () => {
       try {
         await this.yieldReconciliation(task);
@@ -7993,9 +7973,7 @@ export class LibraryService {
     try {
       await task.promise;
     } finally {
-      if (this.reconciliationByLibrary.get(libraryId) === task) {
-        this.reconciliationByLibrary.delete(libraryId);
-      }
+      this.reconciliationOwner.clearIfCurrent(task);
     }
   }
 
@@ -30239,20 +30217,14 @@ export class LibraryService {
     const openLibrary = this.openById.get(libraryId);
     if (!openLibrary || openLibrary.readOnly) return;
     this.cancelDeferredOpenMaintenance(libraryId);
-    const previous = this.reconciliationByLibrary.get(libraryId);
-    previous?.controller.abort();
-    const generation = (this.reconciliationGenerationByLibrary.get(libraryId) ?? 0) + 1;
-    this.reconciliationGenerationByLibrary.set(libraryId, generation);
-    const task: OpenReconciliationTask = {
-      controller: new AbortController(),
-      generation,
+    this.reconciliationOwner.abort(libraryId);
+    const task = this.reconciliationOwner.register({
       libraryId,
       openLibrary,
-      promise: Promise.resolve(),
       reason: 'open',
       ...(options?.admissionYield === undefined ? {} : { admissionYield: options.admissionYield }),
-    };
-    this.reconciliationByLibrary.set(libraryId, task);
+    });
+    const generation = task.generation;
     const stageLog = process.env.SERPENT_REFRESH_STAGE_LOG === '1';
     const startedAt = performance.now();
     let stageMark = startedAt;
@@ -30357,15 +30329,13 @@ export class LibraryService {
     try {
       await task.promise;
     } finally {
-      if (this.reconciliationByLibrary.get(libraryId) === task) {
-        this.reconciliationByLibrary.delete(libraryId);
-      }
+      this.reconciliationOwner.clearIfCurrent(task);
     }
   }
 
   /** Request the current open-generation owner to stop at its next safe point. */
   cancelOpenBackgroundReconciliation(libraryId: string): void {
-    this.reconciliationByLibrary.get(libraryId)?.controller.abort();
+    this.reconciliationOwner.abort(libraryId);
   }
 
   /**
@@ -44117,15 +44087,13 @@ export class LibraryService {
   }
 
   private reconciliationAbortError(): Error {
-    const error = new Error('Open-library reconciliation was cancelled.');
-    error.name = 'AbortError';
-    return error;
+    return this.reconciliationOwner.abortError();
   }
 
   private assertReconciliationActive(task: OpenReconciliationTask): void {
     if (
       task.controller.signal.aborted
-      || this.reconciliationByLibrary.get(task.libraryId) !== task
+      || !this.reconciliationOwner.isCurrent(task)
       || this.openById.get(task.libraryId) !== task.openLibrary
       || !this.sqlitePrimaryIsOpen(task.openLibrary)
     ) {
@@ -44170,7 +44138,7 @@ export class LibraryService {
       this.deferredOpenMaintenanceByLibrary.delete(libraryId);
       if (
         this.openById.get(libraryId) !== openLibrary
-        || this.reconciliationGenerationByLibrary.get(libraryId) !== generation
+        || this.reconciliationOwner.generation(libraryId) !== generation
       ) return;
       const remainingMs = (this.interactiveIdleUntilByLibrary.get(libraryId) ?? 0) - Date.now();
       if (remainingMs > 0) {
@@ -44188,7 +44156,7 @@ export class LibraryService {
           await this.createDatabaseBackupForOpenLibrary(openLibrary, 'open');
           if (
             this.openById.get(libraryId) !== openLibrary
-            || this.reconciliationGenerationByLibrary.get(libraryId) !== generation
+            || this.reconciliationOwner.generation(libraryId) !== generation
           ) return;
           readLibraryIdentity(openLibrary.connection);
         } catch (error) {
@@ -48420,7 +48388,7 @@ export class LibraryService {
       );
     };
     this.cancelDeferredOpenMaintenance(libraryId);
-    const reconciliation = this.reconciliationByLibrary.get(libraryId);
+    const reconciliation = this.reconciliationOwner.current(libraryId);
     this.cancelOpenBackgroundReconciliation(libraryId);
     if (reconciliation) {
       const reconciliationStartedAt = performance.now();
