@@ -4,8 +4,12 @@ import { createPublicError } from "../../src/shared/protocol/errors";
 import {
   applyExternalLibrarySourceCleanup,
   applyLibraryRendererLifecycle,
+  applyLibraryReplacementAfterWorker,
   applyLibraryWorkerSideEffects,
+  externalSourceRootFromCommand,
   mapBillfishInspectedDisplayName,
+  maybeBeginLibraryDeleteFromDisk,
+  maybeDelayE2eTrash,
   prepareLibraryLifecycle,
   tryHandleRecoveryReport,
 } from "../../src/main/library-request/lifecycle";
@@ -151,4 +155,79 @@ test("invalid recent opens drop the path from every recent list", () => {
     "C:\\libraries\\gone",
     expect.any(Function),
   );
+});
+
+test("delete-from-disk begins the media fence before Worker dispatch", () => {
+  const beginFence = vi.fn();
+  const clearNativeAssetDragCache = vi.fn();
+  expect(maybeBeginLibraryDeleteFromDisk(
+    { type: "library.delete-from-disk.request", libraryId: "lib-1" },
+    { beginFence, clearNativeAssetDragCache },
+  )).toBe("lib-1");
+  expect(beginFence).toHaveBeenCalledWith("lib-1");
+  expect(clearNativeAssetDragCache).toHaveBeenCalledWith("lib-1");
+});
+
+test("cancelled replacement closes the new library and restores the previous one", async () => {
+  const closeOpenedLibrary = vi.fn(async () => undefined);
+  const reopenLibrariesAfterFailedReplacement = vi.fn(async () => undefined);
+  const publishLifecycle = vi.fn();
+  await expect(applyLibraryReplacementAfterWorker(
+    {
+      ok: true,
+      type: "library.opened",
+      library: {
+        libraryId: "lib-new",
+        displayName: "New",
+        libraryPath: "C:\\libraries\\new",
+      },
+    },
+    {
+      cancelled: true,
+      previousLibraryPaths: ["C:\\libraries\\old"],
+      operation: "open",
+    },
+    {
+      closeOpenedLibrary,
+      logError: vi.fn(),
+      reopenLibrariesAfterFailedReplacement,
+      publishLifecycle,
+    },
+  )).resolves.toEqual({
+    ok: false,
+    error: createPublicError("CANCELLED"),
+  });
+  expect(closeOpenedLibrary).toHaveBeenCalledWith("lib-new");
+  expect(reopenLibrariesAfterFailedReplacement).toHaveBeenCalledWith(["C:\\libraries\\old"]);
+  expect(publishLifecycle).toHaveBeenCalledWith({
+    type: "library.open-failed",
+    operation: "open",
+    error: createPublicError("CANCELLED"),
+  });
+});
+
+test("E2E trash delay stays gated to unpackaged E2E", async () => {
+  const delay = vi.fn(async () => undefined);
+  await maybeDelayE2eTrash(
+    { type: "asset.trash", libraryId: "lib-1", assetIds: ["asset-1"] },
+    {
+      isUnpackagedE2e: () => true,
+      env: (name) => (name === "SERPENT_E2E_TRASH_DELAY_MS" ? "25" : undefined),
+      delay,
+    },
+  );
+  expect(delay).toHaveBeenCalledWith(25);
+});
+
+test("eagle and billfish commands expose their temporary source root", () => {
+  expect(externalSourceRootFromCommand({
+    type: "library.open-eagle",
+    sourceRootPath: "C:\\libraries\\eagle-source",
+    selectedParentPath: "C:\\libraries",
+    displayName: "Eagle",
+  })).toBe("C:\\libraries\\eagle-source");
+  expect(externalSourceRootFromCommand({
+    type: "library.close",
+    libraryId: "lib-1",
+  })).toBeUndefined();
 });

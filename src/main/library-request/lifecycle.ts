@@ -424,3 +424,108 @@ export function applyLibraryRendererLifecycle(
     runtime.publishLifecycle({ type: "library.closed", libraryId: result.libraryId });
   }
 }
+
+export type LibraryDeleteFromDiskRuntime = {
+  beginFence: (libraryId: string) => void;
+  clearNativeAssetDragCache: (libraryId: string) => void;
+};
+
+/**
+ * Drop serpent:// file handles before the Worker tries to rm the root.
+ * Always end this fence in `finally`; ZIP import preserves library_id.
+ */
+export function maybeBeginLibraryDeleteFromDisk(
+  request: RendererRequest,
+  runtime: LibraryDeleteFromDiskRuntime,
+): string | undefined {
+  if (request.type !== "library.delete-from-disk.request") return undefined;
+  runtime.beginFence(request.libraryId);
+  runtime.clearNativeAssetDragCache(request.libraryId);
+  return request.libraryId;
+}
+
+export type LibraryReplacementAfterWorkerRuntime = {
+  closeOpenedLibrary: (libraryId: string) => Promise<void>;
+  logError: (scope: string, error: unknown, context?: Record<string, unknown>) => void;
+  reopenLibrariesAfterFailedReplacement: (paths: string[]) => Promise<void>;
+  publishLifecycle: (event: RendererLifecycleEvent) => void;
+};
+
+/**
+ * Cancel-during-open closes the replacement library and restores the previous
+ * one. A failed replacement also reopens the previous libraries.
+ */
+export async function applyLibraryReplacementAfterWorker(
+  workerResult: WorkerResult,
+  input: {
+    cancelled: boolean;
+    previousLibraryPaths: string[];
+    operation: LibraryOpenOperation | undefined;
+  },
+  runtime: LibraryReplacementAfterWorkerRuntime,
+): Promise<RendererResult | undefined> {
+  if (input.cancelled) {
+    if (workerResult.ok && workerResult.type === "library.opened") {
+      try {
+        await runtime.closeOpenedLibrary(workerResult.library.libraryId);
+      } catch (error) {
+        runtime.logError("library.open.cancel-close", error, {
+          libraryId: workerResult.library.libraryId,
+        });
+      }
+    }
+    if (input.previousLibraryPaths.length > 0) {
+      await runtime.reopenLibrariesAfterFailedReplacement(input.previousLibraryPaths);
+    }
+    if (input.operation) {
+      runtime.publishLifecycle({
+        type: "library.open-failed",
+        operation: input.operation,
+        error: createPublicError("CANCELLED"),
+      });
+    }
+    return {
+      ok: false,
+      error: createPublicError("CANCELLED"),
+    } satisfies RendererResult;
+  }
+  if (!workerResult.ok && input.previousLibraryPaths.length > 0) {
+    await runtime.reopenLibrariesAfterFailedReplacement(input.previousLibraryPaths);
+  }
+  return undefined;
+}
+
+export type E2eTrashDelayRuntime = {
+  isUnpackagedE2e: () => boolean;
+  env: (name: string) => string | undefined;
+  delay: (ms: number) => Promise<void>;
+};
+
+/**
+ * Deterministic E2E seam for optimistic asset deletion. The renderer must
+ * remove the card before this real IPC/Worker request resolves; production
+ * never delays requests because this branch is gated by SERPENT_E2E.
+ */
+export async function maybeDelayE2eTrash(
+  command: WorkerCommand,
+  runtime: E2eTrashDelayRuntime,
+): Promise<void> {
+  if (!runtime.isUnpackagedE2e() || command.type !== "asset.trash") return;
+  const delayMs = Number.parseInt(runtime.env("SERPENT_E2E_TRASH_DELAY_MS") ?? "", 10);
+  if (Number.isInteger(delayMs) && delayMs > 0 && delayMs <= 10_000) {
+    await runtime.delay(delayMs);
+  }
+}
+
+export function externalSourceRootFromCommand(
+  command: WorkerCommand | undefined,
+): string | undefined {
+  return command?.type === "library.inspect-eagle" ||
+    command?.type === "library.open-eagle" ||
+    command?.type === "asset.import-eagle" ||
+    command?.type === "library.inspect-billfish" ||
+    command?.type === "library.open-billfish" ||
+    command?.type === "asset.import-billfish"
+      ? command.sourceRootPath
+      : undefined;
+}

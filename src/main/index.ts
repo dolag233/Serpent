@@ -67,6 +67,7 @@ import {
 import {
   tryHandleSyncOwnedRequest,
   applySyncWorkerBindings,
+  runSyncProbeWithRetry,
   type SyncServerRecord,
   type SyncBindingRecord,
 } from "./library-request/sync";
@@ -74,6 +75,7 @@ import { tryHandleAiOwnedRequest } from "./library-request/ai";
 import { tryHandlePreviewOwnedRequest } from "./library-request/preview";
 import { tryHandleMediaShellWorkerResult } from "./library-request/media-shell";
 import { maybePrimeNativeDrag } from "./library-request/native-drag";
+import { toRendererResult } from "./library-request/renderer-result";
 import { tryHandleRelinkOwnedRequest, maybeRememberRelinkPreview } from "./library-request/relink";
 import {
   prepareLibraryLifecycle,
@@ -82,6 +84,10 @@ import {
   mapBillfishInspectedDisplayName,
   applyLibraryRendererLifecycle,
   tryHandleRecoveryReport,
+  maybeBeginLibraryDeleteFromDisk,
+  applyLibraryReplacementAfterWorker,
+  maybeDelayE2eTrash,
+  externalSourceRootFromCommand,
 } from "./library-request/lifecycle";
 import { executeFolderMainCommand } from "./commands/folders";
 import { executeAssetIngestionMainCommand } from "./commands/asset-ingestion";
@@ -297,11 +303,9 @@ import {
   type WorkerCommand,
 } from "../shared/protocol/requests";
 import {
-  parseRendererResult,
   parseRendererLifecycleEvent,
   type RendererLifecycleEvent,
   type RendererResult,
-  type WorkerResult,
   type AssetChangeEvent,
   parseAssetChangeEvent,
   type LibraryChangedEvent,
@@ -2199,116 +2203,6 @@ async function processAiQueueBatch(
   }
 }
 
-function toRendererResult(
-  result: WorkerResult,
-  relinkPreviewId?: string,
-): RendererResult {
-  if (!result.ok) return parseRendererResult(result);
-  if (result.type === "library.opened") {
-    return parseRendererResult({
-      ok: true,
-      type: result.type,
-      library: {
-        libraryId: result.library.libraryId,
-        displayName: result.library.displayName,
-        displayPath: result.library.libraryPath,
-        // Serpent-033e: read-only degrade for newer-schema libraries.
-        readOnly: result.library.readOnly,
-        networkStorage: result.library.networkStorage,
-        libraryVersion: result.library.libraryVersion,
-        supportedSchemaVersion: result.library.supportedSchemaVersion,
-        // Serpent-verg.5: read-only because the migration is stuck.
-        migrationStuck: result.library.migrationStuck,
-        // Keep the recovery report path inside Main/Worker. Renderer receives
-        // only a boolean affordance so the filesystem boundary stays intact.
-        recovery: result.library.recovery
-          ? {
-              mode: result.library.recovery.mode,
-              ...(result.library.recovery.reportPath
-                ? { reportAvailable: true }
-                : {}),
-              ...(result.library.recovery.recoveredAssetCount === undefined
-                ? {}
-                : { recoveredAssetCount: result.library.recovery.recoveredAssetCount }),
-              ...(result.library.recovery.metadataRecovered === undefined
-                ? {}
-                : { metadataRecovered: result.library.recovery.metadataRecovered }),
-              ...(result.library.recovery.metadataLosses === undefined
-                ? {}
-                : { metadataLosses: result.library.recovery.metadataLosses }),
-            }
-          : undefined,
-      },
-    });
-  }
-  if (result.type === "library.renamed") {
-    return parseRendererResult({
-      ok: true,
-      type: result.type,
-      library: {
-        libraryId: result.library.libraryId,
-        displayName: result.library.displayName,
-        displayPath: result.library.libraryPath,
-        networkStorage: result.library.networkStorage,
-      },
-    });
-  }
-  if (result.type === "asset.recovery-probe") {
-    return parseRendererResult({
-      ok: true,
-      type: "asset.recovery-probe.result",
-      assetId: result.assetId,
-      probe: result.probe,
-    });
-  }
-  if (result.type === "library.list") {
-    return parseRendererResult({
-      ok: true,
-      type: result.type,
-      libraries: result.libraries.map((library) => ({
-        libraryId: library.libraryId,
-        displayName: library.displayName,
-        displayPath: library.libraryPath,
-        networkStorage: library.networkStorage,
-      })),
-    });
-  }
-  // library.imported includes libraryPath but the renderer schema strips it.
-  if (result.type === "library.imported") {
-    // Use libraryPath for lifecycle but strip from renderer result.
-    // The lifecycle is published in handleLibraryRequest above.
-    return parseRendererResult({
-      ok: true,
-      type: "library.imported",
-      importId: result.importId,
-      libraryId: result.libraryId,
-      displayName: result.displayName,
-    });
-  }
-  // library.deleted includes libraryPath for Main recent-store cleanup only.
-  if (result.type === "library.deleted") {
-    return parseRendererResult({
-      ok: true,
-      type: "library.deleted",
-      libraryId: result.libraryId,
-      displayName: result.displayName,
-      // Serpent-65d837: the library root is gone, but a `.del-*` aside may
-      // still exist; the Renderer shows a deferred-cleanup notice.
-      ...(result.pendingAsidePath ? { pendingCleanup: true } : {}),
-    });
-  }
-  if (result.type === "asset.relink-batch.preview") {
-    if (!relinkPreviewId) {
-      throw new Error("Batch relink preview is missing its Main-process token.");
-    }
-    return parseRendererResult({
-      ...result,
-      previewId: relinkPreviewId,
-    });
-  }
-  return parseRendererResult(result);
-}
-
 function createNativeDialogHost(): NativeDialogHost {
   return {
     getLocale: () => appLocale,
@@ -2671,61 +2565,6 @@ function assertNever(value: never): never {
   throw new Error(`Unhandled Renderer request: ${String(value)}`);
 }
 
-/** 测试连接的最大尝试次数（含首次）。 */
-const SYNC_PROBE_MAX_ATTEMPTS = 3;
-const SYNC_PROBE_RETRY_DELAY_MS = [1_000, 2_000];
-
-/**
- * 测试连接（sync.probe）：单次请求超时或网络类失败后自动重试，
- * 最大重试后返回带“已自动重试”提示的可读错误（用户决定 2026-08-17）。
- * 认证失败等确定性错误不重试，直接返回。
- */
-async function runSyncProbeWithRetry(
-  command: Extract<WorkerCommand, { type: "sync.probe" }>,
-): Promise<WorkerResult> {
-  if (!workerClient) throw new Error("Library Worker is unavailable.");
-  let lastError: WorkerResult & { ok: false } | undefined;
-  let lastTimeout = false;
-  for (let attempt = 0; attempt < SYNC_PROBE_MAX_ATTEMPTS; attempt += 1) {
-    try {
-      const result = await workerClient.request(command);
-      if (result.ok) return result;
-      // 确定性错误（认证失败/服务器不支持等）不重试。
-      if (!isRetryableProbeError(result.error)) return result;
-      lastError = result;
-    } catch (error) {
-      if (error instanceof WorkerRequestTimeoutError) {
-        lastTimeout = true;
-      } else {
-        throw error;
-      }
-    }
-    if (attempt < SYNC_PROBE_MAX_ATTEMPTS - 1) {
-      await new Promise((resolve) => setTimeout(resolve, SYNC_PROBE_RETRY_DELAY_MS[attempt] ?? 1_000));
-    }
-  }
-  if (lastTimeout) {
-    return {
-      ok: false,
-      error: createPublicError("SYNC_CONNECTION_FAILED", "SYNC_TIMEOUT"),
-    } satisfies WorkerResult;
-  }
-  return lastError ?? {
-    ok: false,
-    error: createPublicError("SYNC_CONNECTION_FAILED", "SYNC_NETWORK"),
-  } satisfies WorkerResult;
-}
-
-function isRetryableProbeError(error: { code: string; reason?: string }): boolean {
-  if (error.code !== "SYNC_CONNECTION_FAILED") return false;
-  return (
-    error.reason === "SYNC_TIMEOUT"
-    || error.reason === "SYNC_DNS"
-    || error.reason === "SYNC_CONNECTION_REFUSED"
-    || error.reason === "SYNC_NETWORK"
-  );
-}
-
 /**
  * Per-request Main-side trace for library lifecycle requests.
  *
@@ -2829,12 +2668,12 @@ async function handleLibraryRequest(
       if (!(await confirmCriticalRendererRequest(request))) return cancelled();
     }
 
-    if (request.type === "library.delete-from-disk.request") {
-      // Drop serpent:// file handles before the Worker tries to rm the root.
-      // Always end this fence in `finally`; ZIP import preserves library_id.
-      deleteFromDiskLibraryId = request.libraryId;
-      beginLibraryDeleteMediaFence(request.libraryId);
-      clearNativeAssetDragCache(request.libraryId);
+    const deleteFromDiskLibraryIdFromRequest = maybeBeginLibraryDeleteFromDisk(request, {
+      beginFence: beginLibraryDeleteMediaFence,
+      clearNativeAssetDragCache,
+    });
+    if (deleteFromDiskLibraryIdFromRequest) {
+      deleteFromDiskLibraryId = deleteFromDiskLibraryIdFromRequest;
     }
 
     const ingestionOwnedResult = await tryHandleIngestionOwnedRequest(request, {
@@ -3006,22 +2845,11 @@ async function handleLibraryRequest(
     if (lifecycle.clearPendingEagle) pendingEagleOpenSourcePath = undefined;
     if (lifecycle.clearPendingBillfish) pendingBillfishOpenSourcePath = undefined;
 
-    // Deterministic E2E seam for optimistic asset deletion. The renderer must
-    // remove the card before this real IPC/Worker request resolves; production
-    // never delays requests because this branch is gated by SERPENT_E2E.
-    if (
-      !app.isPackaged &&
-      process.env.SERPENT_E2E === "1" &&
-      command.type === "asset.trash"
-    ) {
-      const delayMs = Number.parseInt(
-        process.env.SERPENT_E2E_TRASH_DELAY_MS ?? "",
-        10,
-      );
-      if (Number.isInteger(delayMs) && delayMs > 0 && delayMs <= 10_000) {
-        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-      }
-    }
+    await maybeDelayE2eTrash(command, {
+      isUnpackagedE2e: () => !app.isPackaged && process.env.SERPENT_E2E === "1",
+      env: (name) => process.env[name],
+      delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    });
 
     // 测试连接（sync.probe）：单次超时后自动重试，最大重试后给出提醒
     // （用户决定 2026-08-17；传输数据本身无墙钟超时）。
@@ -3031,7 +2859,10 @@ async function handleLibraryRequest(
       : 0;
     const navigationWorkerStartedAt = navigationTrace ? performance.now() : 0;
     const workerResult = command.type === "sync.probe"
-      ? await runSyncProbeWithRetry(command)
+      ? await runSyncProbeWithRetry(command, (probe) => {
+        if (!workerClient) throw new Error("Library Worker is unavailable.");
+        return workerClient.request(probe);
+      })
       : await (async () => {
         const traceLibraryRequest = libraryRequestTraceEnabled();
         if (traceLibraryRequest) {
@@ -3069,34 +2900,25 @@ async function handleLibraryRequest(
         errorCode: workerResult.ok ? undefined : workerResult.error.code,
       });
     }
-    if (openCancellation?.cancelled) {
-      if (workerResult.ok && workerResult.type === "library.opened") {
-        try {
-          await workerClient.request({
-            type: "library.close",
-            libraryId: workerResult.library.libraryId,
-          }, { consumerId: options.consumerId });
-        } catch (error) {
-          logger?.error("library.open.cancel-close", error, {
-            libraryId: workerResult.library.libraryId,
-          });
-        }
-      }
-      if (previousLibraryPaths.length > 0) {
-        await reopenLibrariesAfterFailedReplacement(previousLibraryPaths);
-      }
-      if (operation) {
-        publishLifecycle({
-          type: "library.open-failed",
-          operation,
-          error: createPublicError("CANCELLED"),
-        });
-      }
-      return cancelled();
-    }
-    if (!workerResult.ok && previousLibraryPaths.length > 0) {
-      await reopenLibrariesAfterFailedReplacement(previousLibraryPaths);
-    }
+    const replacementOutcome = await applyLibraryReplacementAfterWorker(workerResult, {
+      cancelled: Boolean(openCancellation?.cancelled),
+      previousLibraryPaths,
+      operation,
+    }, {
+      closeOpenedLibrary: async (libraryId) => {
+        if (!workerClient) throw new Error("Library Worker is unavailable.");
+        await workerClient.request({
+          type: "library.close",
+          libraryId,
+        }, { consumerId: options.consumerId });
+      },
+      logError: (scope, error, context) => {
+        logger?.error(scope, error, context);
+      },
+      reopenLibrariesAfterFailedReplacement,
+      publishLifecycle,
+    });
+    if (replacementOutcome) return replacementOutcome;
 
     const externalSource = await applyExternalLibrarySourceCleanup(command, workerResult, {
       cleanupExternalSource,
@@ -3294,16 +3116,7 @@ async function handleLibraryRequest(
       endLibraryDeleteMediaFence(deleteFromDiskLibraryId);
     }
     if (!retainExternalSource) {
-      const sourceRootPath =
-        command?.type === "library.inspect-eagle" ||
-        command?.type === "library.open-eagle" ||
-        command?.type === "asset.import-eagle" ||
-        command?.type === "library.inspect-billfish" ||
-        command?.type === "library.open-billfish" ||
-        command?.type === "asset.import-billfish"
-          ? command.sourceRootPath
-          : undefined;
-      await cleanupExternalSource(sourceRootPath);
+      await cleanupExternalSource(externalSourceRootFromCommand(command));
     }
     if (clipboardStageDirectory) {
       try {

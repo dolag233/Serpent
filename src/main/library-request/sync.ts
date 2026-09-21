@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 
 import { normalizeWebDAVBaseUrl } from "../../shared/sync-paths";
-import type { RendererRequest } from "../../shared/protocol/requests";
+import type { RendererRequest, WorkerCommand } from "../../shared/protocol/requests";
 import type { RendererResult, WorkerResult } from "../../shared/protocol/responses";
 import { createPublicError } from "../../shared/protocol/errors";
+import { WorkerRequestTimeoutError } from "../worker-client";
 
 export type SyncServerRecord = {
   id: string;
@@ -189,4 +190,63 @@ export function applySyncWorkerBindings(
     };
     runtime.writeSyncBindings(syncBindings);
   }
+}
+
+/** 测试连接的最大尝试次数（含首次）。 */
+export const SYNC_PROBE_MAX_ATTEMPTS = 3;
+export const SYNC_PROBE_RETRY_DELAY_MS = [1_000, 2_000];
+
+export function isRetryableProbeError(error: { code: string; reason?: string }): boolean {
+  if (error.code !== "SYNC_CONNECTION_FAILED") return false;
+  return (
+    error.reason === "SYNC_TIMEOUT"
+    || error.reason === "SYNC_DNS"
+    || error.reason === "SYNC_CONNECTION_REFUSED"
+    || error.reason === "SYNC_NETWORK"
+  );
+}
+
+/**
+ * 测试连接（sync.probe）：单次请求超时或网络类失败后自动重试，
+ * 最大重试后返回带“已自动重试”提示的可读错误（用户决定 2026-08-17）。
+ * 认证失败等确定性错误不重试，直接返回。
+ */
+export async function runSyncProbeWithRetry(
+  command: Extract<WorkerCommand, { type: "sync.probe" }>,
+  requestWorker: (
+    command: Extract<WorkerCommand, { type: "sync.probe" }>,
+  ) => Promise<WorkerResult>,
+  delay: (ms: number) => Promise<void> = (ms) =>
+    new Promise((resolve) => setTimeout(resolve, ms)),
+): Promise<WorkerResult> {
+  let lastError: WorkerResult & { ok: false } | undefined;
+  let lastTimeout = false;
+  for (let attempt = 0; attempt < SYNC_PROBE_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const result = await requestWorker(command);
+      if (result.ok) return result;
+      // 确定性错误（认证失败/服务器不支持等）不重试。
+      if (!isRetryableProbeError(result.error)) return result;
+      lastError = result;
+    } catch (error) {
+      if (error instanceof WorkerRequestTimeoutError) {
+        lastTimeout = true;
+      } else {
+        throw error;
+      }
+    }
+    if (attempt < SYNC_PROBE_MAX_ATTEMPTS - 1) {
+      await delay(SYNC_PROBE_RETRY_DELAY_MS[attempt] ?? 1_000);
+    }
+  }
+  if (lastTimeout) {
+    return {
+      ok: false,
+      error: createPublicError("SYNC_CONNECTION_FAILED", "SYNC_TIMEOUT"),
+    } satisfies WorkerResult;
+  }
+  return lastError ?? {
+    ok: false,
+    error: createPublicError("SYNC_CONNECTION_FAILED", "SYNC_NETWORK"),
+  } satisfies WorkerResult;
 }

@@ -1,11 +1,14 @@
 import { expect, test, vi } from "vitest";
 
+import { createPublicError } from "../../src/shared/protocol/errors";
 import {
   applySyncWorkerBindings,
+  runSyncProbeWithRetry,
   tryHandleSyncOwnedRequest,
   type SyncOwnedRequestRuntime,
   type SyncServerRecord,
 } from "../../src/main/library-request/sync";
+import { WorkerRequestTimeoutError } from "../../src/main/worker-client";
 
 function runtime(overrides?: Partial<SyncOwnedRequestRuntime>): SyncOwnedRequestRuntime {
   return {
@@ -111,4 +114,37 @@ test("sync.run persists lastSyncedAt and keeps auto-sync off by default", () => 
       enabled: false,
     },
   });
+});
+
+test("sync.probe retries timeouts then returns the timeout error", async () => {
+  const requestWorker = vi.fn(async () => {
+    throw new WorkerRequestTimeoutError("req-1", "sync.probe");
+  });
+  const delay = vi.fn(async () => undefined);
+  await expect(runSyncProbeWithRetry(
+    { type: "sync.probe", baseUrl: "http://127.0.0.1:8080" },
+    requestWorker,
+    delay,
+  )).resolves.toMatchObject({
+    ok: false,
+    error: { code: "SYNC_CONNECTION_FAILED", reason: "SYNC_TIMEOUT" },
+  });
+  expect(requestWorker).toHaveBeenCalledTimes(3);
+  expect(delay).toHaveBeenCalledTimes(2);
+});
+
+test("sync.probe does not retry deterministic connection errors", async () => {
+  const requestWorker = vi.fn(async () => ({
+    ok: false as const,
+    error: createPublicError("SYNC_CONNECTION_FAILED", "SYNC_AUTH_FAILED"),
+  }));
+  await expect(runSyncProbeWithRetry(
+    { type: "sync.probe", baseUrl: "http://127.0.0.1:8080" },
+    requestWorker,
+    async () => undefined,
+  )).resolves.toEqual({
+    ok: false,
+    error: createPublicError("SYNC_CONNECTION_FAILED", "SYNC_AUTH_FAILED"),
+  });
+  expect(requestWorker).toHaveBeenCalledTimes(1);
 });
