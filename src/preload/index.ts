@@ -15,13 +15,6 @@ import { summarizePluginJobs } from '../shared/plugin-job-status';
 import type { RecentLibraryEntry } from '../shared/recent-libraries';
 import type { AiApiFormat } from '../shared/ai-endpoints';
 import type { AiReliabilitySettings } from '../shared/ai-reliability';
-import {
-  mcpSettingsResponseSchema,
-  mcpSettingsSnapshotSchema,
-  type McpSettingsSnapshot,
-  type McpSettingsRequest,
-  type SerpentMcpSettingsApi,
-} from '../shared/mcp';
 import { searchQuerySchema } from '../shared/asset-types';
 import type { EntityAppearance, EntityAppearanceTarget } from '../shared/entity-appearance';
 import type { FbxConversionResult, FbxConversionStats } from '../shared/fbx-conversion';
@@ -41,8 +34,6 @@ import {
   PLUGIN_MANAGER_CHANNEL,
   PLUGIN_INSTALL_PROGRESS_CHANNEL,
   PLUGIN_CONTRIBUTIONS_CHANGED_CHANNEL,
-  MCP_SETTINGS_REQUEST_CHANNEL,
-  MCP_SETTINGS_EVENT_CHANNEL,
 } from '../shared/protocol/channels';
 import { sendNativeAssetDrag } from './native-asset-drag';
 import {
@@ -109,6 +100,7 @@ import { resolveDroppedFilePaths } from './dropped-files';
 import { extractWebMediaDrop } from './web-media-drop';
 import { appUpdate } from './bridge/app-update';
 import { automation } from './bridge/automation';
+import { mcp } from './bridge/mcp';
 import { shell } from './bridge/shell';
 import { failure, getE2eRequestCount, importRequest, request } from './transport';
 
@@ -2514,22 +2506,6 @@ const e2eDiagnostics = Object.freeze({
   },
 });
 
-
-const mcp: SerpentMcpSettingsApi = Object.freeze({
-  async request(input: McpSettingsRequest) {
-    return mcpSettingsResponseSchema.parse(
-      await ipcRenderer.invoke(MCP_SETTINGS_REQUEST_CHANNEL, input),
-    );
-  },
-  onChanged(listener: (snapshot: McpSettingsSnapshot) => void) {
-    const handler = (_event: Electron.IpcRendererEvent, input: unknown) => {
-      const parsed = mcpSettingsSnapshotSchema.safeParse(input);
-      if (parsed.success) listener(parsed.data);
-    };
-    ipcRenderer.on(MCP_SETTINGS_EVENT_CHANNEL, handler);
-    return () => ipcRenderer.removeListener(MCP_SETTINGS_EVENT_CHANNEL, handler);
-  },
-});
 
 const plugins: SerpentPluginManagerApi = Object.freeze({
   async request(input: PluginManagerRequest): Promise<PluginManagerResponse> {
