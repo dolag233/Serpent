@@ -58,7 +58,12 @@ import {
 } from "./native-dialogs";
 import { executeLibraryMainCommand } from "./commands/library";
 import { tryHandleLibraryOwnedRequest, tryBuildOpenRecentCommand } from "./library-request/library";
-import { tryBuildIngestionCommand, maybeProbeImportSequences } from "./library-request/ingestion";
+import {
+  tryBuildIngestionCommand,
+  maybeProbeImportSequences,
+  tryHandleIngestionOwnedRequest,
+  applyImportWorkerResult,
+} from "./library-request/ingestion";
 import {
   tryHandleSyncOwnedRequest,
   applySyncWorkerBindings,
@@ -68,7 +73,12 @@ import {
 import { tryHandleAiOwnedRequest } from "./library-request/ai";
 import { tryHandlePreviewOwnedRequest } from "./library-request/preview";
 import { tryHandleMediaShellWorkerResult } from "./library-request/media-shell";
-import { tryHandleRelinkOwnedRequest } from "./library-request/relink";
+import { tryHandleRelinkOwnedRequest, maybeRememberRelinkPreview } from "./library-request/relink";
+import {
+  prepareLibraryLifecycle,
+  applyLibraryWorkerSideEffects,
+  tryHandleRecoveryReport,
+} from "./library-request/lifecycle";
 import { executeFolderMainCommand } from "./commands/folders";
 import { executeAssetIngestionMainCommand } from "./commands/asset-ingestion";
 import { executeLinkedFolderMainCommand } from "./commands/linked-folders";
@@ -274,7 +284,6 @@ import {
 } from "../shared/protocol/errors";
 import {
   LibraryParentError,
-  resolveWritableLibraryParent,
 } from "../worker/library-parent";
 import {
   parseNativeAssetDragRequest,
@@ -404,9 +413,6 @@ import {
   cleanupClipboardImage,
   cleanupStaleClipboardImages,
 } from "./desktop-ingestion";
-import {
-  createWebImportCollectionCommand,
-} from "./web-ingestion";
 import { serpentProtocolSchemes } from "./serpent-protocol-privileges";
 import {
   parsePluginUiAssetRequestFromNavigation,
@@ -2837,31 +2843,12 @@ async function handleLibraryRequest(
       clearNativeAssetDragCache(request.libraryId);
     }
 
-    if (request.type === "asset.import-drop-invalid.report") {
-      logger?.error(
-        "desktop-ingestion.drop-file-handle",
-        new Error(
-          "Electron could not resolve one or more dropped File handles.",
-        ),
-        { libraryId: request.libraryId },
-      );
-      return {
-        ok: false,
-        error: createPublicError("INVALID_DROP_SELECTION"),
-      } satisfies RendererResult;
-    }
-
-    if (request.type === "asset.import-web-invalid.report") {
-      logger?.error(
-        "web-ingestion.drop-metadata",
-        new Error(`Browser drag metadata was rejected: ${request.failure}.`),
-        { libraryId: request.libraryId, failure: request.failure },
-      );
-      return {
-        ok: false,
-        error: createPublicError(request.failure),
-      } satisfies RendererResult;
-    }
+    const ingestionOwnedResult = await tryHandleIngestionOwnedRequest(request, {
+      logError: (scope, error, context) => {
+        logger?.error(scope, error, context);
+      },
+    });
+    if (ingestionOwnedResult) return ingestionOwnedResult;
 
     // Serpent-xffq: 同步服务器与库绑定是 Main 本地配置（凭据经 safeStorage）。
     const syncOwnedResult = await tryHandleSyncOwnedRequest(request, {
@@ -3003,59 +2990,27 @@ async function handleLibraryRequest(
     });
     if (sequenceProbe?.kind === "result") return sequenceProbe.result;
     if (sequenceProbe?.kind === "command") command = sequenceProbe.command;
-    if (
-      (request.type === "asset.relink-batch.request" ||
-        request.type === "asset.relink-batch.preview-at-root.request") &&
-      command.type === "asset.relink-batch.preview"
-    ) {
-      const previewId = pendingRelinkPreviews.create(
-        request.libraryId,
-        command.newRootPath,
-      );
-      relinkPreviewContext = { libraryId: request.libraryId, previewId };
-    }
+    relinkPreviewContext = maybeRememberRelinkPreview(
+      request,
+      command,
+      (libraryId, newRootPath) => pendingRelinkPreviews.create(libraryId, newRootPath),
+    );
     if (!workerClient) throw new Error("Library Worker is unavailable.");
-    if (command.type === "library.create") operation = "create";
-    if (command.type === "library.open") operation = "open";
-    if (
-      command.type === "library.import-folder" ||
-      command.type === "library.import-zip"
-    )
-      operation = "import";
-    // Billfish inspection is the first point at which a validated source is
-    // ready to replace the active library. Detach the old library before the
-    // name panel appears, so a slow archive/metadata read is visible as an
-    // opening operation instead of looking like a stale browse session.
-    if (command.type === "library.inspect-billfish") operation = "open-billfish";
-    if (command.type === "library.open-eagle" || command.type === "library.open-billfish") {
-      try {
-        const selectedParentPath = resolveWritableLibraryParent({
-          selectedParentPath: command.selectedParentPath,
-          sourceRootPath: command.sourceRootPath,
-          createIfMissing: true,
-        });
-        command = { ...command, selectedParentPath };
-      } catch (error) {
-        if (error instanceof LibraryParentError) {
-          return {
-            ok: false,
-            error: createPublicError(error.code, error.reason),
-          } satisfies RendererResult;
-        }
-        throw error;
-      }
-      if (command.type === "library.open-eagle") {
-        pendingEagleOpenSourcePath = undefined;
-        operation = "open-eagle";
-      } else {
-        pendingBillfishOpenSourcePath = undefined;
-        operation = "open-billfish";
-      }
-    }
-    if (operation && !lifecyclePublished) publishLifecycle({ type: "library.opening", operation });
-    if (command.type === "library.open-eagle" || command.type === "library.open-billfish") {
-      previousLibraryPaths = await closeOpenLibrariesBeforeReplacement();
-    }
+    const lifecycle = await prepareLibraryLifecycle(command, {
+      operation,
+      lifecyclePublished,
+    }, {
+      closeOpenLibrariesBeforeReplacement,
+      publishOpening: (nextOperation) => {
+        publishLifecycle({ type: "library.opening", operation: nextOperation });
+      },
+    });
+    if (lifecycle.kind === "result") return lifecycle.result;
+    command = lifecycle.command;
+    operation = lifecycle.operation;
+    previousLibraryPaths = lifecycle.previousLibraryPaths;
+    if (lifecycle.clearPendingEagle) pendingEagleOpenSourcePath = undefined;
+    if (lifecycle.clearPendingBillfish) pendingBillfishOpenSourcePath = undefined;
 
     // Deterministic E2E seam for optimistic asset deletion. The renderer must
     // remove the card before this real IPC/Worker request resolves; production
@@ -3218,152 +3173,64 @@ async function handleLibraryRequest(
       );
     }
 
-    if (workerResult.ok && workerResult.type === "library.opened") {
-      rememberOpenedLibrary(
-        workerResult.library.libraryPath,
-        workerResult.library.displayName,
-        workerResult.library.libraryId,
-      );
-    } else if (
-      workerResult.ok &&
-      workerResult.type === "library.eagle-inspected" &&
-      command.type === "library.inspect-eagle"
-    ) {
-      pendingEagleOpenSourcePath = command.sourceRootPath;
-    } else if (
-      workerResult.ok &&
-      workerResult.type === "library.billfish-inspected" &&
-      command.type === "library.inspect-billfish"
-    ) {
-      pendingBillfishOpenSourcePath = command.sourceRootPath;
-    } else if (workerResult.ok && workerResult.type === "library.renamed") {
-      rememberOpenedLibrary(
-        workerResult.library.libraryPath,
-        workerResult.library.displayName,
-        workerResult.library.libraryId,
-      );
-    } else if (workerResult.ok && workerResult.type === "library.imported") {
-      rememberOpenedLibrary(workerResult.libraryPath, workerResult.displayName, workerResult.libraryId);
-    } else if (workerResult.ok && workerResult.type === "library.deleted") {
-      removeRecentLibrary(
-        recentLibraryPath(),
-        workerResult.libraryPath,
-        (error) => {
-          logger?.error("recent-library.remove", error);
-        },
-      );
-      // Serpent-140fe2 review: deleted libraries must not leave phantom
-      // preview mirrors consuming the LRU budget.
-      if ("libraryId" in request) {
-        void previewCache?.purgeLibrary(request.libraryId);
-      }
-      // Serpent-65d837: a leftover `.del-*` aside must never be silently
-      // forgotten — persist it for deferred cleanup and kick the retry loop.
-      if (workerResult.pendingAsidePath) {
-        const pendingPath = pendingLibraryCleanupPath();
-        const current = readPendingCleanupAsidePaths(pendingPath, (error) => {
-          logger?.error("pending-library-cleanup.read", error);
-        });
-        writePendingCleanupAsidePaths(
-          pendingPath,
-          [...current, workerResult.pendingAsidePath],
-          (error) => {
-            logger?.error("pending-library-cleanup.write", error);
-          },
-        );
+    applyLibraryWorkerSideEffects(request, command, workerResult, {
+      rememberOpenedLibrary,
+      removeRecentLibrary,
+      recentLibraryPath,
+      logError: (scope, error, context) => {
+        logger?.error(scope, error, context);
+      },
+      setPendingEagleOpenSourcePath: (value) => {
+        pendingEagleOpenSourcePath = value;
+      },
+      setPendingBillfishOpenSourcePath: (value) => {
+        pendingBillfishOpenSourcePath = value;
+      },
+      purgePreviewLibrary: (libraryId) => {
+        void previewCache?.purgeLibrary(libraryId);
+      },
+      pendingCleanupPath: pendingLibraryCleanupPath,
+      readPendingCleanupAsidePaths,
+      writePendingCleanupAsidePaths,
+      retryPendingLibraryCleanups: () => {
         void retryPendingLibraryCleanups();
-      }
-    }
+      },
+      clearRelinkLibrary: (libraryId) => pendingRelinkPreviews.clearLibrary(libraryId),
+      clearSourcePathLibrary: (libraryId) => sourcePathCache.clearLibrary(libraryId),
+      clearArtifactPathCache,
+      cancelArtifactPathBatches,
+      clearPendingImportsForLibrary: (libraryId) => {
+        for (const [importId, pendingLibraryId] of pendingImportLibraries) {
+          if (pendingLibraryId !== libraryId) continue;
+          pendingImportLibraries.delete(importId);
+          pendingImportCollections.delete(importId);
+        }
+      },
+      processAiQueue: (libraryId) => {
+        void processAiQueue(libraryId);
+      },
+      notifyLibraryOpened: (input) => {
+        notifyLibraryOpenedSideEffects(input).catch((error) => {
+          logger?.error("plugin.activation.library-opened", error, {
+            libraryId: input.libraryId,
+          });
+        });
+      },
+      onLibraryClosed: (libraryId) => {
+        pluginActivationCoordinator?.onLibraryClosed(libraryId);
+        for (const [executionId, context] of pluginAutomationContexts) {
+          if (context.libraryId === libraryId) {
+            pluginAutomationContexts.delete(executionId);
+          }
+        }
+      },
+    });
 
     applySyncWorkerBindings(request, workerResult, {
       readSyncBindings,
       writeSyncBindings,
       now: () => new Date(),
     });
-
-    if (!workerResult.ok && request.type === "asset.import-web.request") {
-      logger?.error(
-        "web-ingestion.download",
-        new Error(
-          `Library Worker rejected the browser media import: ${workerResult.error.code}.`,
-        ),
-        {
-          libraryId: request.libraryId,
-          targetFolderId: request.targetFolderId,
-          targetCollectionId: request.targetCollectionId,
-          code: workerResult.error.code,
-          reason: workerResult.error.reason,
-        },
-      );
-    }
-
-    if (!workerResult.ok && (request.type === "asset.import.resolve" ||
-          request.type === "asset.import.skip-source-failure")) {
-      pendingImportLibraries.delete(request.importId);
-      pendingImportCollections.delete(request.importId);
-    }
-    if (workerResult.ok && request.type === "library.close.request") {
-      pendingRelinkPreviews.clearLibrary(request.libraryId);
-      for (const [importId, libraryId] of pendingImportLibraries) {
-        if (libraryId !== request.libraryId) continue;
-        pendingImportLibraries.delete(importId);
-        pendingImportCollections.delete(importId);
-      }
-      clearArtifactPathCache(request.libraryId);
-      cancelArtifactPathBatches(request.libraryId);
-    }
-    if (workerResult.ok && request.type === "library.delete-from-disk.request") {
-      pendingRelinkPreviews.clearLibrary(request.libraryId);
-      sourcePathCache.clearLibrary(request.libraryId);
-      clearArtifactPathCache(request.libraryId);
-      cancelArtifactPathBatches(request.libraryId);
-      for (const [importId, libraryId] of pendingImportLibraries) {
-        if (libraryId !== request.libraryId) continue;
-        pendingImportLibraries.delete(importId);
-        pendingImportCollections.delete(importId);
-      }
-    }
-
-    if (
-      workerResult.ok &&
-      (request.type === "ai.resume-jobs.request" ||
-        request.type === "ai.retry-jobs.request")
-    ) {
-      void processAiQueue(request.libraryId);
-    }
-    if (
-      workerResult.ok &&
-      (workerResult.type === "library.opened" ||
-        workerResult.type === "library.imported")
-    ) {
-      const openedLibraryId =
-        workerResult.type === "library.opened"
-          ? workerResult.library.libraryId
-          : workerResult.libraryId;
-      const openedLibraryPath =
-        workerResult.type === "library.opened"
-          ? workerResult.library.libraryPath
-          : workerResult.libraryPath;
-      notifyLibraryOpenedSideEffects({
-        libraryId: openedLibraryId,
-        libraryDirectory: openedLibraryPath,
-      }).catch((error) => {
-        logger?.error("plugin.activation.library-opened", error, {
-          libraryId: openedLibraryId,
-        });
-      });
-    }
-    if (workerResult.ok && workerResult.type === "library.closed") {
-      sourcePathCache.clearLibrary(workerResult.libraryId);
-      clearArtifactPathCache(workerResult.libraryId);
-      cancelArtifactPathBatches(workerResult.libraryId);
-      pluginActivationCoordinator?.onLibraryClosed(workerResult.libraryId);
-      for (const [executionId, context] of pluginAutomationContexts) {
-        if (context.libraryId === workerResult.libraryId) {
-          pluginAutomationContexts.delete(executionId);
-        }
-      }
-    }
 
     const mediaShellResult = await tryHandleMediaShellWorkerResult(request, workerResult, {
       logInfo: (scope, message, context) => {
@@ -3389,219 +3256,31 @@ async function handleLibraryRequest(
     });
     if (mediaShellResult) return mediaShellResult;
 
-    // Auto-analyze on import: after a successful ordinary import
-    // (resolveImport or importFolderAsLinked), enqueue AI analysis for
-    // imported images. Eagle/external-library imports intentionally do not
-    // enter this branch: importing an external catalogue must never enqueue
-    // thousands of AI jobs, even when the global auto-analyze preference is on.
-    //
-    // Track importId -> libraryId mapping for resolve flows where libraryId
-    // is not carried in the resolve request itself.
-    if (
-      workerResult.ok &&
-      (workerResult.type === "asset.import.conflicts" ||
-        workerResult.type === "asset.import.source-failure")
-    ) {
-      pendingImportLibraries.set(
-        workerResult.plan.importId,
-        (request as { libraryId?: string }).libraryId ?? "",
-      );
-      if (
-        (request.type === "asset.import-drop.request" ||
-          request.type === "asset.import-clipboard.request") &&
-        request.targetCollectionId
-      ) {
-        pendingImportCollections.set(
-          workerResult.plan.importId,
-          request.targetCollectionId,
-        );
-      }
-    }
+    const importPostProcess = await applyImportWorkerResult(request, workerResult, {
+      pendingImportLibraries,
+      pendingImportCollections,
+      logError: (scope, error, context) => {
+        logger?.error(scope, error, context);
+      },
+      requestWorker: (workerCommand) => {
+        if (!workerClient) throw new Error("Library Worker is unavailable.");
+        return workerClient.request(workerCommand);
+      },
+      enqueueAutoAnalyzeAfterImport: (libraryId, assetIds, importedFolderId) => {
+        void enqueueAutoAnalyzeAfterImport(libraryId, assetIds, importedFolderId);
+      },
+    });
+    if (importPostProcess) return importPostProcess;
 
-    if (request.type === "asset.import.abandon") {
-      pendingImportCollections.delete(request.importId);
-    }
-
-    if (workerResult.ok && workerResult.type === "asset.import.completed") {
-      const collectionId =
-        (request.type === "asset.import.resolve" ||
-          request.type === "asset.import.skip-source-failure")
-          ? pendingImportCollections.get(request.importId)
-          : request.type === "asset.import-drop.request" ||
-              request.type === "asset.import-clipboard.request"
-            ? request.targetCollectionId
-            : undefined;
-      if ((request.type === "asset.import.resolve" ||
-          request.type === "asset.import.skip-source-failure"))
-        pendingImportCollections.delete(request.importId);
-      if (collectionId && workerResult.completion.assets.length > 0) {
-        const importLibraryId =
-          (request.type === "asset.import.resolve" ||
-          request.type === "asset.import.skip-source-failure")
-            ? pendingImportLibraries.get(request.importId)
-            : request.type === "asset.import-drop.request" ||
-                request.type === "asset.import-clipboard.request"
-              ? request.libraryId
-              : undefined;
-        if (!importLibraryId) {
-          logger?.error(
-            "desktop-ingestion.collection-assign",
-            new Error("The import library context was not found."),
-            {
-              collectionId,
-              importedCount: workerResult.completion.assets.length,
-            },
-          );
-          return {
-            ok: false,
-            error: createPublicError("IMPORT_COLLECTION_ASSIGN_FAILED"),
-          } satisfies RendererResult;
-        }
-        const relationResult = await workerClient.request({
-          type: "collection.assets.add",
-          libraryId: importLibraryId,
-          collectionId,
-          assetIds: workerResult.completion.assets.map(
-            (asset) => asset.assetId,
-          ),
-        });
-        if (
-          !relationResult.ok ||
-          relationResult.type !== "collection.assets.added"
-        ) {
-          logger?.error(
-            "desktop-ingestion.collection-assign",
-            new Error(
-              "Imported assets could not be assigned to the collection.",
-            ),
-            {
-              collectionId,
-              importedCount: workerResult.completion.assets.length,
-              code: relationResult.ok
-                ? "UNEXPECTED_RESULT"
-                : relationResult.error.code,
-              reason: relationResult.ok
-                ? undefined
-                : relationResult.error.reason,
-            },
-          );
-          if ((request.type === "asset.import.resolve" ||
-          request.type === "asset.import.skip-source-failure"))
-            pendingImportLibraries.delete(request.importId);
-          return {
-            ok: false,
-            error: createPublicError("IMPORT_COLLECTION_ASSIGN_FAILED"),
-          } satisfies RendererResult;
-        }
-      }
-    }
-
-    if (
-      workerResult.ok &&
-      workerResult.type === "extension.asset-saved" &&
-      request.type === "asset.import-web.request" &&
-      request.targetCollectionId
-    ) {
-      const relationCommand = createWebImportCollectionCommand(
-        request,
-        workerResult.asset.assetId,
-      )!;
-      const relationResult = await workerClient.request(relationCommand);
-      if (
-        !relationResult.ok ||
-        relationResult.type !== "collection.assets.added"
-      ) {
-        logger?.error(
-          "web-ingestion.collection-assign",
-          new Error(
-            "Downloaded browser media could not be assigned to the collection.",
-          ),
-          {
-            libraryId: request.libraryId,
-            collectionId: request.targetCollectionId,
-            assetId: workerResult.asset.assetId,
-            code: relationResult.ok
-              ? "UNEXPECTED_RESULT"
-              : relationResult.error.code,
-            reason: relationResult.ok ? undefined : relationResult.error.reason,
-          },
-        );
-        return {
-          ok: false,
-          error: createPublicError("IMPORT_COLLECTION_ASSIGN_FAILED"),
-        } satisfies RendererResult;
-      }
-    }
-
-    if (
-      workerResult.ok &&
-      (workerResult.type === "asset.import.completed" ||
-        workerResult.type === "asset.import-linked.completed")
-    ) {
-      let assetIds: string[] = [];
-      let libId: string | undefined;
-      let importedFolderId: string | undefined;
-
-      if (workerResult.type === "asset.import.completed") {
-        assetIds = workerResult.completion.assets.map((a) => a.assetId);
-        // libId from original request or from pending import tracker
-        if (
-          request.type === "asset.import-files.request" ||
-          request.type === "asset.import-folder.request" ||
-          request.type === "asset.import-drop.request" ||
-          request.type === "asset.import-clipboard.request"
-        ) {
-          libId = request.libraryId;
-        } else if ((request.type === "asset.import.resolve" ||
-          request.type === "asset.import.skip-source-failure")) {
-          libId = pendingImportLibraries.get(request.importId);
-          pendingImportLibraries.delete(request.importId);
-        }
-      } else {
-        // import-linked has libraryId in the request
-        if (request.type === "asset.import-linked.request") {
-          libId = request.libraryId;
-          importedFolderId = workerResult.linkedFolder.folderId;
-        }
-      }
-
-      if (libId && (assetIds.length > 0 || importedFolderId)) {
-        void enqueueAutoAnalyzeAfterImport(libId, assetIds, importedFolderId);
-      }
-    }
-
-    if (
-      workerResult.ok &&
-      workerResult.type === "extension.asset-saved" &&
-      request.type === "asset.import-web.request"
-    ) {
-      void enqueueAutoAnalyzeAfterImport(request.libraryId, [
-        workerResult.asset.assetId,
-      ]);
-    }
-
-    if (
-      workerResult.ok &&
-      request.type === "library.recovery-report.request" &&
-      workerResult.type === "library.recovery-report"
-    ) {
-      try {
-        // Keep the report path Main-owned. Showing the containing directory
-        // also lets users inspect the quarantined damaged database beside it.
-        shell.showItemInFolder(workerResult.reportPath);
-        return {
-          ok: true,
-          type: "library.recovery-report.requested",
-          libraryId: request.libraryId,
-        } satisfies RendererResult;
-      } catch (error) {
-        logger?.error("main.recovery-report", error);
-        return {
-          ok: false,
-          error: createPublicError("INTERNAL_ERROR"),
-        } satisfies RendererResult;
-      }
-    }
+    const recoveryReport = tryHandleRecoveryReport(request, workerResult, {
+      showItemInFolder: (absolutePath) => {
+        shell.showItemInFolder(absolutePath);
+      },
+      logError: (scope, error) => {
+        logger?.error(scope, error);
+      },
+    });
+    if (recoveryReport) return recoveryReport;
 
     // A Billfish archive has no stable library root name after extraction:
     // the worker sees a temporary `serpent-external-library-*` directory.

@@ -1,4 +1,4 @@
-import type { RendererRequest } from "../../shared/protocol/requests";
+import type { RendererRequest, WorkerCommand } from "../../shared/protocol/requests";
 import type { RendererResult } from "../../shared/protocol/responses";
 
 export type RelinkOwnedRequestRuntime = {
@@ -24,4 +24,25 @@ export async function tryHandleRelinkOwnedRequest(
     default:
       return undefined;
   }
+}
+
+/**
+ * Remember a relink batch preview before Worker dispatch.
+ */
+export function maybeRememberRelinkPreview(
+  request: RendererRequest,
+  command: WorkerCommand,
+  createPreview: (libraryId: string, newRootPath: string) => string,
+): { libraryId: string; previewId: string } | undefined {
+  if (
+    (request.type === "asset.relink-batch.request" ||
+      request.type === "asset.relink-batch.preview-at-root.request") &&
+    command.type === "asset.relink-batch.preview"
+  ) {
+    return {
+      libraryId: request.libraryId,
+      previewId: createPreview(request.libraryId, command.newRootPath),
+    };
+  }
+  return undefined;
 }

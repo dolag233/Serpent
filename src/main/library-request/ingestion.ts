@@ -14,6 +14,7 @@ import {
   type ClipboardImageReaderDeps,
 } from "../desktop-ingestion";
 import { resolveImageSequenceImportPaths } from "../image-sequence-import";
+import { createWebImportCollectionCommand } from "../web-ingestion";
 import type { LibraryCommandBuildOutcome } from "./command-outcome";
 
 export type PendingImageSequenceOffer = {
@@ -356,6 +357,45 @@ export async function tryBuildIngestionCommand(
   }
 }
 
+export type IngestionOwnedRequestRuntime = {
+  logError: (scope: string, error: unknown, context?: Record<string, unknown>) => void;
+};
+
+/**
+ * Drop/web invalid reports that return before Worker dispatch.
+ */
+export async function tryHandleIngestionOwnedRequest(
+  request: RendererRequest,
+  runtime: IngestionOwnedRequestRuntime,
+): Promise<RendererResult | undefined> {
+  switch (request.type) {
+    case "asset.import-drop-invalid.report":
+      runtime.logError(
+        "desktop-ingestion.drop-file-handle",
+        new Error(
+          "Electron could not resolve one or more dropped File handles.",
+        ),
+        { libraryId: request.libraryId },
+      );
+      return {
+        ok: false,
+        error: createPublicError("INVALID_DROP_SELECTION"),
+      } satisfies RendererResult;
+    case "asset.import-web-invalid.report":
+      runtime.logError(
+        "web-ingestion.drop-metadata",
+        new Error(`Browser drag metadata was rejected: ${request.failure}.`),
+        { libraryId: request.libraryId, failure: request.failure },
+      );
+      return {
+        ok: false,
+        error: createPublicError(request.failure),
+      } satisfies RendererResult;
+    default:
+      return undefined;
+  }
+}
+
 export type SequenceProbeRuntime = {
   isUnpackagedE2e: () => boolean;
   workerAvailable: () => boolean;
@@ -424,4 +464,229 @@ export async function maybeProbeImportSequences(
     kind: "command",
     command: { ...command, createImageSequence: false },
   };
+}
+
+export type ImportWorkerResultRuntime = {
+  pendingImportLibraries: Map<string, string>;
+  pendingImportCollections: Map<string, string>;
+  logError: (scope: string, error: unknown, context?: Record<string, unknown>) => void;
+  requestWorker: (command: WorkerCommand) => Promise<WorkerResult>;
+  enqueueAutoAnalyzeAfterImport: (
+    libraryId: string,
+    assetIds: string[],
+    importedFolderId?: string,
+  ) => void;
+};
+
+/**
+ * Import Worker-result bookkeeping: pending maps, collection assign, auto-analyze.
+ * A RendererResult means handleLibraryRequest should return immediately.
+ */
+export async function applyImportWorkerResult(
+  request: RendererRequest,
+  workerResult: WorkerResult,
+  runtime: ImportWorkerResultRuntime,
+): Promise<RendererResult | undefined> {
+  if (!workerResult.ok && request.type === "asset.import-web.request") {
+    runtime.logError(
+      "web-ingestion.download",
+      new Error(
+        `Library Worker rejected the browser media import: ${workerResult.error.code}.`,
+      ),
+      {
+        libraryId: request.libraryId,
+        targetFolderId: request.targetFolderId,
+        targetCollectionId: request.targetCollectionId,
+        code: workerResult.error.code,
+        reason: workerResult.error.reason,
+      },
+    );
+  }
+
+  if (!workerResult.ok && (request.type === "asset.import.resolve" ||
+        request.type === "asset.import.skip-source-failure")) {
+    runtime.pendingImportLibraries.delete(request.importId);
+    runtime.pendingImportCollections.delete(request.importId);
+  }
+
+  if (
+    workerResult.ok &&
+    (workerResult.type === "asset.import.conflicts" ||
+      workerResult.type === "asset.import.source-failure")
+  ) {
+    runtime.pendingImportLibraries.set(
+      workerResult.plan.importId,
+      (request as { libraryId?: string }).libraryId ?? "",
+    );
+    if (
+      (request.type === "asset.import-drop.request" ||
+        request.type === "asset.import-clipboard.request") &&
+      request.targetCollectionId
+    ) {
+      runtime.pendingImportCollections.set(
+        workerResult.plan.importId,
+        request.targetCollectionId,
+      );
+    }
+  }
+
+  if (request.type === "asset.import.abandon") {
+    runtime.pendingImportCollections.delete(request.importId);
+  }
+
+  if (workerResult.ok && workerResult.type === "asset.import.completed") {
+    const collectionId =
+      (request.type === "asset.import.resolve" ||
+        request.type === "asset.import.skip-source-failure")
+        ? runtime.pendingImportCollections.get(request.importId)
+        : request.type === "asset.import-drop.request" ||
+            request.type === "asset.import-clipboard.request"
+          ? request.targetCollectionId
+          : undefined;
+    if ((request.type === "asset.import.resolve" ||
+        request.type === "asset.import.skip-source-failure"))
+      runtime.pendingImportCollections.delete(request.importId);
+    if (collectionId && workerResult.completion.assets.length > 0) {
+      const importLibraryId =
+        (request.type === "asset.import.resolve" ||
+        request.type === "asset.import.skip-source-failure")
+          ? runtime.pendingImportLibraries.get(request.importId)
+          : request.type === "asset.import-drop.request" ||
+              request.type === "asset.import-clipboard.request"
+            ? request.libraryId
+            : undefined;
+      if (!importLibraryId) {
+        runtime.logError(
+          "desktop-ingestion.collection-assign",
+          new Error("The import library context was not found."),
+          {
+            collectionId,
+            importedCount: workerResult.completion.assets.length,
+          },
+        );
+        return {
+          ok: false,
+          error: createPublicError("IMPORT_COLLECTION_ASSIGN_FAILED"),
+        } satisfies RendererResult;
+      }
+      const relationResult = await runtime.requestWorker({
+        type: "collection.assets.add",
+        libraryId: importLibraryId,
+        collectionId,
+        assetIds: workerResult.completion.assets.map(
+          (asset) => asset.assetId,
+        ),
+      });
+      if (
+        !relationResult.ok ||
+        relationResult.type !== "collection.assets.added"
+      ) {
+        runtime.logError(
+          "desktop-ingestion.collection-assign",
+          new Error(
+            "Imported assets could not be assigned to the collection.",
+          ),
+          {
+            collectionId,
+            importedCount: workerResult.completion.assets.length,
+            code: relationResult.ok
+              ? "UNEXPECTED_RESULT"
+              : relationResult.error.code,
+            reason: relationResult.ok
+              ? undefined
+              : relationResult.error.reason,
+          },
+        );
+        if ((request.type === "asset.import.resolve" ||
+        request.type === "asset.import.skip-source-failure"))
+          runtime.pendingImportLibraries.delete(request.importId);
+        return {
+          ok: false,
+          error: createPublicError("IMPORT_COLLECTION_ASSIGN_FAILED"),
+        } satisfies RendererResult;
+      }
+    }
+  }
+
+  if (
+    workerResult.ok &&
+    workerResult.type === "extension.asset-saved" &&
+    request.type === "asset.import-web.request" &&
+    request.targetCollectionId
+  ) {
+    const relationCommand = createWebImportCollectionCommand(
+      request,
+      workerResult.asset.assetId,
+    )!;
+    const relationResult = await runtime.requestWorker(relationCommand);
+    if (
+      !relationResult.ok ||
+      relationResult.type !== "collection.assets.added"
+    ) {
+      runtime.logError(
+        "web-ingestion.collection-assign",
+        new Error(
+          "Downloaded browser media could not be assigned to the collection.",
+        ),
+        {
+          libraryId: request.libraryId,
+          collectionId: request.targetCollectionId,
+          assetId: workerResult.asset.assetId,
+          code: relationResult.ok
+            ? "UNEXPECTED_RESULT"
+            : relationResult.error.code,
+          reason: relationResult.ok ? undefined : relationResult.error.reason,
+        },
+      );
+      return {
+        ok: false,
+        error: createPublicError("IMPORT_COLLECTION_ASSIGN_FAILED"),
+      } satisfies RendererResult;
+    }
+  }
+
+  if (
+    workerResult.ok &&
+    (workerResult.type === "asset.import.completed" ||
+      workerResult.type === "asset.import-linked.completed")
+  ) {
+    let assetIds: string[] = [];
+    let libId: string | undefined;
+    let importedFolderId: string | undefined;
+
+    if (workerResult.type === "asset.import.completed") {
+      assetIds = workerResult.completion.assets.map((a) => a.assetId);
+      if (
+        request.type === "asset.import-files.request" ||
+        request.type === "asset.import-folder.request" ||
+        request.type === "asset.import-drop.request" ||
+        request.type === "asset.import-clipboard.request"
+      ) {
+        libId = request.libraryId;
+      } else if ((request.type === "asset.import.resolve" ||
+        request.type === "asset.import.skip-source-failure")) {
+        libId = runtime.pendingImportLibraries.get(request.importId);
+        runtime.pendingImportLibraries.delete(request.importId);
+      }
+    } else if (request.type === "asset.import-linked.request") {
+      libId = request.libraryId;
+      importedFolderId = workerResult.linkedFolder.folderId;
+    }
+
+    if (libId && (assetIds.length > 0 || importedFolderId)) {
+      runtime.enqueueAutoAnalyzeAfterImport(libId, assetIds, importedFolderId);
+    }
+  }
+
+  if (
+    workerResult.ok &&
+    workerResult.type === "extension.asset-saved" &&
+    request.type === "asset.import-web.request"
+  ) {
+    runtime.enqueueAutoAnalyzeAfterImport(request.libraryId, [
+      workerResult.asset.assetId,
+    ]);
+  }
+
+  return undefined;
 }
