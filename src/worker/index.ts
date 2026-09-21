@@ -33,10 +33,8 @@ import { isBenignThumbnailErrorCode } from '../shared/thumbnail-support';
 import { ThumbnailCompletionFanout } from '../shared/thumbnail-completion-fanout';
 import {
   ViewportPriorityOverlay,
-  VIEWPORT_PREEMPT_STABLE_MS,
   claimIdsForThumbnailWave,
   resolveViewportClaimIds,
-  shouldAbortRunningOutsideViewport,
 } from '../shared/viewport-priority';
 import {
   LibraryService,
@@ -127,6 +125,7 @@ import { executePluginJobWorkerCommand } from './handlers/plugin-jobs';
 import { executeMediaPathWorkerCommand } from './handlers/media-paths';
 import { executeMediaJobWorkerCommand } from './handlers/media-jobs';
 import { executeMediaGenerationWorkerCommand } from './handlers/media-generation';
+import { executeVisibleWindowWorkerCommand } from './handlers/visible-window';
 import { executeAssetQueryWorkerCommand } from './handlers/asset-query';
 import { executeSmartCollectionWorkerCommand } from './handlers/smart-collections';
 import { executeLibraryLifecycleWorkerCommand } from './handlers/library-lifecycle';
@@ -134,7 +133,6 @@ import { executeSyncWorkerCommand } from './handlers/sync';
 import { LibraryGenerationRegistry } from './library-generation';
 import {
   isViewportOnlyThumbnailWave,
-  shouldPreemptVisibleWindow,
   shouldRunThumbnailBackgroundRepair,
 } from './visible-window-policy';
 import {
@@ -3124,138 +3122,36 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       return result;
     }
     case 'asset.thumbnail.visible-window': {
-      // Serpent-visible-window: the renderer reports what the user is actually
-      // looking at after scrolling. Two effects, both cheap:
-      // 1) queue-jump — the visible wave (350, light) boosts these assets'
-      //    and restricts the next queue claim to them, so the current viewport
-      //    finishes first no matter how the queue was filled;
-      // 2) placeholder sizing — header-probe dimensions land immediately so
-      //    masonry placeholders stop reflowing when thumbnails finish later.
-      const { libraryId, assetIds } = request.command;
-      startupThumbnailVisibleWindows.add(libraryId);
-      const deferredGeneration = deferredStartupThumbnailGenerations.get(libraryId);
-      if (deferredGeneration !== undefined) {
-        startDeferredStartupThumbnailScene(libraryId, deferredGeneration);
-      }
-      // Serpent-4bc4ac: ignored assets are not indexed or operated on —
-      // drop them before dimension probes and thumbnail scheduling.
-      const focusedRaw = request.command.focusedAssetIds ?? [];
-      const nearForwardRaw = request.command.nearForwardAssetIds ?? [];
-      const nearBackwardRaw = request.command.nearBackwardAssetIds ?? [];
-      const scopeWarmRaw = request.command.scopeWarmAssetIds ?? [];
-      const allowedAssetIds = new Set(libraryService.filterIgnoredAssetIds(
-        libraryId,
-        [...assetIds, ...focusedRaw, ...nearForwardRaw, ...nearBackwardRaw, ...scopeWarmRaw],
-      ));
-      const keepAllowed = (ids: readonly string[]): string[] => {
-        const kept: string[] = [];
-        const seen = new Set<string>();
-        for (const assetId of ids) {
-          if (!assetId || seen.has(assetId) || !allowedAssetIds.has(assetId)) continue;
-          seen.add(assetId);
-          kept.push(assetId);
-        }
-        return kept;
-      };
-      const visibleAssetIds = keepAllowed(assetIds);
-      const focusedAssetIds = keepAllowed(focusedRaw);
-      const nearForwardAssetIds = keepAllowed(nearForwardRaw);
-      const nearBackwardAssetIds = keepAllowed(nearBackwardRaw);
-      const scopeWarmAssetIds = keepAllowed(scopeWarmRaw);
-      // The renderer order is meaningful for the first visual wave (top to
-      // bottom), while the key and overlap calculation are set-like. Keep the
-      // stable key sorted without destroying the caller's scheduling order.
-      const visibleWindowKey = [...visibleAssetIds].toSorted().join('\u0000');
-      const viewportGeneration = request.command.viewportGeneration;
-      const consumerId = request.command.consumerId ?? 'browse';
-      const bandSnapshotAccepted = viewportPriorityOverlay.apply({
-        libraryId,
-        consumerId,
-        libraryGeneration: request.command.libraryGeneration
-          ?? libraryGenerationRegistry.current(libraryId)
-          ?? 0,
-        interactionGeneration: request.command.interactionGeneration ?? 0,
-        viewportGeneration: viewportGeneration ?? Date.now(),
-        direction: request.command.direction ?? 'stationary',
-        focused: focusedAssetIds,
-        visible: visibleAssetIds,
-        nearForward: nearForwardAssetIds,
-        nearBackward: nearBackwardAssetIds,
-        scopeWarm: scopeWarmAssetIds,
+      const result = executeVisibleWindowWorkerCommand(libraryService, request, {
+        startupThumbnailVisibleWindows,
+        deferredStartupThumbnailGenerations,
+        startDeferredStartupThumbnailScene,
+        viewportPriorityOverlay,
+        currentLibraryGeneration: (libraryId) => libraryGenerationRegistry.current(libraryId),
+        lastVisibleWindowKeyByLibrary,
+        lastVisibleWindowAssetIdsByLibrary,
+        lastViewportVisibleChangeAtMs,
+        lastViewportPreemptAtMs,
+        activeThumbnailQueueAssetScopes,
+        setImmediateAssetIds: (libraryId, assetIds) => {
+          thumbnailCompletionFanout.setImmediateAssetIds(libraryId, assetIds);
+        },
+        hasIdleForegroundImageSlot,
+        scheduleVisibleThumbnails: (libraryId, assetIds, preemptVisible) => {
+          scheduleThumbnailScene(
+            libraryId,
+            'visible',
+            assetIds,
+            assetIds.length,
+            { light: true, preemptVisible },
+          );
+        },
+        enqueueVisibleWindowDimensionProbes,
       });
-      if (!bandSnapshotAccepted.accepted) {
-        return { ok: true, type: 'asset.thumbnail.visible-window.acknowledged' };
+      if (result === undefined) {
+        throw new Error(`Unhandled visible-window command: ${request.command.type}`);
       }
-      if (
-        viewportGeneration === undefined
-        && visibleWindowKey === lastVisibleWindowKeyByLibrary.get(libraryId)
-      ) {
-        return { ok: true, type: 'asset.thumbnail.visible-window.acknowledged' };
-      }
-      const previousVisible = lastVisibleWindowAssetIdsByLibrary.get(libraryId);
-      const previousVisibleKey = lastVisibleWindowKeyByLibrary.get(libraryId);
-      const visibleSetChanged = visibleWindowKey !== previousVisibleKey;
-      const overlapShouldPreempt = shouldPreemptVisibleWindow(
-        previousVisible,
-        visibleAssetIds,
-      );
-      const nowMs = Date.now();
-      const viewportStableMs = previousVisible === undefined
-        ? VIEWPORT_PREEMPT_STABLE_MS
-        : visibleSetChanged
-          ? 0
-          : Math.max(0, nowMs - (lastViewportVisibleChangeAtMs.get(libraryId) ?? nowMs));
-      if (visibleSetChanged) lastViewportVisibleChangeAtMs.set(libraryId, nowMs);
-      lastVisibleWindowKeyByLibrary.set(libraryId, visibleWindowKey);
-      lastVisibleWindowAssetIdsByLibrary.set(libraryId, visibleAssetIds);
-      const rankedClaimIds = viewportPriorityOverlay.rankedClaimIds(libraryId);
-      const assetScope = activeThumbnailQueueAssetScopes.get(libraryId);
-      if (assetScope) {
-        assetScope.current = resolveViewportClaimIds(rankedClaimIds, visibleAssetIds);
-      }
-      thumbnailCompletionFanout.setImmediateAssetIds(
-        libraryId,
-        viewportPriorityOverlay.immediateAssetIds(libraryId),
-      );
-      const preemptVisible = shouldAbortRunningOutsideViewport({
-        overlapShouldPreempt,
-        hasIdleForegroundSlot: hasIdleForegroundImageSlot(),
-        viewportStableMs,
-        lastPreemptAtMs: lastViewportPreemptAtMs.get(libraryId),
-        nowMs,
-        p0OrP1Waiting: viewportPriorityOverlay.immediateAssetIds(libraryId).length > 0,
-        lookaheadOnly: previousVisible !== undefined && !visibleSetChanged,
-      });
-      if (preemptVisible) {
-        libraryService.interruptThumbnailJobsOutsideViewport(libraryId, visibleAssetIds);
-        lastViewportPreemptAtMs.set(libraryId, nowMs);
-      }
-      // Models use Main's single-flight offscreen renderer. Keep that
-      // potentially slow/timeout-prone work out of the fast visible raster
-      // wave so it cannot occupy one of the two Worker queue slots while the
-      // user-visible image/video cards are being filled. Startup and mutation
-      // scenes still process model jobs in the background, and an explicit
-      // model preview request still uses the normal visible hint.
-      const fastVisibleAssetIds = libraryService.filterVisibleThumbnailAssetIds(
-        libraryId,
-        visibleAssetIds,
-      );
-      if (fastVisibleAssetIds.length > 0) {
-        scheduleThumbnailScene(
-          libraryId,
-          'visible',
-          fastVisibleAssetIds,
-          fastVisibleAssetIds.length,
-          { light: true, preemptVisible },
-        );
-      }
-      // Header probes used to run synchronously here, before the ACK. On a
-      // cold/remote volume that made a scroll report monopolize the Worker
-      // behind dozens of open/read/close calls and delayed the next page
-      // query. Keep the geometry correction, but drain it asynchronously after
-      // this command has returned and let it be cancelled on library close.
-      enqueueVisibleWindowDimensionProbes(libraryId, visibleAssetIds);
-      return { ok: true, type: 'asset.thumbnail.visible-window.acknowledged' };
+      return result;
     }
     case 'media.enqueue-thumbnail-jobs':
     case 'media.process-thumbnail-queue':
