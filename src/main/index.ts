@@ -65,6 +65,8 @@ import {
   type SyncBindingRecord,
 } from "./library-request/sync";
 import { tryHandleAiOwnedRequest } from "./library-request/ai";
+import { tryHandlePreviewOwnedRequest } from "./library-request/preview";
+import { tryHandleRelinkOwnedRequest } from "./library-request/relink";
 import { executeFolderMainCommand } from "./commands/folders";
 import { executeAssetIngestionMainCommand } from "./commands/asset-ingestion";
 import { executeLinkedFolderMainCommand } from "./commands/linked-folders";
@@ -2898,40 +2900,19 @@ async function handleLibraryRequest(
     });
     if (aiOwnedResult) return aiOwnedResult;
 
-    if (request.type === "asset.close-preview.request") {
-      return {
-        ok: true,
-        type: "asset.preview.closed",
-        assetId: request.assetId,
-      } satisfies RendererResult;
-    }
+    const previewOwnedResult = await tryHandlePreviewOwnedRequest(request, {
+      logError: (scope, error, context) => {
+        logger?.error(scope, error, context);
+      },
+    });
+    if (previewOwnedResult) return previewOwnedResult;
 
-    if (request.type === "asset.preview-error.report") {
-      logger?.error(
-        "media.preview.renderer",
-        new Error(`Renderer media element reported ${request.errorCode}.`),
-        {
-          libraryId: request.libraryId,
-          assetId: request.assetId,
-          errorCode: request.errorCode,
-          detail: request.detail,
-        },
-      );
-      return {
-        ok: true,
-        type: "asset.preview-error.recorded",
-        assetId: request.assetId,
-      } satisfies RendererResult;
-    }
-
-    if (request.type === "asset.relink-batch.cancel.request") {
-      pendingRelinkPreviews.cancel(request.libraryId, request.previewId);
-      return {
-        ok: true,
-        type: "asset.relink-batch.cancelled",
-        previewId: request.previewId,
-      } satisfies RendererResult;
-    }
+    const relinkOwnedResult = await tryHandleRelinkOwnedRequest(request, {
+      cancelRelinkPreview: (libraryId, previewId) => {
+        pendingRelinkPreviews.cancel(libraryId, previewId);
+      },
+    });
+    if (relinkOwnedResult) return relinkOwnedResult;
 
     if (request.type === "library.open-recent.request") {
       // The renderer may only reopen a library that Main itself recorded in the
