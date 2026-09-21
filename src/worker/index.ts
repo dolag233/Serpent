@@ -115,6 +115,7 @@ import {
 import { executeBrowseSessionWorkerCommand } from './handlers/browse-session';
 import { executeLibraryIdentityWorkerCommand } from './handlers/library-identity';
 import { executeLibraryTransferWorkerCommand } from './handlers/library-transfer';
+import { executeExtensionWorkerCommand } from './handlers/extension';
 import { executeFolderWorkerCommand } from './handlers/folders';
 import { executeLinkedFolderWorkerCommand } from './handlers/linked-folders';
 import { executeAssetIngestionWorkerCommand } from './handlers/asset-ingestion';
@@ -3109,15 +3110,17 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       scheduleThumbnailScene(request.command.libraryId, 'mutation', assets.map((asset) => asset.assetId));
       return { ok: true, type: 'asset.relink-batch.applied', restoredCount, unchangedMissingCount, assets };
     }
-    case 'extension.save-from-url': {
-      const { asset } = await libraryService.saveAssetFromUrl(request.command);
-      scheduleThumbnailScene(request.command.libraryId, 'mutation', [asset.assetId]);
-      return { ok: true, type: 'extension.asset-saved', asset };
-    }
+    case 'extension.save-from-url':
     case 'extension.save-from-file': {
-      const { asset } = await libraryService.saveAssetFromFile(request.command);
-      scheduleThumbnailScene(request.command.libraryId, 'mutation', [asset.assetId]);
-      return { ok: true, type: 'extension.asset-saved', asset };
+      const result = await executeExtensionWorkerCommand(libraryService, request, {
+        scheduleMutationThumbnails: (libraryId, assetIds) => {
+          scheduleThumbnailScene(libraryId, 'mutation', assetIds);
+        },
+      });
+      if (result === undefined) {
+        throw new Error(`Unhandled extension command: ${request.command.type}`);
+      }
+      return result;
     }
     case 'library.export':
     case 'library.export-cancel':
