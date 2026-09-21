@@ -2416,6 +2416,8 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     case 'history.status':
     case 'history.group.begin':
     case 'history.group.complete':
+    case 'history.undo':
+    case 'history.redo':
     case 'library.create':
     case 'library.recovery-report':
     case 'library.inspect-eagle':
@@ -3936,27 +3938,6 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       throw new Error('Automation file-operation planning requires automation-readonly dispatch.');
     case 'automation.file-import-plan':
       throw new Error('Automation import planning requires automation-readonly dispatch.');
-    case 'history.undo':
-      {
-        const result = await libraryService.undoOperationHistory(request.command);
-        return {
-          ok: true,
-          type: 'history.undone',
-          historyEntryId: result.historyEntryId,
-          affectedCount: result.affectedCount,
-          status: result.status,
-        };
-      }
-    case 'history.redo': {
-      const result = await libraryService.redoOperationHistory(request.command);
-      return {
-        ok: true,
-        type: 'history.redone',
-        historyEntryId: result.historyEntryId,
-        affectedCount: result.affectedCount,
-        status: result.status,
-        };
-      }
     case 'selection.trash':
       throw new Error('Selection trash must be dispatched through its writer lease.');
     default:

@@ -102,6 +102,31 @@ test('library.navigation-summary maps ignored and trashed flags', async () => {
   });
 });
 
+test('history.undo returns the undone history entry', async () => {
+  const libraryService = {
+    undoOperationHistory: vi.fn(async () => ({
+      historyEntryId: 'hist-1',
+      affectedCount: 2,
+      status: { canUndo: false, canRedo: true },
+    })),
+  } as unknown as LibraryService;
+
+  await expect(executeLibraryIdentityWorkerCommand(
+    libraryService,
+    identityRequest({
+      type: 'history.undo',
+      libraryId: 'lib-1',
+      expectedHistoryEntryId: 'hist-1',
+    }),
+  )).resolves.toEqual({
+    ok: true,
+    type: 'history.undone',
+    historyEntryId: 'hist-1',
+    affectedCount: 2,
+    status: { canUndo: false, canRedo: true },
+  });
+});
+
 test('library.open is left to the lifecycle dispatcher', async () => {
   await expect(executeLibraryIdentityWorkerCommand(
     {} as LibraryService,

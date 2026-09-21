@@ -25,6 +25,26 @@ export async function executeLibraryIdentityWorkerCommand(
     case 'history.group.begin':
     case 'history.group.complete':
       throw new Error('History group control was not dispatched through its write lease.');
+    case 'history.undo': {
+      const result = await libraryService.undoOperationHistory(request.command);
+      return {
+        ok: true,
+        type: 'history.undone',
+        historyEntryId: result.historyEntryId,
+        affectedCount: result.affectedCount,
+        status: result.status,
+      };
+    }
+    case 'history.redo': {
+      const result = await libraryService.redoOperationHistory(request.command);
+      return {
+        ok: true,
+        type: 'history.redone',
+        historyEntryId: result.historyEntryId,
+        affectedCount: result.affectedCount,
+        status: result.status,
+      };
+    }
     case 'library.create': {
       const library = libraryService.createLibrary(request.command);
       return { ok: true, type: 'library.opened', library };
