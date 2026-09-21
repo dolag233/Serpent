@@ -64,6 +64,7 @@ import {
   type SyncServerRecord,
   type SyncBindingRecord,
 } from "./library-request/sync";
+import { tryHandleAiOwnedRequest } from "./library-request/ai";
 import { executeFolderMainCommand } from "./commands/folders";
 import { executeAssetIngestionMainCommand } from "./commands/asset-ingestion";
 import { executeLinkedFolderMainCommand } from "./commands/linked-folders";
@@ -333,7 +334,6 @@ import {
   writeExternalLibraryStagingRoots,
 } from "./external-library-staging-store";
 import { AiQueueScheduler } from "./ai-queue-scheduler";
-import { aiSearchFailureReason, planAiSearch } from "./ai-search-planner";
 import {
   DEFAULT_AI_ANALYSIS_SETTINGS,
   normalizeAiAnalysisSettings,
@@ -358,7 +358,6 @@ import {
   DEFAULT_AI_API_FORMAT,
   DEFAULT_AI_LANGUAGES,
   DEFAULT_AI_MODELS,
-  listAiModels,
   migrateLegacyProviderToApiFormat,
   normalizeAiLanguages,
   type AiApiFormat,
@@ -2879,381 +2878,25 @@ async function handleLibraryRequest(
     });
     if (syncOwnedResult) return syncOwnedResult;
 
-    // A selected batch must be enqueued atomically. Sending one IPC request per
-    // asset lets the first scheduler batch observe only one job and serializes
-    // the entire operation despite a higher configured lane limit.
-    if (request.type === "assets.analyze.request") {
-      const config = loadAiConfig();
-      if (!config.hasKey || !config.apiFormat) {
-        return {
-          ok: false,
-          error: createPublicError("AI_ANALYSIS_FAILED", "AI_NOT_CONFIGURED"),
-        } satisfies RendererResult;
-      }
-      try {
-        getDecryptedApiKey();
-      } catch {
-        return {
-          ok: false,
-          error: createPublicError("AI_ANALYSIS_FAILED", "AI_NOT_CONFIGURED"),
-        } satisfies RendererResult;
-      }
-      if (!workerClient) throw new Error("Library Worker is unavailable.");
-      try {
-        const enqueueResult = await workerClient.request({
-          type: "ai.enqueue-analysis",
-          libraryId: request.libraryId,
-          assetIds: request.assetIds,
-          resumePaused: true,
-          // 手动分析可覆盖已有 AI 结果（8-09 WIP 恢复：worker 已支持）
-          forceExisting: true,
-        });
-        if (enqueueResult.ok && enqueueResult.type === "ai.jobs.enqueued") {
-          const jobIds = [
-            ...enqueueResult.jobIds,
-            ...enqueueResult.alreadyPendingJobIds,
-          ];
-          if (jobIds.length > 0) {
-            void processAiQueue(request.libraryId);
-            return {
-              ok: true,
-              type: "assets.analyze-queued",
-              assetIds: request.assetIds,
-              jobIds,
-              skippedAssetIds: enqueueResult.skippedAssetIds,
-              enqueued: enqueueResult.enqueued,
-            } satisfies RendererResult;
-          }
-        }
-      } catch (error) {
-        logger?.error("ai.analyze.batch-enqueue", error);
-      }
-      return {
-        ok: false,
-        error: createPublicError("AI_ANALYSIS_FAILED"),
-      } satisfies RendererResult;
-    }
-
-    // Manual analyze: prefer the AI job queue so Renderer gets progress events
-    // and the background-jobs panel updates. Fall through to sync analyze only
-    // when the asset could not be queued (and is not already pending).
-    if (request.type === "asset.analyze.request") {
-      const config = loadAiConfig();
-      if (!config.hasKey || !config.apiFormat) {
-        return {
-          ok: false,
-          error: createPublicError("AI_ANALYSIS_FAILED", "AI_NOT_CONFIGURED"),
-        } satisfies RendererResult;
-      }
-      try {
-        getDecryptedApiKey();
-      } catch {
-        return {
-          ok: false,
-          error: createPublicError("AI_ANALYSIS_FAILED", "AI_NOT_CONFIGURED"),
-        } satisfies RendererResult;
-      }
-      if (!workerClient) throw new Error("Library Worker is unavailable.");
-      try {
-        const enqueueResult = await workerClient.request({
-          type: "ai.enqueue-analysis",
-          libraryId: request.libraryId,
-          assetIds: [request.assetId],
-          // 手动分析可覆盖已有 AI 结果（8-09 WIP 恢复：worker 已支持）
-          forceExisting: true,
-        });
-        if (
-          enqueueResult.ok &&
-          enqueueResult.type === "ai.jobs.enqueued" &&
-          enqueueResult.enqueued > 0
-        ) {
-          void processAiQueue(request.libraryId);
-          return {
-            ok: true,
-            type: "asset.analyze-queued",
-            assetId: request.assetId,
-            enqueued: enqueueResult.enqueued,
-          } satisfies RendererResult;
-        }
-        if (
-          enqueueResult.ok &&
-          enqueueResult.type === "ai.jobs.enqueued" &&
-          enqueueResult.enqueued === 0
-        ) {
-          const statusResult = await workerClient.request({
-            type: "ai.status",
-            libraryId: request.libraryId,
-          });
-          const alreadyPending =
-            statusResult.ok &&
-            statusResult.type === "ai.jobs.status" &&
-            statusResult.jobs.some(
-              (job) =>
-                job.assetId === request.assetId &&
-                (job.status === "queued" ||
-                  job.status === "running" ||
-                  job.status === "paused"),
-            );
-          if (alreadyPending) {
-            void processAiQueue(request.libraryId);
-            return {
-              ok: true,
-              type: "asset.analyze-queued",
-              assetId: request.assetId,
-              enqueued: 1,
-            } satisfies RendererResult;
-          }
-        }
-      } catch (error) {
-        logger?.error("ai.analyze.enqueue", error);
-      }
-      // Fall through to synchronous asset.analyze for eligibility errors.
-    }
-
-    // Handle AI config requests entirely in the main process — no Worker involved.
-    if (request.type === "ai.config.get.request") {
-      const config = loadAiConfig();
-      return {
-        ok: true,
-        type: "ai.config.got",
-        apiFormat: config.apiFormat,
-        model: config.model,
-        baseUrl: config.baseUrl ?? "",
-        hasKey: config.hasKey,
-        enabledFields: {
-          description: config.descriptionEnabled,
-          tags: config.tagEnabled,
-          rating: config.ratingEnabled,
-        },
-        analysisSettings: toWireAiAnalysisSettings(config.analysisSettings),
-        languages: config.languages,
-        concurrencyLimit: config.concurrencyLimit,
-        maxAnalysisImageEdgePx: config.maxAnalysisImageEdgePx,
-        reliabilitySettings: config.reliabilitySettings,
-        autoAnalyzeEnabled: config.autoAnalyzeEnabled,
-        disclaimerAccepted: config.disclaimerAccepted,
-      } satisfies RendererResult;
-    }
-
-    if (request.type === "ai.config.set.request") {
-      const currentConfig = loadAiConfig();
-      if (request.autoAnalyzeEnabled && !request.disclaimerAccepted) {
-        return {
-          ok: false,
-          error: createPublicError("CONFIRMATION_REQUIRED"),
-        } satisfies RendererResult;
-      }
-      if (!request.apiKey && !currentConfig.hasKey) {
-        return {
-          ok: false,
-          error: createPublicError("AI_SETTINGS_INCOMPLETE"),
-        } satisfies RendererResult;
-      }
-      const savedConfig: AiConfig = {
-        apiFormat: request.apiFormat,
-        model: request.model,
-        baseUrl: (request.baseUrl ?? "").trim(),
-        descriptionEnabled: request.enabledFields?.description ?? true,
-        tagEnabled: request.enabledFields?.tags ?? true,
-        ratingEnabled: request.enabledFields?.rating ?? true,
-        analysisSettings: normalizeAiAnalysisSettings({
-          ...DEFAULT_AI_ANALYSIS_SETTINGS,
-          ...request.analysisSettings,
-          descriptionEnabled: request.enabledFields?.description ?? true,
-          tagEnabled: request.enabledFields?.tags ?? true,
-          ratingEnabled: request.enabledFields?.rating ?? true,
-        }),
-        concurrencyLimit: normalizeAiAnalysisConcurrency(
-          request.concurrencyLimit ?? currentConfig.concurrencyLimit,
-        ),
-        maxAnalysisImageEdgePx: normalizeAiAnalysisImageEdgePx(
-          request.maxAnalysisImageEdgePx ?? currentConfig.maxAnalysisImageEdgePx,
-        ),
-        // Retry policy remains durable but is no longer a user-facing setting.
-        reliabilitySettings: request.reliabilitySettings
-          ? normalizeAiReliabilitySettings(request.reliabilitySettings)
-          : currentConfig.reliabilitySettings,
-        languages: normalizeAiLanguages(
-          request.languages ?? request.language ?? DEFAULT_AI_LANGUAGES,
-        ),
-        autoAnalyzeEnabled: request.autoAnalyzeEnabled,
-        disclaimerAccepted: request.disclaimerAccepted,
-      };
-      saveAiConfig(savedConfig);
-      if (request.apiKey) saveEncryptedApiKey(request.apiKey);
-      if (workerClient) {
-        try {
-          const update = await workerClient.request({
-            type: 'ai.set-concurrency-limit',
-            concurrencyLimit: savedConfig.concurrencyLimit,
-          });
-          if (!update.ok || update.type !== 'ai.concurrency.updated') {
-            logger?.error(
-              'ai.config.concurrency-update',
-              new Error('Library Worker did not acknowledge the AI concurrency update.'),
-              { concurrencyLimit: savedConfig.concurrencyLimit },
-            );
-          }
-        } catch (error) {
-          // Saving stays durable even if the Worker is restarting. The next
-          // queue batch always reapplies this value before dispatching work.
-          logger?.error('ai.config.concurrency-update', error, {
-            concurrencyLimit: savedConfig.concurrencyLimit,
-          });
-        }
-      }
-      return { ok: true, type: "ai.config.saved" } satisfies RendererResult;
-    }
-
-    if (request.type === "ai.test-connection.request") {
-      // Resolve credentials here so a missing key returns AI_NOT_CONFIGURED
-      // instead of the generic CANCELLED path from commandFor().
-      let apiKey = request.apiKey?.trim() ?? "";
-      if (!apiKey) {
-        try {
-          apiKey = getDecryptedApiKey();
-        } catch {
-          return {
-            ok: false,
-            error: createPublicError("AI_ANALYSIS_FAILED", "AI_NOT_CONFIGURED"),
-          } satisfies RendererResult;
-        }
-      }
-      if (!workerClient) throw new Error("Library Worker is unavailable.");
-      const workerResult = await workerClient.request({
-        type: "ai.test-connection",
-        apiFormat: request.apiFormat,
-        model: request.model,
-        apiKey,
-        ...(request.baseUrl?.trim()
-          ? { baseUrl: request.baseUrl.trim() }
-          : {}),
-      });
-      if (!workerResult.ok) {
-        return {
-          ok: false,
-          error: workerResult.error,
-        } satisfies RendererResult;
-      }
-      if (workerResult.type !== "ai.test-connection.result") {
-        return {
-          ok: false,
-          error: createPublicError("AI_ANALYSIS_FAILED"),
-        } satisfies RendererResult;
-      }
-      return {
-        ok: true,
-        type: "ai.test-connection.result",
-        success: workerResult.success,
-        ...(workerResult.errorKind
-          ? { errorKind: workerResult.errorKind }
-          : {}),
-        ...(workerResult.reason ? { reason: workerResult.reason } : {}),
-      } satisfies RendererResult;
-    }
-
-    if (request.type === "ai.list-models.request") {
-      let apiKey = request.apiKey?.trim() ?? "";
-      if (!apiKey) {
-        try {
-          apiKey = getDecryptedApiKey();
-        } catch {
-          return {
-            ok: true,
-            type: "ai.list-models.result",
-            models: [],
-            errorKind: "auth",
-            reason: "API key is required to list models.",
-          } satisfies RendererResult;
-        }
-      }
-      const listed = await listAiModels({
-        apiFormat: request.apiFormat,
-        apiKey,
-        baseUrl: request.baseUrl,
-      });
-      if (!listed.ok) {
-        return {
-          ok: true,
-          type: "ai.list-models.result",
-          models: [],
-          errorKind: listed.errorKind,
-          reason: listed.reason,
-        } satisfies RendererResult;
-      }
-      return {
-        ok: true,
-        type: "ai.list-models.result",
-        models: listed.models,
-      } satisfies RendererResult;
-    }
-
-    if (request.type === "ai.search-plan.request") {
-      const config = loadAiConfig();
-      if (!config.hasKey || !config.disclaimerAccepted) {
-        logger?.info(
-          "ai.search-plan.unavailable",
-          "AI search requires configured credentials and accepted disclosure.",
-          {
-            apiFormat: config.apiFormat,
-            hasKey: config.hasKey,
-            disclaimerAccepted: config.disclaimerAccepted,
-          },
-        );
-        return {
-          ok: false,
-          error: createPublicError("AI_SEARCH_FAILED", "AI_NOT_CONFIGURED"),
-        } satisfies RendererResult;
-      }
-      let apiKey: string;
-      try {
-        apiKey = getDecryptedApiKey();
-      } catch (caught) {
-        logger?.error("ai.search-plan.credentials", caught, {
-          apiFormat: config.apiFormat,
-        });
-        return {
-          ok: false,
-          error: createPublicError("AI_SEARCH_FAILED", "AI_NOT_CONFIGURED"),
-        } satisfies RendererResult;
-      }
-      try {
-        const plan = await planAiSearch({
-          apiFormat: config.apiFormat,
-          model: config.model,
-          apiKey,
-          baseUrl: config.baseUrl,
-          languages: config.languages,
-          naturalQuery: request.naturalQuery,
-        });
-        logger?.info("ai.search-plan.completed", "AI search plan validated.", {
-          apiFormat: config.apiFormat,
-          model: config.model,
-          keywordCount: plan.keywords.length,
-          synonymCount: plan.synonyms.length,
-          exclusionCount: plan.exclusions.length,
-          filterCount: plan.filters.length,
-        });
-        return {
-          ok: true,
-          type: "ai.search-plan.result",
-          plan,
-          apiFormat: config.apiFormat,
-          model: config.model,
-        } satisfies RendererResult;
-      } catch (caught) {
-        const reason = aiSearchFailureReason(caught);
-        logger?.error("ai.search-plan.failed", caught, {
-          apiFormat: config.apiFormat,
-          model: config.model,
-          reason,
-        });
-        return {
-          ok: false,
-          error: createPublicError("AI_SEARCH_FAILED", reason),
-        } satisfies RendererResult;
-      }
-    }
+    const aiOwnedResult = await tryHandleAiOwnedRequest(request, {
+      loadAiConfig,
+      getDecryptedApiKey,
+      saveAiConfig,
+      saveEncryptedApiKey,
+      workerAvailable: () => Boolean(workerClient),
+      requestWorker: (command) => {
+        if (!workerClient) throw new Error("Library Worker is unavailable.");
+        return workerClient.request(command);
+      },
+      processAiQueue,
+      logInfo: (scope, message, context) => {
+        logger?.info(scope, message, context);
+      },
+      logError: (scope, error, context) => {
+        logger?.error(scope, error, context);
+      },
+    });
+    if (aiOwnedResult) return aiOwnedResult;
 
     if (request.type === "asset.close-preview.request") {
       return {
