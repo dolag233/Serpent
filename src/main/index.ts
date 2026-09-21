@@ -67,6 +67,7 @@ import {
 } from "./library-request/sync";
 import { tryHandleAiOwnedRequest } from "./library-request/ai";
 import { tryHandlePreviewOwnedRequest } from "./library-request/preview";
+import { tryHandleMediaShellWorkerResult } from "./library-request/media-shell";
 import { tryHandleRelinkOwnedRequest } from "./library-request/relink";
 import { executeFolderMainCommand } from "./commands/folders";
 import { executeAssetIngestionMainCommand } from "./commands/asset-ingestion";
@@ -3385,336 +3386,29 @@ async function handleLibraryRequest(
       }
     }
 
-    // Post-process preview and open-external requests
-    if (
-      workerResult.ok &&
-      request.type === "asset.preview.request" &&
-      workerResult.type === "media.preview-artifact"
-    ) {
-      const url =
-        workerResult.status === "ready"
-          ? workerResult.playbackMode === "source" &&
-            workerResult.sourceRevisionId
-            ? `serpent://source/${request.libraryId}/${request.assetId}?revision=${encodeURIComponent(workerResult.sourceRevisionId)}`
-            : workerResult.artifactId
-              ? `serpent://${workerResult.playbackMode === "proxy" ? "proxy" : "preview"}/${request.libraryId}/${workerResult.artifactId}`
-              : undefined
-          : undefined;
-      const posterUrl = workerResult.posterArtifactId
-        ? `serpent://preview/${request.libraryId}/${workerResult.posterArtifactId}`
-        : undefined;
-      if (
-        workerResult.status === "failed" ||
-        workerResult.status === "missing"
-      ) {
-        logger?.info("media.preview.unavailable", "Preview is not available.", {
-          assetId: request.assetId,
-          status: workerResult.status,
-          errorCode: workerResult.errorCode,
-        });
-      }
-      return {
-        ok: true,
-        type: "asset.preview.resolved",
-        assetId: request.assetId,
-        mediaType: workerResult.mediaType,
-        status: workerResult.status,
-        kind: workerResult.kind,
-        ...(url ? { url } : {}),
-        ...(posterUrl ? { posterUrl } : {}),
-        ...(workerResult.errorCode
-          ? { errorCode: workerResult.errorCode }
-          : {}),
-        ...(workerResult.playbackMode
-          ? { playbackMode: workerResult.playbackMode }
-          : {}),
-        ...(workerResult.sourceMimeType
-          ? { sourceMimeType: workerResult.sourceMimeType }
-          : {}),
-        ...(workerResult.sourceContainer
-          ? { sourceContainer: workerResult.sourceContainer }
-          : {}),
-        ...(workerResult.sourceCodecs
-          ? { sourceCodecs: workerResult.sourceCodecs }
-          : {}),
-        ...(workerResult.sourceRevisionId
-          ? {
-              playbackToken: `${request.assetId}:${workerResult.sourceRevisionId}`,
-            }
-          : {}),
-        ...(workerResult.exrPlanes ? { exrPlanes: workerResult.exrPlanes } : {}),
-        ...(workerResult.selectedExrPlane === undefined
-          ? {}
-          : { selectedExrPlane: workerResult.selectedExrPlane }),
-        ...(workerResult.colorSpacePending === undefined
-          ? {}
-          : { colorSpacePending: workerResult.colorSpacePending }),
-        ...(workerResult.colorSpace ? { colorSpace: workerResult.colorSpace } : {}),
-      } satisfies RendererResult;
-    }
-    if (
-      workerResult.ok &&
-      request.type === "asset.open-external.request" &&
-      workerResult.type === "media.asset-path"
-    ) {
-      try {
-        const openError = await shell.openPath(workerResult.absolutePath);
-        if (openError) {
-          logger?.error("main.open-external", new Error(openError));
-          return {
-            ok: false,
-            error: createPublicError("INTERNAL_ERROR"),
-          } satisfies RendererResult;
-        }
-        return {
-          ok: true,
-          type: "asset.open-external.requested",
-          assetId: request.assetId,
-        } satisfies RendererResult;
-      } catch (error) {
-        logger?.error("main.open-external", error);
-        return {
-          ok: false,
-          error: createPublicError("INTERNAL_ERROR"),
-        } satisfies RendererResult;
-      }
-    }
-    if (
-      workerResult.ok &&
-      request.type === "asset.open-with.request" &&
-      workerResult.type === "media.asset-path"
-    ) {
-      const outcome = await openPathWithOtherApplication(
-        workerResult.absolutePath,
-        createOpenWithDeps(appLocale, () => mainWindow ?? null),
-      );
-      if (outcome === "failed") {
-        logger?.error("main.open-with", new Error("open-with failed"));
-        return {
-          ok: false,
-          error: createPublicError("INTERNAL_ERROR"),
-        } satisfies RendererResult;
-      }
-      // cancelled → quiet ok (no toast); opened → quiet ok.
-      return {
-        ok: true,
-        type: "asset.open-with.requested",
-        assetId: request.assetId,
-      } satisfies RendererResult;
-    }
-    if (
-      workerResult.ok &&
-      request.type === "asset.reveal-in-folder.request" &&
-      workerResult.type === "media.asset-path"
-    ) {
-      try {
-        shell.showItemInFolder(workerResult.absolutePath);
-        return {
-          ok: true,
-          type: "asset.reveal-in-folder.requested",
-          assetId: request.assetId,
-        } satisfies RendererResult;
-      } catch (error) {
-        logger?.error("main.reveal-in-folder", error);
-        return {
-          ok: false,
-          error: createPublicError("INTERNAL_ERROR"),
-        } satisfies RendererResult;
-      }
-    }
-    if (
-      workerResult.ok &&
-      request.type === "asset.copy-file-path.request" &&
-      workerResult.type === "media.asset-path"
-    ) {
-      try {
-        clipboard.writeText(workerResult.absolutePath);
-        return {
-          ok: true,
-          type: "asset.copy-file-path.requested",
-          assetId: request.assetId,
-        } satisfies RendererResult;
-      } catch (error) {
-        logger?.error("main.copy-file-path", error);
-        return {
-          ok: false,
-          error: createPublicError("INTERNAL_ERROR"),
-        } satisfies RendererResult;
-      }
-    }
-    if (
-      workerResult.ok &&
-      request.type === "asset.copy-files.request" &&
-      workerResult.type === "media.asset-paths"
-    ) {
-      try {
-        const wrote = writeFilePathsToClipboard(
-          workerResult.absolutePaths,
-          createFileClipboardDeps(),
-        );
-        if (!wrote) {
-          logger?.error(
-            "main.copy-asset-files",
-            new Error("clipboard file copy produced no file list"),
-          );
-          return {
-            ok: false,
-            error: createPublicError("INTERNAL_ERROR"),
-          } satisfies RendererResult;
-        }
-        return {
-          ok: true,
-          type: "asset.copy-files.requested",
-          assetIds: workerResult.assetIds,
-        } satisfies RendererResult;
-      } catch (error) {
-        logger?.error("main.copy-asset-files", error);
-        return {
-          ok: false,
-          error: createPublicError("INTERNAL_ERROR"),
-        } satisfies RendererResult;
-      }
-    }
-    if (
-      workerResult.ok &&
-      request.type === "asset.resolve-dropped-paths.request" &&
-      workerResult.type === "media.asset-ids-resolved"
-    ) {
-      return {
-        ok: true,
-        type: "asset.dropped-paths.resolved",
-        assetIds: workerResult.assetIds,
-      } satisfies RendererResult;
-    }
-    if (
-      workerResult.ok &&
-      request.type === "folder.open-in-file-manager.request" &&
-      workerResult.type === "folder.path"
-    ) {
-      try {
-        const openError = await shell.openPath(workerResult.absolutePath);
-        if (openError) {
-          logger?.error(
-            "main.open-folder-in-file-manager",
-            new Error(openError),
-          );
-          return {
-            ok: false,
-            error: createPublicError("INTERNAL_ERROR"),
-          } satisfies RendererResult;
-        }
-        return {
-          ok: true,
-          type: "folder.open-in-file-manager.requested",
-          folderId: request.folderId,
-        } satisfies RendererResult;
-      } catch (error) {
-        logger?.error("main.open-folder-in-file-manager", error);
-        return {
-          ok: false,
-          error: createPublicError("INTERNAL_ERROR"),
-        } satisfies RendererResult;
-      }
-    }
-    if (
-      workerResult.ok &&
-      request.type === "folder.open-with.request" &&
-      workerResult.type === "folder.path"
-    ) {
-      const outcome = await openPathWithOtherApplication(
-        workerResult.absolutePath,
-        createOpenWithDeps(appLocale, () => mainWindow ?? null),
-      );
-      if (outcome === "failed") {
-        logger?.error("main.folder-open-with", new Error("open-with failed"));
-        return {
-          ok: false,
-          error: createPublicError("INTERNAL_ERROR"),
-        } satisfies RendererResult;
-      }
-      return {
-        ok: true,
-        type: "folder.open-with.requested",
-        folderId: request.folderId,
-      } satisfies RendererResult;
-    }
-    if (
-      workerResult.ok &&
-      request.type === "folder.copy-path.request" &&
-      workerResult.type === "folder.path"
-    ) {
-      try {
-        clipboard.writeText(workerResult.absolutePath);
-        return {
-          ok: true,
-          type: "folder.copy-path.requested",
-          folderId: request.folderId,
-        } satisfies RendererResult;
-      } catch (error) {
-        logger?.error("main.copy-folder-path", error);
-        return {
-          ok: false,
-          error: createPublicError("INTERNAL_ERROR"),
-        } satisfies RendererResult;
-      }
-    }
-    if (
-      workerResult.ok &&
-      request.type === "folder.copy.request" &&
-      workerResult.type === "folder.path"
-    ) {
-      try {
-        const wrote = writeFilePathsToClipboard(
-          [workerResult.absolutePath],
-          createFileClipboardDeps(),
-        );
-        if (!wrote) {
-          logger?.error(
-            "main.copy-folder-files",
-            new Error("clipboard file copy produced no file list"),
-          );
-          return {
-            ok: false,
-            error: createPublicError("INTERNAL_ERROR"),
-          } satisfies RendererResult;
-        }
-        return {
-          ok: true,
-          type: "folder.copy.requested",
-          folderId: request.folderId,
-        } satisfies RendererResult;
-      } catch (error) {
-        logger?.error("main.copy-folder-files", error);
-        return {
-          ok: false,
-          error: createPublicError("INTERNAL_ERROR"),
-        } satisfies RendererResult;
-      }
-    }
-    if (
-      workerResult.ok &&
-      request.type === "asset.retry-artifact.request" &&
-      workerResult.type === "media.retry-artifact.queued"
-    ) {
-      return {
-        ok: true,
-        type: "asset.retry-artifact.started",
-        assetId: workerResult.assetId,
-        kind: request.kind,
-      } satisfies RendererResult;
-    }
-    if (
-      workerResult.ok &&
-      request.type === "asset.thumbnail.request" &&
-      workerResult.type === "media.thumbnail.generated"
-    ) {
-      return {
-        ok: true,
-        type: "asset.thumbnail.generated",
-        assetId: workerResult.assetId,
-        artifactId: workerResult.artifactId,
-      } satisfies RendererResult;
-    }
+    const mediaShellResult = await tryHandleMediaShellWorkerResult(request, workerResult, {
+      logInfo: (scope, message, context) => {
+        logger?.info(scope, message, context);
+      },
+      logError: (scope, error, context) => {
+        logger?.error(scope, error, context);
+      },
+      openPath: (absolutePath) => shell.openPath(absolutePath),
+      showItemInFolder: (absolutePath) => {
+        shell.showItemInFolder(absolutePath);
+      },
+      writeClipboardText: (text) => {
+        clipboard.writeText(text);
+      },
+      writeClipboardFilePaths: (absolutePaths) =>
+        writeFilePathsToClipboard(absolutePaths, createFileClipboardDeps()),
+      openWith: (absolutePath) =>
+        openPathWithOtherApplication(
+          absolutePath,
+          createOpenWithDeps(appLocale, () => mainWindow ?? null),
+        ),
+    });
+    if (mediaShellResult) return mediaShellResult;
 
     // Auto-analyze on import: after a successful ordinary import
     // (resolveImport or importFolderAsLinked), enqueue AI analysis for
