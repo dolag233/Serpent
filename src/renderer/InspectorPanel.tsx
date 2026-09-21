@@ -33,7 +33,7 @@ import { useLocale } from "./i18n";
 
 import type { AssetSummary, AssetMetadataResult, ExtractedVideoMetadata, TagSummary } from "../shared/asset-types";
 import {
-  isRawImageExtension,
+  isEmbeddedImageMetadataExtension,
   mediaTypeHasPixelResolution,
 } from "../shared/media-formats";
 import type { PreviewResolution, SerpentLibraryApi } from "../shared/library-api";
@@ -42,7 +42,12 @@ import type { PluginContributionContext } from "../plugins/plugin-context";
 import type {
   RendererLibrarySummary,
 } from "../shared/protocol/responses";
-import { formatAudioTechnicalLine, formatVideoTechnicalLine } from "./video-metadata-format";
+import {
+  buildEmbeddedMetadataRows,
+  formatAudioTechnicalLine,
+  formatVideoTechnicalLine,
+  type EmbeddedMetadataField,
+} from "./video-metadata-format";
 import { buildFontInspectorRows } from "./font-inspector-rows";
 import { isGifDisplayName } from "./gif-player-controls";
 import {
@@ -116,6 +121,25 @@ const RAW_METADATA_LABEL_KEYS: Record<RawMetadataField, string> = {
   meteringMode: "inspector.rawMeteringMode",
   flash: "inspector.rawFlash",
   focalLength: "inspector.rawFocalLength",
+  title: "inspector.rawTitle",
+  description: "inspector.rawDescription",
+  gpsLatitude: "inspector.rawGpsLatitude",
+  gpsLongitude: "inspector.rawGpsLongitude",
+  orientation: "inspector.rawOrientation",
+};
+
+const EMBEDDED_METADATA_LABEL_KEYS: Record<Exclude<EmbeddedMetadataField, "custom">, string> = {
+  title: "inspector.embeddedTitle",
+  artist: "inspector.embeddedArtist",
+  album: "inspector.embeddedAlbum",
+  albumArtist: "inspector.embeddedAlbumArtist",
+  trackNumber: "inspector.embeddedTrack",
+  discNumber: "inspector.embeddedDisc",
+  genre: "inspector.embeddedGenre",
+  composer: "inspector.embeddedComposer",
+  date: "inspector.embeddedDate",
+  comment: "inspector.embeddedComment",
+  copyright: "inspector.embeddedCopyright",
 };
 
 // --- Types ---
@@ -708,7 +732,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
   }, [showTagInput]);
 
   // REQ-VIEW-003 / CU-D8 / Serpent-i07: fetch extracted metadata for video /
-  // audio tech lines, GIF frames, and RAW camera details. Display is derived
+  // audio tech lines, GIF frames, and embedded image details. Display is derived
   // from cache identity so selection changes do not sync-setState.
   useEffect(() => {
     const assetId = selectedAsset?.assetId ?? null;
@@ -717,9 +741,9 @@ export function InspectorPanel(props: InspectorPanelProps) {
     const isAudio = selectedAsset?.mediaType === "audio";
     const isGif =
       selectedAsset != null && isGifDisplayName(selectedAsset.displayName);
-    const isRawImage =
+    const isEmbeddedImage =
       selectedAsset?.mediaType === "image"
-      && isRawImageExtension(selectedAsset.relativeFilePath);
+      && isEmbeddedImageMetadataExtension(selectedAsset.relativeFilePath);
     // Serpent-485aeb: font facts are read on demand from the font file itself.
     const isFont = selectedAsset?.mediaType === "font";
     const shouldFetch =
@@ -727,7 +751,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
         api &&
           libraryId &&
           assetId &&
-          (isVideo || isAudio || isGif || isRawImage || isFont) &&
+          (isVideo || isAudio || isGif || isEmbeddedImage || isFont) &&
           selectionCount < 2,
       );
 
@@ -807,7 +831,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
 
   const rawImageMetadata =
     selectedAsset?.mediaType === "image"
-    && isRawImageExtension(selectedAsset.relativeFilePath)
+    && isEmbeddedImageMetadataExtension(selectedAsset.relativeFilePath)
     && selectionCount < 2
     && videoTechCache?.assetId === selectedAsset.assetId
       ? videoTechCache.metadata
@@ -820,7 +844,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
       ? videoTechCache.metadata
       : null;
 
-  // RAW camera metadata is a fallback for the existing author field. Keep it
+  // Embedded image author metadata is a fallback for the existing author field. Keep it
   // out of the technical strip so the author remains editable in the same
   // place as every other asset.
   const displayAuthor = metadataReady
@@ -1039,7 +1063,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
     if (
       !selectedAsset
       || selectionCount >= 2
-      || !isRawImageExtension(selectedAsset.relativeFilePath)
+      || !isEmbeddedImageMetadataExtension(selectedAsset.relativeFilePath)
     ) {
       return [];
     }
@@ -1067,6 +1091,16 @@ export function InspectorPanel(props: InspectorPanelProps) {
     ),
     [rawMetadataRows],
   );
+
+  const embeddedMetadataRows = useMemo(() => {
+    if (!selectedAsset || selectionCount >= 2) return [];
+    const metadata = selectedAsset.mediaType === "audio"
+      ? audioTechMetadata
+      : selectedAsset.mediaType === "video"
+        ? videoTechMetadata
+        : null;
+    return metadata ? buildEmbeddedMetadataRows(metadata) : [];
+  }, [audioTechMetadata, selectedAsset, selectionCount, videoTechMetadata]);
 
   const inspectorSelectedAssetIds = useMemo(() => {
     if (selectedAssets.length > 0) {
@@ -1606,6 +1640,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
           )}
 
           {(technicalInfoParts.length > 0
+            || embeddedMetadataRows.length > 0
             || rawTechnicalMetadataRows.length > 0
             || fontMetadataRows.length > 0) && (
             <div
@@ -1630,6 +1665,24 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   <span className="inspector-raw-tech-value">{row.value}</span>
                 </div>
               ))}
+              {embeddedMetadataRows.map((row, index) => {
+                const label = row.field === "custom"
+                  ? row.key ?? t("inspector.embeddedCustomTag")
+                  : t(EMBEDDED_METADATA_LABEL_KEYS[row.field]);
+                return (
+                  <div
+                    className="inspector-tech-part inspector-raw-tech-row"
+                    data-field={`embedded-${row.key ?? row.field}`}
+                    data-hover-tip={`${label}: ${row.value}`}
+                    key={`embedded-${row.key ?? row.field}-${index}`}
+                  >
+                    <span className="inspector-raw-tech-label">{label}</span>
+                    <span className="inspector-raw-tech-value">
+                      {row.value}
+                    </span>
+                  </div>
+                );
+              })}
               {rawTechnicalMetadataRows.map((row) => (
                 <div
                   className="inspector-tech-part inspector-raw-tech-row"

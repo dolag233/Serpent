@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   formatAudioTechnicalLine,
+  formatEmbeddedMetadataLine,
+  buildEmbeddedMetadataRows,
   formatBitrate,
   formatFrameRate,
   formatSampleRate,
@@ -33,6 +35,49 @@ const EMPTY_RAW_IMAGE_METADATA = {
 };
 
 describe("video-metadata-format", () => {
+  it("builds ARW-style embedded metadata rows", () => {
+    expect(buildEmbeddedMetadataRows({
+      title: "Scene 07",
+      artist: "Example Artist",
+      album: "Example Album",
+      albumArtist: null,
+      trackNumber: "7/12",
+      discNumber: "1/2",
+      genre: null,
+      composer: null,
+      comment: "Preview",
+      copyright: null,
+      date: "2026",
+      customTags: [{ key: "Mood", value: "Calm" }],
+    })).toEqual([
+      { field: "title", value: "Scene 07" },
+      { field: "artist", value: "Example Artist" },
+      { field: "album", value: "Example Album" },
+      { field: "trackNumber", value: "7/12" },
+      { field: "discNumber", value: "1/2" },
+      { field: "date", value: "2026" },
+      { field: "comment", value: "Preview" },
+      { field: "custom", key: "Mood", value: "Calm" },
+    ]);
+  });
+
+  it("formats standard embedded tags and bounded custom fields", () => {
+    expect(formatEmbeddedMetadataLine({
+      title: "Scene 07",
+      artist: "Example Artist",
+      album: "Example Album",
+      albumArtist: "Example Group",
+      trackNumber: "7/12",
+      discNumber: null,
+      genre: "Ambient",
+      composer: null,
+      comment: "Preview",
+      copyright: null,
+      date: "2026",
+      customTags: [{ key: "Mood", value: "Calm" }],
+    })).toContain("Mood: Calm");
+  });
+
   it("parses ffprobe ratio and plain fps", () => {
     expect(parseFrameRateFps("30000/1001")).toBeCloseTo(29.97, 2);
     expect(parseFrameRateFps("30/1")).toBe(30);
@@ -127,7 +172,7 @@ describe("video-metadata-format", () => {
       framerate: null,
       pixelFormat: null,
       containerBitrate: "320000",
-    })).toBe("mp3 · 320 kbps · 44.1 kHz · stereo");
+    })).toBe("320 kbps · 44.1 kHz · stereo");
   });
 
   it("falls back to container bitrate for audio when stream bitrate is missing", () => {
@@ -144,7 +189,7 @@ describe("video-metadata-format", () => {
       framerate: null,
       pixelFormat: null,
       containerBitrate: "192000",
-    })).toBe("mp3 · 192 kbps · 48 kHz · mono");
+    })).toBe("192 kbps · 48 kHz · mono");
   });
 });
 

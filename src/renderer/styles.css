@@ -12079,6 +12079,11 @@ select.ai-config-input.ai-config-languages {
   gap: 12px;
   min-width: 0;
   width: 100%;
+  /* Match the Inspector description field so Chinese metadata stays readable. */
+  font-family: var(--font-ui);
+  font-size: calc(11.5px * var(--ui-font-scale));
+  font-weight: var(--ui-font-weight-regular);
+  line-height: 1.35;
 }
 
 .inspector-raw-tech-label,

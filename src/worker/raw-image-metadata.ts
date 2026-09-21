@@ -1,5 +1,5 @@
 /**
- * Best-effort camera metadata extraction for RAW/image Inspector details.
+ * Best-effort EXIF/IPTC/XMP extraction for image Inspector details.
  *
  * The Worker owns the source path and the parser call. Only a bounded,
  * normalized allow-list leaves this module, so arbitrary EXIF keys and local
@@ -28,6 +28,11 @@ export interface RawImageMetadata {
   meteringMode: number | string | null;
   flash: number | string | null;
   focalLength: number | string | null;
+  title: string | null;
+  description: string | null;
+  gpsLatitude: number | null;
+  gpsLongitude: number | null;
+  orientation: number | string | null;
 }
 
 export type RawImageMetadataExtractionResult =
@@ -80,6 +85,27 @@ function numeric(value: unknown): number | null {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
+}
+
+function firstRawValue(record: Record<string, unknown>, keys: string[]): unknown {
+  for (const key of keys) {
+    const value = record[key];
+    if (value !== null && value !== undefined) return value;
+  }
+  return null;
+}
+
+function coordinate(value: unknown, reference: unknown): number | null {
+  const direct = numeric(value);
+  const ref = boundedText(reference)?.toUpperCase();
+  if (direct !== null) return ref === 'S' || ref === 'W' ? -Math.abs(direct) : direct;
+  if (!Array.isArray(value) || value.length < 2) return null;
+  const degrees = numeric(value[0]);
+  const minutes = numeric(value[1]);
+  const seconds = numeric(value[2] ?? 0);
+  if (degrees === null || minutes === null || seconds === null) return null;
+  const decimal = Math.abs(degrees) + minutes / 60 + seconds / 3600;
+  return ref === 'S' || ref === 'W' ? -decimal : decimal;
 }
 
 function scalar(value: unknown): number | string | null {
@@ -158,6 +184,27 @@ export function normalizeRawImageMetadata(output: unknown): RawImageMetadata {
     meteringMode: scalar(firstValue(record, ['MeteringMode'])),
     flash: scalar(firstValue(record, ['Flash'])),
     focalLength: scalar(firstValue(record, ['FocalLength'])),
+    title: boundedText(firstValue(record, [
+      'Title',
+      'ObjectName',
+      'Headline',
+    ])),
+    description: boundedText(firstValue(record, [
+      'Description',
+      'ImageDescription',
+      'Caption-Abstract',
+    ])),
+    gpsLatitude: coordinate(firstRawValue(record, [
+      'latitude',
+      'GPSLatitude',
+      'gpsLatitude',
+    ]), firstRawValue(record, ['GPSLatitudeRef', 'latitudeRef'])),
+    gpsLongitude: coordinate(firstRawValue(record, [
+      'longitude',
+      'GPSLongitude',
+      'gpsLongitude',
+    ]), firstRawValue(record, ['GPSLongitudeRef', 'longitudeRef'])),
+    orientation: scalar(firstValue(record, ['Orientation'])),
   };
 }
 

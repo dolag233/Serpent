@@ -23,6 +23,13 @@ export const RAW_IMAGE_EXTENSIONS = [
   '.raw', '.dng', '.cr2', '.cr3', '.nef', '.arw', '.raf', '.orf', '.rw2',
 ] as const;
 
+/** Image containers whose EXIF/IPTC/XMP blocks can be read without decoding pixels. */
+export const EMBEDDED_IMAGE_METADATA_EXTENSIONS = [
+  ...JPEG_IMAGE_EXTENSIONS,
+  '.png', '.gif', '.tif', '.tiff', '.webp', '.avif',
+  ...RAW_IMAGE_EXTENSIONS,
+] as const;
+
 export const IMAGE_EXTENSIONS = [
   ...SHARP_IMAGE_EXTENSIONS,
   ...OIIO_IMAGE_EXTENSIONS,
@@ -67,6 +74,7 @@ export type ImageDecoder = 'sharp' | 'oiio';
 
 const sharpExtensions = new Set<string>(SHARP_IMAGE_EXTENSIONS);
 const rawImageExtensions = new Set<string>(RAW_IMAGE_EXTENSIONS);
+const embeddedImageMetadataExtensions = new Set<string>(EMBEDDED_IMAGE_METADATA_EXTENSIONS);
 const oiioExtensions = new Set<string>([
   ...OIIO_IMAGE_EXTENSIONS,
   ...RAW_IMAGE_EXTENSIONS,
@@ -104,6 +112,10 @@ function normalizedExtension(extensionOrFilename: string): string {
 
 export function isRawImageExtension(extensionOrFilename: string): boolean {
   return rawImageExtensions.has(normalizedExtension(extensionOrFilename));
+}
+
+export function isEmbeddedImageMetadataExtension(extensionOrFilename: string): boolean {
+  return embeddedImageMetadataExtensions.has(normalizedExtension(extensionOrFilename));
 }
 
 export function isSupportedImageExtension(extensionOrFilename: string): boolean {

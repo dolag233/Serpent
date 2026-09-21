@@ -44,6 +44,12 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-09-21 文件内嵌元数据
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| METADATA-EMBEDDED-001 / `Serpent-2b47e8` | 读取并展示 EXIF/IPTC/XMP、ID3/容器标签，并支持 `meta:` 全文搜索 | 待人类验收 | ① 完全退出后打开含 JPEG/PNG/TIFF、视频和音频（含至少一份带标签的文件）的资源库。② 选中图片、视频、音频，查看 Inspector 技术元数据。③ 在搜索框输入 `meta:` 加标题、艺术家、相机型号或自定义标签值。④ 修改或替换一份源文件后重新对账，再搜索旧标签。 | Inspector 显示源文件实际携带的标准标签；`meta:` 能命中标签值和有界自定义字段；源文件 revision 变化后旧标签不再命中。结构化筛选、地图/GPS 专用界面本条暂不验收。 | [开发日志](../development/2026-09-21-embedded-metadata-development-log.md) / `src/worker/embedded-metadata.ts`、`src/worker/raw-image-metadata.ts`、`src/worker/library-service.ts`、`src/renderer/InspectorPanel.tsx` / [定向单测](../../../tests/unit/embedded-metadata.test.ts)、`tests/unit/raw-image-metadata.test.ts`、`tests/unit/video-metadata-format.test.ts`、`tests/worker/video-exr.test.ts`、`npm run test:library-availability` | 2026-09-21：typecheck、定向单测（25 项）、Worker ffprobe 回归（68 项）和资源库底线（228 项通过、1 项跳过）通过；真实应用和 Computer Use 待独立验收。 |
+
 ### 2026-09-20 乱序排序
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

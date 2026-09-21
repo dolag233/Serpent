@@ -13,6 +13,9 @@ export const AUDIO_EXTENSIONS = [
   ".aac",
   ".flac",
   ".opus",
+  ".aif",
+  ".aiff",
+  ".ac3",
 ] as const;
 
 /**
@@ -158,6 +161,9 @@ export const AUDIO_MIME_BY_EXTENSION: Record<
   ".aac": "audio/aac",
   ".flac": "audio/flac",
   ".opus": "audio/ogg",
+  ".aif": "audio/aiff",
+  ".aiff": "audio/aiff",
+  ".ac3": "audio/ac3",
 };
 
 export function isAudioFileName(filenameOrMime: string): boolean {
