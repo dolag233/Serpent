@@ -38,10 +38,6 @@ import {
   AI_PROGRESS_CHANNEL,
   AI_COMPLETED_CHANNEL,
   AI_CLEARED_CHANNEL,
-  APP_UPDATE_CHECK_CHANNEL,
-  APP_UPDATE_INSTALL_CHANNEL,
-  APP_UPDATE_CANCEL_CHANNEL,
-  APP_UPDATE_PROGRESS_CHANNEL,
   AUTOMATION_SCRIPT_OPEN_CHANNEL,
   AUTOMATION_SCRIPT_SAVE_CHANNEL,
   AUTOMATION_SCRIPT_START_CHANNEL,
@@ -91,13 +87,6 @@ import {
   type SerpentPluginManagerApi,
 } from '../shared/plugin-manager-api';
 import { pluginInstallProgressSchema, type PluginInstallProgress } from '../shared/plugin-install-progress';
-import {
-  parseAppUpdateCheckResult,
-  parseAppUpdateInstallResult,
-  parseAppUpdateProgress,
-  type AppUpdateProgress,
-  type SerpentAppUpdateApi,
-} from '../shared/app-update';
 import {
   PLUGIN_UI_DIALOG_PATCH_CHANNEL,
   PLUGIN_UI_DIALOG_REQUEST_CHANNEL,
@@ -152,6 +141,7 @@ import { createPublicError } from '../shared/protocol/errors';
 import { isImageSequenceImportOffer } from '../shared/import-outcome';
 import { resolveDroppedFilePaths } from './dropped-files';
 import { extractWebMediaDrop } from './web-media-drop';
+import { appUpdate } from './bridge/app-update';
 import { shell } from './bridge/shell';
 import { failure, getE2eRequestCount, importRequest, request } from './transport';
 
@@ -2557,32 +2547,6 @@ const e2eDiagnostics = Object.freeze({
   },
 });
 
-
-const appUpdate: SerpentAppUpdateApi = Object.freeze({
-  async checkForUpdates() {
-    return parseAppUpdateCheckResult(
-      await ipcRenderer.invoke(APP_UPDATE_CHECK_CHANNEL),
-    );
-  },
-  async downloadAndInstall() {
-    return parseAppUpdateInstallResult(
-      await ipcRenderer.invoke(APP_UPDATE_INSTALL_CHANNEL),
-    );
-  },
-  cancelDownload() {
-    ipcRenderer.send(APP_UPDATE_CANCEL_CHANNEL);
-  },
-  onDownloadProgress(listener: (progress: AppUpdateProgress) => void) {
-    const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
-      const progress = parseAppUpdateProgress(payload);
-      if (progress !== null) listener(progress);
-    };
-    ipcRenderer.on(APP_UPDATE_PROGRESS_CHANNEL, handler);
-    return () => {
-      ipcRenderer.removeListener(APP_UPDATE_PROGRESS_CHANNEL, handler);
-    };
-  },
-});
 
 const automation: SerpentAutomationScriptApi = Object.freeze({
   async open() {
