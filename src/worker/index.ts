@@ -119,6 +119,7 @@ import { executeLinkedFolderWorkerCommand } from './handlers/linked-folders';
 import { executeAssetIngestionWorkerCommand } from './handlers/asset-ingestion';
 import { executeIgnoreWorkerCommand } from './handlers/ignore';
 import { executeTagWorkerCommand } from './handlers/tags';
+import { executeCollectionWorkerCommand } from './handlers/collections';
 import { executeLibraryLifecycleWorkerCommand } from './handlers/library-lifecycle';
 import { executeSyncWorkerCommand } from './handlers/sync';
 import { LibraryGenerationRegistry } from './library-generation';
@@ -2695,46 +2696,20 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       return result;
     }
     case 'collection.list':
-      return {
-        ok: true,
-        type: 'collection.list',
-        collections: libraryService.listCollections(request.command.libraryId),
-      };
     case 'collection.create':
-      throw new Error('Bounded collection.create write was not dispatched through its transaction fence.');
-    case 'collection.update': {
-      const collection = libraryService.updateCollection(request.command);
-      return { ok: true, type: 'collection.updated', collection };
-    }
-    case 'collection.reorder': {
-      const orderedCollectionIds = libraryService.reorderCollections(request.command);
-      return { ok: true, type: 'collection.reordered', orderedCollectionIds };
-    }
+    case 'collection.update':
+    case 'collection.reorder':
     case 'collection.delete':
-      return {
-        ok: true,
-        type: 'collection.deleted',
-        collectionId: libraryService.deleteCollection(request.command),
-      };
     case 'collection.assets.add':
-      throw new Error('Bounded collection.assets.add write was not dispatched through its transaction fence.');
     case 'collection.assets.remove':
-      throw new Error('Bounded collection.assets.remove write was not dispatched through its transaction fence.');
-    case 'collection.assets.reorder': {
-      const { collectionId } = libraryService.reorderCollectionAssets(request.command);
-      return { ok: true, type: 'collection.assets.reordered', collectionId };
-    }
-    case 'collection.assets.list': {
-      const assets = libraryService.listCollectionAssets(request.command);
-      // Serpent-4bdd26 收编 codex/large-library-performance@d5f58088：同
-      // asset.list——视口上报（asset.thumbnail.visible-window）才是可见波的唯一触发源。
-      return { ok: true, type: 'collection.assets.list', assets };
-    }
+    case 'collection.assets.reorder':
+    case 'collection.assets.list':
     case 'collection.assets.memberships': {
-      const memberships = libraryService.listAssetCollectionMemberships(
-        request.command,
-      );
-      return { ok: true, type: 'collection.assets.memberships', memberships };
+      const result = executeCollectionWorkerCommand(libraryService, request);
+      if (result === undefined) {
+        throw new Error(`Unhandled collection command: ${request.command.type}`);
+      }
+      return result;
     }
     case 'asset.metadata.get': {
       const metadata = libraryService.getAssetMetadata(request.command);
