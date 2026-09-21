@@ -44,6 +44,12 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-09-21 视频倍速下拉
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| VIEW-RATE-001 / `Serpent-1a846c` | 视频查看页倍速为 0.25–4 下拉，可减慢也可加快 | 待人类验收 | ① **完全退出**后再打开含这次改动的构建。② 双击打开一段视频。③ 底部控制条点当前倍速（默认 `1×`），应弹出选项而不是直接加快。④ 依次选 `0.25`、`0.5`、`1`、`1.5`、`2`、`4`，听/看播放速度。⑤ 按 `X` 降一档、`C` 升一档。⑥ 亮/暗主题各看一眼下拉。 | 下拉选项只有这六档；可选慢于 1×；选中后立即按该倍速播放。不是原生系统白底下拉。X/C 在这六档之间切换，到 0.25 不能再慢、到 4 不能再快。 | [开发日志](../development/2026-09-21-video-playback-rate-dropdown-development-log.md) / `VideoPlaybackRateSelect.tsx` / `video-player-controls.ts` / [档位单测](../../../tests/unit/video-player-controls.test.ts) / [下拉单测](../../../tests/unit/video-playback-rate-select.test.tsx) | 2026-09-21 用户报告只能加快无法减慢。根因：VIEWER-023 把原生 select 改成只升档的按钮。 |
+
 ### 2026-09-21 文件内嵌元数据
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
@@ -1365,7 +1371,7 @@
 | VIEWER-017 | 查看页双指横向滑动不误触捏合缩放 | 待人类验收 | 触控板上双击打开图片查看；① Fit 态双指左右快速滑动切上一张/下一张；② 放大后双指左右平移图片；③ 再做真实捏合放大/缩小；④ 对照普通鼠标滚轮缩放与双指上下滚动平移 | ①② 横向滑动只切图或平移，不明显误缩放；③ 捏合仍可缩放；④ 鼠标滚轮缩放与双指滚动平移语义不变 | [wheel 单测](../../../tests/unit/viewer-wheel-intent.test.ts) / `Serpent-4kg3` | 2026-07-21：`ctrlKey` 横向主导 delta 改判为 pan，避免 Chromium 把双指横滑合成 pinch。 |
 | VIEWER-021 | 全屏查看鼠标静止时隐藏光标 | 人类验收通过 | 图片或视频查看页进入全屏；静止鼠标约 2 秒；再移动鼠标；退出全屏 | 静止后与 chrome 渐隐同步隐藏系统光标；移动后恢复；退出全屏后光标始终可见 | `Serpent-c3lf` / [styles](../../../src/renderer/styles.css) | 2026-07-25 用户验收通过。 |
 | VIEWER-022 | 查看页全局音量（静音/滑条/↑↓） | 人类验收通过 | ① 打开视频查看页：点静音、拖滑条、按 ↑/↓。② 打开音频查看页重复。③ 切到另一视频/音频确认音量一致。④ 完全退出 Serpent 后重开再查看。⑤ 在 Inspector 描述框聚焦时按 ↑/↓ 确认不抢键 | 视频与音频底部 chrome 均有静音与滑条；↑↓ 与滑条/静音一致；跨资产与重启保持（localStorage `serpent.viewer-volume.v1`）；输入框内不触发；查看器不显示缩放百分比 | [偏好单测](../../../tests/unit/viewer-volume-preferences.test.ts) / `Serpent-8w6x` | 2026-07-25 用户验收通过；附带移除图片/视频查看页缩放百分比显示。 |
-| VIEWER-023 | 视频倍速下拉与底部 chrome 视觉统一 | 待人类验收 | 打开视频查看页；观察倍速控件与播放/全屏等按钮；亮/暗主题各看一眼；点倍速按钮应升一档 | 倍速为与 chrome 同高的文字按钮（非原生白底下拉）；hover/焦点与其他按钮一致 | `Serpent-gplm` / [styles](../../../src/renderer/styles.css) | 2026-07-25 复验不通过后改为按钮控件。待复验。 |
+| VIEWER-023 | 视频倍速下拉与底部 chrome 视觉统一 | 人类验收不通过 | 打开视频查看页；观察倍速控件与播放/全屏等按钮；亮/暗主题各看一眼；点倍速应打开选项而不是只升一档 | 倍速为与 chrome 同高的文字下拉（非原生白底下拉）；选项为 0.25/0.5/1/1.5/2/4；hover/焦点与其他按钮一致 | `Serpent-gplm` / `Serpent-1a846c` / [styles](../../../src/renderer/styles.css) | 2026-07-25 复验不通过后改为只升档按钮。**2026-09-21 用户本人验收不通过**：只能加快无法减慢。见 VIEW-RATE-001。 |
 | IMAGESEQ-001 | 连续编号图片识别、导入确认与手动创建 | 人类验收通过 | ① 准备 `img_0.png`…`img_2.png`，只拖入其中一张；在确认窗核对范围与默认 30 FPS，确认导入序列。② 再拖一帧后点「只导入所选文件」。③ 文件夹导入含 `1,2,3,5,6,7`。④ 右键解散；多选连续三帧手动创建并把 FPS 改为 13。⑤ 完整退出再重开。 | 拖单帧先出确认窗；确认后合成一套序列（显示名含 `0~2` / `000~00N`）；取消/只导所选则仅一帧；缺口拆段；手动 13 FPS 与重启保持 | [0022 规格](../implementation/0022-image-sequences-and-viewer-transforms.md) / [Worker 测试](../../../tests/worker/image-sequence.test.ts) / `Serpent-6s02` / `Serpent-2eg1` | 2026-07-28 用户验收通过。P3 跟进：导入完成 Toast 按 1 套逻辑资产计数 → `Serpent-1y9r`。 |
 | IMAGESEQ-002 | 序列图卡片角标与查看页播放 | 人类验收通过 | ① 导入至少 3 帧序列，检查卡片文件大小是否为所有帧之和，并检查 `NF · FPS · 时长` 角标。② 单击/悬停切帧，观察是否无闪烁。③ 双击查看页：空格/按钮播放暂停，拖滑块，循环多圈观察是否无闪烁。④ 导入完成后立即点空白，确认选择保持为空且不自动回选。⑤ 右键序列卡片 →「设置序列帧率…」，输入新 FPS，确认角标、查看页和重启后保持。 | 卡片显示序列总大小与时长；无堆叠错位或闪烁；空白处可立即取消选中；右键可修改 FPS 并持久化 | [ImageSequencePlayer](../../../src/renderer/ImageSequencePlayer.tsx) / [AssetCardMedia](../../../src/renderer/AssetCardMedia.tsx) / [SequenceFrameCanvas](../../../src/renderer/SequenceFrameCanvas.tsx) / `Serpent-8wus` / `Serpent-50xn` / `Serpent-ue5f` | 2026-07-28 用户验收通过（总大小/时长角标、Canvas 无闪烁播放、导入后取消选中、右键 FPS）。 |
 | IMAGESEQ-003 | 序列帧后缀格式与显示名 | 人类验收通过 | 分别导入或拖入：`clip_0…_35`、`shot_001…098`、`photo(1)…(12)`、`name.0001.exr` 风格素材（≥3 连续帧） | 各风格分别识别为序列；显示名为 `prefix+first~last`（含括号式）；补零与未补零不混并 | [image-sequence 单测](../../../tests/unit/image-sequence.test.ts) / `Serpent-2w1a` / `Serpent-vwr7` | 2026-07-28 用户验收通过。 |

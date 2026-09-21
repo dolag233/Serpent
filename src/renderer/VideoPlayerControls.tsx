@@ -24,6 +24,7 @@ import {
   isTypingKeyboardTarget,
   type VideoPlaybackRate,
 } from "./video-player-controls";
+import { VideoPlaybackRateSelect } from "./VideoPlaybackRateSelect";
 import { ViewerVolumeControls } from "./ViewerVolumeControls";
 import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
 import { applyViewerVolumeToMedia } from "./viewer-volume-preferences";
@@ -90,7 +91,7 @@ function waitForVideoSeeked(video: HTMLVideoElement): Promise<void> {
  * - D / F frame step (D=back, F=forward) and Ctrl+←/→ ±2s skip (Serpent-sk1 / soii)
  * - X / C step playback rate within VIDEO_PLAYBACK_RATES (Serpent-soii)
  * - scrubbable progress track (mousedown / drag / click / arrow keys)
- * - playback rate button (cycles; no native select focus trap)
+ * - playback rate dropdown (0.25–4; themed listbox, not native select)
  *
  * See `video-player-controls.ts` for why this replaced native
  * `<video controls>` rather than layering on top of it.
@@ -631,23 +632,11 @@ export function VideoPlayerControls({
         <span aria-hidden="true" className="preview-video-time">
           {formatVideoClockTime(duration)}
         </span>
-        <button
-          className="preview-video-rate"
-          onClick={() => {
-            applyPlaybackRate(
-              stepVideoPlaybackRate(playbackRateRef.current, "faster"),
-            );
-          }}
-          tabIndex={VIEWER_CHROME_TAB_INDEX}
-          type="button"
-          {...iconActionAttrs(
-            `${t("preview.playbackRate")}: ${t("preview.playbackRateOption", {
-              rate: playbackRate,
-            })}`,
-          )}
-        >
-          {t("preview.playbackRateOption", { rate: playbackRate })}
-        </button>
+        <VideoPlaybackRateSelect
+          onChange={applyPlaybackRate}
+          onInteract={onUserActivity}
+          value={playbackRate}
+        />
         <ViewerVolumeControls
           muted={muted}
           onInteract={onUserActivity}

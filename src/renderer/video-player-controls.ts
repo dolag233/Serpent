@@ -10,7 +10,7 @@
  * so all of it stays unit-testable outside a DOM environment.
  */
 
-export const VIDEO_PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
+export const VIDEO_PLAYBACK_RATES = [0.25, 0.5, 1, 1.5, 2, 4] as const;
 
 export type VideoPlaybackRate = (typeof VIDEO_PLAYBACK_RATES)[number];
 
@@ -61,6 +61,20 @@ export function shouldAutoStartMediaPlayback(options: {
   userPaused: boolean;
 }): boolean {
   return options.autoPlay && !options.userPaused;
+}
+
+/** True when Space must pick a rate option instead of toggling playback. */
+export function isVideoPlaybackRateMenuTarget(
+  target: KeyboardTargetLike | EventTarget | null,
+): boolean {
+  if (target == null || typeof target !== "object") return false;
+  const el = target as KeyboardTargetLike & object;
+  if (el.role === "listbox" || el.role === "option") return true;
+  if (typeof el.closest === "function") {
+    if (el.closest('[role="listbox"]')) return true;
+    if (el.closest('[aria-haspopup="listbox"]')) return true;
+  }
+  return false;
 }
 
 export function isEditableKeyboardTarget(
@@ -138,6 +152,7 @@ export function shouldHandleVideoSpaceKey(event: {
   if (event.repeat) return false;
   if (event.key !== " " && event.code !== "Space") return false;
   if (isEditableKeyboardTarget(event.target)) return false;
+  if (isVideoPlaybackRateMenuTarget(event.target)) return false;
   return true;
 }
 
