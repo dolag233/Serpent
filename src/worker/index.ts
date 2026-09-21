@@ -121,6 +121,7 @@ import {
   SchedulerCancelledError,
 } from './interactive-scheduler';
 import { executeBrowseSessionWorkerCommand } from './handlers/browse-session';
+import { executeLibraryIdentityWorkerCommand } from './handlers/library-identity';
 import { executeSyncWorkerCommand } from './handlers/sync';
 import { LibraryGenerationRegistry } from './library-generation';
 import {
@@ -2532,7 +2533,22 @@ function stopAutomaticWorkForLibrary(
 async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<WorkerResult> {
   switch (request.command.type) {
     case 'library.list':
-      return { ok: true, type: 'library.list', libraries: libraryService.listLibraries() };
+    case 'library.change-sequence':
+    case 'history.status':
+    case 'history.group.begin':
+    case 'history.group.complete':
+    case 'library.create':
+    case 'library.recovery-report':
+    case 'library.inspect-eagle':
+    case 'library.open-eagle':
+    case 'library.inspect-billfish':
+    case 'library.open-billfish': {
+      const result = await executeLibraryIdentityWorkerCommand(libraryService, request);
+      if (result === undefined) {
+        throw new Error(`Unhandled library identity command: ${request.command.type}`);
+      }
+      return result;
+    }
     case 'sync.probe':
     case 'sync.preview':
     case 'sync.run':
@@ -2545,26 +2561,6 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         throw new Error(`Unhandled sync command: ${request.command.type}`);
       }
       return result;
-    }
-    case 'library.change-sequence':
-      return {
-        ok: true,
-        type: 'library.change-sequence',
-        libraryId: request.command.libraryId,
-        changeSequence: libraryService.getChangeSequence(request.command.libraryId),
-      };
-    case 'history.status':
-      return {
-        ok: true,
-        type: 'history.status',
-        status: libraryService.getOperationHistoryStatus(request.command.libraryId),
-      };
-    case 'history.group.begin':
-    case 'history.group.complete':
-      throw new Error('History group control was not dispatched through its write lease.');
-    case 'library.create': {
-      const library = libraryService.createLibrary(request.command);
-      return { ok: true, type: 'library.opened', library };
     }
     case 'library.open': {
       // Switching libraries through the recent list sends `library.open` for the
@@ -2617,41 +2613,6 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       const library = libraryService.openLibrary(request.command.selectedLibraryPath, {
         replaceExisting: request.command.replaceExisting === true,
       });
-      return { ok: true, type: 'library.opened', library };
-    }
-    case 'library.recovery-report':
-      return {
-        ok: true,
-        type: 'library.recovery-report',
-        reportPath: libraryService.getRecoveryReportPath(request.command.libraryId),
-      };
-    case 'library.inspect-eagle': {
-      const inspected = libraryService.inspectEagleLibrary(
-        request.command.sourceRootPath,
-      );
-      return {
-        ok: true,
-        type: 'library.eagle-inspected',
-        displayName: inspected.displayName,
-      };
-    }
-    case 'library.open-eagle': {
-      const library = await libraryService.openEagleLibrary(request.command);
-      return { ok: true, type: 'library.opened', library };
-    }
-    case 'library.inspect-billfish': {
-      const inspected = libraryService.inspectBillfishLibrary(
-        request.command.sourceRootPath,
-        request.command.sourceDisplayName,
-      );
-      return {
-        ok: true,
-        type: 'library.billfish-inspected',
-        displayName: inspected.displayName,
-      };
-    }
-    case 'library.open-billfish': {
-      const library = await libraryService.openBillfishLibrary(request.command);
       return { ok: true, type: 'library.opened', library };
     }
     case 'library.close':
