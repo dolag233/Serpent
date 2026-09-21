@@ -52,7 +52,6 @@ import {
   selectImportSources as selectImportSourcesDialog,
   selectLibraryDirectory,
   selectOpenDirectory,
-  selectOpenLibrarySource,
   selectOpenFile,
   selectSavePath,
   selectPluginPackage,
@@ -60,6 +59,14 @@ import {
 } from "./native-dialogs";
 import { executeLibraryMainCommand } from "./commands/library";
 import { executeFolderMainCommand } from "./commands/folders";
+import { executeAssetIngestionMainCommand } from "./commands/asset-ingestion";
+import { executeLinkedFolderMainCommand } from "./commands/linked-folders";
+import { executeIgnoreMainCommand } from "./commands/ignore";
+import { executeTagMainCommand } from "./commands/tags";
+import { executeCollectionMainCommand } from "./commands/collections";
+import { executeAssetQueryMainCommand } from "./commands/asset-query";
+import { executeBrowseSessionMainCommand } from "./commands/browse-session";
+import { executeSmartCollectionMainCommand } from "./commands/smart-collections";
 import {
   ExternalLibraryArchiveError,
   materializeExternalLibrarySource,
@@ -391,7 +398,6 @@ import {
 } from "./desktop-ingestion";
 import {
   createWebImportCollectionCommand,
-  createWebImportCommand,
 } from "./web-ingestion";
 import { serpentProtocolSchemes } from "./serpent-protocol-privileges";
 import {
@@ -2461,478 +2467,101 @@ async function commandFor(
     case "folder.move.request": {
       return executeFolderMainCommand(request);
     }
-    case "asset.list.request":
-      return {
-        type: "asset.list",
-        libraryId: request.libraryId,
-        folderId: request.folderId,
-        recursive: request.recursive,
-        showIgnored: request.showIgnored,
-        ...(request.assetIds && request.assetIds.length > 0
-          ? { assetIds: request.assetIds }
-          : {}),
-      };
-    case "asset.import-files.request": {
-      const sourcePaths = await selectImportSources("files");
-      return sourcePaths
-        ? {
-            type: "asset.import.prepare",
-            libraryId: request.libraryId,
-            targetFolderId: request.targetFolderId,
-            sourceKind: "files" as const,
-            sourcePaths,
-            expandImageSequences:
-              !app.isPackaged && process.env.SERPENT_E2E === "1",
-            ...(request.detectImageSequences === false ||
-            request.autoDetectImageSequences === false
-              ? { createImageSequence: false }
-              : {}),
-            imageSequenceFps:
-              !app.isPackaged && process.env.SERPENT_E2E === "1"
-                ? 30
-                : undefined,
-          }
-        : undefined;
+    case "asset.list.request": {
+      return executeAssetQueryMainCommand(request);
     }
-    case "asset.import-folder.request": {
-      const sourcePaths = await selectImportSources("folder");
-      return sourcePaths
-        ? {
-            type: "asset.import.prepare",
-            libraryId: request.libraryId,
-            targetFolderId: request.targetFolderId,
-            sourceKind: "folder",
-            sourcePaths,
-            ...(request.detectImageSequences === false ||
-            request.autoDetectImageSequences === false
-              ? { createImageSequence: false }
-              : {}),
-          }
-        : undefined;
-    }
-    case "asset.import-eagle.request": {
-      const selectedSourcePath = await selectOpenLibrarySource(
-        createNativeDialogHost(),
-        "importEagleLibrary",
-        process.env.SERPENT_E2E_IMPORT_EAGLE_LIBRARY,
-        ["zip", "eaglepack", "rar", "7z", "tar", "gz", "tgz", "bz2", "tbz", "tbz2", "xz", "txz"],
-      );
-      if (!selectedSourcePath) return undefined;
-      const materialized = await materializeSelectedExternalLibrary({
-        sourcePath: selectedSourcePath,
-        kind: "eagle",
-        fallbackDirectory: fallbackDirectoryForLibraryId(request.libraryId),
-      });
-      const sourceRootPath = rememberExternalSource(materialized);
-      return sourceRootPath
-        ? {
-            type: "asset.import-eagle",
-            libraryId: request.libraryId,
-            sourceRootPath,
-          }
-        : undefined;
-    }
-    case "asset.import-billfish.request": {
-      const selectedSourcePath = await selectOpenFile(
-        createNativeDialogHost(),
-        "importBillfishLibrary",
-        process.env.SERPENT_E2E_IMPORT_BILLFISH_LIBRARY,
-        [{ name: "Billfish Pack", extensions: ["billfishpack"] }],
-      );
-      if (!selectedSourcePath) return undefined;
-      const materialized = await materializeSelectedExternalLibrary({
-        sourcePath: selectedSourcePath,
-        kind: "billfish",
-        fallbackDirectory: fallbackDirectoryForLibraryId(request.libraryId),
-      });
-      const sourceRootPath = rememberExternalSource(materialized);
-      return sourceRootPath
-        ? {
-            type: "asset.import-billfish",
-            libraryId: request.libraryId,
-            sourceRootPath,
-          }
-        : undefined;
-    }
+    case "asset.import-files.request":
+    case "asset.import-folder.request":
+    case "asset.import-eagle.request":
+    case "asset.import-billfish.request":
     case "asset.import-drop.request":
-      // Classified in handleLibraryRequest because classification failures need
-      // a renderer-safe, specific public error instead of an INTERNAL_ERROR.
-      return undefined;
     case "asset.resolve-dropped-paths.request":
-      return {
-        type: "media.resolve-asset-paths",
-        libraryId: request.libraryId,
-        sourcePaths: request.sourcePaths,
-      };
     case "asset.import-sequence.confirm":
-      // Resolved against Main-held offer paths in handleLibraryRequest.
-      return undefined;
     case "asset.import-drop-invalid.report":
-      return undefined;
     case "asset.import-web.request":
-      return createWebImportCommand(request);
     case "asset.import-web-invalid.report":
-      return undefined;
     case "asset.import-clipboard.request":
-      // Clipboard bytes are read and staged in handleLibraryRequest. Renderer
-      // never sends clipboard bytes or a source path.
-      return undefined;
     case "asset.import.resolve":
-      return {
-        type: "asset.import.resolve",
-        importId: request.importId,
-        suspectedDuplicate: request.suspectedDuplicate,
-        nameConflict: request.nameConflict,
-      };
     case "asset.import.skip-source-failure":
-      return {
-        type: "asset.import.skip-source-failure",
-        importId: request.importId,
-        applyToRest: request.applyToRest,
-      };
     case "asset.import.abandon":
-      return { type: "asset.import.abandon", importId: request.importId };
     case "asset.refresh.request":
-      return { type: "asset.refresh", libraryId: request.libraryId };
     case "asset.import-linked.request": {
-      const sourceRootPath = await selectOpenDirectory(
-        createNativeDialogHost(),
-        "linkFolder",
-        process.env.SERPENT_E2E_LINKED_SOURCE,
-      );
-      return sourceRootPath
-        ? {
-            type: "asset.import-linked",
-            libraryId: request.libraryId,
-            displayName: request.displayName,
-            sourceRootPath,
-            parentFolderId: request.parentFolderId,
-          }
-        : undefined;
+      return executeAssetIngestionMainCommand(request, {
+        selectImportSources,
+        createNativeDialogHost,
+        materializeSelectedExternalLibrary,
+        rememberExternalSource,
+        fallbackDirectoryForLibraryId,
+        isUnpackagedE2e: () => !app.isPackaged && process.env.SERPENT_E2E === "1",
+      });
     }
     case "linked-folder.list.request":
-      return { type: "linked-folder.list", libraryId: request.libraryId };
-    case "linked-folder.relink.request": {
-      const newRootPath = await selectOpenDirectory(
-        createNativeDialogHost(),
-        "relinkFolder",
-        process.env.SERPENT_E2E_LINKED_NEW_ROOT,
-      );
-      return newRootPath
-        ? {
-            type: "linked-folder.relink",
-            libraryId: request.libraryId,
-            folderId: request.folderId,
-            newRootPath,
-          }
-        : undefined;
-    }
+    case "linked-folder.relink.request":
     case "linked-folder.rules.get.request":
-      return {
-        type: "linked-folder.rules.get",
-        libraryId: request.libraryId,
-        folderId: request.folderId,
-      };
-    case "linked-folder.rules.set.request":
-      return {
-        type: "linked-folder.rules.set",
-        libraryId: request.libraryId,
-        folderId: request.folderId,
-        rules: request.rules,
-      };
+    case "linked-folder.rules.set.request": {
+      return executeLinkedFolderMainCommand(request, {
+        createNativeDialogHost,
+      });
+    }
     case "ignore.list.request":
-      return { type: "ignore.list", libraryId: request.libraryId };
     case "ignore.gitignore.get.request":
-      return { type: "ignore.gitignore.get", libraryId: request.libraryId };
     case "ignore.gitignore.set.request":
-      return {
-        type: "ignore.gitignore.set",
-        libraryId: request.libraryId,
-        content: request.content,
-      };
-    case "ignore.set.request":
-      return {
-        type: "ignore.set",
-        libraryId: request.libraryId,
-        locationKind: request.locationKind,
-        linkedFolderId: request.linkedFolderId,
-        relativePath: request.relativePath,
-        pathKind: request.pathKind,
-        ignored: request.ignored,
-      };
+    case "ignore.set.request": {
+      return executeIgnoreMainCommand(request);
+    }
     case "linked-folder.assets.copy.request":
-      return {
-        type: "linked-folder.assets.copy",
-        libraryId: request.libraryId,
-        folderId: request.folderId,
-        relativePath: request.relativePath,
-        assetIds: request.assetIds,
-        conflictStrategy: request.conflictStrategy,
-      };
-    case "linked-folder.convert.request":
-      return {
-        type: "linked-folder.convert",
-        libraryId: request.libraryId,
-        folderId: request.folderId,
-        targetFolderId: request.targetFolderId,
-      };
+    case "linked-folder.convert.request": {
+      return executeLinkedFolderMainCommand(request, {
+        createNativeDialogHost,
+      });
+    }
     case "tag.list.request":
-      return { type: "tag.list", libraryId: request.libraryId };
     case "tag.create.request":
-      return {
-        type: "tag.create",
-        libraryId: request.libraryId,
-        name: request.name,
-      };
     case "tag.rename.request":
-      return {
-        type: "tag.rename",
-        libraryId: request.libraryId,
-        tagId: request.tagId,
-        name: request.name,
-      };
     case "tag.delete.request":
-      return {
-        type: "tag.delete",
-        libraryId: request.libraryId,
-        tagId: request.tagId,
-      };
     case "tag.delete-many.request":
-      return {
-        type: "tag.delete-many",
-        libraryId: request.libraryId,
-        tagIds: request.tagIds,
-      };
     case "tag.merge.request":
-      return {
-        type: "tag.merge",
-        libraryId: request.libraryId,
-        sourceTagIds: request.sourceTagIds,
-        name: request.name,
-      };
     case "tag.cooccurrence.request":
-      return {
-        type: "tag.cooccurrence",
-        libraryId: request.libraryId,
-        minWeight: request.minWeight,
-        maxNodes: request.maxNodes,
-        maxEdges: request.maxEdges,
-      };
     case "tag.assign.request":
-      return {
-        type: "tag.assign",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-        tagIds: request.tagIds,
-      };
-    case "tag.remove.request":
-      return {
-        type: "tag.remove",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-        tagIds: request.tagIds,
-      };
+    case "tag.remove.request": {
+      return executeTagMainCommand(request);
+    }
     case "collection.list.request":
-      return { type: "collection.list", libraryId: request.libraryId };
     case "collection.create.request":
-      return {
-        type: "collection.create",
-        libraryId: request.libraryId,
-        parentId: request.parentId,
-        name: request.name,
-      };
     case "collection.update.request":
-      return {
-        type: "collection.update",
-        libraryId: request.libraryId,
-        collectionId: request.collectionId,
-        name: request.name,
-        parentId: request.parentId,
-        description: request.description,
-        coverAssetId: request.coverAssetId,
-        position: request.position,
-      };
     case "collection.reorder.request":
-      return {
-        type: "collection.reorder",
-        libraryId: request.libraryId,
-        orderedCollectionIds: request.orderedCollectionIds,
-      };
     case "collection.delete.request":
-      return {
-        type: "collection.delete",
-        libraryId: request.libraryId,
-        collectionId: request.collectionId,
-      };
     case "collection.assets.add.request":
-      return {
-        type: "collection.assets.add",
-        libraryId: request.libraryId,
-        collectionId: request.collectionId,
-        assetIds: request.assetIds,
-      };
     case "collection.assets.remove.request":
-      return {
-        type: "collection.assets.remove",
-        libraryId: request.libraryId,
-        collectionId: request.collectionId,
-        assetIds: request.assetIds,
-      };
     case "collection.assets.reorder.request":
-      return {
-        type: "collection.assets.reorder",
-        libraryId: request.libraryId,
-        collectionId: request.collectionId,
-        orderedAssetIds: request.orderedAssetIds,
-      };
     case "collection.assets.list.request":
-      return {
-        type: "collection.assets.list",
-        libraryId: request.libraryId,
-        collectionId: request.collectionId,
-        recursive: request.recursive,
-      };
-    case "collection.assets.memberships.request":
-      return {
-        type: "collection.assets.memberships",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-      };
+    case "collection.assets.memberships.request": {
+      return executeCollectionMainCommand(request);
+    }
     case "asset.metadata.get.request":
-      return {
-        type: "asset.metadata.get",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-      };
     case "asset.extracted-metadata.get.request":
-      return {
-        type: "asset.extracted-metadata.get",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-      };
     case "asset.color-space.set.request":
-      return {
-        type: "asset.color-space.set",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-        colorSpace: request.colorSpace,
-      };
     case "asset.metadata.set.request":
-      return {
-        type: "asset.metadata.set",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-        expectedVersion: request.expectedVersion,
-        description: request.description,
-        rating: request.rating,
-        favorite: request.favorite,
-        palette: request.palette,
-        sourcePageUrl: request.sourcePageUrl,
-        author: request.author,
-      };
     case "asset.metadata.backfill.request":
-      return { type: "asset.metadata.backfill", libraryId: request.libraryId };
     case "asset.rating.set.request":
-      return {
-        type: "asset.rating.set",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-        rating: request.rating,
-      };
-    case "asset.search.request":
-      return {
-        type: "asset.search",
-        libraryId: request.libraryId,
-        query: request.query,
-        filters: request.filters,
-        scope: request.scope,
-        sort: request.sort,
-        scopeMode: request.scopeMode,
-        idsOnly: request.idsOnly,
-        layoutOnly: request.layoutOnly,
-        limit: request.limit,
-        offset: request.offset,
-        showIgnored: request.showIgnored,
-      };
+    case "asset.search.request": {
+      return executeAssetQueryMainCommand(request);
+    }
     case "browse.session.open.request":
-      return {
-        type: "browse.session.open",
-        libraryId: request.libraryId,
-        ...(request.navigationId === undefined ? {} : { navigationId: request.navigationId }),
-        query: request.query,
-        filters: request.filters,
-        scope: request.scope,
-        sort: request.sort,
-        smartCollectionId: request.smartCollectionId,
-        limit: request.limit,
-        showIgnored: request.showIgnored,
-      };
     case "browse.session.page.request":
-      return {
-        type: "browse.session.page",
-        libraryId: request.libraryId,
-        sessionId: request.sessionId,
-        limit: request.limit,
-        offset: request.offset,
-      };
     case "browse.session.ids.request":
-      return {
-        type: "browse.session.ids",
-        libraryId: request.libraryId,
-        sessionId: request.sessionId,
-      };
     case "browse.session.close.request":
-      return {
-        type: "browse.session.close",
-        libraryId: request.libraryId,
-        sessionId: request.sessionId,
-      };
     case "library.navigation-summary.request":
-      return {
-        type: "library.navigation-summary",
-        libraryId: request.libraryId,
-        showIgnored: request.showIgnored,
-        includeTrashedFolders: request.includeTrashedFolders,
-      };
-    case "ai.search-plan.request":
-      // Planned directly in Main so provider credentials never enter the
-      // Renderer response or Library Worker command stream.
-      return undefined;
+    case "ai.search-plan.request": {
+      return executeBrowseSessionMainCommand(request);
+    }
     case "smart-collection.list.request":
-      return { type: "smart-collection.list", libraryId: request.libraryId };
     case "smart-collection.create.request":
-      return {
-        type: "smart-collection.create",
-        libraryId: request.libraryId,
-        name: request.name,
-        queryDefinitionJson: request.queryDefinitionJson,
-      };
     case "smart-collection.update.request":
-      return {
-        type: "smart-collection.update",
-        libraryId: request.libraryId,
-        collectionId: request.collectionId,
-        name: request.name,
-        queryDefinitionJson: request.queryDefinitionJson,
-        position: request.position,
-      };
     case "smart-collection.delete.request":
-      return {
-        type: "smart-collection.delete",
-        libraryId: request.libraryId,
-        collectionId: request.collectionId,
-      };
-    case "smart-collection.execute.request":
-      return {
-        type: "smart-collection.execute",
-        libraryId: request.libraryId,
-        collectionId: request.collectionId,
-        scopeMode: request.scopeMode,
-        idsOnly: request.idsOnly,
-        layoutOnly: request.layoutOnly,
-        limit: request.limit,
-        offset: request.offset,
-      };
+    case "smart-collection.execute.request": {
+      return executeSmartCollectionMainCommand(request);
+    }
     case "asset.trash.request":
       return {
         type: "asset.trash",
