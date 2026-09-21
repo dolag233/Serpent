@@ -1,6 +1,7 @@
 import { expect, test, vi } from "vitest";
 
 import {
+  maybeProbeImportSequences,
   tryBuildIngestionCommand,
   type IngestionCommandRuntime,
 } from "../../src/main/library-request/ingestion";
@@ -97,4 +98,28 @@ test("folder.paste returns CLIPBOARD_FILES_NOT_FOUND when the clipboard is empty
       error: { code: "CLIPBOARD_FILES_NOT_FOUND" },
     },
   });
+});
+
+test("sequence probe skips drop imports", async () => {
+  await expect(maybeProbeImportSequences(
+    {
+      type: "asset.import-drop.request",
+      libraryId: "lib-1",
+      sourcePaths: ["C:\\libraries\\a.png"],
+    },
+    {
+      type: "asset.import.prepare",
+      libraryId: "lib-1",
+      sourceKind: "files",
+      sourcePaths: ["C:\\libraries\\a.png"],
+    },
+    {
+      isUnpackagedE2e: () => false,
+      workerAvailable: () => true,
+      requestWorker: vi.fn(async () => {
+        throw new Error("probe should not run");
+      }),
+      rememberSequenceOffer: (offer) => offer,
+    },
+  )).resolves.toBeUndefined();
 });

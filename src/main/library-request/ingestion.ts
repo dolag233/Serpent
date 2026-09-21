@@ -355,3 +355,73 @@ export async function tryBuildIngestionCommand(
       return undefined;
   }
 }
+
+export type SequenceProbeRuntime = {
+  isUnpackagedE2e: () => boolean;
+  workerAvailable: () => boolean;
+  requestWorker: (command: WorkerCommand) => Promise<WorkerResult>;
+  rememberSequenceOffer: (offer: ImageSequenceImportOffer) => ImageSequenceImportOffer;
+};
+
+/**
+ * Optional sequence-offer probe after a file import.prepare command.
+ * Undefined means the command is unchanged.
+ */
+export async function maybeProbeImportSequences(
+  request: RendererRequest,
+  command: WorkerCommand,
+  runtime: SequenceProbeRuntime,
+): Promise<LibraryCommandBuildOutcome | undefined> {
+  if (
+    command.type !== "asset.import.prepare" ||
+    command.sourceKind !== "files" ||
+    command.expandImageSequences === true ||
+    request.type === "asset.import-files.request" ||
+    request.type === "asset.import-drop.request" ||
+    request.type === "asset.import-sequence.confirm" ||
+    // Clipboard paste into a folder must keep ordinary conflict flows
+    // (name-conflict / content-duplicate). Sequence probing here wrongly
+    // offered a sequence dialog when pasting a single copied image
+    // (PASTE-001 / Serpent-el2g).
+    request.type === "folder.paste.request" ||
+    runtime.isUnpackagedE2e()
+  ) {
+    return undefined;
+  }
+  if (!runtime.workerAvailable()) throw new Error("Library Worker is unavailable.");
+  const probeResult = await runtime.requestWorker({
+    type: "asset.import.probe-sequences",
+    libraryId: command.libraryId,
+    targetFolderId: command.targetFolderId,
+    sourcePaths: command.sourcePaths,
+  });
+  if (!probeResult.ok) {
+    return {
+      kind: "result",
+      result: {
+        ok: false,
+        error: probeResult.error,
+      } satisfies RendererResult,
+    };
+  }
+  if (
+    probeResult.type === "asset.import.sequence-offer" &&
+    probeResult.offer.sequences.length > 0
+  ) {
+    return {
+      kind: "result",
+      result: {
+        ok: true,
+        type: "asset.import.sequence-offer",
+        offer: runtime.rememberSequenceOffer(probeResult.offer),
+      } satisfies RendererResult,
+    };
+  }
+  // The explicit normal-file path must not run the legacy post-import
+  // sequence detector. Folder imports and automation calls that opt into
+  // expansion keep the existing behavior above.
+  return {
+    kind: "command",
+    command: { ...command, createImageSequence: false },
+  };
+}
