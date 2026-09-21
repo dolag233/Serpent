@@ -1856,13 +1856,13 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   border-radius: 999px;
   background: linear-gradient(
     to right,
-    #f00,
-    #ff0,
-    #0f0,
-    #0ff,
-    #00f,
-    #f0f,
-    #f00
+    hsl(0 100% 50%),
+    hsl(60 100% 50%),
+    hsl(120 100% 50%),
+    hsl(180 100% 50%),
+    hsl(240 100% 50%),
+    hsl(300 100% 50%),
+    hsl(360 100% 50%)
   );
   cursor: pointer;
 }

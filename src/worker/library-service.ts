@@ -31389,18 +31389,20 @@ export class LibraryService {
     // RAW card generation is deliberately independent from the EXIF/IPTC/XMP
     // parser. Keep the metadata admission bounded and lower priority so the
     // embedded-JPEG/OIIO card path is the first useful result after open.
-    enqueued += this.enqueueRawImageMetadataJobs(openLibrary, {
+    // Do not fold these secondary admissions into the thumbnail enqueue
+    // count — callers and tests treat that number as generate_thumbnail rows.
+    this.enqueueRawImageMetadataJobs(openLibrary, {
       ...(options.assetIds === undefined ? {} : { assetIds: selectedIds }),
       ...(limit === undefined ? {} : { limit }),
-    }).admitted;
+    });
     // JPEG/PNG/TIFF/WebP/AVIF metadata uses the same bounded exifr projection
     // as RAW files, but is admitted separately so the historical RAW backfill
     // cursor and retry policy remain compatible with existing libraries.
-    enqueued += this.enqueueRawImageMetadataJobs(openLibrary, {
+    this.enqueueRawImageMetadataJobs(openLibrary, {
       ...(options.assetIds === undefined ? {} : { assetIds: selectedIds }),
       ...(limit === undefined ? {} : { limit }),
       extensions: 'embedded',
-    }).admitted;
+    });
 
     // Native audio is source-first just like native video. Its waveform cover
     // and viewer strip are still generated above, but an Ogg playback proxy is

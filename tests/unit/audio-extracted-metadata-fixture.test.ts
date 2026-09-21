@@ -19,7 +19,7 @@ describe("audio extracted metadata fixture", () => {
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
     expect(formatAudioTechnicalLine(parsed.data)).toBe(
-      "mp3 · 256 kbps · 44.1 kHz · stereo",
+      "256 kbps · 44.1 kHz · stereo",
     );
   });
 

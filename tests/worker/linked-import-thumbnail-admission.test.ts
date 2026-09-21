@@ -8,7 +8,7 @@ import { LibraryService } from '../../src/worker/library-service';
 
 const roots: string[] = [];
 const png = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwnwEIAgEBAQAAAABJRU5ErkJggg==',
+  'iVBORw0KGgoAAAANSUhEUgAACAEAAAABCAIAAAAqtLKbAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAOklEQVRYhe3YQQ0AAAgDMeRMImInBh+kySno8yZbESBAgAABAgQIECBAgAABAgQIECBAgAABAnk3zA9mXOIiDxU7WQAAAABJRU5ErkJggg==',
   'base64',
 );
 
@@ -30,7 +30,10 @@ describe('linked import thumbnail admission', () => {
     mkdirSync(sourceRoot);
     const fileCount = 60;
     for (let index = 0; index < fileCount; index += 1) {
-      writeFileSync(path.join(sourceRoot, `file-${index}.png`), png);
+      writeFileSync(
+        path.join(sourceRoot, `thumb-admit-${index}-x.png`),
+        Buffer.concat([png, Buffer.from([index])]),
+      );
     }
 
     const service = new LibraryService();
