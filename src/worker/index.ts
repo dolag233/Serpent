@@ -121,6 +121,7 @@ import { executeIgnoreWorkerCommand } from './handlers/ignore';
 import { executeTagWorkerCommand } from './handlers/tags';
 import { executeCollectionWorkerCommand } from './handlers/collections';
 import { executeAssetQueryWorkerCommand } from './handlers/asset-query';
+import { executeSmartCollectionWorkerCommand } from './handlers/smart-collections';
 import { executeLibraryLifecycleWorkerCommand } from './handlers/library-lifecycle';
 import { executeSyncWorkerCommand } from './handlers/sync';
 import { LibraryGenerationRegistry } from './library-generation';
@@ -2756,36 +2757,15 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         }),
       };
     case 'smart-collection.list':
-      return {
-        ok: true,
-        type: 'smart-collection.list',
-        collections: libraryService.listSmartCollections(request.command.libraryId),
-      };
-    case 'smart-collection.create': {
-      const sc = libraryService.createSmartCollection(request.command);
-      return { ok: true, type: 'smart-collection.created', collection: sc };
-    }
-    case 'smart-collection.update': {
-      const sc = libraryService.updateSmartCollection(request.command);
-      return { ok: true, type: 'smart-collection.updated', collection: sc };
-    }
+    case 'smart-collection.create':
+    case 'smart-collection.update':
     case 'smart-collection.delete':
-      return {
-        ok: true,
-        type: 'smart-collection.deleted',
-        collectionId: libraryService.deleteSmartCollection(request.command),
-      };
     case 'smart-collection.execute': {
-      const result = libraryService.executeSmartCollection(request.command);
-      return {
-        ok: true,
-        type: 'smart-collection.executed',
-        items: result.items,
-        total: result.total,
-        offset: result.offset,
-        ...(result.assetIds ? { assetIds: result.assetIds } : {}),
-        ...(result.layout ? { layout: result.layout } : {}),
-      };
+      const result = executeSmartCollectionWorkerCommand(libraryService, request);
+      if (result === undefined) {
+        throw new Error(`Unhandled smart-collection command: ${request.command.type}`);
+      }
+      return result;
     }
     case 'asset.trash': {
       if (request.command.automationPlan) {
