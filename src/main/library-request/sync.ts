@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { normalizeWebDAVBaseUrl } from "../../shared/sync-paths";
 import type { RendererRequest } from "../../shared/protocol/requests";
-import type { RendererResult } from "../../shared/protocol/responses";
+import type { RendererResult, WorkerResult } from "../../shared/protocol/responses";
 import { createPublicError } from "../../shared/protocol/errors";
 
 export type SyncServerRecord = {
@@ -147,5 +147,46 @@ export async function tryHandleSyncOwnedRequest(
     }
     default:
       return undefined;
+  }
+}
+
+export type SyncWorkerBindingRuntime = {
+  readSyncBindings: () => Record<string, SyncBindingRecord>;
+  writeSyncBindings: (bindings: Record<string, SyncBindingRecord>) => void;
+  now: () => Date;
+};
+
+/**
+ * Persist library bindings after a successful sync run or remote open.
+ * Does not produce a RendererResult.
+ */
+export function applySyncWorkerBindings(
+  request: RendererRequest,
+  workerResult: WorkerResult,
+  runtime: SyncWorkerBindingRuntime,
+): void {
+  if (!workerResult.ok) return;
+  if (request.type === "sync.run.request") {
+    const syncBindings = runtime.readSyncBindings();
+    const previous = syncBindings[request.libraryId];
+    syncBindings[request.libraryId] = {
+      serverId: request.serverId,
+      directoryName: request.directoryName ?? effectiveSyncDirectoryName(previous),
+      lastSyncedAt: runtime.now().toISOString(),
+      enabled: previous?.enabled ?? false,
+    };
+    runtime.writeSyncBindings(syncBindings);
+    return;
+  }
+  if (request.type === "sync.open-remote-library.request") {
+    const syncBindings = runtime.readSyncBindings();
+    const previous = syncBindings[request.libraryId];
+    syncBindings[request.libraryId] = {
+      serverId: request.serverId,
+      directoryName: request.directoryName ?? effectiveSyncDirectoryName(previous),
+      lastSyncedAt: runtime.now().toISOString(),
+      enabled: true,
+    };
+    runtime.writeSyncBindings(syncBindings);
   }
 }

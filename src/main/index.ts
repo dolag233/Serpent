@@ -61,7 +61,7 @@ import { tryHandleLibraryOwnedRequest, tryBuildOpenRecentCommand } from "./libra
 import { tryBuildIngestionCommand, maybeProbeImportSequences } from "./library-request/ingestion";
 import {
   tryHandleSyncOwnedRequest,
-  effectiveSyncDirectoryName,
+  applySyncWorkerBindings,
   type SyncServerRecord,
   type SyncBindingRecord,
 } from "./library-request/sync";
@@ -3275,32 +3275,11 @@ async function handleLibraryRequest(
       }
     }
 
-    // Serpent-xffq: 同步成功即记录绑定与上次同步时间，供“已同步”状态展示。
-    if (workerResult.ok && request.type === "sync.run.request") {
-      const syncBindings = readSyncBindings();
-      const previous = syncBindings[request.libraryId];
-      syncBindings[request.libraryId] = {
-        serverId: request.serverId,
-        directoryName: request.directoryName ?? effectiveSyncDirectoryName(previous),
-        lastSyncedAt: new Date().toISOString(),
-        enabled: previous?.enabled ?? false,
-      };
-      writeSyncBindings(syncBindings);
-    }
-
-    // 打开同步资源库成功：自动绑定服务器并开启自动同步（用户决定），
-    // 免去手动进入资源库设置重选服务器；此后本地变更/云端变更自动同步。
-    if (workerResult.ok && request.type === "sync.open-remote-library.request") {
-      const syncBindings = readSyncBindings();
-      const previous = syncBindings[request.libraryId];
-      syncBindings[request.libraryId] = {
-        serverId: request.serverId,
-        directoryName: request.directoryName ?? effectiveSyncDirectoryName(previous),
-        lastSyncedAt: new Date().toISOString(),
-        enabled: true,
-      };
-      writeSyncBindings(syncBindings);
-    }
+    applySyncWorkerBindings(request, workerResult, {
+      readSyncBindings,
+      writeSyncBindings,
+      now: () => new Date(),
+    });
 
     if (!workerResult.ok && request.type === "asset.import-web.request") {
       logger?.error(

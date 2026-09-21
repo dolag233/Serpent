@@ -1,6 +1,7 @@
 import { expect, test, vi } from "vitest";
 
 import {
+  applySyncWorkerBindings,
   tryHandleSyncOwnedRequest,
   type SyncOwnedRequestRuntime,
   type SyncServerRecord,
@@ -84,4 +85,30 @@ test("sync.library.binding.save triggers syncNow when enabled", async () => {
   });
   expect(syncNow).toHaveBeenCalledWith("lib-1");
   expect(writeSyncBindings).toHaveBeenCalled();
+});
+
+test("sync.run persists lastSyncedAt and keeps auto-sync off by default", () => {
+  const writeSyncBindings = vi.fn();
+  applySyncWorkerBindings(
+    {
+      type: "sync.run.request",
+      libraryId: "lib-1",
+      serverId: "server-1",
+      directoryName: "Studio",
+    },
+    { ok: true as const, type: "ai.config.saved" as const },
+    {
+      readSyncBindings: () => ({}),
+      writeSyncBindings,
+      now: () => new Date("2026-09-21T00:00:00.000Z"),
+    },
+  );
+  expect(writeSyncBindings).toHaveBeenCalledWith({
+    "lib-1": {
+      serverId: "server-1",
+      directoryName: "Studio",
+      lastSyncedAt: "2026-09-21T00:00:00.000Z",
+      enabled: false,
+    },
+  });
 });
