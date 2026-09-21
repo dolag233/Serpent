@@ -114,6 +114,7 @@ import {
 } from './interactive-scheduler';
 import { executeBrowseSessionWorkerCommand } from './handlers/browse-session';
 import { executeLibraryIdentityWorkerCommand } from './handlers/library-identity';
+import { executeLibraryTransferWorkerCommand } from './handlers/library-transfer';
 import { executeFolderWorkerCommand } from './handlers/folders';
 import { executeLinkedFolderWorkerCommand } from './handlers/linked-folders';
 import { executeAssetIngestionWorkerCommand } from './handlers/asset-ingestion';
@@ -3118,94 +3119,21 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       scheduleThumbnailScene(request.command.libraryId, 'mutation', [asset.assetId]);
       return { ok: true, type: 'extension.asset-saved', asset };
     }
-    case 'library.export': {
-      if (request.command.format === 'zip') {
-        const exported = await libraryService.exportLibraryToZip({
-          libraryId: request.command.libraryId,
-          destinationPath: request.command.destinationPath,
-          includeLinkedContent: request.command.includeLinkedContent,
-        });
-        return {
-          ok: true,
-          type: 'library.exported',
-          exportId: exported.exportId,
-          libraryId: request.command.libraryId,
-          format: 'zip' as const,
-          fileCount: exported.fileCount,
-          totalBytes: exported.totalBytes,
-          excludedPreviewCount: exported.excludedPreviewCount,
-          includedLinkedContent: exported.includedLinkedContent,
-          durationMs: exported.durationMs,
-        };
-      }
-      const exported = await libraryService.exportLibraryToFolder({
-        libraryId: request.command.libraryId,
-        destinationPath: request.command.destinationPath,
-        includeLinkedContent: request.command.includeLinkedContent,
-      });
-      return {
-        ok: true,
-        type: 'library.exported',
-        exportId: exported.exportId,
-        libraryId: request.command.libraryId,
-        format: 'folder' as const,
-        fileCount: exported.fileCount,
-        totalBytes: exported.totalBytes,
-        excludedPreviewCount: exported.excludedPreviewCount,
-        includedLinkedContent: exported.includedLinkedContent,
-        durationMs: exported.durationMs,
-      };
-    }
+    case 'library.export':
     case 'library.export-cancel':
-      libraryService.cancelExport(request.command.exportId);
-      return { ok: true, type: 'library.closed', libraryId: request.command.exportId };
-    case 'library.import-folder': {
-      const imported = await libraryService.importLibraryFromFolder({
-        sourceFolderPath: request.command.sourceFolderPath,
-        copyToParentPath: request.command.copyToParentPath,
-      });
-      return {
-        ok: true,
-        type: 'library.imported',
-        importId: imported.importId,
-        libraryId: imported.libraryId,
-        displayName: imported.displayName,
-        libraryPath: imported.libraryPath,
-      };
-    }
-    case 'library.import-zip': {
-      const imported = await libraryService.importLibraryFromZip({
-        sourceZipPath: request.command.sourceZipPath,
-        destinationParentPath: request.command.destinationParentPath,
-      });
-      return {
-        ok: true,
-        type: 'library.imported',
-        importId: imported.importId,
-        libraryId: imported.libraryId,
-        displayName: imported.displayName,
-        libraryPath: imported.libraryPath,
-      };
-    }
+    case 'library.import-folder':
+    case 'library.import-zip':
     case 'library.import-cancel':
-      libraryService.cancelImport(
-        request.command.importId,
-        request.command.mode ?? 'abandon',
-      );
-      return { ok: true, type: 'library.closed', libraryId: request.command.importId };
+    case 'library.import-validate': {
+      const result = await executeLibraryTransferWorkerCommand(libraryService, request);
+      if (result === undefined) {
+        throw new Error(`Unhandled library transfer command: ${request.command.type}`);
+      }
+      return result;
+    }
     case 'asset.delete-cancel':
       libraryService.cancelDiskDelete(request.command.operationId);
       return { ok: true, type: 'library.closed', libraryId: request.command.operationId };
-    case 'library.import-validate': {
-      const validated = libraryService.validateImportSource(request.command.sourceFolderPath);
-      return {
-        ok: true,
-        type: 'library.import-validated',
-        importId: request.command.importId,
-        libraryId: validated.libraryId,
-        displayName: validated.displayName,
-      };
-    }
     case 'asset.analyze': {
       const {
         libraryId,
