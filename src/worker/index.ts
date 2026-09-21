@@ -117,6 +117,7 @@ import { executeLibraryIdentityWorkerCommand } from './handlers/library-identity
 import { executeFolderWorkerCommand } from './handlers/folders';
 import { executeLinkedFolderWorkerCommand } from './handlers/linked-folders';
 import { executeAssetIngestionWorkerCommand } from './handlers/asset-ingestion';
+import { executeIgnoreWorkerCommand } from './handlers/ignore';
 import { executeLibraryLifecycleWorkerCommand } from './handlers/library-lifecycle';
 import { executeSyncWorkerCommand } from './handlers/sync';
 import { LibraryGenerationRegistry } from './library-generation';
@@ -2664,26 +2665,18 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       return result;
     }
     case 'ignore.list':
-      return {
-        ok: true,
-        type: 'ignore.list',
-        paths: libraryService.listIgnoredPaths(request.command.libraryId),
-      };
     case 'ignore.gitignore.get':
-      return {
-        ok: true,
-        type: 'ignore.gitignore',
-        content: libraryService.getGitignore(request.command.libraryId).content,
-      };
-    case 'ignore.gitignore.set': {
-      const result = libraryService.setGitignore(request.command);
-      scheduleThumbnailScene(request.command.libraryId, 'refresh');
-      return { ok: true, type: 'ignore.gitignore.updated', content: result.content };
-    }
+    case 'ignore.gitignore.set':
     case 'ignore.set': {
-      const result = libraryService.setIgnore(request.command);
-      scheduleThumbnailScene(request.command.libraryId, 'refresh');
-      return { ok: true, type: 'ignore.updated', ...result };
+      const result = executeIgnoreWorkerCommand(libraryService, request, {
+        scheduleRefreshThumbnails: (libraryId) => {
+          scheduleThumbnailScene(libraryId, 'refresh');
+        },
+      });
+      if (result === undefined) {
+        throw new Error(`Unhandled ignore command: ${request.command.type}`);
+      }
+      return result;
     }
     case 'tag.list':
       return {
