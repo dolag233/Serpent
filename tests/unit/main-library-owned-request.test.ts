@@ -1,6 +1,7 @@
 import { expect, test, vi } from "vitest";
 
 import {
+  tryBuildOpenRecentCommand,
   tryHandleLibraryOwnedRequest,
   type LibraryOwnedRequestRuntime,
 } from "../../src/main/library-request/library";
@@ -79,5 +80,37 @@ test("library.list-recent stays on the Main-owned store path", async () => {
     ok: true,
     type: "library.recent-list",
     libraries,
+  });
+});
+
+test("library.open-recent rejects a path that is not in the recent store", () => {
+  expect(tryBuildOpenRecentCommand(
+    { type: "library.open-recent.request", libraryPath: "C:\\libraries\\missing" },
+    runtime(),
+  )).toEqual({
+    kind: "result",
+    result: {
+      ok: false,
+      error: expect.objectContaining({ code: "LIBRARY_NOT_FOUND" }),
+    },
+  });
+});
+
+test("library.open-recent maps a recent path onto library.open", () => {
+  expect(tryBuildOpenRecentCommand(
+    { type: "library.open-recent.request", libraryPath: "C:\\libraries\\studio" },
+    runtime({
+      readRecentLibraryEntries: () => [{
+        path: "C:\\libraries\\studio",
+        name: "Studio",
+        lastOpenedAt: "2026-09-21T00:00:00.000Z",
+      }],
+    }),
+  )).toEqual({
+    kind: "command",
+    command: {
+      type: "library.open",
+      selectedLibraryPath: "C:\\libraries\\studio",
+    },
   });
 });

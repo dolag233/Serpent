@@ -1,9 +1,10 @@
 import path from "node:path";
 
-import type { RendererRequest } from "../../shared/protocol/requests";
+import type { RendererRequest, WorkerCommand } from "../../shared/protocol/requests";
 import type { RendererResult } from "../../shared/protocol/responses";
 import { createPublicError } from "../../shared/protocol/errors";
 import type { RecentLibraryEntry } from "../../shared/recent-libraries";
+import type { LibraryCommandBuildOutcome } from "./command-outcome";
 
 export type LibraryOwnedRequestRuntime = {
   getActiveLibraryOpenCancellation: () => { cancelled: boolean } | undefined;
@@ -103,4 +104,43 @@ export async function tryHandleLibraryOwnedRequest(
     default:
       return undefined;
   }
+}
+
+/**
+ * Recent-library reopen that either returns a Worker open command or a
+ * LIBRARY_NOT_FOUND result. Undefined means the request is not handled here.
+ */
+export function tryBuildOpenRecentCommand(
+  request: RendererRequest,
+  runtime: LibraryOwnedRequestRuntime,
+): LibraryCommandBuildOutcome | undefined {
+  if (request.type !== "library.open-recent.request") return undefined;
+  // The renderer may only reopen a library that Main itself recorded in the
+  // recent libraries store — never an arbitrary path. This keeps the same
+  // open-by-path pipeline the restart restore uses.
+  const recentEntries = runtime.readRecentLibraryEntries(
+    runtime.recentLibraryPath(),
+    (error) => {
+      runtime.logError("recent-library.read", error);
+    },
+  );
+  if (
+    !path.isAbsolute(request.libraryPath) ||
+    !recentEntries.some((entry) => entry.path === request.libraryPath)
+  ) {
+    return {
+      kind: "result",
+      result: {
+        ok: false,
+        error: createPublicError("LIBRARY_NOT_FOUND"),
+      } satisfies RendererResult,
+    };
+  }
+  return {
+    kind: "command",
+    command: {
+      type: "library.open",
+      selectedLibraryPath: request.libraryPath,
+    } satisfies WorkerCommand,
+  };
 }

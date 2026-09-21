@@ -57,7 +57,8 @@ import {
   type NativeDialogHost,
 } from "./native-dialogs";
 import { executeLibraryMainCommand } from "./commands/library";
-import { tryHandleLibraryOwnedRequest } from "./library-request/library";
+import { tryHandleLibraryOwnedRequest, tryBuildOpenRecentCommand } from "./library-request/library";
+import { tryBuildIngestionCommand } from "./library-request/ingestion";
 import {
   tryHandleSyncOwnedRequest,
   effectiveSyncDirectoryName,
@@ -268,7 +269,6 @@ import { parseReadAppLogRequest, type ReadAppLogResult } from "../shared/app-log
 import type { ShowEditContextMenuResult } from "../shared/edit-context-menu";
 import {
   createPublicError,
-  publicReasonFromError,
   toPublicError,
 } from "../shared/protocol/errors";
 import {
@@ -306,7 +306,6 @@ import {
 import { LibraryWorkerClient, WorkerRequestTimeoutError } from "./worker-client";
 import { performanceConsumerIdForWindow } from "../shared/performance-contract";
 import { SyncAutoScheduler, type SyncBindingLike } from "./sync-auto-scheduler";
-import { resolveImageSequenceImportPaths } from "./image-sequence-import";
 import { AppLogger } from "./app-logger";
 import { chooseUniqueSessionLogPath, pruneSessionLogs } from "./session-log";
 import {
@@ -401,11 +400,8 @@ import {
 import { resolveExtensionSaveRouting } from "./extension-save-context";
 import { RelinkPreviewStore } from "./relink-preview-store";
 import {
-  classifyDroppedSourcePaths,
   cleanupClipboardImage,
   cleanupStaleClipboardImages,
-  readClipboardImage,
-  stageClipboardImage,
 } from "./desktop-ingestion";
 import {
   createWebImportCollectionCommand,
@@ -2914,316 +2910,85 @@ async function handleLibraryRequest(
     });
     if (relinkOwnedResult) return relinkOwnedResult;
 
-    if (request.type === "library.open-recent.request") {
-      // The renderer may only reopen a library that Main itself recorded in the
-      // recent libraries store — never an arbitrary path. This keeps the same
-      // open-by-path pipeline the restart restore uses.
-      const recentEntries = readRecentLibraryEntries(
-        recentLibraryPath(),
-        (error) => {
-          logger?.error("recent-library.read", error);
-        },
-      );
-      if (
-        !path.isAbsolute(request.libraryPath) ||
-        !recentEntries.some((entry) => entry.path === request.libraryPath)
-      ) {
-        return {
-          ok: false,
-          error: createPublicError("LIBRARY_NOT_FOUND"),
-        } satisfies RendererResult;
-      }
-      command = {
-        type: "library.open",
-        selectedLibraryPath: request.libraryPath,
-      };
-    } else if (request.type === "asset.import-drop.request") {
-      let sourceKind: "files" | "folder";
-      try {
-        sourceKind = classifyDroppedSourcePaths(request.sourcePaths);
-      } catch (error) {
-        logger?.error("desktop-ingestion.drop-selection", error, {
-          sourceCount: request.sourcePaths.length,
-        });
-        const isSelectionShapeError =
-          error instanceof Error && error.message === "INVALID_DROP_SELECTION";
-        return {
-          ok: false,
-          error: isSelectionShapeError
-            ? createPublicError("INVALID_DROP_SELECTION")
-            : createPublicError(
-                "INVALID_IMPORT_SOURCE",
-                publicReasonFromError(error),
-              ),
-        } satisfies RendererResult;
-      }
-      const e2eAutoExpand =
-        !app.isPackaged &&
-        process.env.SERPENT_E2E === "1" &&
-        // Serpent-866c20：序列帧确认面板（含导入前预览）只能在确认流程里跑，
-        // 需要一条 E2E 保持真实交互，而不是被 E2E 自动展开吞掉。
-        process.env.SERPENT_E2E_SEQUENCE_PROMPT !== "1";
-      const disableSequenceCreate =
-        request.detectImageSequences === false ||
-        request.autoDetectImageSequences === false;
-      if (
-        sourceKind === "files" &&
-        request.imageSequenceDecision?.action === "import-sequence"
-      ) {
-        if (!workerClient) throw new Error("Library Worker is unavailable.");
-        const probeResult = await workerClient.request({
-          type: "asset.import.probe-sequences",
-          libraryId: request.libraryId,
-          targetFolderId: request.targetFolderId,
-          targetCollectionId: request.targetCollectionId,
-          sourcePaths: request.sourcePaths,
-        });
-        if (!probeResult.ok) {
-          return {
-            ok: false,
-            error: probeResult.error,
-          } satisfies RendererResult;
-        }
-        if (
-          probeResult.type !== "asset.import.sequence-offer" ||
-          probeResult.offer.sequences.length === 0
-        ) {
-          command = {
-            type: "asset.import.prepare",
-            libraryId: request.libraryId,
-            targetFolderId: request.targetFolderId,
-            sourceKind,
-            sourcePaths: request.sourcePaths,
-            expandImageSequences: false,
-          };
-        } else {
-          const sequenceIndex = request.imageSequenceDecision.sequenceIndex ?? 0;
-          const sequence =
-            probeResult.offer.sequences[sequenceIndex] ??
-            probeResult.offer.sequences[0]!;
-          const firstFrame =
-            request.imageSequenceDecision.firstFrame ?? sequence.firstFrame;
-          const lastFrame =
-            request.imageSequenceDecision.lastFrame ?? sequence.lastFrame;
-          const rangedPaths: string[] = [];
-          const framePaths = sequence.framePaths ?? [];
-          for (let index = 0; index < framePaths.length; index += 1) {
-            const frameNumber = sequence.firstFrame + index;
-            if (frameNumber < firstFrame || frameNumber > lastFrame) continue;
-            rangedPaths.push(framePaths[index]!);
-          }
-          command = {
-            type: "asset.import.prepare",
-            libraryId: request.libraryId,
-            targetFolderId: request.targetFolderId,
-            sourceKind: "files",
-            sourcePaths:
-              request.imageSequenceDecision.applyToRest
-                ? request.sourcePaths
-                : rangedPaths.length >= 3
-                  ? rangedPaths
-                  : framePaths,
-            expandImageSequences: false,
-            createImageSequence: true,
-            imageSequenceFps:
-              request.imageSequenceDecision.fps ??
-              probeResult.offer.defaultFps,
-          };
-        }
-      } else {
-        command = {
-          type: "asset.import.prepare",
-          libraryId: request.libraryId,
-          targetFolderId: request.targetFolderId,
-          sourceKind,
-          sourcePaths: request.sourcePaths,
-          expandImageSequences: e2eAutoExpand && sourceKind === "files",
-          ...(disableSequenceCreate ? { createImageSequence: false } : {}),
-          imageSequenceFps: e2eAutoExpand ? 30 : undefined,
-        };
-      }
-    } else if (request.type === "asset.import-sequence.confirm") {
-      const pending = pendingImageSequenceOffers.get(request.offerId);
-      if (!pending || pending.expiresAt <= Date.now()) {
-        pendingImageSequenceOffers.delete(request.offerId);
-        return {
-          ok: false,
-          error: createPublicError("IMPORT_NOT_FOUND"),
-        } satisfies RendererResult;
-      }
-      if (pending.offer.libraryId !== request.libraryId) {
-        return {
-          ok: false,
-          error: createPublicError("IMPORT_NOT_FOUND"),
-        } satisfies RendererResult;
-      }
-      const stored = pending.offer;
-      const sequenceIndex = request.sequenceIndex ?? pending.nextSequenceIndex;
-      if (sequenceIndex !== pending.nextSequenceIndex) {
-        return {
-          ok: false,
-          error: createPublicError("IMPORT_NOT_FOUND"),
-        } satisfies RendererResult;
-      }
-      const sequence = stored.sequences[sequenceIndex];
-      const decision = resolveImageSequenceImportPaths({
-        action: request.action,
-        applyToRest: request.applyToRest === true,
-        firstFrame: request.firstFrame ?? sequence?.firstFrame ?? 0,
-        lastFrame: request.lastFrame ?? sequence?.lastFrame ?? 0,
-        offer: stored,
-        sequenceIndex,
-      });
-      if (decision.sourcePaths.length === 0) {
-        return {
-          ok: false,
-          error: createPublicError("INVALID_SELECTION"),
-        } satisfies RendererResult;
-      }
-      command = {
-        type: "asset.import.prepare",
-        libraryId: request.libraryId,
-        targetFolderId: stored.targetFolderId,
-        sourceKind: "files",
-        sourcePaths: decision.sourcePaths,
-        expandImageSequences: false,
-        createImageSequence: decision.createImageSequence,
-        ...(decision.createImageSequence
-          ? { imageSequenceFps: request.fps ?? stored.defaultFps }
-          : {}),
-      };
-      if (decision.nextSequenceIndex === null) {
-        pendingImageSequenceOffers.delete(request.offerId);
-      } else {
-        pending.nextSequenceIndex = decision.nextSequenceIndex;
-      }
-    } else if (request.type === "asset.import-clipboard.request") {
-      let image;
-      try {
-        if (
-          !app.isPackaged &&
-          process.env.SERPENT_E2E === "1" &&
-          process.env.SERPENT_E2E_CLIPBOARD_IMAGE_PATH
-        ) {
-          image = nativeImage.createFromBuffer(
-            readFileSync(process.env.SERPENT_E2E_CLIPBOARD_IMAGE_PATH),
-          );
-        } else {
-          // Windows clipboard images arrive in several layouts; walk them all
-          // (Chromium bitmap, registered PNG, bare DIB, HTML references).
-          const extracted = readClipboardImage({
-            readImage: () => clipboard.readImage(),
-            readBuffer: (format) => clipboard.readBuffer(format),
-            readHTML: () => clipboard.readHTML(),
-            createFromBuffer: (buffer) => nativeImage.createFromBuffer(buffer),
-          });
-          if (!extracted) {
-            logger?.info(
-              "desktop-ingestion.clipboard-formats",
-              "no importable image on the clipboard",
-              { formats: clipboard.availableFormats() },
-            );
-            throw new Error("CLIPBOARD_IMAGE_NOT_FOUND");
-          }
-          image = extracted.image;
-        }
-        const injectedNow =
-          !app.isPackaged &&
-          process.env.SERPENT_E2E === "1" &&
-          process.env.SERPENT_E2E_CLIPBOARD_NOW
-            ? new Date(process.env.SERPENT_E2E_CLIPBOARD_NOW)
-            : new Date();
-        const staged = stageClipboardImage(
-          image,
-          app.getPath("temp"),
-          injectedNow,
-        );
-        clipboardStageDirectory = staged.directoryPath;
-        command = {
-          type: "asset.import.prepare",
-          libraryId: request.libraryId,
-          targetFolderId: request.targetFolderId,
-          sourceKind: "files",
-          sourcePaths: [staged.filePath],
-        };
-      } catch (error) {
-        logger?.error("desktop-ingestion.clipboard-stage", error);
-        const code =
-          error instanceof Error &&
-          error.message === "CLIPBOARD_IMAGE_NOT_FOUND"
-            ? "CLIPBOARD_IMAGE_NOT_FOUND"
-            : "INVALID_IMPORT_SOURCE";
-        return {
-          ok: false,
-          error: createPublicError(
-            code,
-            code === "INVALID_IMPORT_SOURCE"
-              ? publicReasonFromError(error)
-              : undefined,
-          ),
-        } satisfies RendererResult;
-      }
-    } else if (request.type === "folder.paste.request") {
-      try {
-        const injectedPaths =
-          !app.isPackaged &&
-          process.env.SERPENT_E2E === "1" &&
-          process.env.SERPENT_E2E_CLIPBOARD_FILE_PATHS
-            ? process.env.SERPENT_E2E_CLIPBOARD_FILE_PATHS.split("\n").filter(
-                Boolean,
-              )
-            : null;
-        const sourcePaths =
-          injectedPaths ??
-          readFilePathsFromClipboard(createFileClipboardDeps());
-        if (sourcePaths.length === 0) {
-          return {
-            ok: false,
-            error: createPublicError("CLIPBOARD_FILES_NOT_FOUND"),
-          } satisfies RendererResult;
-        }
-        const sourceKind = classifyDroppedSourcePaths(sourcePaths);
-        command = {
-          type: "asset.import.prepare",
-          libraryId: request.libraryId,
-          targetFolderId: request.folderId ?? undefined,
-          sourceKind,
-          sourcePaths,
-          // Paste must never auto-group into an image sequence. Users expect
-          // ordinary import + name/content conflict dialogs (PASTE-001).
-          expandImageSequences: false,
-          createImageSequence: false,
-        };
-      } catch (error) {
-        logger?.error("desktop-ingestion.clipboard-files", error);
-        const isSelectionShapeError =
-          error instanceof Error && error.message === "INVALID_DROP_SELECTION";
-        return {
-          ok: false,
-          error: isSelectionShapeError
-            ? createPublicError("INVALID_DROP_SELECTION")
-            : createPublicError(
-                "INVALID_IMPORT_SOURCE",
-                publicReasonFromError(error),
-              ),
-        } satisfies RendererResult;
-      }
+    const openRecent = tryBuildOpenRecentCommand(request, {
+      getActiveLibraryOpenCancellation: () => activeLibraryOpenCancellation,
+      logInfo: (scope, message) => {
+        logger?.info(scope, message);
+      },
+      logError: (scope, error) => {
+        logger?.error(scope, error);
+      },
+      selectDirectory,
+      recentLibraryPath,
+      readRecentLibraryEntries,
+      removeRecentLibrary,
+      refreshApplicationMenuRecentLibraries,
+      cleanupExternalSource,
+      getPendingEagleOpenSourcePath: () => pendingEagleOpenSourcePath,
+      setPendingEagleOpenSourcePath: (value) => { pendingEagleOpenSourcePath = value; },
+      getPendingBillfishOpenSourcePath: () => pendingBillfishOpenSourcePath,
+      setPendingBillfishOpenSourcePath: (value) => { pendingBillfishOpenSourcePath = value; },
+    });
+    if (openRecent?.kind === "result") return openRecent.result;
+    if (openRecent?.kind === "command") {
+      command = openRecent.command;
     } else {
-      command = await commandFor(
-        request,
-        request.type === "library.inspect-billfish.request"
-          ? {
-              onBillfishSourceSelected: () => {
-                operation = "open-billfish";
-                lifecyclePublished = true;
-                publishLifecycle({
-                  type: "library.opening",
-                  operation: "open-billfish",
-                });
-              },
-            }
-          : undefined,
-      );
+      const ingestion = await tryBuildIngestionCommand(request, {
+        isUnpackagedE2e: () => !app.isPackaged && process.env.SERPENT_E2E === "1",
+        e2eEnv: (name) => process.env[name],
+        workerAvailable: () => Boolean(workerClient),
+        requestWorker: (workerCommand) => {
+          if (!workerClient) throw new Error("Library Worker is unavailable.");
+          return workerClient.request(workerCommand);
+        },
+        logInfo: (scope, message, context) => {
+          logger?.info(scope, message, context);
+        },
+        logError: (scope, error, context) => {
+          logger?.error(scope, error, context);
+        },
+        getPendingSequenceOffer: (offerId) => pendingImageSequenceOffers.get(offerId),
+        deletePendingSequenceOffer: (offerId) => {
+          pendingImageSequenceOffers.delete(offerId);
+        },
+        setPendingSequenceNextIndex: (offerId, nextSequenceIndex) => {
+          const pending = pendingImageSequenceOffers.get(offerId);
+          if (pending) pending.nextSequenceIndex = nextSequenceIndex;
+        },
+        tempPath: () => app.getPath("temp"),
+        now: () => new Date(),
+        createImageFromBuffer: (buffer) => nativeImage.createFromBuffer(buffer),
+        readFileBuffer: (filePath) => readFileSync(filePath),
+        clipboardImageDeps: {
+          readImage: () => clipboard.readImage(),
+          readBuffer: (format) => clipboard.readBuffer(format),
+          readHTML: () => clipboard.readHTML(),
+          createFromBuffer: (buffer) => nativeImage.createFromBuffer(buffer),
+        },
+        clipboardAvailableFormats: () => clipboard.availableFormats(),
+        readClipboardFilePaths: () => readFilePathsFromClipboard(createFileClipboardDeps()),
+      });
+      if (ingestion?.kind === "result") return ingestion.result;
+      if (ingestion?.kind === "command") {
+        command = ingestion.command;
+        clipboardStageDirectory = ingestion.clipboardStageDirectory;
+      } else {
+        command = await commandFor(
+          request,
+          request.type === "library.inspect-billfish.request"
+            ? {
+                onBillfishSourceSelected: () => {
+                  operation = "open-billfish";
+                  lifecyclePublished = true;
+                  publishLifecycle({
+                    type: "library.opening",
+                    operation: "open-billfish",
+                  });
+                },
+              }
+            : undefined,
+        );
+      }
     }
     if (!command || openCancellation?.cancelled) return cancelled();
     if (
