@@ -58,6 +58,7 @@ import {
   selectPluginPackage,
   type NativeDialogHost,
 } from "./native-dialogs";
+import { executeLibraryMainCommand } from "./commands/library";
 import {
   ExternalLibraryArchiveError,
   materializeExternalLibrarySource,
@@ -2406,156 +2407,37 @@ async function commandFor(
   },
 ): Promise<WorkerCommand | undefined> {
   switch (request.type) {
-    case "library.create.request": {
-      const selectedParentPath = await selectDirectory("createLibrary");
-      return selectedParentPath
-        ? {
-            type: "library.create",
-            displayName: request.displayName,
-            selectedParentPath,
-          }
-        : undefined;
-    }
-    case "library.open.request": {
-      const selectedLibraryPath =
-        request.libraryPath ?? (await selectDirectory("openLibrary"));
-      return selectedLibraryPath
-        ? {
-            type: "library.open",
-            selectedLibraryPath,
-            ...(request.replaceExisting === true ? { replaceExisting: true } : {}),
-          }
-        : undefined;
-    }
+    case "library.create.request":
+    case "library.open.request":
     case "library.recovery-report.request":
-      // The Worker resolves the report path from its Main-owned library state;
-      // Renderer only receives a shell acknowledgement.
-      return { type: "library.recovery-report", libraryId: request.libraryId };
-    case "library.inspect-eagle.request": {
-      await cleanupExternalSource(pendingEagleOpenSourcePath);
-      pendingEagleOpenSourcePath = undefined;
-      await cleanupExternalSource(pendingBillfishOpenSourcePath);
-      pendingBillfishOpenSourcePath = undefined;
-      const selectedSourcePath = await selectOpenLibrarySource(
-        createNativeDialogHost(),
-        "openEagleLibrary",
-        process.env.SERPENT_E2E_OPEN_EAGLE_LIBRARY,
-        ["zip", "eaglepack", "rar", "7z", "tar", "gz", "tgz", "bz2", "tbz", "tbz2", "xz", "txz"],
-      );
-      if (!selectedSourcePath) return undefined;
-      const materialized = await materializeSelectedExternalLibrary({
-        sourcePath: selectedSourcePath,
-        kind: "eagle",
-        fallbackDirectory: path.dirname(path.resolve(selectedSourcePath)),
-      });
-      const sourceRootPath = rememberExternalSource(materialized);
-      return sourceRootPath
-        ? { type: "library.inspect-eagle", sourceRootPath }
-        : undefined;
-    }
-    case "library.inspect-billfish.request": {
-      await cleanupExternalSource(pendingBillfishOpenSourcePath);
-      pendingBillfishOpenSourcePath = undefined;
-      await cleanupExternalSource(pendingEagleOpenSourcePath);
-      pendingEagleOpenSourcePath = undefined;
-      const selectedSourcePath = await selectOpenFile(
-        createNativeDialogHost(),
-        "openBillfishLibrary",
-        process.env.SERPENT_E2E_OPEN_BILLFISH_LIBRARY,
-        [{ name: "Billfish Pack", extensions: ["billfishpack"] }],
-      );
-      if (!selectedSourcePath) return undefined;
-      callbacks?.onBillfishSourceSelected?.();
-      const materialized = await materializeSelectedExternalLibrary({
-        sourcePath: selectedSourcePath,
-        kind: "billfish",
-        fallbackDirectory: path.dirname(path.resolve(selectedSourcePath)),
-      });
-      const sourceRootPath = rememberExternalSource(materialized);
-      return sourceRootPath
-        ? {
-            type: "library.inspect-billfish",
-            sourceRootPath,
-            ...(materialized.sourceDisplayName === undefined
-              ? {}
-              : { sourceDisplayName: materialized.sourceDisplayName }),
-          }
-        : undefined;
-    }
+    case "library.inspect-eagle.request":
+    case "library.inspect-billfish.request":
     case "library.inspect-eagle.cancel.request":
-      await cleanupExternalSource(pendingEagleOpenSourcePath);
-      pendingEagleOpenSourcePath = undefined;
-      return undefined;
     case "library.inspect-billfish.cancel.request":
-      await cleanupExternalSource(pendingBillfishOpenSourcePath);
-      pendingBillfishOpenSourcePath = undefined;
-      return undefined;
-    case "library.open-eagle.request": {
-      const sourceRootPath = pendingEagleOpenSourcePath;
-      if (!sourceRootPath) return undefined;
-      const selectedParentPath = await selectOpenDirectory(
-        createNativeDialogHost(),
-        "openEagleLibraryDestination",
-        process.env.SERPENT_E2E_OPEN_EAGLE_PARENT,
-        { createDirectory: true },
-      );
-      return selectedParentPath
-        ? {
-            type: "library.open-eagle",
-            sourceRootPath,
-            selectedParentPath,
-            displayName: request.displayName,
-          }
-        : undefined;
-    }
-    case "library.open-billfish.request": {
-      const sourceRootPath = pendingBillfishOpenSourcePath;
-      if (!sourceRootPath) return undefined;
-      const selectedParentPath = await selectOpenDirectory(
-        createNativeDialogHost(),
-        "openEagleLibraryDestination",
-        process.env.SERPENT_E2E_OPEN_BILLFISH_PARENT,
-        { createDirectory: true },
-      );
-      return selectedParentPath
-        ? {
-            type: "library.open-billfish",
-            sourceRootPath,
-            selectedParentPath,
-            displayName: request.displayName,
-          }
-        : undefined;
-    }
+    case "library.open-eagle.request":
+    case "library.open-billfish.request":
     case "library.close.request":
-      return { type: "library.close", libraryId: request.libraryId };
     case "library.rename.request":
-      return { type: "library.rename", libraryId: request.libraryId, displayName: request.displayName };
     case "library.delete-from-disk.request":
-      return { type: "library.delete-from-disk", libraryId: request.libraryId };
     case "library.list.request":
-      return { type: "library.list" };
     case "history.status.request":
-      return { type: "history.status", libraryId: request.libraryId };
     case "history.undo.request":
-      return {
-        type: "history.undo",
-        libraryId: request.libraryId,
-        expectedHistoryEntryId: request.expectedHistoryEntryId,
-      };
     case "history.redo.request":
-      return {
-        type: "history.redo",
-        libraryId: request.libraryId,
-        expectedHistoryEntryId: request.expectedHistoryEntryId,
-      };
     case "library.list-recent.request":
     case "library.open-recent.request":
-    case "library.forget-recent.request":
-      // Both are handled directly in handleLibraryRequest: the list comes from
-      // the Main-owned recent libraries store, and open-recent validates store
-      // membership before building the same library.open command used here.
-      // forget-recent only mutates the Main store (Serpent-ucx).
-      return undefined;
+    case "library.forget-recent.request": {
+      return executeLibraryMainCommand(request, {
+        selectDirectory,
+        createNativeDialogHost,
+        cleanupExternalSource,
+        getPendingEagleOpenSourcePath: () => pendingEagleOpenSourcePath,
+        setPendingEagleOpenSourcePath: (value) => { pendingEagleOpenSourcePath = value; },
+        getPendingBillfishOpenSourcePath: () => pendingBillfishOpenSourcePath,
+        setPendingBillfishOpenSourcePath: (value) => { pendingBillfishOpenSourcePath = value; },
+        materializeSelectedExternalLibrary,
+        rememberExternalSource,
+      }, callbacks);
+    }
     case "folder.create.request":
       return {
         type: "folder.create",
