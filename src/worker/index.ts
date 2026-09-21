@@ -126,6 +126,7 @@ import { executeAssetMutationWorkerCommand } from './handlers/asset-mutations';
 import { executePluginJobWorkerCommand } from './handlers/plugin-jobs';
 import { executeMediaPathWorkerCommand } from './handlers/media-paths';
 import { executeMediaJobWorkerCommand } from './handlers/media-jobs';
+import { executeMediaGenerationWorkerCommand } from './handlers/media-generation';
 import { executeAssetQueryWorkerCommand } from './handlers/asset-query';
 import { executeSmartCollectionWorkerCommand } from './handlers/smart-collections';
 import { executeLibraryLifecycleWorkerCommand } from './handlers/library-lifecycle';
@@ -3082,61 +3083,22 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         modelVersion,
       };
     }
-    case 'media.generate-thumbnail': {
-      const pluginArtifact = await writePluginMediaArtifact({
-        libraryId: request.command.libraryId,
-        assetId: request.command.assetId,
-        kind: 'thumbnail',
-      });
-      const generated = pluginArtifact
-        ?? await libraryService.generateThumbnail(request.command);
-      if (!generated && libraryService.isModelAsset(
-        request.command.libraryId,
-        request.command.assetId,
-      )) {
-        // Model thumbnails render offscreen in Main (slice E): the explicit
-        // request enqueues through the queue, and the thumbnail.ready event
-        // arrives asynchronously once the offscreen frame lands.
-        scheduleThumbnailScene(
-          request.command.libraryId,
-          'mutation',
-          [request.command.assetId],
-        );
-      }
-      if (generated) {
-        thumbnailCompletionFanout.publishImmediate({
-          type: 'asset.thumbnail.ready',
-          libraryId: request.command.libraryId,
-          assetId: request.command.assetId,
-          artifactId: generated.artifactId,
-        });
-      }
-      return {
-        ok: true,
-        type: 'media.thumbnail.generated',
-        assetId: request.command.assetId,
-        ...(generated ? { artifactId: generated.artifactId } : {}),
-      };
-    }
+    case 'media.generate-thumbnail':
     case 'media.retry-artifact': {
-      const { libraryId, assetId, kind } = request.command;
-      libraryService.enqueueArtifactRetry({ libraryId, assetId, kind });
-      // The idempotent queue scheduler owns all FFmpeg work; normal IPC returns
-      // before poster/proxy generation and never starts a second drain.
-      if (kind === 'webm_proxy' || kind === 'audio_proxy') {
-        // Explicit source-playback fallback must not wait for the normal
-        // secondary idle window. A primary poster/import wave may remain
-        // active, but the proxy gets its own bounded FFmpeg lane immediately.
-        scheduleSecondaryMediaQueue(libraryId, { assetId, urgent: true });
-      } else {
-        scheduleThumbnailScene(libraryId, 'mutation', [assetId]);
+      const result = await executeMediaGenerationWorkerCommand(libraryService, request, {
+        writePluginMediaArtifact,
+        scheduleThumbnails: (libraryId, scene, assetIds) => {
+          scheduleThumbnailScene(libraryId, scene, assetIds);
+        },
+        publishThumbnailReady: (event) => {
+          thumbnailCompletionFanout.publishImmediate(event);
+        },
+        scheduleSecondaryMediaQueue,
+      });
+      if (result === undefined) {
+        throw new Error(`Unhandled media generation command: ${request.command.type}`);
       }
-      return {
-        ok: true,
-        type: 'media.retry-artifact.queued',
-        assetId,
-        kind,
-      };
+      return result;
     }
     case 'model.convert-fbx':
     case 'media.get-artifact-path':
