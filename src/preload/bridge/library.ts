@@ -1,0 +1,2463 @@
+// A sandboxed preload cannot load `node:crypto` — importing it here makes the
+// whole preload fail (`Unable to load preload script`), which leaves the
+// renderer without the `serpent` bridge. Web Crypto is available in the
+// preload's renderer context and produces the same RFC 4122 v4 shape the
+// navigation-id schema requires.
+function createNavigationId(): string {
+  return globalThis.crypto.randomUUID();
+}
+
+import { ipcRenderer, webUtils } from 'electron';
+
+import type { AiJobStatus, LibraryApiResult, LinkedAssetDeleteResult, MediaJobStatus, PluginJobStatus, PreviewResolution, RelinkAssetResult, SerpentLibraryApi, SyncCapabilities, SyncReport } from '../../shared/library-api';
+import type { MutationReceipt } from '../../shared/performance-contract';
+import { summarizePluginJobs } from '../../shared/plugin-job-status';
+import type { RecentLibraryEntry } from '../../shared/recent-libraries';
+import type { AiApiFormat } from '../../shared/ai-endpoints';
+import type { AiReliabilitySettings } from '../../shared/ai-reliability';
+import { searchQuerySchema } from '../../shared/asset-types';
+import type { EntityAppearance, EntityAppearanceTarget } from '../../shared/entity-appearance';
+import type { FbxConversionResult, FbxConversionStats } from '../../shared/fbx-conversion';
+import type { ModelCompanionAsset } from '../../shared/model-companions';
+import type { AiSearchPlan, AssetSummary, AssetMetadataResult, ExtractedMetadataResult, CollectionSummary, FilterClause, FolderBrowseEntry, LinkedFolderDirectoryMutation, LinkedFolderRule, LinkedFolderSummary, ManagedFolderSummary, SearchQuery, SearchScope, SmartCollectionSummary, TagCooccurrenceGraph, TagSummary, TrashedFolderSummary } from '../../shared/asset-types';
+import {
+  ASSET_CHANGE_CHANNEL,
+  EXTENSION_SAVE_COMPLETED_CHANNEL,
+  THUMBNAIL_CHANNEL,
+  ACTIVE_CONTEXT_CHANNEL,
+  LIBRARY_LIFECYCLE_CHANNEL,
+  LIBRARY_CHANGED_CHANNEL,
+  PROGRESS_CHANNEL,
+  AI_PROGRESS_CHANNEL,
+  AI_COMPLETED_CHANNEL,
+  AI_CLEARED_CHANNEL,
+} from '../../shared/protocol/channels';
+import { sendNativeAssetDrag } from '../native-asset-drag';
+import type { PublicErrorReason } from '../../shared/protocol/errors';
+import {
+  parseRendererLifecycleEvent,
+  parseThumbnailEvent,
+  parseAiProgressEvent,
+  parseAiAnalysisCompletedEvent,
+  parseAiContentClearedEvent,
+  type RendererLibrarySummary,
+  type RendererLifecycleEvent,
+  type ThumbnailEvent,
+  type ImportCompletion,
+  type ImportConflictPlan,
+  type ImportSourceFailurePlan,
+  type ImageSequenceImportOffer,
+  type EagleImportResult,
+  type BillfishImportResult,
+  type AssetChangeEvent,
+  parseAssetChangeEvent,
+  type LibraryChangedEvent,
+  parseLibraryChangedEvent,
+  type ExtensionSaveCompletedEvent,
+  parseExtensionSaveCompletedEvent,
+  type ExportProgressEvent,
+  parseExportProgressEvent,
+  type ImportProgressEvent,
+  parseImportProgressEvent,
+  type SyncProgressEvent,
+  parseSyncProgressEvent,
+  type DeleteProgressEvent,
+  parseDeleteProgressEvent,
+  type TagOperationSkip,
+} from '../../shared/protocol/responses';
+import type {
+  NameConflictDecision,
+  SuspectedDuplicateDecision,
+} from '../../shared/protocol/requests';
+import { createPublicError } from '../../shared/protocol/errors';
+import { isImageSequenceImportOffer } from '../../shared/import-outcome';
+import { resolveDroppedFilePaths } from '../dropped-files';
+import { extractWebMediaDrop } from '../web-media-drop';
+import { failure, importRequest, request } from '../transport';
+
+const EMPTY_FBX_CONVERSION_STATS: FbxConversionStats = {
+  triangles: 0,
+  vertices: 0,
+  meshes: 0,
+  instances: 0,
+  materials: 0,
+  textures: 0,
+  missingTextures: 0,
+  sourceBytes: 0,
+  glbBytes: 0,
+  sourceUnitMeters: 1,
+};
+
+const e2eEnabled = process.env.SERPENT_E2E === '1';
+export type E2eBrowseSessionDelayTarget = {
+  folderId?: string;
+  smartCollectionId?: string;
+};
+let e2eBrowseSessionDelay: {
+  target: E2eBrowseSessionDelayTarget;
+  delayMs: number;
+} | null = null;
+if (e2eEnabled) {
+  const e2eLocale = process.env.SERPENT_E2E_LOCALE === 'en' ? 'en' : 'zh-CN';
+  (globalThis as { __SERPENT_E2E_LOCALE__?: string }).__SERPENT_E2E_LOCALE__ =
+    e2eLocale;
+  // Default dark so system-theme preference stays visually stable in CI.
+  const e2eTheme = process.env.SERPENT_E2E_THEME === 'light' ? 'light' : 'dark';
+  (globalThis as { __SERPENT_E2E_THEME__?: string }).__SERPENT_E2E_THEME__ =
+    e2eTheme;
+}
+
+function emitE2eBrowseSessionResponse(
+  navigationId: string,
+  ok: boolean,
+): void {
+  if (!e2eEnabled || process.env.SERPENT_E2E_LIBRARY_TRACE !== '1') return;
+  window.dispatchEvent(new CustomEvent('serpent:e2e-browse-session-response', {
+    detail: JSON.stringify({
+      navigationId,
+      responseAtEpochMs: Date.now(),
+      ok,
+    }),
+  }));
+}
+
+export const library: SerpentLibraryApi = Object.freeze({
+  async create({
+    displayName,
+  }: {
+    displayName: string;
+  }): Promise<LibraryApiResult<RendererLibrarySummary>> {
+    const result = await request({ type: 'library.create.request', displayName });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.opened') throw new Error('Unexpected create-library response.');
+    return { ok: true as const, value: result.library };
+  },
+
+  async open(input?: {
+    libraryPath?: string;
+    replaceExisting?: boolean;
+  }): Promise<LibraryApiResult<RendererLibrarySummary>> {
+    const result = await request({
+      type: 'library.open.request',
+      ...(input?.libraryPath ? { libraryPath: input.libraryPath } : {}),
+      ...(input?.replaceExisting === true ? { replaceExisting: true } : {}),
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.opened') throw new Error('Unexpected open-library response.');
+    return { ok: true as const, value: result.library };
+  },
+
+  async chooseLibraryPath(): Promise<LibraryApiResult<string | null>> {
+    const result = await request({ type: 'library.choose-path.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.choose-path') {
+      throw new Error('Unexpected choose-library-path response.');
+    }
+    return { ok: true as const, value: result.path };
+  },
+
+  async cancelOpen(): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'library.open-cancel.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.open-cancelled') {
+      throw new Error('Unexpected cancel-open-library response.');
+    }
+    return { ok: true as const, value: undefined };
+  },
+
+  async revealRecoveryReport({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'library.recovery-report.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.recovery-report.requested') {
+      throw new Error('Unexpected recovery-report response.');
+    }
+    return { ok: true, value: undefined };
+  },
+
+  async probeMissingAssetRecovery({
+    libraryId,
+    assetId,
+  }: {
+    libraryId: string;
+    assetId: string;
+  }) {
+    const result = await request({
+      type: 'asset.recovery-probe.request',
+      libraryId,
+      assetId,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.recovery-probe.result') {
+      throw new Error('Unexpected recovery-probe response.');
+    }
+    return { ok: true as const, value: result.probe };
+  },
+
+  async inspectEagle(): Promise<LibraryApiResult<{ displayName: string }>> {
+    const result = await request({ type: 'library.inspect-eagle.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.eagle-inspected') {
+      throw new Error('Unexpected inspect-Eagle-library response.');
+    }
+    return { ok: true as const, value: { displayName: result.displayName } };
+  },
+
+  async cancelInspectEagle(): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'library.inspect-eagle.cancel.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.eagle-inspect-cancelled') {
+      throw new Error('Unexpected cancel-inspect-Eagle-library response.');
+    }
+    return { ok: true as const, value: undefined };
+  },
+
+  async openEagle({
+    displayName,
+  }: {
+    displayName: string;
+  }): Promise<LibraryApiResult<RendererLibrarySummary>> {
+    const result = await request({ type: 'library.open-eagle.request', displayName });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.opened') throw new Error('Unexpected open-Eagle-library response.');
+    return { ok: true as const, value: result.library };
+  },
+
+  async inspectBillfish(): Promise<LibraryApiResult<{ displayName: string }>> {
+    const result = await request({ type: 'library.inspect-billfish.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.billfish-inspected') {
+      throw new Error('Unexpected inspect-Billfish-library response.');
+    }
+    return { ok: true as const, value: { displayName: result.displayName } };
+  },
+
+  async cancelInspectBillfish(): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'library.inspect-billfish.cancel.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.billfish-inspect-cancelled') {
+      throw new Error('Unexpected cancel-inspect-Billfish-library response.');
+    }
+    return { ok: true as const, value: undefined };
+  },
+
+  async openBillfish({
+    displayName,
+  }: {
+    displayName: string;
+  }): Promise<LibraryApiResult<RendererLibrarySummary>> {
+    const result = await request({ type: 'library.open-billfish.request', displayName });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.opened') {
+      throw new Error('Unexpected open-Billfish-library response.');
+    }
+    return { ok: true as const, value: result.library };
+  },
+
+  async listRecent(): Promise<LibraryApiResult<RecentLibraryEntry[]>> {
+    const result = await request({ type: 'library.list-recent.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.recent-list') throw new Error('Unexpected list-recent-libraries response.');
+    return { ok: true as const, value: result.libraries };
+  },
+
+  async openRecent({ path }: { path: string }): Promise<LibraryApiResult<RendererLibrarySummary>> {
+    const result = await request({ type: 'library.open-recent.request', libraryPath: path });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.opened') throw new Error('Unexpected open-recent-library response.');
+    return { ok: true as const, value: result.library };
+  },
+
+  async forgetRecent({ path }: { path: string }): Promise<LibraryApiResult<{ path: string }>> {
+    const result = await request({ type: 'library.forget-recent.request', libraryPath: path });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.forgotten') {
+      throw new Error('Unexpected forget-recent-library response.');
+    }
+    return { ok: true as const, value: { path: result.libraryPath } };
+  },
+
+  async close({
+    libraryId,
+  }: {
+    libraryId: string;
+  }): Promise<LibraryApiResult<{ libraryId: string }>> {
+    const result = await request({ type: 'library.close.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.closed') throw new Error('Unexpected close-library response.');
+    return { ok: true as const, value: { libraryId: result.libraryId } };
+  },
+
+  async rename({ libraryId, displayName }: { libraryId: string; displayName: string }): Promise<LibraryApiResult<RendererLibrarySummary>> {
+    const result = await request({ type: 'library.rename.request', libraryId, displayName });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.renamed') throw new Error('Unexpected rename-library response.');
+    return { ok: true as const, value: result.library };
+  },
+
+  async deleteLibraryFromDisk({
+    libraryId,
+  }: {
+    libraryId: string;
+  }): Promise<LibraryApiResult<{ libraryId: string; displayName: string; pendingCleanup?: boolean }>> {
+    const result = await request({ type: 'library.delete-from-disk.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.deleted') {
+      throw new Error('Unexpected delete-library response.');
+    }
+    return {
+      ok: true as const,
+      value: {
+        libraryId: result.libraryId,
+        displayName: result.displayName,
+        ...(result.pendingCleanup ? { pendingCleanup: result.pendingCleanup } : {}),
+      },
+    };
+  },
+
+  async listOpen(): Promise<LibraryApiResult<RendererLibrarySummary[]>> {
+    const result = await request({ type: 'library.list.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.list') throw new Error('Unexpected list-libraries response.');
+    return { ok: true as const, value: result.libraries };
+  },
+
+  async getOperationHistoryStatus({ libraryId }: { libraryId: string }) {
+    const result = await request({ type: 'history.status.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'history.status') throw new Error('Unexpected history-status response.');
+    return { ok: true as const, value: result.status };
+  },
+
+  async undoOperationHistory({ libraryId, expectedHistoryEntryId }: {
+    libraryId: string;
+    expectedHistoryEntryId: string;
+  }) {
+    const result = await request({
+      type: 'history.undo.request',
+      libraryId,
+      expectedHistoryEntryId,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'history.undone') throw new Error('Unexpected history-undo response.');
+    return { ok: true as const, value: result.status };
+  },
+
+  async redoOperationHistory({ libraryId, expectedHistoryEntryId }: {
+    libraryId: string;
+    expectedHistoryEntryId: string;
+  }) {
+    const result = await request({
+      type: 'history.redo.request',
+      libraryId,
+      expectedHistoryEntryId,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'history.redone') throw new Error('Unexpected history-redo response.');
+    return { ok: true as const, value: result.status };
+  },
+
+  async createFolder(input: {
+    libraryId: string;
+    parentFolderId?: string;
+    name: string;
+  }): Promise<LibraryApiResult<ManagedFolderSummary & { historyEntryId?: string; mutationReceipt?: MutationReceipt }>> {
+    const result = await request({ type: 'folder.create.request', ...input });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.created') throw new Error('Unexpected create-folder response.');
+    return {
+      ok: true,
+      value: {
+        ...result.folder,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+        ...(result.mutationReceipt ? { mutationReceipt: result.mutationReceipt } : {}),
+      },
+    };
+  },
+
+  async renameFolder(input: {
+    libraryId: string;
+    folderId: string;
+    newName: string;
+  }): Promise<LibraryApiResult<ManagedFolderSummary & { historyEntryId?: string }>> {
+    const result = await request({ type: 'folder.rename.request', ...input });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.renamed') throw new Error('Unexpected rename-folder response.');
+    return {
+      ok: true,
+      value: {
+        ...result.folder,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+      },
+    };
+  },
+
+  async setEntityAppearance(input: {
+    libraryId: string;
+    target: EntityAppearanceTarget;
+    appearance: EntityAppearance | null;
+  }) {
+    const result = await request({ type: 'appearance.set.request', ...input });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'appearance.updated') throw new Error('Unexpected set-appearance response.');
+    return { ok: true as const, value: { target: result.target, appearance: result.appearance } };
+  },
+
+  async createLinkedFolderDirectory(input: {
+    libraryId: string;
+    linkedFolderId: string;
+    relativePath: string;
+    name: string;
+  }): Promise<LibraryApiResult<LinkedFolderDirectoryMutation>> {
+    const result = await request({
+      type: 'linked-folder.create-directory.request',
+      ...input,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'linked-folder.directory-created') {
+      throw new Error('Unexpected linked-folder-create-directory response.');
+    }
+    return { ok: true, value: result.folder };
+  },
+
+  async renameLinkedFolderDirectory(input: {
+    libraryId: string;
+    linkedFolderId: string;
+    relativePath: string;
+    newName: string;
+  }): Promise<LibraryApiResult<LinkedFolderDirectoryMutation>> {
+    const result = await request({
+      type: 'linked-folder.rename-directory.request',
+      ...input,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'linked-folder.directory-renamed') {
+      throw new Error('Unexpected linked-folder-rename-directory response.');
+    }
+    return { ok: true, value: result.folder };
+  },
+
+  async copyFolder({ libraryId, folderId }: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'folder.copy.request', libraryId, folderId });
+    if (!result.ok) return failure(result);
+    return { ok: true, value: undefined };
+  },
+
+  async pasteIntoFolder(input: {
+    libraryId: string;
+    folderId?: string | null;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan | ImageSequenceImportOffer>> {
+    return importRequest({ type: 'folder.paste.request', ...input });
+  },
+
+  async cloneFolder(input: {
+    libraryId: string;
+    folderId: string;
+  }): Promise<
+    LibraryApiResult<{
+      folder: ManagedFolderSummary;
+      clonedFolderCount: number;
+      clonedAssetCount: number;
+    }>
+  > {
+    const result = await request({ type: 'folder.clone.request', ...input });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.cloned') throw new Error('Unexpected clone-folder response.');
+    return {
+      ok: true,
+      value: {
+        folder: result.folder,
+        clonedFolderCount: result.clonedFolderCount,
+        clonedAssetCount: result.clonedAssetCount,
+      },
+    };
+  },
+
+  async moveFolders(input: {
+    libraryId: string;
+    folderIds: string[];
+    targetParentFolderId: string | null;
+    conflictStrategy?: 'keep-both' | 'skip';
+  }): Promise<
+    LibraryApiResult<{
+      movedCount: number;
+      skippedCount: number;
+      folders: ManagedFolderSummary[];
+      historyEntryId?: string;
+    }>
+  > {
+    const result = await request({
+      type: 'folder.move.request',
+      libraryId: input.libraryId,
+      folderIds: input.folderIds,
+      targetParentFolderId: input.targetParentFolderId,
+      conflictStrategy: input.conflictStrategy ?? 'keep-both',
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.moved') throw new Error('Unexpected move-folders response.');
+    return {
+      ok: true,
+      value: {
+        movedCount: result.movedCount,
+        skippedCount: result.skippedCount,
+        folders: result.folders,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+      },
+    };
+  },
+
+  async listFolders({ libraryId, showIgnored }: { libraryId: string; showIgnored?: boolean }): Promise<LibraryApiResult<ManagedFolderSummary[]>> {
+    const result = await request({ type: 'folder.list.request', libraryId, showIgnored });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.list') throw new Error('Unexpected list-folders response.');
+    return { ok: true, value: result.folders };
+  },
+
+  async listFolderBrowseEntries(input: {
+    libraryId: string;
+    parentFolderId: string | null;
+    showIgnored?: boolean;
+  }): Promise<LibraryApiResult<FolderBrowseEntry[]>> {
+    const result = await request({
+      type: 'folder.browse-entries.request',
+      libraryId: input.libraryId,
+      parentFolderId: input.parentFolderId,
+      showIgnored: input.showIgnored,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.browse-entries') {
+      throw new Error('Unexpected list-folder-browse-entries response.');
+    }
+    return { ok: true, value: result.entries };
+  },
+
+  async listFolderEntriesByRefs(input: {
+    libraryId: string;
+    refs: Array<{ locationKind: 'managed' | 'linked'; folderId: string }>;
+  }): Promise<LibraryApiResult<FolderBrowseEntry[]>> {
+    const result = await request({
+      type: 'folder.entries-request',
+      ...input,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.entries') {
+      throw new Error('Unexpected folder-entries response.');
+    }
+    return { ok: true, value: result.entries };
+  },
+
+  async trashFolder(input: {
+    libraryId: string;
+    folderId: string;
+  }) {
+    const result = await request({ type: 'folder.trash.request', ...input });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.trashed') throw new Error('Unexpected trash-folder response.');
+    return {
+      ok: true as const,
+      value: {
+        folderId: result.folderId,
+        trashedAssetCount: result.trashedAssetCount,
+        removedFolderCount: result.removedFolderCount,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+      },
+    };
+  },
+
+  async trashSelection(input: {
+    libraryId: string;
+    assetIds: string[];
+    folderIds: string[];
+  }) {
+    const result = await request({ type: 'selection.trash.request', ...input });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'selection.trashed') throw new Error('Unexpected trash-selection response.');
+    return {
+      ok: true as const,
+      value: {
+        trashedAssetCount: result.trashedAssetCount,
+        trashedFolderCount: result.trashedFolderCount,
+        removedFolderCount: result.removedFolderCount,
+        historyEntryId: result.historyEntryId,
+      },
+    };
+  },
+
+  async deleteFolderFromDisk(input: {
+    libraryId: string;
+    folderId: string;
+  }) {
+    const result = await request({ type: 'folder.delete-from-disk.request', ...input });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.deleted-from-disk') {
+      throw new Error('Unexpected delete-folder-from-disk response.');
+    }
+    return {
+      ok: true as const,
+      value: {
+        folderId: result.folderId,
+        deletedAssetCount: result.deletedAssetCount,
+        removedFolderCount: result.removedFolderCount,
+      },
+    };
+  },
+
+  async removeLinkedFolder(input: {
+    libraryId: string;
+    folderId: string;
+  }) {
+    const result = await request({ type: 'linked-folder.remove.request', ...input });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'linked-folder.removed') {
+      throw new Error('Unexpected remove-linked-folder response.');
+    }
+    return {
+      ok: true as const,
+      value: {
+        folderId: result.folderId,
+        removedAssetCount: result.removedAssetCount,
+      },
+    };
+  },
+
+  async deleteLinkedFolderSubtree(input: {
+    libraryId: string;
+    linkedFolderId: string;
+    relativePath: string;
+    deleteFromDisk: boolean;
+  }) {
+    const result = await request({
+      type: 'linked-folder.delete-subtree.request',
+      ...input,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'linked-folder.subtree-deleted') {
+      throw new Error('Unexpected delete-linked-folder-subtree response.');
+    }
+    return {
+      ok: true as const,
+      value: {
+        linkedFolderId: result.linkedFolderId,
+        relativePath: result.relativePath,
+        deletedAssetCount: result.deletedAssetCount,
+        failedCount: result.failedCount,
+      },
+    };
+  },
+
+  async listAssets(input: {
+    libraryId: string;
+    folderId?: string;
+    recursive: boolean;
+    showIgnored?: boolean;
+    assetIds?: readonly string[];
+  }): Promise<LibraryApiResult<AssetSummary[]>> {
+    const result = await request({
+      type: 'asset.list.request',
+      ...input,
+      assetIds: input.assetIds ? [...input.assetIds] : undefined,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.list') throw new Error('Unexpected list-assets response.');
+    return { ok: true, value: result.assets };
+  },
+
+  async createImageSequence({ libraryId, assetIds, fps }: { libraryId: string; assetIds: string[]; fps: number }): Promise<LibraryApiResult<AssetSummary>> {
+    const result = await request({ type: 'asset.sequence.create.request', libraryId, assetIds, fps });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.sequence.created') throw new Error('Unexpected create-image-sequence response.');
+    return { ok: true, value: result.asset };
+  },
+
+  async dissolveImageSequence({ libraryId, sequenceId }: { libraryId: string; sequenceId: string }): Promise<LibraryApiResult<{ sequenceId: string }>> {
+    const result = await request({ type: 'asset.sequence.dissolve.request', libraryId, sequenceId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.sequence.dissolved') throw new Error('Unexpected dissolve-image-sequence response.');
+    return { ok: true, value: { sequenceId: result.sequenceId } };
+  },
+
+  async dissolveImageSequences({ libraryId, sequenceIds }: { libraryId: string; sequenceIds: string[] }): Promise<LibraryApiResult<{ sequenceIds: string[] }>> {
+    const result = await request({ type: 'asset.sequence.dissolve-batch.request', libraryId, sequenceIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.sequence.dissolved-batch') throw new Error('Unexpected dissolve-image-sequences response.');
+    return { ok: true, value: { sequenceIds: result.sequenceIds } };
+  },
+
+  async setImageSequenceFps({ libraryId, sequenceId, fps }: { libraryId: string; sequenceId: string; fps: number }): Promise<LibraryApiResult<{ sequenceId: string; fps: number }>> {
+    const result = await request({ type: 'asset.sequence.set-fps.request', libraryId, sequenceId, fps });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.sequence.fps-updated') throw new Error('Unexpected set-image-sequence-fps response.');
+    return { ok: true, value: { sequenceId: result.sequenceId, fps: result.fps } };
+  },
+
+  async importFiles(input: {
+    libraryId: string;
+    targetFolderId?: string;
+    autoDetectImageSequences?: boolean;
+    detectImageSequences?: boolean;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan | ImageSequenceImportOffer>> {
+    return importRequest({ type: 'asset.import-files.request', ...input });
+  },
+
+  async importFolder(input: {
+    libraryId: string;
+    targetFolderId?: string;
+    autoDetectImageSequences?: boolean;
+    detectImageSequences?: boolean;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan>> {
+    const result = await importRequest({ type: 'asset.import-folder.request', ...input });
+    if (!result.ok) return { ok: false, error: result.error };
+    if (isImageSequenceImportOffer(result.value)) {
+      throw new Error('Unexpected sequence-offer response for folder import.');
+    }
+    return {
+      ok: true,
+      value: result.value,
+    };
+  },
+
+  async importEagleLibrary({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<EagleImportResult>> {
+    const result = await request({ type: 'asset.import-eagle.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.import-eagle.completed') {
+      throw new Error('Unexpected Eagle-library import response.');
+    }
+    return { ok: true, value: result.result };
+  },
+
+  async importBillfishLibrary({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<BillfishImportResult>> {
+    const result = await request({ type: 'asset.import-billfish.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.import-billfish.completed') {
+      throw new Error('Unexpected Billfish-library import response.');
+    }
+    return { ok: true, value: result.result };
+  },
+
+  async importDropped(input: {
+    libraryId: string;
+    targetFolderId?: string;
+    targetCollectionId?: string;
+    files: File[];
+    html?: string;
+    uriList?: string;
+    autoDetectImageSequences?: boolean;
+    detectImageSequences?: boolean;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan | ImageSequenceImportOffer>> {
+    // Native File handles always win. Browser drags can include text/html
+    // beside Files; the secondary metadata must never turn a local import into
+    // a network request.
+    if (input.files.length === 0) {
+      try {
+        const extracted = extractWebMediaDrop({
+          html: input.html ?? '',
+          uriList: input.uriList ?? '',
+        });
+        return importRequest({
+          type: 'asset.import-web.request',
+          libraryId: input.libraryId,
+          targetFolderId: input.targetFolderId,
+          targetCollectionId: input.targetCollectionId,
+          ...extracted,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        const parserFailure = message === 'WEB_MEDIA_URL_INVALID' || message === 'WEB_MEDIA_DROP_TOO_LARGE'
+          ? message
+          : 'WEB_MEDIA_NOT_FOUND';
+        const result = await request({
+          type: 'asset.import-web-invalid.report',
+          libraryId: input.libraryId,
+          failure: parserFailure,
+        });
+        return result.ok
+          ? { ok: false, error: createPublicError(parserFailure) }
+          : failure(result);
+      }
+    }
+    try {
+      const sourcePaths = resolveDroppedFilePaths(input.files, (file) => webUtils.getPathForFile(file));
+      return importRequest({
+        type: 'asset.import-drop.request',
+        libraryId: input.libraryId,
+        targetFolderId: input.targetFolderId,
+        targetCollectionId: input.targetCollectionId,
+        sourcePaths,
+        autoDetectImageSequences: input.autoDetectImageSequences,
+        detectImageSequences: input.detectImageSequences,
+      });
+    } catch {
+      // Main owns persistent diagnostics. Report only the semantic failure;
+      // no File object or attempted path crosses back to Renderer.
+      const result = await request({ type: 'asset.import-drop-invalid.report', libraryId: input.libraryId });
+      return result.ok
+        ? { ok: false, error: createPublicError('INVALID_DROP_SELECTION') }
+        : failure(result);
+    }
+  },
+
+  async resolveManagedAssetDrop(input: {
+    libraryId: string;
+    files: File[];
+  }): Promise<LibraryApiResult<{ assetIds: string[] }>> {
+    try {
+      const sourcePaths = resolveDroppedFilePaths(input.files, (file) =>
+        webUtils.getPathForFile(file),
+      );
+      const result = await request({
+        type: 'asset.resolve-dropped-paths.request',
+        libraryId: input.libraryId,
+        sourcePaths,
+      });
+      if (!result.ok) return failure(result);
+      if (result.type !== 'asset.dropped-paths.resolved') {
+        throw new Error('Unexpected dropped-asset resolution response.');
+      }
+      return { ok: true, value: { assetIds: result.assetIds } };
+    } catch {
+      return { ok: true, value: { assetIds: [] } };
+    }
+  },
+
+  async pasteClipboardImage(input: {
+    libraryId: string;
+    targetFolderId?: string;
+    targetCollectionId?: string;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>> {
+    const result = await importRequest({ type: 'asset.import-clipboard.request', ...input });
+    if (!result.ok) return { ok: false, error: result.error };
+    if (isImageSequenceImportOffer(result.value)) {
+      throw new Error('Unexpected sequence-offer response for clipboard import.');
+    }
+    return {
+      ok: true,
+      value: result.value as ImportCompletion | ImportConflictPlan,
+    };
+  },
+
+  async confirmImageSequenceImport(input: {
+    libraryId: string;
+    offerId: string;
+    action: 'import-sequence' | 'import-selected';
+    sequenceIndex?: number;
+    firstFrame?: number;
+    lastFrame?: number;
+    fps?: number;
+    applyToRest?: boolean;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>> {
+    const result = await importRequest({ type: 'asset.import-sequence.confirm', ...input });
+    if (!result.ok) return { ok: false, error: result.error };
+    if (isImageSequenceImportOffer(result.value)) {
+      throw new Error('Unexpected nested sequence-offer response.');
+    }
+    return {
+      ok: true,
+      value: result.value as ImportCompletion | ImportConflictPlan,
+    };
+  },
+
+  async resolveImport(input: {
+    importId: string;
+    suspectedDuplicate: SuspectedDuplicateDecision;
+    nameConflict: NameConflictDecision;
+  }): Promise<LibraryApiResult<ImportCompletion>> {
+    const result = await request({ type: 'asset.import.resolve', ...input });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.import.completed') throw new Error('Unexpected resolve-import response.');
+    return { ok: true, value: result.completion };
+  },
+
+  async skipImportSourceFailure(input: {
+    importId: string;
+    applyToRest: boolean;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan>> {
+    const result = await request({ type: 'asset.import.skip-source-failure', ...input });
+    if (!result.ok) return failure(result);
+    if (result.type === 'asset.import.completed') return { ok: true, value: result.completion };
+    if (result.type === 'asset.import.conflicts') return { ok: true, value: result.plan };
+    if (result.type === 'asset.import.source-failure') return { ok: true, value: result.plan };
+    throw new Error('Unexpected skip-source-failure response.');
+  },
+
+  async abandonImport({ importId }: { importId: string }) {
+    const result = await request({ type: 'asset.import.abandon', importId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.import.abandoned') throw new Error('Unexpected abandon-import response.');
+    return { ok: true as const, value: { importId: result.importId } };
+  },
+
+  async refreshAssets({ libraryId }: { libraryId: string }) {
+    const result = await request({ type: 'asset.refresh.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.refreshed') throw new Error('Unexpected refresh-assets response.');
+    return {
+      ok: true as const,
+      value: {
+        changedCount: result.changedCount,
+        missingCount: result.missingCount,
+        assets: result.assets,
+      },
+    };
+  },
+
+  async listLinkedFolders({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<LinkedFolderSummary[]>> {
+    const result = await request({ type: 'linked-folder.list.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'linked-folder.list') throw new Error('Unexpected list-linked-folders response.');
+    return { ok: true, value: result.folders };
+  },
+
+  async importFolderAsLinked({
+    libraryId,
+    displayName,
+    parentFolderId,
+  }: {
+    libraryId: string;
+    displayName?: string;
+    parentFolderId?: string | null;
+  }): Promise<LibraryApiResult<LinkedFolderSummary>> {
+    const result = await request({
+      type: 'asset.import-linked.request',
+      libraryId,
+      displayName,
+      parentFolderId,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.import-linked.completed') throw new Error('Unexpected import-linked-folder response.');
+    return { ok: true, value: result.linkedFolder };
+  },
+
+  async relinkMissingFolder({
+    libraryId,
+    folderId,
+  }: {
+    libraryId: string;
+    folderId: string;
+  }): Promise<LibraryApiResult<LinkedFolderSummary>> {
+    const result = await request({ type: 'linked-folder.relink.request', libraryId, folderId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'linked-folder.relinked') throw new Error('Unexpected relink-folder response.');
+    return { ok: true, value: result.linkedFolder };
+  },
+
+  async getLinkedFolderRules({ libraryId, folderId }: { libraryId: string; folderId: string }) {
+    const result = await request({ type: 'linked-folder.rules.get.request', libraryId, folderId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'linked-folder.rules') throw new Error('Unexpected linked-folder-rules response.');
+    return { ok: true as const, value: result.rules };
+  },
+
+  async setLinkedFolderRules({ libraryId, folderId, rules }: { libraryId: string; folderId: string; rules: LinkedFolderRule[] }) {
+    const result = await request({ type: 'linked-folder.rules.set.request', libraryId, folderId, rules });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'linked-folder.rules.updated') throw new Error('Unexpected linked-folder-rules-updated response.');
+    return { ok: true as const, value: { rules: result.rules, hiddenCount: result.hiddenCount, restoredCount: result.restoredCount } };
+  },
+
+  async listIgnoredPaths({ libraryId }: { libraryId: string }) {
+    const result = await request({ type: 'ignore.list.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ignore.list') throw new Error('Unexpected ignored-paths response.');
+    return { ok: true as const, value: result.paths };
+  },
+
+  async getGitignore({ libraryId }: { libraryId: string }) {
+    const result = await request({ type: 'ignore.gitignore.get.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ignore.gitignore') throw new Error('Unexpected gitignore response.');
+    return { ok: true as const, value: { content: result.content } };
+  },
+
+  async setGitignore({ libraryId, content }: { libraryId: string; content: string }) {
+    const result = await request({ type: 'ignore.gitignore.set.request', libraryId, content });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ignore.gitignore.updated') throw new Error('Unexpected gitignore-updated response.');
+    return { ok: true as const, value: { content: result.content } };
+  },
+
+  async setIgnore({ libraryId, locationKind, linkedFolderId, relativePath, pathKind, ignored }: {
+    libraryId: string;
+    locationKind: 'managed' | 'linked';
+    linkedFolderId?: string | null;
+    relativePath: string;
+    pathKind: 'asset' | 'folder' | 'extension';
+    ignored: boolean;
+  }) {
+    const result = await request({ type: 'ignore.set.request', libraryId, locationKind, linkedFolderId: linkedFolderId ?? undefined, relativePath, pathKind, ignored });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ignore.updated') throw new Error('Unexpected ignore-updated response.');
+    return { ok: true as const, value: { ignored: result.ignored, path: result.path } };
+  },
+
+  async copyAssetsToLinkedFolder({ libraryId, folderId, relativePath, assetIds, conflictStrategy }: { libraryId: string; folderId: string; relativePath?: string; assetIds: string[]; conflictStrategy: 'keep-both' | 'replace' | 'skip' }) {
+    const result = await request({ type: 'linked-folder.assets.copy.request', libraryId, folderId, relativePath, assetIds, conflictStrategy });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'linked-folder.assets.copied') throw new Error('Unexpected linked-folder-assets-copied response.');
+    return { ok: true as const, value: { copiedCount: result.copiedCount, skippedCount: result.skippedCount, assets: result.assets } };
+  },
+
+  async convertLinkedFolderToManaged({ libraryId, folderId, targetFolderId }: { libraryId: string; folderId: string; targetFolderId?: string }) {
+    const result = await request({ type: 'linked-folder.convert.request', libraryId, folderId, targetFolderId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'linked-folder.converted') throw new Error('Unexpected linked-folder-converted response.');
+    return { ok: true as const, value: { managedFolderId: result.managedFolderId, convertedCount: result.convertedCount, assets: result.assets } };
+  },
+
+  async listTags({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<TagSummary[]>> {
+    const result = await request({ type: 'tag.list.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'tag.list') throw new Error('Unexpected list-tags response.');
+    return { ok: true, value: result.tags };
+  },
+
+  async createTag({ libraryId, name }: { libraryId: string; name: string }): Promise<LibraryApiResult<TagSummary & { historyEntryId?: string }>> {
+    const result = await request({ type: 'tag.create.request', libraryId, name });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'tag.created') throw new Error('Unexpected create-tag response.');
+    return { ok: true, value: { ...result.tag, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
+  },
+
+  async renameTag({ libraryId, tagId, name }: { libraryId: string; tagId: string; name: string }): Promise<LibraryApiResult<TagSummary & { historyEntryId?: string }>> {
+    const result = await request({ type: 'tag.rename.request', libraryId, tagId, name });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'tag.renamed') throw new Error('Unexpected rename-tag response.');
+    return { ok: true, value: { ...result.tag, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
+  },
+
+  async deleteTag({ libraryId, tagId }: { libraryId: string; tagId: string }): Promise<LibraryApiResult<{ tagId: string; historyEntryId?: string }>> {
+    const result = await request({ type: 'tag.delete.request', libraryId, tagId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'tag.deleted') throw new Error('Unexpected delete-tag response.');
+    return { ok: true, value: { tagId: result.tagId, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
+  },
+
+  async deleteTags({ libraryId, tagIds }: { libraryId: string; tagIds: string[] }): Promise<LibraryApiResult<{ deletedTagIds: string[]; historyEntryId?: string }>> {
+    const result = await request({ type: 'tag.delete-many.request', libraryId, tagIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'tag.deleted-many') throw new Error('Unexpected delete-tags response.');
+    return { ok: true, value: { deletedTagIds: result.deletedTagIds, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
+  },
+
+  async mergeTags({ libraryId, sourceTagIds, name }: { libraryId: string; sourceTagIds: string[]; name: string }): Promise<LibraryApiResult<TagSummary & { historyEntryId?: string }>> {
+    const result = await request({ type: 'tag.merge.request', libraryId, sourceTagIds, name });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'tag.merged') throw new Error('Unexpected merge-tags response.');
+    return { ok: true, value: { ...result.tag, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
+  },
+
+  async getTagCooccurrenceGraph({ libraryId, minWeight, maxNodes, maxEdges }: { libraryId: string; minWeight?: number; maxNodes?: number; maxEdges?: number }): Promise<LibraryApiResult<TagCooccurrenceGraph>> {
+    const result = await request({ type: 'tag.cooccurrence.request', libraryId, minWeight, maxNodes, maxEdges });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'tag.cooccurrence') throw new Error('Unexpected tag-cooccurrence response.');
+    return { ok: true, value: result.graph };
+  },
+
+  async assignTags({ libraryId, assetIds, tagIds }: { libraryId: string; assetIds: string[]; tagIds: string[] }): Promise<LibraryApiResult<{ assignedCount: number; skipped: TagOperationSkip[]; historyEntryId?: string }>> {
+    const result = await request({ type: 'tag.assign.request', libraryId, assetIds, tagIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'tag.assigned') throw new Error('Unexpected assign-tags response.');
+    return { ok: true, value: { assignedCount: result.assignedCount, skipped: result.skipped, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
+  },
+
+  async removeTags({ libraryId, assetIds, tagIds }: { libraryId: string; assetIds: string[]; tagIds: string[] }): Promise<LibraryApiResult<{ removedCount: number; skipped: TagOperationSkip[]; historyEntryId?: string }>> {
+    const result = await request({ type: 'tag.remove.request', libraryId, assetIds, tagIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'tag.removed') throw new Error('Unexpected remove-tags response.');
+    return { ok: true, value: { removedCount: result.removedCount, skipped: result.skipped, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
+  },
+
+  async listCollections({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<CollectionSummary[]>> {
+    const result = await request({ type: 'collection.list.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'collection.list') throw new Error('Unexpected list-collections response.');
+    return { ok: true, value: result.collections };
+  },
+
+  async createCollection({ libraryId, parentId, name }: { libraryId: string; parentId?: string; name: string }): Promise<LibraryApiResult<CollectionSummary & { historyEntryId?: string }>> {
+    const result = await request({ type: 'collection.create.request', libraryId, parentId, name });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'collection.created') throw new Error('Unexpected create-collection response.');
+    return { ok: true, value: { ...result.collection, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
+  },
+
+  async updateCollection({ libraryId, collectionId, name, parentId, description, coverAssetId, position }: { libraryId: string; collectionId: string; name?: string; parentId?: string | null; description?: string | null; coverAssetId?: string | null; position?: number }): Promise<LibraryApiResult<CollectionSummary & { historyEntryId?: string }>> {
+    const result = await request({ type: 'collection.update.request', libraryId, collectionId, name, parentId, description, coverAssetId, position });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'collection.updated') throw new Error('Unexpected update-collection response.');
+    return { ok: true, value: { ...result.collection, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
+  },
+
+  async reorderCollections({ libraryId, orderedCollectionIds }: { libraryId: string; orderedCollectionIds: string[] }): Promise<LibraryApiResult<{ orderedCollectionIds: string[]; historyEntryId?: string }>> {
+    const result = await request({ type: 'collection.reorder.request', libraryId, orderedCollectionIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'collection.reordered') throw new Error('Unexpected reorder-collections response.');
+    return { ok: true, value: { orderedCollectionIds: result.orderedCollectionIds, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
+  },
+
+  async deleteCollection({ libraryId, collectionId }: { libraryId: string; collectionId: string }): Promise<LibraryApiResult<{ collectionId: string; historyEntryId?: string }>> {
+    const result = await request({ type: 'collection.delete.request', libraryId, collectionId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'collection.deleted') throw new Error('Unexpected delete-collection response.');
+    return { ok: true, value: { collectionId: result.collectionId, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
+  },
+
+  async addCollectionAssets({ libraryId, collectionId, assetIds }: { libraryId: string; collectionId: string; assetIds: string[] }): Promise<LibraryApiResult<{ collectionId: string; historyEntryId?: string }>> {
+    const result = await request({ type: 'collection.assets.add.request', libraryId, collectionId, assetIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'collection.assets.added') throw new Error('Unexpected add-collection-assets response.');
+    return { ok: true, value: { collectionId: result.collectionId, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
+  },
+
+  async removeCollectionAssets({ libraryId, collectionId, assetIds }: { libraryId: string; collectionId: string; assetIds: string[] }): Promise<LibraryApiResult<{ collectionId: string; historyEntryId?: string }>> {
+    const result = await request({ type: 'collection.assets.remove.request', libraryId, collectionId, assetIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'collection.assets.removed') throw new Error('Unexpected remove-collection-assets response.');
+    return { ok: true, value: { collectionId: result.collectionId, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
+  },
+
+  async reorderCollectionAssets({ libraryId, collectionId, orderedAssetIds }: { libraryId: string; collectionId: string; orderedAssetIds: string[] }): Promise<LibraryApiResult<{ collectionId: string; historyEntryId?: string }>> {
+    const result = await request({ type: 'collection.assets.reorder.request', libraryId, collectionId, orderedAssetIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'collection.assets.reordered') throw new Error('Unexpected reorder-collection-assets response.');
+    return { ok: true, value: { collectionId: result.collectionId, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
+  },
+
+  async listCollectionAssets({ libraryId, collectionId, recursive }: { libraryId: string; collectionId: string; recursive: boolean }): Promise<LibraryApiResult<AssetSummary[]>> {
+    const result = await request({ type: 'collection.assets.list.request', libraryId, collectionId, recursive });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'collection.assets.list') throw new Error('Unexpected list-collection-assets response.');
+    return { ok: true, value: result.assets };
+  },
+
+  async listAssetCollectionMemberships({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<Array<{ assetId: string; collectionId: string }>>> {
+    const result = await request({ type: 'collection.assets.memberships.request', libraryId, assetIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'collection.assets.memberships') throw new Error('Unexpected list-asset-collection-memberships response.');
+    return { ok: true, value: result.memberships };
+  },
+
+  async getAssetMetadata({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<AssetMetadataResult>> {
+    const result = await request({ type: 'asset.metadata.get.request', libraryId, assetId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.metadata.got') throw new Error('Unexpected get-metadata response.');
+    return { ok: true, value: result.metadata };
+  },
+
+  async getExtractedMetadata({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<ExtractedMetadataResult>> {
+    const result = await request({ type: 'asset.extracted-metadata.get.request', libraryId, assetId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.extracted-metadata.got') throw new Error('Unexpected get-extracted-metadata response.');
+    return { ok: true, value: result.result };
+  },
+
+  async setAssetColorSpaceOverride({ libraryId, assetId, colorSpace }: { libraryId: string; assetId: string; colorSpace: string | null }): Promise<LibraryApiResult<{ assetId: string; colorSpaceOverride: string | null }>> {
+    const result = await request({ type: 'asset.color-space.set.request', libraryId, assetId, colorSpace });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.color-space.updated') throw new Error('Unexpected set-color-space response.');
+    return { ok: true, value: { assetId: result.assetId, colorSpaceOverride: result.colorSpaceOverride } };
+  },
+
+  async setAssetMetadata({ libraryId, assetId, expectedVersion, description, rating, favorite, palette, sourcePageUrl, author }: { libraryId: string; assetId: string; expectedVersion: number; description?: string; rating?: number; favorite?: boolean; palette?: string[]; sourcePageUrl?: string; author?: string }): Promise<LibraryApiResult<AssetMetadataResult & { historyEntryId?: string }>> {
+    const result = await request({ type: 'asset.metadata.set.request', libraryId, assetId, expectedVersion, description, rating, favorite, palette, sourcePageUrl, author });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.metadata.updated') throw new Error('Unexpected set-metadata response.');
+    return {
+      ok: true,
+      value: {
+        ...result.metadata,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+      },
+    };
+  },
+
+  async backfillAssetMetadata({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<{ backfilledCount: number }>> {
+    const result = await request({ type: 'asset.metadata.backfill.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.metadata.backfilled') throw new Error('Unexpected backfill-metadata response.');
+    return { ok: true, value: { backfilledCount: result.backfilledCount } };
+  },
+
+  async setAssetsRating({ libraryId, assetIds, rating }: { libraryId: string; assetIds: string[]; rating: number }): Promise<LibraryApiResult<{ updatedCount: number; skipped: TagOperationSkip[]; historyEntryId?: string }>> {
+    const result = await request({ type: 'asset.rating.set.request', libraryId, assetIds, rating });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.rating.updated') throw new Error('Unexpected set-assets-rating response.');
+    return { ok: true, value: { updatedCount: result.updatedCount, skipped: result.skipped, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
+  },
+
+  async listSmartCollections({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<SmartCollectionSummary[]>> {
+    const result = await request({ type: 'smart-collection.list.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'smart-collection.list') throw new Error('Unexpected list-smart-collections response.');
+    return { ok: true, value: result.collections };
+  },
+
+  async createSmartCollection({ libraryId, name, queryDefinitionJson }: { libraryId: string; name: string; queryDefinitionJson: string }): Promise<LibraryApiResult<SmartCollectionSummary & { historyEntryId?: string }>> {
+    const result = await request({ type: 'smart-collection.create.request', libraryId, name, queryDefinitionJson });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'smart-collection.created') throw new Error('Unexpected create-smart-collection response.');
+    return {
+      ok: true,
+      value: {
+        ...result.collection,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+      },
+    };
+  },
+
+  async updateSmartCollection({ libraryId, collectionId, name, queryDefinitionJson, position }: { libraryId: string; collectionId: string; name?: string; queryDefinitionJson?: string; position?: number }): Promise<LibraryApiResult<SmartCollectionSummary & { historyEntryId?: string }>> {
+    const result = await request({ type: 'smart-collection.update.request', libraryId, collectionId, name, queryDefinitionJson, position });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'smart-collection.updated') throw new Error('Unexpected update-smart-collection response.');
+    return {
+      ok: true,
+      value: {
+        ...result.collection,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+      },
+    };
+  },
+
+  async deleteSmartCollection({ libraryId, collectionId }: { libraryId: string; collectionId: string }): Promise<LibraryApiResult<{ collectionId: string; historyEntryId?: string }>> {
+    const result = await request({ type: 'smart-collection.delete.request', libraryId, collectionId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'smart-collection.deleted') throw new Error('Unexpected delete-smart-collection response.');
+    return {
+      ok: true,
+      value: {
+        collectionId: result.collectionId,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+      },
+    };
+  },
+
+  async executeSmartCollection({ libraryId, collectionId, scopeMode, idsOnly, layoutOnly, limit, offset }: { libraryId: string; collectionId: string; scopeMode?: boolean; idsOnly?: boolean; layoutOnly?: boolean; limit?: number; offset?: number }) {
+    const result = await request({ type: 'smart-collection.execute.request', libraryId, collectionId, scopeMode, idsOnly, layoutOnly, limit, offset });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'smart-collection.executed') throw new Error('Unexpected execute-smart-collection response.');
+    return { ok: true as const, value: { items: result.items, total: result.total, offset: result.offset, ...(result.assetIds ? { assetIds: result.assetIds } : {}), ...(result.layout ? { layout: result.layout } : {}) } };
+  },
+
+  async searchAssets({ libraryId, query, filters, scope, sort, scopeMode, idsOnly, layoutOnly, limit, offset, showIgnored }: { libraryId: string; query?: SearchQuery | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'long_edge' | 'duration' | 'rating' | 'color' | 'author'; order: 'asc' | 'desc' }; scopeMode?: boolean; idsOnly?: boolean; layoutOnly?: boolean; limit?: number; offset?: number; showIgnored?: boolean }) {
+    const parsedQuery = searchQuerySchema.safeParse(query ?? null);
+    if (!parsedQuery.success) {
+      return { ok: false as const, error: createPublicError('INVALID_SEARCH_QUERY') };
+    }
+    const result = await request({ type: 'asset.search.request', libraryId, query: parsedQuery.data, filters, scope, sort, scopeMode, idsOnly, layoutOnly, limit, offset, showIgnored });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.search.result') throw new Error('Unexpected search-assets response.');
+    return { ok: true as const, value: { items: result.items, total: result.total, offset: result.offset, snippets: result.snippets, ...(result.assetIds ? { assetIds: result.assetIds } : {}), ...(result.layout ? { layout: result.layout } : {}) } };
+  },
+
+  async openBrowseSession({ libraryId, query, filters, scope, sort, smartCollectionId, limit, showIgnored }: { libraryId: string; query: SearchQuery | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'long_edge' | 'duration' | 'rating' | 'color' | 'author'; order: 'asc' | 'desc' }; smartCollectionId?: string; limit?: number; showIgnored?: boolean }) {
+    const navigationId = createNavigationId();
+    const navigationStartedAtEpochMs = Date.now();
+    const delayedBrowse = e2eBrowseSessionDelay;
+    const shouldDelay = delayedBrowse && (
+      delayedBrowse.target.folderId !== undefined
+        ? scope?.kind === 'folder' && scope.folderId === delayedBrowse.target.folderId
+        : delayedBrowse.target.smartCollectionId !== undefined &&
+          smartCollectionId === delayedBrowse.target.smartCollectionId
+    );
+    if (shouldDelay && delayedBrowse) {
+      e2eBrowseSessionDelay = null;
+      await new Promise((resolve) => setTimeout(resolve, delayedBrowse.delayMs));
+    }
+    const result = await request({
+      type: 'browse.session.open.request',
+      libraryId,
+      navigationId,
+      navigationStartedAtEpochMs,
+      query,
+      filters,
+      scope,
+      sort,
+      smartCollectionId,
+      limit,
+      showIgnored,
+    });
+    emitE2eBrowseSessionResponse(navigationId, result.ok);
+    if (!result.ok) return failure(result);
+    if (result.type !== 'browse.session.opened') throw new Error('Unexpected open-browse-session response.');
+    return {
+      ok: true as const,
+      value: {
+        sessionId: result.sessionId,
+        libraryGeneration: result.libraryGeneration,
+        changeSequence: result.changeSequence,
+        ...(result.catalogSequence === undefined ? {} : { catalogSequence: result.catalogSequence }),
+        ...(result.snapshotGeneration === undefined ? {} : { snapshotGeneration: result.snapshotGeneration }),
+        queryFingerprint: result.queryFingerprint,
+        items: result.items,
+        total: result.total,
+        offset: result.offset,
+        ...(result.snippets ? { snippets: result.snippets } : {}),
+      },
+    };
+  },
+
+  async fetchBrowseSessionPage({ libraryId, sessionId, limit, offset }: { libraryId: string; sessionId: string; limit?: number; offset?: number }) {
+    const result = await request({ type: 'browse.session.page.request', libraryId, sessionId, limit, offset });
+    if (!result.ok) return failure(result);
+    if (result.type === 'browse.session.stale') {
+      return {
+        ok: true as const,
+        value: {
+          stale: true as const,
+          sessionId: result.sessionId,
+          reason: result.reason,
+        },
+      };
+    }
+    if (result.type !== 'browse.session.page') throw new Error('Unexpected browse-session-page response.');
+    return {
+      ok: true as const,
+      value: {
+        sessionId: result.sessionId,
+        changeSequence: result.changeSequence,
+        ...(result.catalogSequence === undefined ? {} : { catalogSequence: result.catalogSequence }),
+        ...(result.snapshotGeneration === undefined ? {} : { snapshotGeneration: result.snapshotGeneration }),
+        items: result.items,
+        total: result.total,
+        offset: result.offset,
+        ...(result.snippets ? { snippets: result.snippets } : {}),
+      },
+    };
+  },
+
+  async fetchBrowseSessionAssetIds({ libraryId, sessionId }: { libraryId: string; sessionId: string }) {
+    const result = await request({ type: 'browse.session.ids.request', libraryId, sessionId });
+    if (!result.ok) return failure(result);
+    if (result.type === 'browse.session.stale') {
+      return {
+        ok: true as const,
+        value: {
+          stale: true as const,
+          sessionId: result.sessionId,
+          reason: result.reason,
+        },
+      };
+    }
+    if (result.type !== 'browse.session.ids') throw new Error('Unexpected browse-session-ids response.');
+    return { ok: true as const, value: result.assetIds };
+  },
+
+  async closeBrowseSession({ libraryId, sessionId }: { libraryId: string; sessionId: string }) {
+    const result = await request({ type: 'browse.session.close.request', libraryId, sessionId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'browse.session.closed') throw new Error('Unexpected close-browse-session response.');
+    return { ok: true as const, value: { sessionId: result.sessionId } };
+  },
+
+  async fetchLibraryNavigationSummary({ libraryId, showIgnored, includeTrashedFolders }: { libraryId: string; showIgnored?: boolean; includeTrashedFolders?: boolean }) {
+    const result = await request({
+      type: 'library.navigation-summary.request',
+      libraryId,
+      showIgnored,
+      includeTrashedFolders,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.navigation-summary') {
+      throw new Error('Unexpected library-navigation-summary response.');
+    }
+    return { ok: true as const, value: result.summary };
+  },
+
+  async planAiSearch({ naturalQuery }: { naturalQuery: string }): Promise<LibraryApiResult<{ plan: AiSearchPlan; apiFormat: AiApiFormat; model: string }>> {
+    const result = await request({ type: 'ai.search-plan.request', naturalQuery });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.search-plan.result') throw new Error('Unexpected AI search-plan response.');
+    return { ok: true, value: { plan: result.plan, apiFormat: result.apiFormat, model: result.model } };
+  },
+
+  async trashAssets({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ trashedCount: number; historyEntryId?: string }>> {
+    const result = await request({ type: 'asset.trash.request', libraryId, assetIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.trashed') throw new Error('Unexpected trash response.');
+    return {
+      ok: true,
+      value: {
+        trashedCount: result.trashedCount,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+      },
+    };
+  },
+
+  async restoreAssets({ libraryId, assetIds, targetFolderId, conflictStrategy }: { libraryId: string; assetIds: string[]; targetFolderId?: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ restoredCount: number; assets: AssetSummary[]; historyEntryId?: string }>> {
+    const result = await request({ type: 'asset.restore.request', libraryId, assetIds, targetFolderId, conflictStrategy });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.restored') throw new Error('Unexpected restore response.');
+    return {
+      ok: true,
+      value: {
+        restoredCount: result.restoredCount,
+        assets: result.assets,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+      },
+    };
+  },
+  async previewRestoreAssets({ libraryId, assetIds, targetFolderId }: { libraryId: string; assetIds: string[]; targetFolderId?: string | null }): Promise<LibraryApiResult<{ hasNameConflicts: boolean }>> {
+    const result = await request({ type: 'asset.restore-preview.request', libraryId, assetIds, targetFolderId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.restore-previewed') throw new Error('Unexpected restore-preview response.');
+    return { ok: true, value: { hasNameConflicts: result.hasNameConflicts } };
+  },
+  async moveAssets({ libraryId, assetIds, targetFolderId, conflictStrategy }: { libraryId: string; assetIds: string[]; targetFolderId: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ movedCount: number; skippedCount: number; operationId: string | null; assets: AssetSummary[]; historyEntryId?: string }>> {
+    const result = await request({ type: 'asset.move.request', libraryId, assetIds, targetFolderId, conflictStrategy });
+    if (!result.ok) return result;
+    if (result.type !== 'asset.moved') throw new Error('Unexpected move-assets response.');
+    return {
+      ok: true,
+      value: {
+        movedCount: result.movedCount,
+        skippedCount: result.skippedCount,
+        operationId: result.operationId,
+        assets: result.assets,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+      },
+    };
+  },
+  async undoMoveAssets({ libraryId, operationId, conflictStrategy }: { libraryId: string; operationId: string; conflictStrategy?: 'error' | 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ undoneCount: number; skippedCount: number; assets: AssetSummary[] }>> {
+    const result = await request({ type: 'asset.move-undo.request', libraryId, operationId, conflictStrategy });
+    if (!result.ok) return result;
+    if (result.type !== 'asset.move-undone') throw new Error('Unexpected undo-move response.');
+    return { ok: true, value: { undoneCount: result.undoneCount, skippedCount: result.skippedCount, assets: result.assets } };
+  },
+  async copyAssets({ libraryId, assetIds, targetFolderId, conflictStrategy }: { libraryId: string; assetIds: string[]; targetFolderId: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ copiedCount: number; skippedCount: number; operationId: string | null; assets: AssetSummary[]; historyEntryId?: string }>> {
+    const result = await request({ type: 'asset.copy.request', libraryId, assetIds, targetFolderId, conflictStrategy });
+    if (!result.ok) return result;
+    if (result.type !== 'asset.copied') throw new Error('Unexpected copy-assets response.');
+    return {
+      ok: true,
+      value: {
+        copiedCount: result.copiedCount,
+        skippedCount: result.skippedCount,
+        operationId: result.operationId,
+        assets: result.assets,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+      },
+    };
+  },
+  async undoCopyAssets({ libraryId, operationId, conflictStrategy }: { libraryId: string; operationId: string; conflictStrategy?: 'error' | 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ undoneCount: number; skippedCount: number; assets: AssetSummary[] }>> {
+    const result = await request({ type: 'asset.copy-undo.request', libraryId, operationId, conflictStrategy });
+    if (!result.ok) return result;
+    if (result.type !== 'asset.copy-undone') throw new Error('Unexpected undo-copy response.');
+    return { ok: true, value: { undoneCount: result.undoneCount, skippedCount: result.skippedCount, assets: result.assets } };
+  },
+
+  async renameAssetFile({ libraryId, assetId, newBaseName, newFileName }: { libraryId: string; assetId: string; newBaseName?: string; newFileName?: string }): Promise<LibraryApiResult<AssetSummary & { historyEntryId?: string }>> {
+    const result = await request({
+      type: 'asset.rename-file.request',
+      libraryId,
+      assetId,
+      ...(newBaseName === undefined ? {} : { newBaseName }),
+      ...(newFileName === undefined ? {} : { newFileName }),
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.file-renamed') throw new Error('Unexpected rename-asset-file response.');
+    return {
+      ok: true,
+      value: {
+        ...result.asset,
+        ...(result.historyEntryId === undefined ? {} : { historyEntryId: result.historyEntryId }),
+      },
+    };
+  },
+
+  async readTextAsset({ libraryId, assetId, maxBytes }: { libraryId: string; assetId: string; maxBytes?: number }) {
+    const result = await request({ type: 'asset.text.read.request', libraryId, assetId, maxBytes });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.text.read') throw new Error('Unexpected text-read response.');
+    return {
+      ok: true as const,
+      value: {
+        assetId: result.assetId,
+        revisionId: result.revisionId,
+        content: result.content,
+        truncated: result.truncated,
+        byteSize: result.byteSize,
+        lineCount: result.lineCount,
+        editable: result.editable,
+        mimeType: result.mimeType,
+      },
+    };
+  },
+
+  async saveTextAsset({ libraryId, assetId, content, expectedRevisionId, createRevision }: { libraryId: string; assetId: string; content: string; expectedRevisionId?: string; createRevision?: boolean }) {
+    const result = await request({ type: 'asset.text.save.request', libraryId, assetId, content, expectedRevisionId, createRevision });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.text.saved') throw new Error('Unexpected text-save response.');
+    return {
+      ok: true as const,
+      value: {
+        asset: result.asset,
+        revisionId: result.revisionId,
+        byteSize: result.byteSize,
+        lineCount: result.lineCount,
+      },
+    };
+  },
+
+  async deleteAssetsPermanent({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ deletedCount: number; skippedCount: number; skippedReasons: Array<{ assetId: string; reason: PublicErrorReason }> }>> {
+    const result = await request({ type: 'asset.delete-permanent.request', libraryId, assetIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.deleted-permanent') throw new Error('Unexpected delete-permanent response.');
+    return { ok: true, value: { deletedCount: result.deletedCount, skippedCount: result.skippedCount, skippedReasons: result.skippedReasons } };
+  },
+
+  async deleteAssetsFromDisk({ libraryId, assetIds, locationKind }: { libraryId: string; assetIds: string[]; locationKind?: 'managed' | 'linked' | 'mixed' }): Promise<LibraryApiResult<{ deletedCount: number }>> {
+    const result = await request({ type: 'asset.delete-from-disk.request', libraryId, assetIds, locationKind });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.deleted-from-disk') throw new Error('Unexpected delete-from-disk response.');
+    return { ok: true, value: { deletedCount: result.deletedCount } };
+  },
+
+  async cancelDiskDelete({ operationId }: { operationId: string }) {
+    const result = await request({ type: 'asset.delete-cancel.request', operationId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.closed') throw new Error('Unexpected delete-cancel response.');
+    return { ok: true as const, value: { operationId } };
+  },
+
+  async listTrash({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<AssetSummary[]>> {
+    const result = await request({ type: 'trash.list.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.list-trash') throw new Error('Unexpected list-trash response.');
+    return { ok: true, value: result.assets };
+  },
+
+  async listTrashedFolders({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<TrashedFolderSummary[]>> {
+    const result = await request({ type: 'trash.list-folders.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.list-trashed') throw new Error('Unexpected list-trashed-folders response.');
+    return { ok: true, value: result.folders };
+  },
+
+  async restoreTrashedManagedFolder({
+    libraryId,
+    tombstoneId,
+  }: {
+    libraryId: string;
+    tombstoneId: string;
+  }): Promise<LibraryApiResult<{
+    restoredFolderCount: number;
+    restoredAssetCount: number;
+    folders: ManagedFolderSummary[];
+    historyEntryId?: string;
+  }>> {
+    const result = await request({
+      type: 'trash.restore-folder.request',
+      libraryId,
+      tombstoneId,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.restored-trashed') {
+      throw new Error('Unexpected restore-trashed-folder response.');
+    }
+    return {
+      ok: true,
+      value: {
+        restoredFolderCount: result.restoredFolderCount,
+        restoredAssetCount: result.restoredAssetCount,
+        folders: result.folders,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+      },
+    };
+  },
+
+  async purgeTrash({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<{ purgedCount: number; skippedCount: number; failures: Array<{ assetId: string; reason: PublicErrorReason }> }>> {
+    const result = await request({ type: 'trash.purge.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.purge-trash') throw new Error('Unexpected purge-trash response.');
+    return { ok: true, value: { purgedCount: result.purgedCount, skippedCount: result.skippedCount, failures: result.failures } };
+  },
+
+  async deleteLinkedAssets({ libraryId, assetIds, deleteSourceFile }: { libraryId: string; assetIds: string[]; deleteSourceFile: boolean }): Promise<LibraryApiResult<LinkedAssetDeleteResult>> {
+    const result = await request({ type: 'asset.delete-linked.request', libraryId, assetIds, deleteSourceFile });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.deleted-linked') throw new Error('Unexpected delete-linked response.');
+    return {
+      ok: true,
+      value: {
+        deletedCount: result.deletedCount,
+        failedCount: result.failedCount,
+        failures: result.failures,
+      },
+    };
+  },
+
+  async relinkAsset({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<RelinkAssetResult>> {
+    const result = await request({ type: 'asset.relink.request', libraryId, assetId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.relinked') throw new Error('Unexpected relink response.');
+    return {
+      ok: true,
+      value: {
+        asset: result.asset,
+        batchFollowUpRoot: result.batchFollowUpRoot,
+      },
+    };
+  },
+
+  async relinkBatchPreview({ libraryId, keepMetadata }: { libraryId: string; keepMetadata: boolean }) {
+    const result = await request({ type: 'asset.relink-batch.request', libraryId, keepMetadata });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.relink-batch.preview') throw new Error('Unexpected relink-batch-preview response.');
+    return { ok: true as const, value: { previewId: result.previewId, matchedCount: result.matchedCount, unmatchedCount: result.unmatchedCount, totalCount: result.totalCount, examples: result.examples } };
+  },
+
+  async relinkBatchPreviewAtRoot({
+    libraryId,
+    newRootPath,
+    keepMetadata,
+  }: {
+    libraryId: string;
+    newRootPath: string;
+    keepMetadata: boolean;
+  }) {
+    const result = await request({
+      type: 'asset.relink-batch.preview-at-root.request',
+      libraryId,
+      newRootPath,
+      keepMetadata,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.relink-batch.preview') throw new Error('Unexpected relink-batch-preview response.');
+    return {
+      ok: true as const,
+      value: {
+        previewId: result.previewId,
+        matchedCount: result.matchedCount,
+        unmatchedCount: result.unmatchedCount,
+        totalCount: result.totalCount,
+        examples: result.examples,
+      },
+    };
+  },
+
+  async relinkBatchApply({ libraryId, previewId, keepMetadata }: { libraryId: string; previewId: string; keepMetadata: boolean }) {
+    const result = await request({ type: 'asset.relink-batch.apply.request', libraryId, previewId, keepMetadata });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.relink-batch.applied') throw new Error('Unexpected relink-batch-apply response.');
+    return { ok: true as const, value: { restoredCount: result.restoredCount, unchangedMissingCount: result.unchangedMissingCount, assets: result.assets } };
+  },
+
+  async cancelRelinkBatch({ libraryId, previewId }: { libraryId: string; previewId: string }) {
+    const result = await request({ type: 'asset.relink-batch.cancel.request', libraryId, previewId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.relink-batch.cancelled') throw new Error('Unexpected relink-batch-cancel response.');
+    return { ok: true as const, value: { previewId: result.previewId } };
+  },
+
+  setActiveContext(libraryId: string | null, selectedFolderId?: string): void {
+    ipcRenderer.send(ACTIVE_CONTEXT_CHANNEL, { libraryId, selectedFolderId });
+  },
+
+  onLifecycle(listener: (event: RendererLifecycleEvent) => void) {
+    const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      listener(parseRendererLifecycleEvent(input));
+    };
+    ipcRenderer.on(LIBRARY_LIFECYCLE_CHANNEL, subscription);
+    return () => ipcRenderer.removeListener(LIBRARY_LIFECYCLE_CHANNEL, subscription);
+  },
+
+  onAssetsChanged(listener: (event: AssetChangeEvent) => void) {
+    const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      listener(parseAssetChangeEvent(input));
+    };
+    ipcRenderer.on(ASSET_CHANGE_CHANNEL, subscription);
+    return () => ipcRenderer.removeListener(ASSET_CHANGE_CHANNEL, subscription);
+  },
+
+  onLibraryChanged(listener: (event: LibraryChangedEvent) => void) {
+    const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      listener(parseLibraryChangedEvent(input));
+    };
+    ipcRenderer.on(LIBRARY_CHANGED_CHANNEL, subscription);
+    return () => ipcRenderer.removeListener(LIBRARY_CHANGED_CHANNEL, subscription);
+  },
+
+  onExtensionSaveCompleted(listener: (event: ExtensionSaveCompletedEvent) => void) {
+    const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      listener(parseExtensionSaveCompletedEvent(input));
+    };
+    ipcRenderer.on(EXTENSION_SAVE_COMPLETED_CHANNEL, subscription);
+    return () =>
+      ipcRenderer.removeListener(EXTENSION_SAVE_COMPLETED_CHANNEL, subscription);
+  },
+
+  async exportLibrary({ libraryId, libraryName, includeLinkedContent, format }: { libraryId: string; libraryName?: string; includeLinkedContent: boolean; format: 'folder' | 'zip' }) {
+    const result = await request({ type: 'library.export.request', libraryId, libraryName, includeLinkedContent, format });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.exported') throw new Error('Unexpected export response.');
+    return { ok: true as const, value: result };
+  },
+
+  async cancelLibraryExport({ exportId }: { exportId: string }) {
+    const result = await request({ type: 'library.export.cancel.request', exportId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.closed') throw new Error('Unexpected export-cancel response.');
+    return { ok: true as const, value: { exportId } };
+  },
+
+  async importLibrary() {
+    const result = await request({ type: 'library.import.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.import-validated') throw new Error('Unexpected import-validate response.');
+    return { ok: true as const, value: result };
+  },
+
+  async importLibraryZip() {
+    const result = await request({ type: 'library.import-zip.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.imported') throw new Error('Unexpected import-zip response.');
+    return { ok: true as const, value: result };
+  },
+
+  async cancelLibraryImport({ importId, mode }: { importId: string; mode?: 'abandon' | 'stop' }) {
+    const result = await request({
+      type: 'library.import.cancel.request',
+      importId,
+      ...(mode === undefined ? {} : { mode }),
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.closed') throw new Error('Unexpected import-cancel response.');
+    return { ok: true as const, value: { importId } };
+  },
+
+  async importLibraryCopy({ importId }: { importId: string }) {
+    const result = await request({ type: 'library.import.copy.request', importId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.imported') throw new Error('Unexpected import response.');
+    return { ok: true as const, value: result };
+  },
+
+  async importLibraryOpenInPlace({ importId }: { importId: string }) {
+    const result = await request({ type: 'library.import.open-in-place.request', importId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.imported') throw new Error('Unexpected import response.');
+    return { ok: true as const, value: result };
+  },
+
+  onProgress(listener: (event: ExportProgressEvent | ImportProgressEvent | SyncProgressEvent | DeleteProgressEvent) => void) {
+    const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      try {
+        listener(parseExportProgressEvent(input));
+        return;
+      } catch {
+        // Try import progress.
+      }
+      try {
+        listener(parseImportProgressEvent(input));
+        return;
+      } catch {
+        // Try sync progress.
+      }
+      try {
+        listener(parseSyncProgressEvent(input));
+        return;
+      } catch {
+        // Try delete progress.
+      }
+      try {
+        listener(parseDeleteProgressEvent(input));
+      } catch {
+        // Not a progress event.
+      }
+    };
+    ipcRenderer.on(PROGRESS_CHANNEL, subscription);
+    return () => ipcRenderer.removeListener(PROGRESS_CHANNEL, subscription);
+  },
+
+  async getAiConfig(): Promise<LibraryApiResult<{
+    apiFormat: AiApiFormat | null;
+    model: string | null;
+    baseUrl: string;
+    hasKey: boolean;
+    enabledFields: { description: boolean; tags: boolean; rating: boolean };
+    analysisSettings: {
+      forceExistingTags: boolean;
+      maxTags: number;
+      maxDescriptionCharsZh: number;
+      maxDescriptionWordsEn: number;
+      outputStyle: 'normal' | 'concise' | 'rigorous';
+      ratingRubric: string;
+      customDescriptionPrompt: string;
+      customTagPrompt: string;
+    };
+    languages: Array<'zh-CN' | 'en' | 'ja' | 'ko'>;
+    concurrencyLimit: number;
+    maxAnalysisImageEdgePx: number;
+    reliabilitySettings: AiReliabilitySettings;
+    autoAnalyzeEnabled: boolean;
+    disclaimerAccepted: boolean;
+  }>> {
+    const result = await request({ type: 'ai.config.get.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.config.got') throw new Error('Unexpected ai-config response.');
+    return { ok: true, value: result };
+  },
+
+  async setAiConfig(input: {
+    apiFormat: AiApiFormat;
+    model: string;
+    baseUrl?: string;
+    apiKey?: string;
+    enabledFields?: { description: boolean; tags: boolean; rating: boolean };
+    analysisSettings?: {
+      forceExistingTags: boolean;
+      maxTags: number;
+      maxDescriptionCharsZh: number;
+      maxDescriptionWordsEn: number;
+      outputStyle: 'normal' | 'concise' | 'rigorous';
+      ratingRubric: string;
+      customDescriptionPrompt: string;
+      customTagPrompt: string;
+    };
+    languages?: Array<'zh-CN' | 'en' | 'ja' | 'ko'>;
+    concurrencyLimit?: number;
+    maxAnalysisImageEdgePx?: number;
+    reliabilitySettings?: AiReliabilitySettings;
+    autoAnalyzeEnabled: boolean;
+    disclaimerAccepted: boolean;
+  }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'ai.config.set.request', ...input });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.config.saved') throw new Error('Unexpected ai-config-save response.');
+    return { ok: true, value: undefined };
+  },
+
+  async getAiContent(input: {
+    libraryId: string;
+    assetId: string;
+  }): Promise<LibraryApiResult<{
+    assetId: string;
+    description: string | null;
+    tags: string[];
+    rating: number | null;
+    modelVersion: string | null;
+  }>> {
+    const result = await request({
+      type: 'ai.content.get.request',
+      libraryId: input.libraryId,
+      assetId: input.assetId,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.content.got') throw new Error('Unexpected ai-content response.');
+    return { ok: true, value: result };
+  },
+
+  async analyzeAsset(input: {
+    libraryId: string;
+    assetId: string;
+  }): Promise<LibraryApiResult<
+    | {
+        assetId: string;
+        generatedFields: {
+          description?: string;
+          tags?: string[];
+          rating?: number;
+        };
+        modelVersion: string;
+      }
+    | { assetId: string; reason: string }
+    | { assetId: string; queued: true; enqueued: number }
+  >> {
+    const result = await request({ type: 'asset.analyze.request', libraryId: input.libraryId, assetId: input.assetId });
+    if (!result.ok) return failure(result);
+    if (result.type === 'asset.analyze-queued') {
+      return {
+        ok: true,
+        value: {
+          assetId: result.assetId,
+          queued: true,
+          enqueued: result.enqueued,
+        },
+      };
+    }
+    if (result.type === 'asset.analyzed' || result.type === 'asset.analyze-unsupported') return { ok: true, value: result };
+    throw new Error('Unexpected analyze response.');
+  },
+
+  async analyzeAssets(input: {
+    libraryId: string;
+    assetIds: string[];
+  }): Promise<LibraryApiResult<{
+    assetIds: string[];
+    jobIds: string[];
+    skippedAssetIds: string[];
+    enqueued: number;
+  }>> {
+    const result = await request({
+      type: 'assets.analyze.request',
+      libraryId: input.libraryId,
+      assetIds: input.assetIds,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'assets.analyze-queued') {
+      throw new Error('Unexpected batch analyze response.');
+    }
+    return {
+      ok: true,
+      value: {
+        assetIds: result.assetIds,
+        jobIds: result.jobIds,
+        skippedAssetIds: result.skippedAssetIds,
+        enqueued: result.enqueued,
+      },
+    };
+  },
+
+  async pendingAiAssets({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ assetIds: string[] }>> {
+    const result = await request({ type: 'ai.pending-assets.request', libraryId, assetIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.pending-assets') throw new Error('Unexpected pending-ai response.');
+    return { ok: true as const, value: { assetIds: result.assetIds } };
+  },
+
+  async requestThumbnail({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<{ assetId: string; artifactId?: string }>> {
+    const result = await request({ type: 'asset.thumbnail.request', libraryId, assetId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.thumbnail.generated') throw new Error('Unexpected thumbnail response.');
+    return {
+      ok: true,
+      value: {
+        assetId: result.assetId,
+        ...(result.artifactId ? { artifactId: result.artifactId } : {}),
+      },
+    };
+  },
+
+  // Serpent-visible-window: fire-and-forget report of the viewport assets —
+  // worker queue-jumps their thumbnail jobs and header-probes dimensions.
+  async reportVisibleWindow({
+    libraryId,
+    assetIds,
+    consumerId,
+    libraryGeneration,
+    interactionGeneration,
+    viewportGeneration,
+    direction,
+    focusedAssetIds,
+    nearForwardAssetIds,
+    nearBackwardAssetIds,
+    scopeWarmAssetIds,
+  }: {
+    libraryId: string;
+    assetIds: string[];
+    consumerId?: string;
+    libraryGeneration?: number;
+    interactionGeneration?: number;
+    viewportGeneration?: number;
+    direction?: 'up' | 'down' | 'stationary' | 'jump';
+    focusedAssetIds?: string[];
+    nearForwardAssetIds?: string[];
+    nearBackwardAssetIds?: string[];
+    scopeWarmAssetIds?: string[];
+  }): Promise<void> {
+    if (assetIds.length === 0) return;
+    await request({
+      type: 'asset.thumbnail.visible-window.request',
+      libraryId,
+      assetIds,
+      ...(consumerId === undefined ? {} : { consumerId }),
+      ...(libraryGeneration === undefined ? {} : { libraryGeneration }),
+      ...(interactionGeneration === undefined ? {} : { interactionGeneration }),
+      ...(viewportGeneration === undefined ? {} : { viewportGeneration }),
+      ...(direction === undefined ? {} : { direction }),
+      ...(focusedAssetIds === undefined ? {} : { focusedAssetIds }),
+      ...(nearForwardAssetIds === undefined ? {} : { nearForwardAssetIds }),
+      ...(nearBackwardAssetIds === undefined ? {} : { nearBackwardAssetIds }),
+      ...(scopeWarmAssetIds === undefined ? {} : { scopeWarmAssetIds }),
+    });
+  },
+
+  // Serpent-xffq: 同步服务器（全局）与库绑定（Main 本地，密码 safeStorage）。
+  async syncListServers(): Promise<LibraryApiResult<Array<{ id: string; baseUrl: string; username?: string; hasPassword: boolean; allowInsecureTls: boolean }>>> {
+    const result = await request({ type: 'sync.servers.list.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'sync.servers.listed') throw new Error('Unexpected sync servers response.');
+    return { ok: true, value: result.servers };
+  },
+  async syncSaveServer({ id, baseUrl, username, password, allowInsecureTls }: { id?: string; baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<LibraryApiResult<{ id: string }>> {
+    const result = await request({ type: 'sync.servers.upsert.request', id, baseUrl, username, password, allowInsecureTls });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'sync.server.saved') throw new Error('Unexpected sync server response.');
+    return { ok: true, value: { id: result.id } };
+  },
+  async syncDeleteServer({ id }: { id: string }): Promise<LibraryApiResult<{ id: string }>> {
+    const result = await request({ type: 'sync.servers.delete.request', id });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'sync.server.deleted') throw new Error('Unexpected sync server delete response.');
+    return { ok: true, value: { id: result.id } };
+  },
+  async syncSaveBinding({ libraryId, serverId, directoryName, enabled, pollIntervalMs, showCardSyncStatus }: { libraryId: string; serverId: string; directoryName?: string; enabled?: boolean; pollIntervalMs?: number; showCardSyncStatus?: boolean }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'sync.library.binding.save.request', libraryId, serverId, directoryName, enabled, pollIntervalMs, showCardSyncStatus });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'sync.binding.saved') throw new Error('Unexpected sync binding response.');
+    return { ok: true, value: undefined };
+  },
+  async syncGetBinding({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<{ serverId: string; directoryName?: string; lastSyncedAt?: string; enabled?: boolean; pollIntervalMs?: number; showCardSyncStatus?: boolean } | null>> {
+    const result = await request({ type: 'sync.library.binding.get.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'sync.binding.got') throw new Error('Unexpected sync binding get response.');
+    return { ok: true, value: result.binding };
+  },
+  async syncListCardStatuses({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<Array<{ assetId: string; status: 'pending' | 'conflict' }>>> {
+    if (assetIds.length === 0) return { ok: true, value: [] };
+    const result = await request({ type: 'sync.asset-card-status.request', libraryId, assetIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'sync.asset-card-status') throw new Error('Unexpected sync card status response.');
+    return { ok: true, value: result.statuses };
+  },
+
+  // Serpent-xffq: 同步探测/预览/执行（Main 按 serverId 解析 URL 与凭据）。
+  async syncProbe({ serverId }: { serverId: string }): Promise<LibraryApiResult<SyncCapabilities>> {
+    const result = await request({ type: 'sync.probe.request', serverId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'sync.probed') throw new Error('Unexpected sync probe response.');
+    return { ok: true, value: result.capabilities };
+  },
+  async syncListRemoteLibraries({ serverId }: { serverId: string }): Promise<LibraryApiResult<Array<{ libraryId: string; displayName: string; directoryName: string }>>> {
+    const result = await request({ type: 'sync.list-remote-libraries.request', serverId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'sync.remote-libraries') throw new Error('Unexpected sync remote libraries response.');
+    return { ok: true, value: result.remoteLibraries };
+  },
+  async syncOpenRemoteLibrary({ serverId, libraryId, displayName, directoryName }: { serverId: string; libraryId: string; displayName: string; directoryName: string }): Promise<LibraryApiResult<RendererLibrarySummary>> {
+    const result = await request({ type: 'sync.open-remote-library.request', serverId, libraryId, displayName, directoryName });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.opened') throw new Error('Unexpected sync open remote response.');
+    return { ok: true, value: result.library };
+  },
+  async syncPreview({ libraryId, serverId, directoryName }: { libraryId: string; serverId: string; directoryName?: string }): Promise<LibraryApiResult<SyncReport>> {
+    const result = await request({ type: 'sync.preview.request', libraryId, serverId, directoryName });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'sync.previewed') throw new Error('Unexpected sync preview response.');
+    return { ok: true, value: result.report };
+  },
+  async syncRun({ libraryId, serverId, directoryName }: { libraryId: string; serverId: string; directoryName?: string }): Promise<LibraryApiResult<{ report: SyncReport; conflicts: Array<{ syncId: string; conflictCopyPath: string }> }>> {
+    const result = await request({ type: 'sync.run.request', libraryId, serverId, directoryName });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'sync.completed') throw new Error('Unexpected sync run response.');
+    return { ok: true, value: { report: result.report, conflicts: result.conflicts } };
+  },
+
+  // Slice C (Serpent-qvc6): 3D viewer renderer request surface. Both requests
+  // bridge straight to Worker commands (slices A/B); errors come back as
+  // typed protocol error codes.
+  async resolveModelCompanions({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<ModelCompanionAsset[]>> {
+    const result = await request({ type: 'model.resolve-companions.request', libraryId, assetId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'model.companions') throw new Error('Unexpected companions response.');
+    return { ok: true, value: result.companions };
+  },
+
+  async convertModelFbx({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<FbxConversionResult>> {
+    const result = await request({ type: 'model.convert-fbx.request', libraryId, assetId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'model.convert-fbx.done') throw new Error('Unexpected convert-fbx response.');
+    if (result.status === 'ready' && result.glbArtifactId) {
+      return {
+        ok: true,
+        value: {
+          status: 'ready',
+          glbArtifactId: result.glbArtifactId,
+          glbRelativePath: result.glbRelativePath ?? '',
+          stats: result.stats ?? EMPTY_FBX_CONVERSION_STATS,
+          missingTextures: result.missingTextures ?? [],
+          warnings: result.warnings ?? [],
+        },
+      };
+    }
+    // A `ready` status without its artifact is a worker-contract violation;
+    // route it to the same fallback path as an explicit conversion failure.
+    return {
+      ok: true,
+      value: {
+        status: 'failed',
+        errorCode: result.errorCode ?? 'FBX_CONVERSION_FAILED',
+        ...(result.reason ? { reason: result.reason } : {}),
+      },
+    };
+  },
+
+  async requestPreview({ libraryId, assetId, mode, intent, exrPlane, colorSpace }: { libraryId: string; assetId: string; mode: 'client' | 'fullscreen'; intent?: 'viewer' | 'hover' | 'proxy-fallback'; exrPlane?: number; colorSpace?: string }): Promise<LibraryApiResult<PreviewResolution>> {
+    const result = await request({ type: 'asset.preview.request', libraryId, assetId, mode, ...(intent === undefined ? {} : { intent }), ...(exrPlane === undefined ? {} : { exrPlane }), ...(colorSpace === undefined ? {} : { colorSpace }) });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.preview.resolved') throw new Error('Unexpected preview response.');
+    return {
+      ok: true,
+      value: {
+        assetId: result.assetId,
+        mediaType: result.mediaType,
+        status: result.status,
+        kind: result.kind,
+        ...(result.url ? { url: result.url } : {}),
+        ...(result.posterUrl ? { posterUrl: result.posterUrl } : {}),
+        ...(result.errorCode ? { errorCode: result.errorCode } : {}),
+        ...(result.playbackMode ? { playbackMode: result.playbackMode } : {}),
+        ...(result.sourceMimeType ? { sourceMimeType: result.sourceMimeType } : {}),
+        ...(result.sourceContainer ? { sourceContainer: result.sourceContainer } : {}),
+        ...(result.sourceCodecs ? { sourceCodecs: result.sourceCodecs } : {}),
+        ...(result.playbackToken ? { playbackToken: result.playbackToken } : {}),
+        ...(result.exrPlanes ? { exrPlanes: result.exrPlanes } : {}),
+        ...(result.selectedExrPlane === undefined ? {} : { selectedExrPlane: result.selectedExrPlane }),
+        ...(result.colorSpacePending === undefined ? {} : { colorSpacePending: result.colorSpacePending }),
+        ...(result.colorSpace ? { colorSpace: result.colorSpace } : {}),
+      },
+    };
+  },
+
+  async closePreview({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'asset.close-preview.request', libraryId, assetId });
+    if (!result.ok) return failure(result);
+    return { ok: true, value: undefined };
+  },
+
+  async reportPreviewError({ libraryId, assetId, errorCode, detail }: { libraryId: string; assetId: string; errorCode: string; detail?: string }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'asset.preview-error.report', libraryId, assetId, errorCode, detail });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.preview-error.recorded') throw new Error('Unexpected preview-error response.');
+    return { ok: true, value: undefined };
+  },
+
+  async openExternal({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'asset.open-external.request', libraryId, assetId });
+    if (!result.ok) return failure(result);
+    return { ok: true, value: undefined };
+  },
+
+  async openWith({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'asset.open-with.request', libraryId, assetId });
+    if (!result.ok) return failure(result);
+    return { ok: true, value: undefined };
+  },
+
+  async revealInFolder({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'asset.reveal-in-folder.request', libraryId, assetId });
+    if (!result.ok) return failure(result);
+    return { ok: true, value: undefined };
+  },
+
+  async copyFilePath({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'asset.copy-file-path.request', libraryId, assetId });
+    if (!result.ok) return failure(result);
+    return { ok: true, value: undefined };
+  },
+
+  async copyAssetFiles({
+    libraryId,
+    assetIds,
+  }: {
+    libraryId: string;
+    assetIds: string[];
+  }): Promise<LibraryApiResult<void>> {
+    const result = await request({
+      type: 'asset.copy-files.request',
+      libraryId,
+      assetIds,
+    });
+    if (!result.ok) return failure(result);
+    return { ok: true, value: undefined };
+  },
+
+  startAssetDrag({
+    libraryId,
+    assetIds,
+  }: {
+    libraryId: string;
+    assetIds: string[];
+  }): void {
+    // Native drag owns a nested OS event loop until the pointer is released.
+    // Do not make this synchronous: dropping back onto Serpent would otherwise
+    // deadlock the Renderer waiting for Main while Main waits for the drop.
+    sendNativeAssetDrag(ipcRenderer, {
+      libraryId,
+      assetIds,
+    });
+  },
+
+  async openFolderInFileManager({ libraryId, folderId }: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'folder.open-in-file-manager.request', libraryId, folderId });
+    if (!result.ok) return failure(result);
+    return { ok: true, value: undefined };
+  },
+
+  async openFolderWith({ libraryId, folderId }: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'folder.open-with.request', libraryId, folderId });
+    if (!result.ok) return failure(result);
+    return { ok: true, value: undefined };
+  },
+
+  async copyFolderPath({ libraryId, folderId }: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'folder.copy-path.request', libraryId, folderId });
+    if (!result.ok) return failure(result);
+    return { ok: true, value: undefined };
+  },
+
+  async retryArtifact({ libraryId, assetId, kind }: { libraryId: string; assetId: string; kind: 'thumbnail' | 'webm_proxy' | 'audio_proxy' }): Promise<LibraryApiResult<{ assetId: string; kind: string }>> {
+    const result = await request({ type: 'asset.retry-artifact.request', libraryId, assetId, kind });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.retry-artifact.started') throw new Error('Unexpected retry-artifact response.');
+    return { ok: true, value: { assetId: result.assetId, kind: result.kind } };
+  },
+
+  async getMediaJobSummary({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<{
+    queued: number;
+    running: number;
+    succeeded: number;
+    failed: number;
+    paused: number;
+    cancelled: number;
+  }>> {
+    const result = await request({
+      type: 'media.job-summary.request',
+      libraryId,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'media.job-summary.read') throw new Error('Unexpected media job-summary response.');
+    const { queued, running, succeeded, failed, paused, cancelled } = result;
+    return { ok: true, value: { queued, running, succeeded, failed, paused, cancelled } };
+  },
+
+  async listMediaJobs({
+    libraryId,
+    summaryOnly,
+    cursor,
+    limit,
+  }: {
+    libraryId: string;
+    summaryOnly?: boolean;
+    cursor?: { createdAt: string; jobId: string };
+    limit?: number;
+  }): Promise<LibraryApiResult<MediaJobStatus>> {
+    const result = await request({
+      type: 'media.list-jobs.request',
+      libraryId,
+      ...(summaryOnly === undefined ? {} : { summaryOnly }),
+      ...(cursor === undefined ? {} : { cursor }),
+      ...(limit === undefined ? {} : { limit }),
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'media.jobs.listed') throw new Error('Unexpected media list-jobs response.');
+    const { queued, running, succeeded, failed, paused, cancelled, jobs, nextCursor, hasMore } = result;
+    return {
+      ok: true,
+      value: { queued, running, succeeded, failed, paused, cancelled, jobs, nextCursor, hasMore },
+    };
+  },
+
+  async listPluginJobs({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<PluginJobStatus>> {
+    const result = await request({ type: 'plugin.list-jobs.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'plugin.jobs.listed') throw new Error('Unexpected plugin list-jobs response.');
+    return { ok: true, value: summarizePluginJobs(result.jobs) };
+  },
+
+  async pauseMediaJobs({ libraryId, jobIds }: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ pausedCount: number }>> {
+    const result = await request({ type: 'media.pause-jobs.request', libraryId, jobIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'media.jobs.paused') throw new Error('Unexpected media pause-jobs response.');
+    return { ok: true, value: { pausedCount: result.pausedCount } };
+  },
+
+  async resumeMediaJobs({ libraryId, jobIds }: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ resumedCount: number }>> {
+    const result = await request({ type: 'media.resume-jobs.request', libraryId, jobIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'media.jobs.resumed') throw new Error('Unexpected media resume-jobs response.');
+    return { ok: true, value: { resumedCount: result.resumedCount } };
+  },
+
+  async cancelMediaJobs({ libraryId, jobIds }: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ cancelledCount: number }>> {
+    const result = await request({ type: 'media.cancel-jobs.request', libraryId, jobIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'media.jobs.cancelled') throw new Error('Unexpected media cancel-jobs response.');
+    return { ok: true, value: { cancelledCount: result.cancelledCount } };
+  },
+
+  async retryMediaJobs({ libraryId, jobIds }: { libraryId: string; jobIds: string[] }): Promise<LibraryApiResult<{ retriedCount: number }>> {
+    const result = await request({ type: 'media.retry-jobs.request', libraryId, jobIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'media.jobs.retried') throw new Error('Unexpected media retry-jobs response.');
+    return { ok: true, value: { retriedCount: result.retriedCount } };
+  },
+
+  // AI test-connection
+  async testAiConnection({
+    apiFormat,
+    model,
+    apiKey,
+    baseUrl,
+  }: {
+    apiFormat: AiApiFormat;
+    model: string;
+    apiKey?: string;
+    baseUrl?: string;
+  }): Promise<LibraryApiResult<{ success: boolean; errorKind?: string; reason?: string }>> {
+    const result = await request({
+      type: 'ai.test-connection.request',
+      apiFormat,
+      model,
+      ...(apiKey?.trim() ? { apiKey: apiKey.trim() } : {}),
+      ...(baseUrl?.trim() ? { baseUrl: baseUrl.trim() } : {}),
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.test-connection.result') throw new Error('Unexpected test-connection response.');
+    return { ok: true, value: { success: result.success, errorKind: result.errorKind, reason: result.reason } };
+  },
+
+  async listAiModels({
+    apiFormat,
+    apiKey,
+    baseUrl,
+  }: {
+    apiFormat: AiApiFormat;
+    apiKey?: string;
+    baseUrl?: string;
+  }): Promise<LibraryApiResult<{ models: string[]; errorKind?: string; reason?: string }>> {
+    const result = await request({
+      type: 'ai.list-models.request',
+      apiFormat,
+      ...(apiKey?.trim() ? { apiKey: apiKey.trim() } : {}),
+      ...(baseUrl?.trim() ? { baseUrl: baseUrl.trim() } : {}),
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.list-models.result') throw new Error('Unexpected list-models response.');
+    return {
+      ok: true,
+      value: {
+        models: result.models,
+        errorKind: result.errorKind,
+        reason: result.reason,
+      },
+    };
+  },
+
+  // AI clear-content
+  async clearAiContent({ libraryId, scope, confirm, fields }: { libraryId: string; scope: { kind: 'asset' | 'selection' | 'folder' | 'library'; assetIds?: string[]; folderId?: string }; confirm: boolean; fields?: Array<'description' | 'rating' | 'tags'> }): Promise<LibraryApiResult<{ clearedCount: number }>> {
+    const result = await request({
+      type: 'ai.clear-content.request',
+      libraryId,
+      scope,
+      confirm,
+      ...(fields ? { fields } : {}),
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.content.cleared') throw new Error('Unexpected clear-content response.');
+    return { ok: true, value: { clearedCount: result.clearedCount } };
+  },
+
+  // AI job queue
+  async pauseAiJobs({ libraryId, jobIds }: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ pausedCount: number }>> {
+    const result = await request({ type: 'ai.pause-jobs.request', libraryId, jobIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.jobs.paused') throw new Error('Unexpected pause-jobs response.');
+    return { ok: true, value: { pausedCount: result.pausedCount } };
+  },
+
+  async resumeAiJobs({ libraryId, jobIds }: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ resumedCount: number }>> {
+    const result = await request({ type: 'ai.resume-jobs.request', libraryId, jobIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.jobs.resumed') throw new Error('Unexpected resume-jobs response.');
+    return { ok: true, value: { resumedCount: result.resumedCount } };
+  },
+
+  async cancelAiJobs({ libraryId, jobIds }: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ cancelledCount: number }>> {
+    const result = await request({ type: 'ai.cancel-jobs.request', libraryId, jobIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.jobs.cancelled') throw new Error('Unexpected cancel-jobs response.');
+    return { ok: true, value: { cancelledCount: result.cancelledCount } };
+  },
+
+  async retryAiJobs({ libraryId, jobIds }: { libraryId: string; jobIds: string[] }): Promise<LibraryApiResult<{ retriedCount: number }>> {
+    const result = await request({ type: 'ai.retry-jobs.request', libraryId, jobIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.jobs.retried') throw new Error('Unexpected retry-jobs response.');
+    return { ok: true, value: { retriedCount: result.retriedCount } };
+  },
+
+  async getAiJobStatus({
+    libraryId,
+    jobIds,
+  }: {
+    libraryId: string;
+    jobIds?: string[];
+  }): Promise<LibraryApiResult<AiJobStatus>> {
+    const result = await request({
+      type: 'ai.status.request',
+      libraryId,
+      ...(jobIds ? { jobIds } : {}),
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.jobs.status') throw new Error('Unexpected AI status response.');
+    const { queued, running, succeeded, failed, paused, cancelled, jobs } = result;
+    return { ok: true, value: { queued, running, succeeded, failed, paused, cancelled, jobs } };
+  },
+
+  // AI events
+  onAiProgress(listener: (event: {
+    type: 'ai.progress';
+    libraryId: string;
+    queued: number;
+    running: number;
+    succeeded: number;
+    failed: number;
+    changedJobs?: Array<{
+      jobId: string;
+      status: 'queued' | 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled';
+      errorCode?: string | null;
+    }>;
+  }) => void) {
+    const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      try {
+        listener(parseAiProgressEvent(input));
+      } catch {
+        // Ignore malformed events.
+      }
+    };
+    ipcRenderer.on(AI_PROGRESS_CHANNEL, subscription);
+    return () => ipcRenderer.removeListener(AI_PROGRESS_CHANNEL, subscription);
+  },
+
+  onAiCompleted(listener: (event: { type: 'ai.analysis.completed'; libraryId: string; assetId: string; fieldCount: number; tagCount: number }) => void) {
+    const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      try {
+        listener(parseAiAnalysisCompletedEvent(input));
+      } catch {
+        // Ignore malformed events.
+      }
+    };
+    ipcRenderer.on(AI_COMPLETED_CHANNEL, subscription);
+    return () => ipcRenderer.removeListener(AI_COMPLETED_CHANNEL, subscription);
+  },
+
+  onAiCleared(listener: (event: { type: 'ai.content.cleared'; libraryId: string; affectedAssetCount: number; affectedAssetIds: string[] }) => void) {
+    const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      try {
+        listener(parseAiContentClearedEvent(input));
+      } catch {
+        // Ignore malformed events.
+      }
+    };
+    ipcRenderer.on(AI_CLEARED_CHANNEL, subscription);
+    return () => ipcRenderer.removeListener(AI_CLEARED_CHANNEL, subscription);
+  },
+
+  onThumbnailEvent(listener: (event: ThumbnailEvent) => void) {
+    const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      try {
+        listener(parseThumbnailEvent(input));
+      } catch {
+        // Ignore malformed thumbnail events.
+      }
+    };
+    ipcRenderer.on(THUMBNAIL_CHANNEL, subscription);
+    return () => ipcRenderer.removeListener(THUMBNAIL_CHANNEL, subscription);
+  },
+});
+
+export function armE2eBrowseSessionDelay(
+  target: E2eBrowseSessionDelayTarget,
+  delayMs: number,
+): void {
+  e2eBrowseSessionDelay = { target: { ...target }, delayMs };
+}
