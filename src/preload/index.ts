@@ -38,17 +38,6 @@ import {
   AI_PROGRESS_CHANNEL,
   AI_COMPLETED_CHANNEL,
   AI_CLEARED_CHANNEL,
-  AUTOMATION_SCRIPT_OPEN_CHANNEL,
-  AUTOMATION_SCRIPT_SAVE_CHANNEL,
-  AUTOMATION_SCRIPT_START_CHANNEL,
-  AUTOMATION_SCRIPT_EXECUTE_CHANNEL,
-  AUTOMATION_SCRIPT_COMMAND_CHANNEL,
-  AUTOMATION_SCRIPT_COMPLETE_CHANNEL,
-  AUTOMATION_SCRIPT_CANCEL_CHANNEL,
-  AUTOMATION_SCRIPT_HISTORY_CHANNEL,
-  AUTOMATION_SCRIPT_UNDO_CHANNEL,
-  AUTOMATION_SCRIPT_RECENT_LIST_CHANNEL,
-  AUTOMATION_SCRIPT_RECENT_OPEN_CHANNEL,
   PLUGIN_MANAGER_CHANNEL,
   PLUGIN_INSTALL_PROGRESS_CHANNEL,
   PLUGIN_CONTRIBUTIONS_CHANGED_CHANNEL,
@@ -56,29 +45,6 @@ import {
   MCP_SETTINGS_EVENT_CHANNEL,
 } from '../shared/protocol/channels';
 import { sendNativeAssetDrag } from './native-asset-drag';
-import {
-  automationScriptFileResultSchema,
-  automationScriptSaveInputSchema,
-  automationScriptStartResultSchema,
-  automationScriptExecuteResultSchema,
-  automationScriptHistoryInputSchema,
-  automationScriptHistoryResultSchema,
-  automationScriptUndoInputSchema,
-  automationScriptUndoResultSchema,
-  automationRecentScriptOpenInputSchema,
-  automationRecentScriptsListResultSchema,
-  type AutomationRecentScriptOpenInput,
-  type AutomationScriptExecuteInput,
-  type AutomationScriptCommandInput,
-  type AutomationScriptCommandResult,
-  type AutomationScriptCompleteInput,
-  type AutomationScriptCancelInput,
-  type AutomationScriptHistoryInput,
-  type AutomationScriptUndoInput,
-  type AutomationScriptSaveInput,
-  type AutomationScriptStartInput,
-  type SerpentAutomationScriptApi,
-} from '../shared/automation-script-api';
 import {
   parsePluginManagerResponse,
   type PluginHostContributionTarget,
@@ -142,6 +108,7 @@ import { isImageSequenceImportOffer } from '../shared/import-outcome';
 import { resolveDroppedFilePaths } from './dropped-files';
 import { extractWebMediaDrop } from './web-media-drop';
 import { appUpdate } from './bridge/app-update';
+import { automation } from './bridge/automation';
 import { shell } from './bridge/shell';
 import { failure, getE2eRequestCount, importRequest, request } from './transport';
 
@@ -2547,71 +2514,6 @@ const e2eDiagnostics = Object.freeze({
   },
 });
 
-
-const automation: SerpentAutomationScriptApi = Object.freeze({
-  async open() {
-    return automationScriptFileResultSchema.parse(
-      await ipcRenderer.invoke(AUTOMATION_SCRIPT_OPEN_CHANNEL),
-    );
-  },
-  async save(input: AutomationScriptSaveInput) {
-    return automationScriptFileResultSchema.parse(
-      await ipcRenderer.invoke(AUTOMATION_SCRIPT_SAVE_CHANNEL, automationScriptSaveInputSchema.parse(input)),
-    );
-  },
-  async recentList() {
-    return automationRecentScriptsListResultSchema.parse(
-      await ipcRenderer.invoke(AUTOMATION_SCRIPT_RECENT_LIST_CHANNEL),
-    );
-  },
-  async openRecent(input: AutomationRecentScriptOpenInput) {
-    return automationScriptFileResultSchema.parse(
-      await ipcRenderer.invoke(
-        AUTOMATION_SCRIPT_RECENT_OPEN_CHANNEL,
-        automationRecentScriptOpenInputSchema.parse(input),
-      ),
-    );
-  },
-  async start(input: AutomationScriptStartInput) {
-    return automationScriptStartResultSchema.parse(
-      await ipcRenderer.invoke(AUTOMATION_SCRIPT_START_CHANNEL, input),
-    );
-  },
-  async execute(input: AutomationScriptExecuteInput) {
-    return automationScriptExecuteResultSchema.parse(
-      await ipcRenderer.invoke(AUTOMATION_SCRIPT_EXECUTE_CHANNEL, input),
-    );
-  },
-  async command(input: AutomationScriptCommandInput): Promise<AutomationScriptCommandResult> {
-    const result = await ipcRenderer.invoke(AUTOMATION_SCRIPT_COMMAND_CHANNEL, input);
-    if (typeof result !== 'object' || result === null || typeof (result as { ok?: unknown }).ok !== 'boolean') {
-      throw new Error('Main returned an invalid automation command result.');
-    }
-    return result as AutomationScriptCommandResult;
-  },
-  async complete(input: AutomationScriptCompleteInput): Promise<void> {
-    await ipcRenderer.invoke(AUTOMATION_SCRIPT_COMPLETE_CHANNEL, input);
-  },
-  async cancel(input: AutomationScriptCancelInput): Promise<void> {
-    await ipcRenderer.invoke(AUTOMATION_SCRIPT_CANCEL_CHANNEL, input);
-  },
-  async history(input: AutomationScriptHistoryInput) {
-    return automationScriptHistoryResultSchema.parse(
-      await ipcRenderer.invoke(
-        AUTOMATION_SCRIPT_HISTORY_CHANNEL,
-        automationScriptHistoryInputSchema.parse(input),
-      ),
-    );
-  },
-  async undo(input: AutomationScriptUndoInput) {
-    return automationScriptUndoResultSchema.parse(
-      await ipcRenderer.invoke(
-        AUTOMATION_SCRIPT_UNDO_CHANNEL,
-        automationScriptUndoInputSchema.parse(input),
-      ),
-    );
-  },
-});
 
 const mcp: SerpentMcpSettingsApi = Object.freeze({
   async request(input: McpSettingsRequest) {
