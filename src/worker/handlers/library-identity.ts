@@ -64,6 +64,16 @@ export async function executeLibraryIdentityWorkerCommand(
       const library = await libraryService.openBillfishLibrary(request.command);
       return { ok: true, type: 'library.opened', library };
     }
+    case 'library.navigation-summary':
+      return {
+        ok: true,
+        type: 'library.navigation-summary',
+        summary: await libraryService.getLibraryNavigationSummaryAsync({
+          libraryId: request.command.libraryId,
+          showIgnored: request.command.showIgnored === true,
+          includeTrashedFolders: request.command.includeTrashedFolders === true,
+        }),
+      };
     default:
       return undefined;
   }

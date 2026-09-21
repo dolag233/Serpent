@@ -2531,7 +2531,8 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     case 'library.inspect-eagle':
     case 'library.open-eagle':
     case 'library.inspect-billfish':
-    case 'library.open-billfish': {
+    case 'library.open-billfish':
+    case 'library.navigation-summary': {
       const result = await executeLibraryIdentityWorkerCommand(libraryService, request);
       if (result === undefined) {
         throw new Error(`Unhandled library identity command: ${request.command.type}`);
@@ -2746,16 +2747,6 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       }
       return result;
     }
-    case 'library.navigation-summary':
-      return {
-        ok: true,
-        type: 'library.navigation-summary',
-        summary: await libraryService.getLibraryNavigationSummaryAsync({
-          libraryId: request.command.libraryId,
-          showIgnored: request.command.showIgnored === true,
-          includeTrashedFolders: request.command.includeTrashedFolders === true,
-        }),
-      };
     case 'smart-collection.list':
     case 'smart-collection.create':
     case 'smart-collection.update':

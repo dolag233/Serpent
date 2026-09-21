@@ -77,6 +77,31 @@ test('library.inspect-eagle returns the inspected display name', async () => {
   });
 });
 
+test('library.navigation-summary maps ignored and trashed flags', async () => {
+  const summary = { folderCount: 2 };
+  const libraryService = {
+    getLibraryNavigationSummaryAsync: vi.fn(async () => summary),
+  } as unknown as LibraryService;
+
+  await expect(executeLibraryIdentityWorkerCommand(
+    libraryService,
+    identityRequest({
+      type: 'library.navigation-summary',
+      libraryId: 'lib-1',
+      showIgnored: true,
+    }),
+  )).resolves.toEqual({
+    ok: true,
+    type: 'library.navigation-summary',
+    summary,
+  });
+  expect(libraryService.getLibraryNavigationSummaryAsync).toHaveBeenCalledWith({
+    libraryId: 'lib-1',
+    showIgnored: true,
+    includeTrashedFolders: false,
+  });
+});
+
 test('library.open is left to the lifecycle dispatcher', async () => {
   await expect(executeLibraryIdentityWorkerCommand(
     {} as LibraryService,
