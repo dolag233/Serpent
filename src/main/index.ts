@@ -51,7 +51,6 @@ import { artifactProtocolMimeForExtension } from "../shared/media-formats";
 import {
   selectImportSources as selectImportSourcesDialog,
   selectLibraryDirectory,
-  selectOpenDirectory,
   selectOpenFile,
   selectSavePath,
   selectPluginPackage,
@@ -69,6 +68,10 @@ import { executeBrowseSessionMainCommand } from "./commands/browse-session";
 import { executeSmartCollectionMainCommand } from "./commands/smart-collections";
 import { executeAssetMutationMainCommand } from "./commands/asset-mutations";
 import { executeLibraryTransferMainCommand } from "./commands/library-transfer";
+import { executeAiMainCommand } from "./commands/ai";
+import { executeMediaJobMainCommand } from "./commands/media-jobs";
+import { executeSyncMainCommand } from "./commands/sync";
+import { executeMediaPathMainCommand } from "./commands/media-paths";
 import {
   ExternalLibraryArchiveError,
   materializeExternalLibrarySource,
@@ -2433,7 +2436,9 @@ async function commandFor(
     case "history.redo.request":
     case "library.list-recent.request":
     case "library.open-recent.request":
-    case "library.forget-recent.request": {
+    case "library.forget-recent.request":
+    case "library.open-cancel.request":
+    case "library.choose-path.request": {
       return executeLibraryMainCommand(request, {
         selectDirectory,
         createNativeDialogHost,
@@ -2612,359 +2617,77 @@ async function commandFor(
     case "ai.config.get.request":
     case "ai.config.set.request":
     case "ai.list-models.request":
-      // Handled directly in handleLibraryRequest — should never reach here.
-      return undefined;
-    case "ai.test-connection.request": {
-      // Resolve plaintext key in Main (safeStorage lives here). Pass ephemeral
-      // plaintext to Worker on the private channel — same pattern as asset.analyze.
-      // Do not re-encrypt for Worker: UtilityProcess cannot decrypt Main ciphertext.
-      let apiKey = request.apiKey?.trim() ?? "";
-      if (!apiKey) {
-        try {
-          apiKey = getDecryptedApiKey();
-        } catch {
-          return undefined;
-        }
-      }
-      return {
-        type: "ai.test-connection",
-        apiFormat: request.apiFormat,
-        model: request.model,
-        apiKey,
-        ...(request.baseUrl?.trim()
-          ? { baseUrl: request.baseUrl.trim() }
-          : {}),
-      };
+    case "ai.test-connection.request":
+    case "ai.clear-content.request": {
+      return executeAiMainCommand(request, {
+        loadAiConfig,
+        getDecryptedApiKey,
+      });
     }
-    case "ai.clear-content.request":
-      return {
-        type: "ai.clear-content",
-        libraryId: request.libraryId,
-        scope: request.scope,
-        confirm: request.confirm,
-        ...(request.fields ? { fields: request.fields } : {}),
-      };
     case "media.job-summary.request":
-      return {
-        type: "media.job-summary",
-        libraryId: request.libraryId,
-      };
     case "media.list-jobs.request":
-      return {
-        type: "media.list-jobs",
-        libraryId: request.libraryId,
-        ...(request.summaryOnly === undefined ? {} : { summaryOnly: request.summaryOnly }),
-        ...(request.cursor === undefined ? {} : { cursor: request.cursor }),
-        ...(request.limit === undefined ? {} : { limit: request.limit }),
-      };
     case "plugin.list-jobs.request":
-      return { type: "plugin.jobs.list", libraryId: request.libraryId };
     case "media.pause-jobs.request":
-      return {
-        type: "media.pause-jobs",
-        libraryId: request.libraryId,
-        jobIds: request.jobIds,
-      };
     case "media.resume-jobs.request":
-      return {
-        type: "media.resume-jobs",
-        libraryId: request.libraryId,
-        jobIds: request.jobIds,
-      };
     case "media.cancel-jobs.request":
-      return {
-        type: "media.cancel-jobs",
-        libraryId: request.libraryId,
-        jobIds: request.jobIds,
-      };
-    case "media.retry-jobs.request":
-      return {
-        type: "media.retry-jobs",
-        libraryId: request.libraryId,
-        jobIds: request.jobIds,
-      };
+    case "media.retry-jobs.request": {
+      return executeMediaJobMainCommand(request);
+    }
     case "ai.pause-jobs.request":
-      return {
-        type: "ai.pause-jobs",
-        libraryId: request.libraryId,
-        jobIds: request.jobIds,
-      };
     case "ai.resume-jobs.request":
-      return {
-        type: "ai.resume-jobs",
-        libraryId: request.libraryId,
-        jobIds: request.jobIds,
-      };
     case "ai.cancel-jobs.request":
-      return {
-        type: "ai.cancel-jobs",
-        libraryId: request.libraryId,
-        jobIds: request.jobIds,
-      };
     case "ai.retry-jobs.request":
-      return {
-        type: "ai.retry-jobs",
-        libraryId: request.libraryId,
-        jobIds: request.jobIds,
-      };
     case "ai.status.request":
-      return {
-        type: "ai.status",
-        libraryId: request.libraryId,
-        ...(request.jobIds ? { jobIds: request.jobIds } : {}),
-      };
     case "ai.pending-assets.request":
-      return {
-        type: "ai.pending-assets.request",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-      };
-    case "asset.analyze.request": {
-      const config = loadAiConfig();
-      if (!config.hasKey) return undefined; // Will be handled as error downstream.
-      if (!config.apiFormat) return undefined;
-      let apiKey: string;
-      try {
-        apiKey = getDecryptedApiKey();
-      } catch {
-        return undefined;
-      }
-      return {
-        type: "asset.analyze",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-        apiFormat: config.apiFormat,
-        model: config.model,
-        apiKey,
-        ...(config.baseUrl.trim() ? { baseUrl: config.baseUrl.trim() } : {}),
-        enabledFields: {
-          description: config.descriptionEnabled,
-          tags: config.tagEnabled,
-          rating: config.ratingEnabled,
-        },
-        analysisSettings: toWireAiAnalysisSettings(config.analysisSettings),
-        languages: config.languages,
-        maxAnalysisImageEdgePx: config.maxAnalysisImageEdgePx,
-      };
-    }
+    case "asset.analyze.request":
     case "assets.analyze.request":
-      // Handled before generic Worker-command dispatch because it atomically
-      // enqueues the whole selected batch and starts the scheduler once.
-      return undefined;
-    case "ai.content.get.request":
-      return {
-        type: "ai.content.get",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-      };
+    case "ai.content.get.request": {
+      return executeAiMainCommand(request, {
+        loadAiConfig,
+        getDecryptedApiKey,
+      });
+    }
     case "asset.thumbnail.request":
-      return {
-        type: "media.generate-thumbnail",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-      };
-    case "asset.thumbnail.visible-window.request":
-      return {
-        type: "asset.thumbnail.visible-window",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-        ...(request.consumerId === undefined ? {} : { consumerId: request.consumerId }),
-        ...(request.libraryGeneration === undefined
-          ? {}
-          : { libraryGeneration: request.libraryGeneration }),
-        ...(request.interactionGeneration === undefined
-          ? {}
-          : { interactionGeneration: request.interactionGeneration }),
-        ...(request.viewportGeneration === undefined
-          ? {}
-          : { viewportGeneration: request.viewportGeneration }),
-        ...(request.direction === undefined ? {} : { direction: request.direction }),
-        ...(request.focusedAssetIds === undefined
-          ? {}
-          : { focusedAssetIds: request.focusedAssetIds }),
-        ...(request.nearForwardAssetIds === undefined
-          ? {}
-          : { nearForwardAssetIds: request.nearForwardAssetIds }),
-        ...(request.nearBackwardAssetIds === undefined
-          ? {}
-          : { nearBackwardAssetIds: request.nearBackwardAssetIds }),
-        ...(request.scopeWarmAssetIds === undefined
-          ? {}
-          : { scopeWarmAssetIds: request.scopeWarmAssetIds }),
-      };
+    case "asset.thumbnail.visible-window.request": {
+      return executeMediaPathMainCommand(request);
+    }
     case "sync.asset-card-status.request":
-      return {
-        type: "sync.asset-card-status",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-      };
-    case "sync.probe.request": {
-      const server = resolveSyncServerCredentials(request.serverId);
-      if (!server) throw new Error("同步服务器不存在，请先在通用设置中配置。");
-      return {
-        type: "sync.probe",
-        baseUrl: server.baseUrl,
-        username: server.username,
-        password: server.password,
-        allowInsecureTls: server.allowInsecureTls,
-      };
-    }
-    case "sync.preview.request": {
-      const server = resolveSyncServerCredentials(request.serverId);
-      if (!server) throw new Error("同步服务器不存在，请先在通用设置中配置。");
-      return {
-        type: "sync.preview",
-        libraryId: request.libraryId,
-        deviceId: syncDeviceId(),
-        baseUrl: server.baseUrl,
-        username: server.username,
-        password: server.password,
-        allowInsecureTls: server.allowInsecureTls,
-        directoryName: request.directoryName,
-      };
-    }
-    case "sync.run.request": {
-      const server = resolveSyncServerCredentials(request.serverId);
-      if (!server) throw new Error("同步服务器不存在，请先在通用设置中配置。");
-      return {
-        type: "sync.run",
-        libraryId: request.libraryId,
-        deviceId: syncDeviceId(),
-        baseUrl: server.baseUrl,
-        username: server.username,
-        password: server.password,
-        allowInsecureTls: server.allowInsecureTls,
-        directoryName: request.directoryName,
-      };
-    }
-    case "sync.list-remote-libraries.request": {
-      const server = resolveSyncServerCredentials(request.serverId);
-      if (!server) throw new Error("同步服务器不存在，请先在通用设置中配置。");
-      return {
-        type: "sync.list-remote-libraries",
-        baseUrl: server.baseUrl,
-        username: server.username,
-        password: server.password,
-        allowInsecureTls: server.allowInsecureTls,
-      };
-    }
+    case "sync.probe.request":
+    case "sync.preview.request":
+    case "sync.run.request":
+    case "sync.list-remote-libraries.request":
     case "sync.open-remote-library.request": {
-      const server = resolveSyncServerCredentials(request.serverId);
-      if (!server) throw new Error("同步服务器不存在，请先在通用设置中配置。");
-      const host = createNativeDialogHost();
-      const selectedParentPath = await selectOpenDirectory(
-        host,
-        "openSyncLibraryDestination",
-        process.env.SERPENT_E2E_OPEN_SYNC_LIBRARY_PARENT,
-        { createDirectory: true },
-      );
-      if (!selectedParentPath) return undefined;
-      return {
-        type: "sync.open-remote-library",
-        baseUrl: server.baseUrl,
-        username: server.username,
-        password: server.password,
-        allowInsecureTls: server.allowInsecureTls,
-        libraryId: request.libraryId,
-        displayName: request.displayName,
-        directoryName: request.directoryName,
-        selectedParentPath,
-      };
+      return executeSyncMainCommand(request, {
+        resolveSyncServerCredentials,
+        syncDeviceId,
+        createNativeDialogHost,
+      });
     }
     case "model.resolve-companions.request":
-      // Slice C (Serpent-qvc6): 3D viewer companion-texture index. The worker
-      // command already exists (slice A); this is the renderer request bridge.
-      return {
-        type: "model.resolve-companions",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-      };
     case "model.convert-fbx.request":
-      // Slice C: FBX→GLB conversion (worker command from slice B). The
-      // renderer routes `failed` results to the FBXLoader fallback.
-      return {
-        type: "model.convert-fbx",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-      };
     case "asset.preview.request":
-      // Handled directly in handleLibraryRequest because it requires constructing
-      // a serpent:// URL after the Worker lookup.
-      return {
-        type: "media.get-preview-artifact",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-        ...(request.intent === undefined ? {} : { intent: request.intent }),
-        ...(request.exrPlane === undefined ? {} : { exrPlane: request.exrPlane }),
-        ...(request.colorSpace === undefined ? {} : { colorSpace: request.colorSpace }),
-      };
     case "asset.close-preview.request":
-      // Preview close is a no-op on the Main side; renderer handles UI state.
-      return undefined;
     case "asset.preview-error.report":
-      // Main records this before command dispatch.
-      return undefined;
     case "asset.recovery-probe.request":
-      return {
-        type: "asset.recovery-probe",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-      };
     case "asset.open-external.request":
-      // Handled directly in handleLibraryRequest because it requires shell.openPath.
-      return {
-        type: "media.get-asset-path",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-      };
     case "asset.open-with.request":
-      // Handled directly in handleLibraryRequest (macOS picker / Windows Open With).
-      return {
-        type: "media.get-asset-path",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-      };
     case "asset.reveal-in-folder.request":
-      // Handled directly in handleLibraryRequest because it requires shell.showItemInFolder.
-      return {
-        type: "media.get-asset-path",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-      };
     case "asset.copy-file-path.request":
-      // Handled directly in handleLibraryRequest because it requires clipboard.writeText.
-      return {
-        type: "media.get-asset-path",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-      };
     case "asset.copy-files.request":
-      // OS file clipboard (clarification #5); paths resolved then written in Main.
-      return {
-        type: "media.get-asset-paths",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-      };
-    case "asset.retry-artifact.request":
-      return {
-        type: "media.retry-artifact",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-        kind: request.kind,
-      };
+    case "asset.retry-artifact.request": {
+      return executeMediaPathMainCommand(request);
+    }
     case "sync.servers.list.request":
     case "sync.servers.upsert.request":
     case "sync.servers.delete.request":
     case "sync.library.binding.save.request":
-    case "sync.library.binding.get.request":
-      // Main-owned local config; handled before Worker dispatch.
-      return undefined;
-    case "library.open-cancel.request":
-      // Main-only request; handled before Worker dispatch.
-      return undefined;
-    case "library.choose-path.request":
-      // Main-only request (native picker); handled before Worker dispatch.
-      return undefined;
+    case "sync.library.binding.get.request": {
+      return executeSyncMainCommand(request, {
+        resolveSyncServerCredentials,
+        syncDeviceId,
+        createNativeDialogHost,
+      });
+    }
     default:
       return assertNever(request);
   }

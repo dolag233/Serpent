@@ -185,6 +185,12 @@ export async function executeLibraryMainCommand(
       // membership before building the same library.open command used here.
       // forget-recent only mutates the Main store (Serpent-ucx).
       return undefined;
+    case "library.open-cancel.request":
+      // Main-only request; handled before Worker dispatch.
+      return undefined;
+    case "library.choose-path.request":
+      // Main-only request (native picker); handled before Worker dispatch.
+      return undefined;
     default:
       return undefined;
   }

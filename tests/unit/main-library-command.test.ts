@@ -77,6 +77,13 @@ test("library.list-recent stays on the Main-owned store path", async () => {
   )).resolves.toBeUndefined();
 });
 
+test("library.choose-path stays on the Main-owned picker path", async () => {
+  await expect(executeLibraryMainCommand(
+    libraryRequest({ type: "library.choose-path.request" }),
+    libraryRuntime(),
+  )).resolves.toBeUndefined();
+});
+
 test("inspect-eagle cancel clears the pending source", async () => {
   const cleanupExternalSource = vi.fn(async () => undefined);
   const setPendingEagleOpenSourcePath = vi.fn();
