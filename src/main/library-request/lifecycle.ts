@@ -1,5 +1,9 @@
 import type { RendererRequest, WorkerCommand } from "../../shared/protocol/requests";
-import type { RendererResult, WorkerResult } from "../../shared/protocol/responses";
+import type {
+  RendererLifecycleEvent,
+  RendererResult,
+  WorkerResult,
+} from "../../shared/protocol/responses";
 import { createPublicError } from "../../shared/protocol/errors";
 import {
   LibraryParentError,
@@ -274,5 +278,149 @@ export function tryHandleRecoveryReport(
       ok: false,
       error: createPublicError("INTERNAL_ERROR"),
     } satisfies RendererResult;
+  }
+}
+
+export type ExternalSourceCleanupRuntime = {
+  cleanupExternalSource: (sourceRootPath: string | undefined) => Promise<void>;
+};
+
+/**
+ * Eagle/Billfish temp-source cleanup after Worker returns.
+ * Inspect success retains the source until the follow-up open/import.
+ */
+export async function applyExternalLibrarySourceCleanup(
+  command: WorkerCommand,
+  workerResult: WorkerResult,
+  runtime: ExternalSourceCleanupRuntime,
+): Promise<{ retainExternalSource: boolean }> {
+  if (
+    command.type === "library.open-eagle" ||
+    command.type === "library.open-billfish" ||
+    command.type === "asset.import-eagle" ||
+    command.type === "asset.import-billfish"
+  ) {
+    await runtime.cleanupExternalSource(command.sourceRootPath);
+    return { retainExternalSource: false };
+  }
+  if (
+    command.type === "library.inspect-eagle" ||
+    command.type === "library.inspect-billfish"
+  ) {
+    const expectedType = command.type === "library.inspect-eagle"
+      ? "library.eagle-inspected"
+      : "library.billfish-inspected";
+    if (workerResult.ok && workerResult.type === expectedType) {
+      return { retainExternalSource: true };
+    }
+    await runtime.cleanupExternalSource(command.sourceRootPath);
+    return { retainExternalSource: false };
+  }
+  return { retainExternalSource: false };
+}
+
+/**
+ * A Billfish archive has no stable library root name after extraction:
+ * the worker sees a temporary `serpent-external-library-*` directory.
+ * Keep the archive stem as the user-facing default all the way through
+ * the Main→Renderer boundary, even if an older worker response falls
+ * back to that temporary directory name.
+ */
+export function mapBillfishInspectedDisplayName(
+  command: WorkerCommand,
+  workerResult: WorkerResult,
+): WorkerResult {
+  if (
+    workerResult.ok &&
+    workerResult.type === "library.billfish-inspected" &&
+    command.type === "library.inspect-billfish" &&
+    command.sourceDisplayName
+  ) {
+    return { ...workerResult, displayName: command.sourceDisplayName };
+  }
+  return workerResult;
+}
+
+export type LibraryRendererLifecycleRuntime = {
+  removeRecentLibrary: (
+    filePath: string,
+    libraryPath: string,
+    onError?: (error: unknown) => void,
+  ) => void;
+  recentLibraryPath: () => string;
+  logError: (scope: string, error: unknown) => void;
+  unblockLibraryMediaReads: (libraryId: string) => void;
+  publishLifecycle: (event: RendererLifecycleEvent) => void;
+  clearNativeAssetDragCache: (libraryId: string) => void;
+  clearActiveRecentLibrary: (
+    filePath: string,
+    onError?: (error: unknown) => void,
+  ) => void;
+};
+
+/**
+ * Renderer-facing library open/close/delete lifecycle after toRendererResult.
+ */
+export function applyLibraryRendererLifecycle(
+  command: WorkerCommand,
+  result: RendererResult,
+  workerResult: WorkerResult,
+  operation: LibraryOpenOperation | undefined,
+  runtime: LibraryRendererLifecycleRuntime,
+): void {
+  if (!result.ok) {
+    if (operation) {
+      runtime.publishLifecycle({
+        type: "library.open-failed",
+        operation,
+        error: result.error,
+      });
+      // Serpent-s0oq: an invalid recent library (folder gone, corrupt, or
+      // unmigratable) must disappear from every recent list — the switcher
+      // menu and the no-library create dialog share the same store. Only
+      // deterministic invalid-open codes remove the entry; transient
+      // failures (picker cancel, busy) and same-catalog identity prompts
+      // (LIBRARY_ALREADY_OPEN) keep it.
+      if (
+        operation === "open" &&
+        command.type === "library.open" &&
+        (result.error?.code === "LIBRARY_NOT_FOUND" ||
+          result.error?.code === "LIBRARY_CORRUPT" ||
+          result.error?.code === "LIBRARY_MIGRATION_FAILED" ||
+          result.error?.code === "LIBRARY_VERSION_TOO_NEW")
+      ) {
+        runtime.removeRecentLibrary(
+          runtime.recentLibraryPath(),
+          command.selectedLibraryPath,
+          (error) => {
+            runtime.logError("recent-library.remove-invalid", error);
+          },
+        );
+      }
+    }
+    return;
+  }
+  if (result.type === "library.opened") {
+    runtime.unblockLibraryMediaReads(result.library.libraryId);
+    runtime.publishLifecycle({ type: "library.opened", library: result.library });
+  } else if (workerResult.ok && workerResult.type === "library.imported") {
+    runtime.unblockLibraryMediaReads(workerResult.libraryId);
+    runtime.publishLifecycle({
+      type: "library.opened",
+      library: {
+        libraryId: workerResult.libraryId,
+        displayName: workerResult.displayName,
+        displayPath: workerResult.libraryPath,
+      },
+    });
+  } else if (result.type === "library.closed") {
+    runtime.clearNativeAssetDragCache(result.libraryId);
+    runtime.clearActiveRecentLibrary(runtime.recentLibraryPath(), (error) => {
+      runtime.logError("recent-library.clear", error);
+    });
+    runtime.publishLifecycle({ type: "library.closed", libraryId: result.libraryId });
+  } else if (result.type === "library.deleted") {
+    runtime.clearNativeAssetDragCache(result.libraryId);
+    runtime.publishLifecycle({ type: "library.closed", libraryId: result.libraryId });
   }
 }

@@ -37,7 +37,7 @@ import {
   NativeAssetDragCache,
   startNativeAssetDrag,
 } from "./native-asset-drag";
-import { nativeDragAssetsForResult, NativeAssetDragPrimeScheduler } from "./native-asset-drag-prime";
+import { NativeAssetDragPrimeScheduler } from "./native-asset-drag-prime";
 import {
   clearViewerVideoShortcutCapture,
   isViewerVideoShortcutContentsActive,
@@ -73,10 +73,14 @@ import {
 import { tryHandleAiOwnedRequest } from "./library-request/ai";
 import { tryHandlePreviewOwnedRequest } from "./library-request/preview";
 import { tryHandleMediaShellWorkerResult } from "./library-request/media-shell";
+import { maybePrimeNativeDrag } from "./library-request/native-drag";
 import { tryHandleRelinkOwnedRequest, maybeRememberRelinkPreview } from "./library-request/relink";
 import {
   prepareLibraryLifecycle,
   applyLibraryWorkerSideEffects,
+  applyExternalLibrarySourceCleanup,
+  mapBillfishInspectedDisplayName,
+  applyLibraryRendererLifecycle,
   tryHandleRecoveryReport,
 } from "./library-request/lifecycle";
 import { executeFolderMainCommand } from "./commands/folders";
@@ -2305,16 +2309,6 @@ function toRendererResult(
   return parseRendererResult(result);
 }
 
-/**
- * Serpent-v4jf/Serpent-29125f: how many sorted-list-head assets to prime
- * synchronously before a card-bearing response reaches the renderer. Native
- * drag can only use entries that are ready when dragstart enters Electron's
- * nested OS loop, but priming hundreds of cards here serializes every browse
- * response behind Worker work. The renderer's overscan window is normally a
- * few dozen cards, so keep this bounded to a small first-screen cushion.
- */
-const NATIVE_DRAG_PRIME_VISIBLE_COUNT = 64;
-
 function createNativeDialogHost(): NativeDialogHost {
   return {
     getLocale: () => appLocale,
@@ -3104,67 +3098,17 @@ async function handleLibraryRequest(
       await reopenLibrariesAfterFailedReplacement(previousLibraryPaths);
     }
 
-    if (
-      command.type === "library.open-eagle" ||
-      command.type === "library.open-billfish" ||
-      command.type === "asset.import-eagle" ||
-      command.type === "asset.import-billfish"
-    ) {
-      await cleanupExternalSource(command.sourceRootPath);
-    } else if (
-      command.type === "library.inspect-eagle" ||
-      command.type === "library.inspect-billfish"
-    ) {
-      const expectedType = command.type === "library.inspect-eagle"
-        ? "library.eagle-inspected"
-        : "library.billfish-inspected";
-      if (workerResult.ok && workerResult.type === expectedType) retainExternalSource = true;
-      else await cleanupExternalSource(command.sourceRootPath);
-    }
+    const externalSource = await applyExternalLibrarySourceCleanup(command, workerResult, {
+      cleanupExternalSource,
+    });
+    retainExternalSource = externalSource.retainExternalSource;
 
-    // Native file drag must be requested during renderer dragstart.
-    // Preheat every card-bearing result before it reaches Renderer; a later
-    // Worker round trip would miss Electron's native drag window. Upserting
-    // instead of replacing avoids an auxiliary count query evicting the cards
-    // visible in a concurrent search request.
-    //
-    // Serpent-v4jf: only the visible first screen (the sorted list head, i.e.
-    // what the user actually sees and can drag immediately) blocks the
-    // response. The rest primes in fire-and-forget chunks so a 50k browse
-    // result no longer stalls the renderer behind a full-cache worker burst.
-    const nativeDragAssets = nativeDragAssetsForResult(workerResult);
-    // Conflict resolution requests intentionally carry only importId; the
-    // library context is retained from the earlier conflicts response until
-    // the completion branch below consumes it.
-    const nativeDragLibraryId =
-      "libraryId" in request && typeof request.libraryId === "string"
-        ? request.libraryId
-        : (request.type === "asset.import.resolve" ||
-          request.type === "asset.import.skip-source-failure")
-          ? pendingImportLibraries.get(request.importId)
-          : undefined;
-    if (
-      nativeDragAssets.length > 0 &&
-      nativeDragLibraryId
-    ) {
-      const dragAssetIds = nativeDragAssets.flatMap((asset) =>
-        asset.sequence?.frames.map((frame) => frame.assetId) ?? [asset.assetId],
-      );
-      // Serpent-8ee170（第三轮纠偏）: the browse result must reach the Renderer
-      // without waiting for any drag-cache work. `media.get-asset-drag-infos`
-      // shares the background-primary lane with reconciliation, so awaiting it
-      // here held a 1.206 s browse response behind a ~68 s maintenance owner —
-      // the measured cause of "the command is fast but the content does not
-      // change for a minute". The visible first screen still warms in the
-      // background (bounded by NATIVE_DRAG_PRIME_VISIBLE_COUNT); the rest of a
-      // large result is no longer primed at all — a card resolves on demand
-      // when a drag actually starts.
-      void nativeAssetDragPrimer.primeImmediately(
-        nativeDragLibraryId,
-        dragAssetIds.slice(0, NATIVE_DRAG_PRIME_VISIBLE_COUNT),
-        "upsert",
-      );
-    }
+    maybePrimeNativeDrag(request, workerResult, {
+      pendingImportLibraries,
+      primeImmediately: (libraryId, assetIds, mode) => {
+        void nativeAssetDragPrimer.primeImmediately(libraryId, assetIds, mode);
+      },
+    });
 
     if (!workerResult.ok && relinkPreviewContext) {
       pendingRelinkPreviews.cancel(
@@ -3282,18 +3226,7 @@ async function handleLibraryRequest(
     });
     if (recoveryReport) return recoveryReport;
 
-    // A Billfish archive has no stable library root name after extraction:
-    // the worker sees a temporary `serpent-external-library-*` directory.
-    // Keep the archive stem as the user-facing default all the way through
-    // the Main→Renderer boundary, even if an older worker response falls
-    // back to that temporary directory name.
-    const rendererWorkerResult =
-      workerResult.ok &&
-      workerResult.type === "library.billfish-inspected" &&
-      command.type === "library.inspect-billfish" &&
-      command.sourceDisplayName
-        ? { ...workerResult, displayName: command.sourceDisplayName }
-        : workerResult;
+    const rendererWorkerResult = mapBillfishInspectedDisplayName(command, workerResult);
     const result = toRendererResult(
       rendererWorkerResult,
       relinkPreviewContext?.previewId,
@@ -3309,61 +3242,18 @@ async function handleLibraryRequest(
         resultType: result.ok ? result.type : undefined,
       });
     }
-    if (!result.ok) {
-      if (operation) {
-        publishLifecycle({
-          type: "library.open-failed",
-          operation,
-          error: result.error,
-        });
-        // Serpent-s0oq: an invalid recent library (folder gone, corrupt, or
-        // unmigratable) must disappear from every recent list — the switcher
-        // menu and the no-library create dialog share the same store. Only
-        // deterministic invalid-open codes remove the entry; transient
-        // failures (picker cancel, busy) and same-catalog identity prompts
-        // (LIBRARY_ALREADY_OPEN) keep it.
-        if (
-          operation === "open" &&
-          command.type === "library.open" &&
-          (result.error?.code === "LIBRARY_NOT_FOUND" ||
-            result.error?.code === "LIBRARY_CORRUPT" ||
-            result.error?.code === "LIBRARY_MIGRATION_FAILED" ||
-            result.error?.code === "LIBRARY_VERSION_TOO_NEW")
-        ) {
-          removeRecentLibrary(
-            recentLibraryPath(),
-            (command as { selectedLibraryPath: string }).selectedLibraryPath,
-            (error) => {
-              logger?.error("recent-library.remove-invalid", error);
-            },
-          );
-        }
-      }
-      return result;
-    }
-    if (result.type === "library.opened") {
-      unblockLibraryMediaReads(result.library.libraryId);
-      publishLifecycle({ type: "library.opened", library: result.library });
-    } else if (workerResult.ok && workerResult.type === "library.imported") {
-      unblockLibraryMediaReads(workerResult.libraryId);
-      publishLifecycle({
-        type: "library.opened",
-        library: {
-          libraryId: workerResult.libraryId,
-          displayName: workerResult.displayName,
-          displayPath: workerResult.libraryPath,
-        },
-      });
-    } else if (result.type === "library.closed") {
-      clearNativeAssetDragCache(result.libraryId);
-      clearActiveRecentLibrary(recentLibraryPath(), (error) => {
-        logger?.error("recent-library.clear", error);
-      });
-      publishLifecycle({ type: "library.closed", libraryId: result.libraryId });
-    } else if (result.type === "library.deleted") {
-      clearNativeAssetDragCache(result.libraryId);
-      publishLifecycle({ type: "library.closed", libraryId: result.libraryId });
-    }
+    applyLibraryRendererLifecycle(command, result, workerResult, operation, {
+      removeRecentLibrary,
+      recentLibraryPath,
+      logError: (scope, error) => {
+        logger?.error(scope, error);
+      },
+      unblockLibraryMediaReads,
+      publishLifecycle,
+      clearNativeAssetDragCache,
+      clearActiveRecentLibrary,
+    });
+    if (!result.ok) return result;
     logNavigationStage("main-return", {
       mainToIpcReturnMs: navigationTrace?.workerReturnedAt === undefined
         ? undefined

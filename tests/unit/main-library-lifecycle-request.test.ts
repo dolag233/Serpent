@@ -1,7 +1,11 @@
 import { expect, test, vi } from "vitest";
 
+import { createPublicError } from "../../src/shared/protocol/errors";
 import {
+  applyExternalLibrarySourceCleanup,
+  applyLibraryRendererLifecycle,
   applyLibraryWorkerSideEffects,
+  mapBillfishInspectedDisplayName,
   prepareLibraryLifecycle,
   tryHandleRecoveryReport,
 } from "../../src/main/library-request/lifecycle";
@@ -86,4 +90,65 @@ test("recovery-report reveals the Main-owned report path", () => {
     libraryId: "lib-1",
   });
   expect(showItemInFolder).toHaveBeenCalledWith("C:\\libraries\\recovery.txt");
+});
+
+test("eagle inspect success retains the external source", async () => {
+  const cleanupExternalSource = vi.fn(async () => undefined);
+  await expect(applyExternalLibrarySourceCleanup(
+    {
+      type: "library.inspect-eagle",
+      sourceRootPath: "C:\\libraries\\eagle-source",
+    },
+    { ok: true, type: "library.eagle-inspected", displayName: "Eagle" },
+    { cleanupExternalSource },
+  )).resolves.toEqual({ retainExternalSource: true });
+  expect(cleanupExternalSource).not.toHaveBeenCalled();
+});
+
+test("billfish inspect keeps the archive stem as the display name", () => {
+  expect(mapBillfishInspectedDisplayName(
+    {
+      type: "library.inspect-billfish",
+      sourceRootPath: "C:\\libraries\\archive.zip",
+      sourceDisplayName: "Archive",
+    },
+    { ok: true, type: "library.billfish-inspected", displayName: "serpent-external-library-temp" },
+  )).toEqual({
+    ok: true,
+    type: "library.billfish-inspected",
+    displayName: "Archive",
+  });
+});
+
+test("invalid recent opens drop the path from every recent list", () => {
+  const removeRecentLibrary = vi.fn();
+  const publishLifecycle = vi.fn();
+  applyLibraryRendererLifecycle(
+    {
+      type: "library.open",
+      selectedLibraryPath: "C:\\libraries\\gone",
+    },
+    { ok: false, error: createPublicError("LIBRARY_NOT_FOUND") },
+    { ok: false, error: { code: "LIBRARY_NOT_FOUND", message: "unused" } },
+    "open",
+    {
+      removeRecentLibrary,
+      recentLibraryPath: () => "recent.json",
+      logError: vi.fn(),
+      unblockLibraryMediaReads: vi.fn(),
+      publishLifecycle,
+      clearNativeAssetDragCache: vi.fn(),
+      clearActiveRecentLibrary: vi.fn(),
+    },
+  );
+  expect(publishLifecycle).toHaveBeenCalledWith({
+    type: "library.open-failed",
+    operation: "open",
+    error: createPublicError("LIBRARY_NOT_FOUND"),
+  });
+  expect(removeRecentLibrary).toHaveBeenCalledWith(
+    "recent.json",
+    "C:\\libraries\\gone",
+    expect.any(Function),
+  );
 });
