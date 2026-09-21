@@ -57,6 +57,7 @@ import {
   type NativeDialogHost,
 } from "./native-dialogs";
 import { executeLibraryMainCommand } from "./commands/library";
+import { tryHandleLibraryOwnedRequest } from "./library-request/library";
 import { executeFolderMainCommand } from "./commands/folders";
 import { executeAssetIngestionMainCommand } from "./commands/asset-ingestion";
 import { executeLinkedFolderMainCommand } from "./commands/linked-folders";
@@ -2821,26 +2822,26 @@ async function handleLibraryRequest(
       });
     }
 
-    if (request.type === "library.open-cancel.request") {
-      if (activeLibraryOpenCancellation) {
-        activeLibraryOpenCancellation.cancelled = true;
-        logger?.info("library.open.cancel-requested", "Library opening cancellation requested.");
-      }
-      return {
-        ok: true,
-        type: "library.open-cancelled",
-      } satisfies RendererResult;
-    }
-    if (request.type === "library.choose-path.request") {
-      // Dialog only. The renderer starts its loading UI/timer only after this
-      // resolves, so the progress overlay never covers the native picker.
-      const chosenPath = await selectDirectory("openLibrary");
-      return {
-        ok: true,
-        type: "library.choose-path",
-        path: chosenPath ?? null,
-      } satisfies RendererResult;
-    }
+    const libraryOwnedResult = await tryHandleLibraryOwnedRequest(request, {
+      getActiveLibraryOpenCancellation: () => activeLibraryOpenCancellation,
+      logInfo: (scope, message) => {
+        logger?.info(scope, message);
+      },
+      logError: (scope, error) => {
+        logger?.error(scope, error);
+      },
+      selectDirectory,
+      recentLibraryPath,
+      readRecentLibraryEntries,
+      removeRecentLibrary,
+      refreshApplicationMenuRecentLibraries,
+      cleanupExternalSource,
+      getPendingEagleOpenSourcePath: () => pendingEagleOpenSourcePath,
+      setPendingEagleOpenSourcePath: (value) => { pendingEagleOpenSourcePath = value; },
+      getPendingBillfishOpenSourcePath: () => pendingBillfishOpenSourcePath,
+      setPendingBillfishOpenSourcePath: (value) => { pendingBillfishOpenSourcePath = value; },
+    });
+    if (libraryOwnedResult) return libraryOwnedResult;
     openCancellation = isLibraryOpenRequest(request)
       ? { cancelled: false }
       : undefined;
@@ -2886,53 +2887,6 @@ async function handleLibraryRequest(
       return {
         ok: false,
         error: createPublicError(request.failure),
-      } satisfies RendererResult;
-    }
-
-    // The recent libraries store is Main-owned; listing never touches the Worker.
-    if (request.type === "library.list-recent.request") {
-      return {
-        ok: true,
-        type: "library.recent-list",
-        libraries: readRecentLibraryEntries(recentLibraryPath(), (error) => {
-          logger?.error("recent-library.read", error);
-        }),
-      } satisfies RendererResult;
-    }
-
-    if (request.type === "library.forget-recent.request") {
-      if (!path.isAbsolute(request.libraryPath)) {
-        return {
-          ok: false,
-          error: createPublicError("LIBRARY_NOT_FOUND"),
-        } satisfies RendererResult;
-      }
-      removeRecentLibrary(recentLibraryPath(), request.libraryPath, (error) => {
-        logger?.error("recent-library.forget", error);
-      });
-      refreshApplicationMenuRecentLibraries();
-      return {
-        ok: true,
-        type: "library.forgotten",
-        libraryPath: request.libraryPath,
-      } satisfies RendererResult;
-    }
-
-    if (request.type === "library.inspect-eagle.cancel.request") {
-      await cleanupExternalSource(pendingEagleOpenSourcePath);
-      pendingEagleOpenSourcePath = undefined;
-      return {
-        ok: true,
-        type: "library.eagle-inspect-cancelled",
-      } satisfies RendererResult;
-    }
-
-    if (request.type === "library.inspect-billfish.cancel.request") {
-      await cleanupExternalSource(pendingBillfishOpenSourcePath);
-      pendingBillfishOpenSourcePath = undefined;
-      return {
-        ok: true,
-        type: "library.billfish-inspect-cancelled",
       } satisfies RendererResult;
     }
 
