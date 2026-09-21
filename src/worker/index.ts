@@ -118,6 +118,7 @@ import { executeFolderWorkerCommand } from './handlers/folders';
 import { executeLinkedFolderWorkerCommand } from './handlers/linked-folders';
 import { executeAssetIngestionWorkerCommand } from './handlers/asset-ingestion';
 import { executeIgnoreWorkerCommand } from './handlers/ignore';
+import { executeTagWorkerCommand } from './handlers/tags';
 import { executeLibraryLifecycleWorkerCommand } from './handlers/library-lifecycle';
 import { executeSyncWorkerCommand } from './handlers/sync';
 import { LibraryGenerationRegistry } from './library-generation';
@@ -2679,46 +2680,20 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       return result;
     }
     case 'tag.list':
-      return {
-        ok: true,
-        type: 'tag.list',
-        tags: libraryService.listTags(request.command.libraryId),
-      };
     case 'tag.create':
-      throw new Error('Bounded tag.create write was not dispatched through its transaction fence.');
-    case 'tag.rename': {
-      const tag = libraryService.renameTag(request.command);
-      return { ok: true, type: 'tag.renamed', tag };
-    }
+    case 'tag.rename':
     case 'tag.delete':
-      return {
-        ok: true,
-        type: 'tag.deleted',
-        tagId: libraryService.deleteTag(request.command),
-      };
-    case 'tag.delete-many': {
-      const { deletedTagIds } = libraryService.deleteTags(request.command);
-      return { ok: true, type: 'tag.deleted-many', deletedTagIds };
-    }
-    case 'tag.merge': {
-      const tag = libraryService.mergeTags(request.command);
-      return {
-        ok: true,
-        type: 'tag.merged',
-        tag,
-        mergedTagIds: request.command.sourceTagIds,
-      };
-    }
+    case 'tag.delete-many':
+    case 'tag.merge':
     case 'tag.cooccurrence':
-      return {
-        ok: true,
-        type: 'tag.cooccurrence',
-        graph: libraryService.getTagCooccurrenceGraph(request.command),
-      };
     case 'tag.assign':
-      throw new Error('Bounded tag.assign write was not dispatched through its transaction fence.');
-    case 'tag.remove':
-      throw new Error('Bounded tag.remove write was not dispatched through its transaction fence.');
+    case 'tag.remove': {
+      const result = executeTagWorkerCommand(libraryService, request);
+      if (result === undefined) {
+        throw new Error(`Unhandled tag command: ${request.command.type}`);
+      }
+      return result;
+    }
     case 'collection.list':
       return {
         ok: true,
