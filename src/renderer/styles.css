@@ -1657,6 +1657,74 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   right: 29px;
 }
 
+.search-history-popover {
+  right: 0;
+  width: max(100%, 280px);
+  gap: 8px;
+  padding: 10px;
+}
+
+.search-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.search-history-header span {
+  color: var(--text);
+  font-size: calc(13px * var(--ui-font-scale));
+  font-weight: var(--ui-font-weight-medium);
+}
+
+.search-history-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 6px;
+  max-height: calc(4 * var(--shell-chip-height) + 18px);
+  overflow: hidden;
+}
+
+.search-history-item {
+  display: inline-flex;
+  max-width: 100%;
+  height: var(--shell-chip-height);
+  align-items: center;
+  overflow: hidden;
+  padding: 0 8px;
+  border: 1px solid var(--divider-soft);
+  border-radius: 4px;
+  background: var(--raised-2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: calc(12px * var(--ui-font-scale));
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-history-item.is-highlighted,
+.search-history-item:hover {
+  border-color: var(--divider);
+  background: color-mix(in srgb, var(--text) 6%, var(--raised-2));
+}
+
+.search-history-clear {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+  font-size: calc(12px * var(--ui-font-scale));
+}
+
+.search-history-clear:hover {
+  color: var(--text);
+}
+
 .search-syntax-help:hover {
   border-color: color-mix(in srgb, var(--divider) 78%, transparent);
   background: color-mix(in srgb, var(--raised-2) 74%, transparent);
@@ -10426,7 +10494,7 @@ select.ai-config-input.ai-config-languages {
   box-sizing: border-box;
   height: var(--justified-caption-band, auto);
   min-height: 0;
-  padding-top: calc(4px * var(--ui-font-scale));
+  padding-top: calc(8px * var(--ui-font-scale));
   overflow: hidden;
 }
 
@@ -11452,9 +11520,9 @@ select.ai-config-input.ai-config-languages {
      breathing room equal instead of leaving all rounding at the bottom. */
   justify-content: center;
   gap: calc(3px * var(--ui-font-scale));
-  padding: calc(4px * var(--ui-font-scale))
+  padding: calc(8px * var(--ui-font-scale))
     calc(8px * var(--ui-font-scale))
-    calc(4px * var(--ui-font-scale));
+    calc(8px * var(--ui-font-scale));
   /* Keep filename/meta above any preview overflow on tall portraits. */
   background: transparent;
 }

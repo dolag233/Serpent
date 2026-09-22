@@ -9,9 +9,9 @@
  * Values mirror `.justified-card-slot .asset-caption` in styles.css.
  */
 
-/** Padding-top override on justified captions (base caption uses the same 4px). */
-export const JUSTIFIED_CAPTION_PAD_TOP_PX = 4;
-export const JUSTIFIED_CAPTION_PAD_BOTTOM_PX = 4;
+/** Padding on justified captions (base `.asset-caption` uses the same 8px). */
+export const JUSTIFIED_CAPTION_PAD_TOP_PX = 8;
+export const JUSTIFIED_CAPTION_PAD_BOTTOM_PX = 8;
 export const JUSTIFIED_CAPTION_GAP_PX = 3;
 
 /** `.asset-dimensions`: 11px / line-height 1.2 */

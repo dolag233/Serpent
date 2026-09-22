@@ -106,6 +106,10 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
           : 'command.folder.revealInExplorer',
       ),
     group: 'open',
+    shortcut: {
+      mac: { label: '⌘⇧S', key: 's', metaKey: true, shiftKey: true },
+      windows: { label: 'Ctrl+Shift+S', key: 's', ctrlKey: true, shiftKey: true },
+    },
     visible: (ctx) => ctx.menuKind === 'folder',
     disabledReason: offlineReason,
     run: (ctx) => ctx.actions.openFolderInFileManager(revealFolderId(ctx)),

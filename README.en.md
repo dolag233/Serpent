@@ -22,6 +22,7 @@ Import, browse, search, tag, collect, preview 3D models (FBX/OBJ/GLB and more), 
 
 + **Massive asset support.** Most video, image, and audio formats, plus 3D models and text assets.
 + **Asset management.** Tags, ratings, descriptions, fast filtering and search, and collections.
++ **Workspace tabs.** Keep several folders, collections, or searches open at once, each with its own place, query, and selection.
 + **Plugin system.** Extend Serpent with plugins.
 + **Scripting & MCP.** Control Serpent with scripts, and let agents connect and automate through MCP.
 + **AI analysis.** Built-in AI module analyzes images, videos, and 3D assets.

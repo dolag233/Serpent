@@ -63,6 +63,15 @@ import { TagManagementWorkspace } from "./TagManagementWorkspace";
 import { useFolderDeleteActions } from "./use-folder-delete-actions";
 import { useFolderOrganizeActions } from "./use-folder-organize-actions";
 import { useFolderCommandShortcuts } from "./use-folder-command-shortcuts";
+import { SearchHistoryPopover } from "./SearchHistoryPopover";
+import {
+  clearSearchHistory,
+  filterSearchHistory,
+  moveSearchHistoryIndex,
+  readSearchHistory,
+  readVisibleSearchHistoryCount,
+  rememberSearchQuery,
+} from "./search-history";
 import { useWindowsBrowseShortcutBridge } from "./use-windows-browse-shortcut-bridge";
 import { useCollectionCommandShortcuts } from "./use-collection-command-shortcuts";
 import { ExportDialog } from "./ExportDialog";
@@ -1246,6 +1255,23 @@ function AppInner() {
   >(null);
   const [searchValue, setSearchValue] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const [storedSearchHistory, setStoredSearchHistory] = useState<{
+    libraryId: string;
+    queries: string[];
+  } | null>(null);
+  const [searchHistoryOpen, setSearchHistoryOpen] = useState(false);
+  const [searchHistoryActiveIndex, setSearchHistoryActiveIndex] = useState(-1);
+  const searchHistoryLibraryId = library?.libraryId ?? null;
+  const searchHistory =
+    searchHistoryLibraryId === null
+      ? []
+      : storedSearchHistory?.libraryId === searchHistoryLibraryId
+        ? storedSearchHistory.queries
+        : readSearchHistory(window.localStorage, searchHistoryLibraryId);
+  function publishSearchHistory(queries: string[]) {
+    if (!searchHistoryLibraryId) return;
+    setStoredSearchHistory({ libraryId: searchHistoryLibraryId, queries });
+  }
   const [formatFilter, setFormatFilter] = useState("");
   const [excludeFormatFilter, setExcludeFormatFilter] = useState(false);
   const [colorFilter, setColorFilter] = useState("");
@@ -8165,6 +8191,17 @@ function AppInner() {
       linkedFolders.some(
         (folder) => folder.folderId === folderId && folder.status === "available",
       ),
+    canOpenFolder: (folderId) => {
+      if (folders.some((folder) => folder.folderId === folderId)) return true;
+      const virtual = parseLinkedVirtualFolderId(folderId);
+      const rootId = virtual?.linkedFolderId ?? folderId;
+      return linkedFolders.some(
+        (folder) => folder.folderId === rootId && folder.status === "available",
+      );
+    },
+    openFolderInFileManager: (folderId) => {
+      void handleOpenFolderInFileManager(folderId);
+    },
     createSubfolder: (parentFolderId) => {
       cancelInlineSmartCollectionEdit();
       openInlineFolderCreate(parentFolderId);
@@ -8419,6 +8456,12 @@ function AppInner() {
       return;
     const timer = window.setTimeout(() => {
       if (previewAssetRef.current || previewRestoringRef.current) return;
+      const query = searchValue.trim();
+      if (query) {
+        publishSearchHistory(
+          rememberSearchQuery(window.localStorage, library.libraryId, query),
+        );
+      }
       void runSearch(undefined, { silent: true });
     }, 200);
     return () => window.clearTimeout(timer);
@@ -12816,15 +12859,99 @@ function AppInner() {
             >
               <Icon name="search" size={15} />
               <input
+                aria-activedescendant={
+                  searchHistoryOpen && searchHistoryActiveIndex >= 0
+                    ? `search-history-${searchHistoryActiveIndex}`
+                    : undefined
+                }
+                aria-autocomplete="list"
+                aria-controls={searchHistoryOpen ? "search-history-list" : undefined}
+                aria-expanded={
+                  searchHistoryOpen &&
+                  filterSearchHistory(searchHistory, searchValue).length > 0
+                }
                 aria-label={t("toolbar.searchLibrary")}
                 className="search-control"
                 disabled={!library}
-                onChange={(event) => setSearchValue(event.target.value)}
+                onBlur={() => {
+                  setSearchHistoryOpen(false);
+                  setSearchHistoryActiveIndex(-1);
+                }}
+                onChange={(event) => {
+                  setSearchValue(event.target.value);
+                  setSearchHistoryActiveIndex(-1);
+                  setSearchHistoryOpen(true);
+                }}
+                onFocus={() => {
+                  setSearchHistoryActiveIndex(-1);
+                  setSearchHistoryOpen(true);
+                }}
+                onKeyDown={(event) => {
+                  const matches = filterSearchHistory(searchHistory, searchValue);
+                  const visibleCount = Math.min(
+                    matches.length,
+                    readVisibleSearchHistoryCount() ?? matches.length,
+                  );
+                  if (!searchHistoryOpen || visibleCount === 0) return;
+                  if (
+                    event.key === "ArrowDown" ||
+                    event.key === "ArrowUp" ||
+                    event.key === "ArrowRight" ||
+                    event.key === "ArrowLeft"
+                  ) {
+                    event.preventDefault();
+                    const direction =
+                      event.key === "ArrowDown" || event.key === "ArrowRight"
+                        ? "next"
+                        : "previous";
+                    setSearchHistoryActiveIndex((current) =>
+                      moveSearchHistoryIndex(current, visibleCount, direction),
+                    );
+                    return;
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setSearchHistoryOpen(false);
+                    setSearchHistoryActiveIndex(-1);
+                    return;
+                  }
+                  if (event.key === "Enter" && searchHistoryActiveIndex >= 0) {
+                    const query = matches[searchHistoryActiveIndex];
+                    if (!query) return;
+                    event.preventDefault();
+                    setSearchValue(query);
+                    setSearchHistoryOpen(false);
+                    setSearchHistoryActiveIndex(-1);
+                  }
+                }}
                 placeholder={t("toolbar.searchPlaceholder")}
                 ref={searchInputRef}
+                role="combobox"
                 type="search"
                 value={searchValue}
               />
+              {searchHistoryOpen && library && (
+                <SearchHistoryPopover
+                  activeIndex={searchHistoryActiveIndex}
+                  items={filterSearchHistory(searchHistory, searchValue)}
+                  onClear={() => {
+                    clearSearchHistory(window.localStorage, library.libraryId);
+                    publishSearchHistory([]);
+                    setSearchHistoryActiveIndex(-1);
+                    setSearchHistoryOpen(false);
+                  }}
+                  onHighlight={setSearchHistoryActiveIndex}
+                  onPick={(query) => {
+                    setSearchValue(query);
+                    setSearchHistoryOpen(false);
+                    setSearchHistoryActiveIndex(-1);
+                    publishSearchHistory(
+                      rememberSearchQuery(window.localStorage, library.libraryId, query),
+                    );
+                  }}
+                />
+              )}
               <button
                 aria-label={t("toolbar.searchSyntax")}
                 className="search-syntax-help"

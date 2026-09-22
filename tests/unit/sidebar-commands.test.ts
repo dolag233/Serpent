@@ -354,6 +354,10 @@ describe('文件夹分支：平台条件标题', () => {
       findItem(registry.resolveMenu(mac.ctx), 'folder.open-in-file-manager')
         .label,
     ).toBe('在 Finder 中打开');
+    expect(
+      findItem(registry.resolveMenu(mac.ctx), 'folder.open-in-file-manager')
+        .shortcutLabel,
+    ).toBe('⌘⇧S');
     const windows = makeCtx({ platform: 'windows' });
     expect(
       findItem(

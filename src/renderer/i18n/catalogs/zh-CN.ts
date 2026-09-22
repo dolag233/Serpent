@@ -281,6 +281,8 @@ export const zhCN = {
     searchSyntaxHint: "高级用法：\n- 使用**空格**表示同时满足，使用**|**表示任一分支满足\n- 在词语前加**-**表示排除；用双引号保留短语中的空格和 |\n- 字段限定：name/filename、tag/tags、desc/description、source/url/link/source_url、author、path/folder/folder_path、meta/metadata/metadata_text\n- 示例：name:\"hero concept\" -tag:草图 | author:Jane",
     searchHint: "示例：name:\"hero concept\" -tag:草图 | author:Jane",
     clearSearch: "清除搜索",
+    recentSearches: "搜索历史",
+    clearSearchHistory: "清空",
     searchingFor: "正在搜索：{query}",
     importFiles: "导入文件",
     importFolder: "导入文件夹",

@@ -44,6 +44,15 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-09-22 链接文件夹拖放、卡片留白、文件夹快捷键与搜索历史
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| DND-LINKED-001 | 把资源库根目录的资产拖到左侧链接文件夹 | 人类验收通过 | ① 完全退出后再打开含这次改动的构建。② 打开同时有根目录资产和链接文件夹的资源库，停在根目录。③ 把一张根目录资产拖到左侧链接文件夹上松开。④ 按住 Alt 再拖一次另一张。 | 普通拖放后资产出现在链接文件夹里，根目录不再有这一张。按住 Alt 拖放会复制过去，根目录仍保留原文件。不应再提示「没有可放入当前文件夹的资产」。 | `NavigationSidebar.tsx` / `asset-drag-drop.ts` / `tests/unit/asset-drag-drop.test.ts` | 2026-09-22 用户本人验收通过（用户原话「DND-LINKED-001通过」）。 |
+| CARD-PAD-001 | 资产卡片文字区上下留白加大一半 | 人类验收通过 | ① 打开含图片的文件夹，分别看平铺和瀑布流。② 对照文件名上下到预览图、到卡片底边的空隙。 | 文件名上下空隙比 6px 那一版再多一点，文字仍完整可见，不与预览图贴死，也不被裁切。 | `styles.css` / `asset-caption-band.ts` / `justified-caption-band.ts` / `tests/unit/asset-caption-band.test.ts` / `tests/unit/justified-caption-band.test.ts` | 2026-09-23 用户本人验收通过（用户原话「搜索记录和CARD-PAD-001通过」）。上下 padding 为 8px，平铺/瀑布流预留高度为 30/45/62。 |
+| FOLDER-REVEAL-001 | Ctrl+Shift+S 在资源管理器中打开文件夹 | 人类验收通过 | ① 在 Windows 上打开一个文件夹，不要选中资产，按 Ctrl+Shift+S。② 在左侧点中一个链接文件夹后再按。③ 选中一张资产后再按。④ 看文件夹右键菜单。 | ①② 在资源管理器中打开对应文件夹。③ 仍是显示该资产所在位置，而不是打开整个文件夹。菜单里「在文件浏览器中显示」旁有 Ctrl+Shift+S。macOS 对应为 ⌘⇧S。 | `sidebar-commands.ts` / `folder-shortcut-dispatch.ts` / `tests/unit/folder-shortcut-dispatch.test.ts` / `tests/unit/sidebar-commands.test.ts` | 2026-09-22 用户本人验收通过（用户原话「FOLDER-REVEAL-001通过」）。 |
+| SEARCH-HISTORY-001 | 搜索框显示最近搜索 | 人类验收通过 | ① 连续搜索多个不同的词，每次等结果出现。② 点回搜索框。③ 看历史是横排小标签，最多四排。④ 用方向键选一条后回车。⑤ 点「清空」后再聚焦。 | 历史以紧凑标签换行排列，标题为「搜索历史」，右侧为「清空」。超过四排的更早记录不显示。选中一条后回车用它搜索。清空后列表消失。换一个资源库不显示上一个库的记录。 | `search-history.ts` / `SearchHistoryPopover.tsx` / `tests/unit/search-history.test.ts` | 2026-09-23 用户本人验收通过（用户原话「搜索记录和CARD-PAD-001通过」）。紧凑标签最多四排；底色为 `--raised-2` 加细边。 |
+
 ### 2026-09-21 文件内嵌元数据
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

@@ -229,6 +229,76 @@ describe("resolveFolderShortcutAction (Serpent-vf8x)", () => {
   });
 });
 
+describe("resolveFolderShortcutAction open in file manager", () => {
+  const base = {
+    commandId: "folder.open-in-file-manager" as const,
+    focusedNav: null,
+    browseManagedFolderId: null,
+    selectedFolderCardIds: [] as string[],
+    selectedAssetCount: 0,
+    resolveManagedFolderName: resolveName,
+  };
+
+  it("opens the focused folder", () => {
+    expect(
+      resolveFolderShortcutAction({
+        ...base,
+        focusedNav: { folderId: "linked-1", locationKind: "linked" },
+        browseManagedFolderId: "folder-a",
+      }),
+    ).toEqual({ type: "open-in-file-manager", folderId: "linked-1" });
+  });
+
+  it("opens one selected folder card", () => {
+    expect(
+      resolveFolderShortcutAction({
+        ...base,
+        selectedFolderCardIds: ["folder-b"],
+        browseManagedFolderId: "folder-a",
+      }),
+    ).toEqual({ type: "open-in-file-manager", folderId: "folder-b" });
+  });
+
+  it("opens the folder currently shown when nothing else is targeted", () => {
+    expect(
+      resolveFolderShortcutAction({
+        ...base,
+        browseManagedFolderId: "folder-a",
+      }),
+    ).toEqual({ type: "open-in-file-manager", folderId: "folder-a" });
+  });
+
+  it("leaves the chord to the selected asset", () => {
+    expect(
+      resolveFolderShortcutAction({
+        ...base,
+        focusedNav: { folderId: "folder-a", locationKind: "managed" },
+        selectedAssetCount: 1,
+      }),
+    ).toEqual({ type: "none" });
+  });
+
+  it("does not guess among several selected folders", () => {
+    expect(
+      resolveFolderShortcutAction({
+        ...base,
+        selectedFolderCardIds: ["folder-a", "folder-b"],
+        browseManagedFolderId: "folder-a",
+      }),
+    ).toEqual({ type: "none" });
+  });
+
+  it("skips a folder the opener rejects", () => {
+    expect(
+      resolveFolderShortcutAction({
+        ...base,
+        browseManagedFolderId: "linked-1",
+        canOpenFolder: () => false,
+      }),
+    ).toEqual({ type: "none" });
+  });
+});
+
 describe("readFocusedNavFolder", () => {
   it("reads data-nav-folder-* from the focused row host", () => {
     const row = {
