@@ -5173,6 +5173,8 @@ body.serpent-modal-open .app-shell {
   color: var(--text);
   font-size: calc(11px * var(--ui-font-scale));
   backdrop-filter: blur(10px);
+  /* Rate listbox is position:absolute above this bar; do not clip it. */
+  overflow: visible;
 }
 .preview-video-playpause,
 .preview-video-fit,
@@ -5251,6 +5253,12 @@ body.serpent-modal-open .app-shell {
   outline-offset: 3px;
   border-radius: 4px;
 }
+.preview-video-rate-host {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  overflow: visible;
+}
 .preview-video-rate {
   display: grid;
   flex: 0 0 auto;
@@ -5270,6 +5278,14 @@ body.serpent-modal-open .app-shell {
 .preview-video-rate:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+.ui-menu-surface.preview-video-rate-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: var(--ui-layer-menu);
+  min-width: 4.75rem;
+  width: max-content;
 }
 .preview-viewer-volume {
   display: flex;
@@ -5739,7 +5755,8 @@ body.serpent-modal-open .app-shell {
    not keep the transport bar visible after the idle timer expires. */
 .workspace-viewer.is-chrome-idle .preview-chrome-fade:hover,
 .workspace-viewer.is-chrome-idle:not(:fullscreen) .preview-chrome-fade:focus-within,
-.workspace-viewer.is-chrome-idle .preview-chrome-fade:has(.preview-viewer-volume.is-adjusting) {
+.workspace-viewer.is-chrome-idle .preview-chrome-fade:has(.preview-viewer-volume.is-adjusting),
+.workspace-viewer.is-chrome-idle .preview-chrome-fade:has(.preview-video-rate-host.is-open) {
   opacity: 1;
   pointer-events: auto;
 }
