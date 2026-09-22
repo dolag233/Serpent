@@ -104,11 +104,7 @@ function buildLibraryAtVersion(root: string, targetVersion: number): string {
 afterEach(() => {
   for (const service of services.splice(0)) service.closeAll();
   for (const root of temporaryRoots.splice(0)) {
-    try {
-      rmSync(root, { force: true, recursive: true, maxRetries: 10, retryDelay: 100 });
-    } catch {
-      // Windows can retain a watcher/SQLite handle briefly after close.
-    }
+    rmSync(root, { force: true, recursive: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 

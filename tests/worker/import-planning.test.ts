@@ -28,6 +28,7 @@ import {
   normalizeAbsolutePath as normalizeLibraryAbsolutePath,
   portablePathIdentity,
 } from '../../src/worker/library-rules';
+import { removePathWithSyncRetry } from '../../src/worker/windows-fs-retry';
 import { ONE_PX_RED_PNG } from '../fixtures/fbx/ascii-fbx';
 
 const temporaryRoots: string[] = [];
@@ -61,7 +62,7 @@ function expectServiceCode(operation: () => unknown, code: LibraryServiceError['
 }
 
 afterEach(() => {
-  for (const root of temporaryRoots.splice(0)) rmSync(root, { force: true, recursive: true });
+  for (const root of temporaryRoots.splice(0)) removePathWithSyncRetry(root);
 });
 
 describe('asset listing', () => {
@@ -675,7 +676,7 @@ describe('pending import plans', () => {
     const example = conflict.examples.find((item) => item.kind === 'name-conflict');
     expect(example?.existingDisplayName).toBe('same.png');
     expect(example?.existingThumbnailArtifactId).toBe(thumb!.artifactId);
-    service.closeAll();
+    await service.closeAllAsync();
   });
 
   it('carries a video poster in name and content conflict examples', () => {

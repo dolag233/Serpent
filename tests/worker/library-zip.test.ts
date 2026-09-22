@@ -20,6 +20,7 @@ import {
   LibraryService,
   LibraryServiceError,
 } from '../../src/worker/library-service';
+import { removePathWithSyncRetry } from '../../src/worker/windows-fs-retry';
 
 const temporaryRoots: string[] = [];
 const require = createRequire(import.meta.url);
@@ -86,10 +87,10 @@ async function expectRejectReasonAsync(
   expect((thrown as LibraryServiceError).reason).toBe(reason);
 }
 
-afterEach(() => {
-  for (const service of services.splice(0)) service.closeAll();
+afterEach(async () => {
+  for (const service of services.splice(0)) await service.closeAllAsync();
   for (const root of temporaryRoots.splice(0)) {
-    rmSync(root, { force: true, recursive: true });
+    removePathWithSyncRetry(root);
   }
 });
 
@@ -475,7 +476,7 @@ describe('LibraryService ZIP export', () => {
     expect(phases).not.toContain('complete');
     expect(existsSync(destinationPath)).toBe(false);
     expect(existsSync(siblingSentinel)).toBe(true);
-    service.closeAll();
+    await service.closeAllAsync();
   });
 });
 

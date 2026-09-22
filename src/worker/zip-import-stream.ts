@@ -517,6 +517,29 @@ async function extractFile(
   }
 }
 
+async function closeZipFile(zipFile: yauzl.ZipFile): Promise<void> {
+  if (!zipFile.isOpen) return;
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      zipFile.removeListener('close', finish);
+      zipFile.removeListener('error', finish);
+      resolve();
+    };
+    // yauzl close() only drops a ref. On Windows the source fd stays open
+    // until the slicer emits close after fs.close.
+    zipFile.once('close', finish);
+    zipFile.once('error', finish);
+    try {
+      zipFile.close();
+    } catch {
+      finish();
+    }
+  });
+}
+
 /**
  * Validate a ZIP central directory, then stream each file into an existing
  * caller-owned destination. Completed entries and directories are deliberately
@@ -617,7 +640,7 @@ export async function extractZipStream(
   } catch (error) {
     throw archiveError(error);
   } finally {
-    try { zipFile.close(); } catch { /* Preserve the primary operation result. */ }
+    await closeZipFile(zipFile);
   }
 }
 
@@ -644,6 +667,6 @@ export async function inspectZipUncompressedBytes(sourceZipPath: string): Promis
   } catch (error) {
     throw archiveError(error);
   } finally {
-    try { zipFile.close(); } catch { /* Preserve the primary operation result. */ }
+    await closeZipFile(zipFile);
   }
 }

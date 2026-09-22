@@ -67,9 +67,15 @@ describe('local extracted palette artifact', () => {
     const assetId = importAsset(service, library.libraryId, source);
 
     service.enqueueThumbnailJobs(library.libraryId);
-    // Small native images bypass the derived thumbnail lane; the remaining
-    // visual derivative is the bounded source-direct palette job.
-    expect(await service.processThumbnailQueue(library.libraryId)).toBeGreaterThanOrEqual(1);
+    // A 1×1 PNG skips the derived thumbnail. The queue still admits the
+    // source-direct palette job and the embedded metadata job, one each.
+    const processed = await service.processThumbnailQueue(library.libraryId);
+    const jobs = service.listMediaJobs(library.libraryId).jobs;
+    expect(jobs.map((job) => `${job.kind}:${job.status}`).sort()).toEqual([
+      'extract_metadata:succeeded',
+      'extract_palette:succeeded',
+    ]);
+    expect(processed).toBe(jobs.length);
 
     const artifact = service.getCurrentArtifact(library.libraryId, assetId, 'extracted_palette');
     expect(artifact).toMatchObject({ status: 'ready', mimeType: 'application/json' });

@@ -104,17 +104,28 @@ describe('asset metadata and content revisions', () => {
     expect(readFileSync(path.join(library.libraryPath, 'Assets', 'asset.png'))).toEqual(replacement);
     expect(service.listAssets({ libraryId: library.libraryId, recursive: false })[0]?.currentRevisionId)
       .toBe(result.revisionId);
-    expect(service.listMediaJobs(library.libraryId).jobs).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          assetId: importedAsset.assetId,
-          assetName: 'asset.png',
-          revisionId: result.revisionId,
-          kind: 'generate_thumbnail',
-          status: 'queued',
-        }),
-      ]),
-    );
+    expect(service.listMediaJobs(library.libraryId).jobs.map((job) => ({
+      assetId: job.assetId,
+      assetName: job.assetName,
+      revisionId: job.revisionId,
+      kind: job.kind,
+      status: job.status,
+    })).sort((left, right) => left.kind.localeCompare(right.kind))).toEqual([
+      {
+        assetId: importedAsset.assetId,
+        assetName: 'asset.png',
+        revisionId: result.revisionId,
+        kind: 'extract_metadata',
+        status: 'queued',
+      },
+      {
+        assetId: importedAsset.assetId,
+        assetName: 'asset.png',
+        revisionId: result.revisionId,
+        kind: 'generate_thumbnail',
+        status: 'queued',
+      },
+    ]);
   });
 
   it('reads bounded bytes from an available managed asset without exposing its path', () => {

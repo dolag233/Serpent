@@ -2172,13 +2172,15 @@ describe('EXR/TGA (oiiotool)', () => {
     importNoConflict(service, created.libraryId, sourcePath);
     const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
 
-    expect(service.enqueueThumbnailJobs(created.libraryId)).toBe(2);
-    expect(service.listMediaJobs(created.libraryId).jobs).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ assetId: asset.assetId, kind: 'generate_thumbnail', status: 'queued' }),
-        expect.objectContaining({ assetId: asset.assetId, kind: 'extract_metadata', status: 'queued' }),
-      ]),
-    );
+    expect(service.enqueueThumbnailJobs(created.libraryId)).toBe(1);
+    expect(service.listMediaJobs(created.libraryId).jobs.map((job) => ({
+      assetId: job.assetId,
+      kind: job.kind,
+      status: job.status,
+    })).sort((left, right) => left.kind.localeCompare(right.kind))).toEqual([
+      { assetId: asset.assetId, kind: 'extract_metadata', status: 'queued' },
+      { assetId: asset.assetId, kind: 'generate_thumbnail', status: 'queued' },
+    ]);
 
     await service.processThumbnailQueue(created.libraryId, {
       maxJobs: 1,
@@ -2259,7 +2261,15 @@ describe('EXR/TGA (oiiotool)', () => {
       metadata: { width: 8256, height: 5504 },
     });
 
-    expect(service.enqueueThumbnailJobs(created.libraryId)).toBe(2);
+    expect(service.enqueueThumbnailJobs(created.libraryId)).toBe(1);
+    expect(service.listMediaJobs(created.libraryId).jobs.map((job) => ({
+      assetId: job.assetId,
+      kind: job.kind,
+      status: job.status,
+    })).sort((left, right) => left.kind.localeCompare(right.kind))).toEqual([
+      { assetId: asset.assetId, kind: 'extract_metadata', status: 'queued' },
+      { assetId: asset.assetId, kind: 'generate_thumbnail', status: 'queued' },
+    ]);
     await service.processThumbnailQueue(created.libraryId, {
       maxJobs: 1,
       jobKinds: ['extract_metadata'],
@@ -2860,13 +2870,21 @@ describe('EXR/TGA (oiiotool)', () => {
     ).run(generated.artifactId);
     db.close();
 
-    // Common TIFF metadata is now admitted as a secondary job alongside the
-    // legacy thumbnail repair check; the thumbnail itself remains current.
+    // The current thumbnail is primary preview work and is not requeued.
+    // Palette and common TIFF metadata are still admitted as secondary jobs.
     expect(service.enqueueThumbnailJobs(created.libraryId, {
       assetIds: [asset.assetId],
       limit: 1,
       priority: 350,
-    })).toBe(1);
+    })).toBe(0);
+    expect(service.listMediaJobs(created.libraryId).jobs.map((job) => ({
+      assetId: job.assetId,
+      kind: job.kind,
+      status: job.status,
+    })).sort((left, right) => left.kind.localeCompare(right.kind))).toEqual([
+      { assetId: asset.assetId, kind: 'extract_metadata', status: 'queued' },
+      { assetId: asset.assetId, kind: 'extract_palette', status: 'queued' },
+    ]);
     service.closeAll();
   });
 

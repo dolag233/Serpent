@@ -7218,9 +7218,11 @@ export class LibraryService {
             modified_at: string | null;
           } | undefined;
 
-        let stat: Awaited<ReturnType<typeof lstatAsync>>;
+        let stat: Stats | BigIntStats;
         try {
-          stat = await lstatAsync(absolutePath);
+          // Match import enumeration: Windows file indexes do not fit in a
+          // Number, and a rounded inode cannot recognize a same-volume move.
+          stat = await lstatAsync(absolutePath, { bigint: true });
         } catch (error) {
           if (!isMissingPathError(error)) return null;
           if (existing) missingAssetIds.push(existing.asset_id);
@@ -30851,6 +30853,12 @@ export class LibraryService {
    * terminal artifact. Callers may pass the currently visible asset ids and a
    * limit so opening a large library never materializes or queues the whole
    * catalogue at once.
+   *
+   * The returned count is primary preview admissions only
+   * (`generate_thumbnail` and the poster/repair rows folded into that lane).
+   * Secondary metadata and palette jobs may be queued in the same call and
+   * are omitted from the count. The Worker uses the count to decide whether
+   * the primary preview pump should continue.
    */
   enqueueThumbnailJobs(
     libraryId: string,
@@ -31359,8 +31367,9 @@ export class LibraryService {
     // RAW card generation is deliberately independent from the EXIF/IPTC/XMP
     // parser. Keep the metadata admission bounded and lower priority so the
     // embedded-JPEG/OIIO card path is the first useful result after open.
-    // Do not fold these secondary admissions into the thumbnail enqueue
-    // count — callers and tests treat that number as generate_thumbnail rows.
+    // Do not add these secondary admissions to the returned count. Callers
+    // treat that number as primary preview work and use it to keep the
+    // thumbnail pump running.
     this.enqueueRawImageMetadataJobs(openLibrary, {
       ...(options.assetIds === undefined ? {} : { assetIds: selectedIds }),
       ...(limit === undefined ? {} : { limit }),
@@ -40843,13 +40852,15 @@ export class LibraryService {
     openLibrary.connection.transaction(() => {
       for (const relativePath of writtenRelativePaths) {
         const absolute = path.join(absoluteRootPath, ...relativePath.split('/'));
-        let stat: Stats;
+        let stat: Stats | BigIntStats;
         try {
-          stat = lstatSync(absolute);
+          stat = lstatSync(absolute, { bigint: true });
         } catch {
           continue; // 文件已消失，留给后续 reconciliation 处理
         }
         if (!stat.isFile() || stat.isSymbolicLink()) continue;
+        const byteSize = Number(stat.size);
+        if (!Number.isSafeInteger(byteSize)) continue;
         const assetId = randomUUID();
         const revisionId = randomUUID();
         const pathIdentity = portablePathIdentity(relativePath);
@@ -40866,7 +40877,7 @@ export class LibraryService {
         insertRevision.run(
           revisionId,
           assetId,
-          stat.size,
+          byteSize,
           stat.mtime.toISOString(),
           path.posix.basename(relativePath),
           now,
@@ -44236,14 +44247,15 @@ export class LibraryService {
               pendingDirectories.push({ absolutePath, relativePath });
             }
           } else if (child.isFile()) {
-            let stat: Awaited<ReturnType<typeof lstatAsync>>;
+            let stat: Stats | BigIntStats;
             try {
               // Keep the existing synchronous stat seam for deterministic tests;
               // production uses the promise API so a slow volume cannot block the
-              // Worker event loop during open reconciliation.
+              // Worker event loop during open reconciliation. bigint matches
+              // enumerateLinkedSources so a same-volume move keeps one asset.
               stat = this.options.assetLstat
                 ? this.options.assetLstat(absolutePath)
-                : await lstatAsync(absolutePath);
+                : await lstatAsync(absolutePath, { bigint: true });
             } catch (error) {
               if (isUnreadablePathError(error)) continue;
               throw new LibraryServiceError(input.errorCode, { cause: error });
@@ -44260,7 +44272,7 @@ export class LibraryService {
                   && isDefaultIgnoredAssetEntry(child.name, 'file'))
                 && !input.explicitlyIgnored(normalized, 'asset')
               ) {
-                const byteSize = stat.size;
+                const byteSize = Number(stat.size);
                 if (!Number.isSafeInteger(byteSize)) {
                   throw new LibraryServiceError(input.errorCode, {
                     reason: 'UNSUPPORTED_FILE_ENTRY',
@@ -47757,6 +47769,23 @@ export class LibraryService {
     let tempDbPath: string | undefined;
     let tempDirOwned = false;
     let destinationOwned = false;
+    let zipArchive: { abort(): void } | undefined;
+    let zipOutput: ReturnType<typeof createWriteStream> | undefined;
+    const releaseZipStreams = async (): Promise<void> => {
+      const archive = zipArchive;
+      const output = zipOutput;
+      zipArchive = undefined;
+      zipOutput = undefined;
+      if (!archive || !output) return;
+      const outputClosed = waitForStreamClose(output);
+      try {
+        archive.abort();
+      } catch {
+        // Finalize cancellation may already have aborted the archive.
+      }
+      output.destroy();
+      await outputClosed;
+    };
 
     function countFilesRecursive(dirPath: string): number {
       let count = 0;
@@ -47974,6 +48003,8 @@ export class LibraryService {
 
       const output = createWriteStream(destZipPath);
       const archive = new archiverModule.ZipArchive({ zlib: { level: 6 }, forceZip64: false });
+      zipOutput = output;
+      zipArchive = archive;
 
       let archiverError: Error | undefined;
       archive.on('error', (err: Error) => {
@@ -48027,6 +48058,8 @@ export class LibraryService {
         archive.abort();
         output.destroy();
         await outputClosed;
+        zipArchive = undefined;
+        zipOutput = undefined;
         // Remove the temp db and temp dir.
         this.removeOwnedTransferPath('export.zip.cancel.cleanup-temp', tempDir, true);
         tempDirOwned = false;
@@ -48074,6 +48107,8 @@ export class LibraryService {
         });
         void archive.finalize();
       });
+      zipArchive = undefined;
+      zipOutput = undefined;
 
       // Clean up temp dir.
       this.removeOwnedTransferPath('export.zip.complete.cleanup-temp', tempDir, true);
@@ -48113,6 +48148,7 @@ export class LibraryService {
           bytesProcessed: 0, totalBytes: 0,
         });
       }
+      await releaseZipStreams();
       if (destinationOwned) {
         this.removeOwnedTransferPath('export.zip.failure.cleanup-destination', input.destinationPath, false);
       }

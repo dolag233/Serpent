@@ -1905,13 +1905,15 @@ describe('processThumbnailQueue', () => {
 
     service.enqueueThumbnailJobs(created.libraryId);
     const processed = await service.processThumbnailQueue(created.libraryId);
-    expect(processed).toBeGreaterThanOrEqual(2);
 
-    // Verify job is succeeded
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    const job = db.prepare("SELECT status FROM jobs WHERE kind = 'generate_thumbnail' LIMIT 1").get() as { status: string } | undefined;
-    expect(job).toBeTruthy();
-    expect(job!.status).toBe('succeeded');
+    const jobs = db.prepare('SELECT kind, status FROM jobs ORDER BY kind').all();
+    expect(jobs).toEqual([
+      { kind: 'extract_metadata', status: 'succeeded' },
+      { kind: 'extract_palette', status: 'succeeded' },
+      { kind: 'generate_thumbnail', status: 'succeeded' },
+    ]);
+    expect(processed).toBe(jobs.length);
     db.close();
 
     service.closeAll();
@@ -2037,8 +2039,13 @@ describe('processThumbnailQueue', () => {
       attemptCount: 0,
     });
     const jobId = thumbnail.jobId;
-    expect(status.queued).toBeGreaterThanOrEqual(1);
+    expect(status.jobs.map((job) => `${job.kind}:${job.status}`).sort()).toEqual([
+      'extract_metadata:queued',
+      'generate_thumbnail:queued',
+    ]);
+    expect(status.queued).toBe(2);
     expect(service.listMediaJobs(created.libraryId, { summaryOnly: true })).toMatchObject({
+      queued: 2,
       running: 0,
       succeeded: 0,
       failed: 0,
@@ -2046,20 +2053,22 @@ describe('processThumbnailQueue', () => {
       cancelled: 0,
       jobs: [],
     });
-    expect(service.listMediaJobs(created.libraryId, { summaryOnly: true }).queued).toBeGreaterThanOrEqual(1);
 
     expect(service.pauseMediaJobs(created.libraryId, [jobId])).toEqual({ pausedCount: 1 });
-    expect(mediaJobOfKind(service, created.libraryId, 'generate_thumbnail')).toMatchObject({
-      status: 'paused',
-    });
+    expect(service.listMediaJobs(created.libraryId).jobs.map((job) => `${job.kind}:${job.status}`).sort()).toEqual([
+      'extract_metadata:queued',
+      'generate_thumbnail:paused',
+    ]);
     expect(service.resumeMediaJobs(created.libraryId, [jobId])).toEqual({ resumedCount: 1 });
-    expect(mediaJobOfKind(service, created.libraryId, 'generate_thumbnail')).toMatchObject({
-      status: 'queued',
-    });
+    expect(service.listMediaJobs(created.libraryId).jobs.map((job) => `${job.kind}:${job.status}`).sort()).toEqual([
+      'extract_metadata:queued',
+      'generate_thumbnail:queued',
+    ]);
     expect(service.cancelMediaJobs(created.libraryId, [jobId])).toEqual({ cancelledCount: 1 });
-    expect(mediaJobOfKind(service, created.libraryId, 'generate_thumbnail')).toMatchObject({
-      status: 'cancelled',
-    });
+    expect(service.listMediaJobs(created.libraryId).jobs.map((job) => `${job.kind}:${job.status}`).sort()).toEqual([
+      'extract_metadata:queued',
+      'generate_thumbnail:cancelled',
+    ]);
 
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
     db.prepare(
@@ -2073,7 +2082,13 @@ describe('processThumbnailQueue', () => {
       attemptCount: 0,
       errorCode: null,
     });
+    expect(status.jobs.map((job) => `${job.kind}:${job.status}`).sort()).toEqual([
+      'extract_metadata:queued',
+      'generate_thumbnail:queued',
+    ]);
+    expect(status.queued).toBe(2);
     expect(status.failed).toBe(0);
+    expect(status.cancelled).toBe(0);
 
     service.closeAll();
   });

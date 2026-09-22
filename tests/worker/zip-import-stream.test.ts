@@ -187,6 +187,7 @@ describe('extractZipStream', () => {
     );
     expect(existsSync(path.join(destinationRoot, 'Assets', 'safe.txt'))).toBe(false);
     expect(existsSync(path.join(root, 'escape.txt'))).toBe(false);
+    rmSync(zipPath);
   });
 
   it.each(['..\\escape.txt', '/absolute.txt', 'C:\\drive.txt'])(
@@ -300,6 +301,7 @@ describe('extractZipStream', () => {
     );
     expect(existsSync(destinationRoot)).toBe(true);
     expect(existsSync(path.join(destinationRoot, 'Assets', 'large.bin'))).toBe(false);
+    rmSync(zipPath);
   });
 
   it('never overwrites or deletes an existing destination file', async () => {
@@ -351,5 +353,6 @@ describe('inspectZipUncompressedBytes', () => {
     ]);
     await expect(inspectZipUncompressedBytes(zipPath)).resolves.toBe(8_192);
     expect(readdirSync(root)).toEqual(['sizes.zip']);
+    rmSync(zipPath);
   });
 });
