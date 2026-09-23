@@ -68,13 +68,21 @@ describe("folder batch planning", () => {
     expect(folderBatchProcessCount(result)).toBe(2);
   });
 
-  it("ignores managed folders and linked roots, reporting the rest", () => {
+  it("ignores managed folders, linked roots, and linked subdirectories", () => {
     const result = plan(["m-2", "l-root", "lfv:l-root/sub"], "ignore");
     expect(result.targets.map((target) => target.folderId)).toEqual([
       "m-2",
       "l-root",
+      "lfv:l-root/sub",
     ]);
-    expect(result.skips).toEqual([{ reason: "linked", count: 1 }]);
+    expect(result.targets[2]).toEqual({
+      folderId: "lfv:l-root/sub",
+      kind: "linked-folder",
+      name: "sub",
+      relativePath: "sub",
+      linkedRelativePath: "sub",
+    });
+    expect(result.skips).toEqual([]);
   });
 
   it("treats unknown ids as unresolved instead of guessing", () => {

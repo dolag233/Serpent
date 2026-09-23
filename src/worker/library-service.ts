@@ -9588,11 +9588,97 @@ export class LibraryService {
           insert.run(asset.relative_file_path, 'asset');
         }
       }
+      this.syncLinkedGitignoreHiddenAssets(openLibrary);
     });
     transaction();
     openLibrary.gitignoreText = migratedText;
     openLibrary.gitignoreMaterialized = true;
+    // Empty linked directories (for example `1Test/.111`) have no managed_folders
+    // row and no asset to write into linked_ignored_assets. Without this, the
+    // navigation summary cache keeps showing those folders after `.*/` or a
+    // right-click ignore (Serpent-c6d907).
+    this.invalidateNavigationSummary(openLibrary);
     this.rebindCurrentNetworkMetadataCache(openLibrary);
+  }
+
+  private invalidateNavigationSummary(openLibrary: OpenLibrary): void {
+    openLibrary.navigationSummaryCache = undefined;
+    if (!hasTable(openLibrary.connection, 'browse_change_sequence')) return;
+    openLibrary.connection.prepare(
+      'UPDATE browse_change_sequence SET sequence = sequence + 1 WHERE library_id = ?',
+    ).run(openLibrary.summary.libraryId);
+  }
+
+  /**
+   * Serpent-c6d907: `.serpentignore` is the single ignore file. Linked assets
+   * that match it are folded into `linked_ignored_assets` so browse/search SQL
+   * hides them the same way linked-folder default rules already do. Default
+   * `.git` / `node_modules` rules stay in `linked_folder_rules` and still win
+   * here; removing a gitignore rule must not un-hide those.
+   */
+  private syncLinkedGitignoreHiddenAssets(openLibrary: OpenLibrary): void {
+    if (
+      !hasTable(openLibrary.connection, 'linked_ignored_assets') ||
+      !hasTable(openLibrary.connection, 'linked_folders')
+    ) {
+      return;
+    }
+    const now = new Date().toISOString();
+    const hide = openLibrary.connection.prepare(
+      'INSERT OR REPLACE INTO linked_ignored_assets(asset_id, ignored_at) VALUES (?, ?)',
+    );
+    const reveal = openLibrary.connection.prepare(
+      'DELETE FROM linked_ignored_assets WHERE asset_id = ?',
+    );
+    const folders = openLibrary.connection
+      .prepare('SELECT folder_id FROM linked_folders WHERE library_id = ?')
+      .all(openLibrary.summary.libraryId) as Array<{ folder_id: string }>;
+    const hasLinkedRules = hasTable(openLibrary.connection, 'linked_folder_rules');
+    const loadRules = hasLinkedRules
+      ? openLibrary.connection.prepare(
+        `SELECT rule_id, action, target, pattern, enabled
+           FROM linked_folder_rules WHERE folder_id = ? ORDER BY position`,
+      )
+      : null;
+    for (const folder of folders) {
+      const rules = loadRules
+        ? (loadRules.all(folder.folder_id) as Array<{
+          rule_id: string;
+          action: 'include' | 'exclude';
+          target: LinkedFolderRule['target'];
+          pattern: string;
+          enabled: number;
+        }>).map((row) => ({
+          ruleId: row.rule_id,
+          action: row.action,
+          target: row.target,
+          pattern: row.pattern,
+          enabled: row.enabled === 1,
+        }))
+        : [];
+      const assets = openLibrary.connection.prepare(
+        `SELECT a.asset_id, a.relative_file_path,
+                EXISTS(SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id) AS ignored
+           FROM assets a
+          WHERE a.linked_folder_id = ? AND a.location_kind = 'linked' AND a.deleted_at IS NULL`,
+      ).all(folder.folder_id) as Array<{
+        asset_id: string;
+        relative_file_path: string;
+        ignored: number;
+      }>;
+      for (const asset of assets) {
+        const ignored = this.linkedPathIsIgnored(asset.relative_file_path, rules)
+          || this.isExplicitlyIgnored(
+            openLibrary,
+            'linked',
+            folder.folder_id,
+            asset.relative_file_path,
+            'asset',
+          );
+        if (ignored && asset.ignored === 0) hide.run(asset.asset_id, now);
+        else if (!ignored && asset.ignored === 1) reveal.run(asset.asset_id);
+      }
+    }
   }
 
   private migrateLegacyManagedIgnoreRules(openLibrary: OpenLibrary, text: string): string {
@@ -15988,7 +16074,11 @@ export class LibraryService {
       )
       : [];
     const prefixes = [...new Set([...assetPrefixes, ...diskPrefixes])].sort();
-    const children = directChildLinkedDirectories(prefixes, resolved.relativePath);
+    const children = directChildLinkedDirectories(prefixes, resolved.relativePath)
+      .filter((relativePath) =>
+        input.showIgnored === true
+        || !this.explicitFolderIgnored(openLibrary, 'linked', resolved.linkedFolderId, relativePath),
+      );
     if (children.length === 0) return [];
     const directoryChildCounts = countLinkedDirectoryChildren(prefixes);
 
@@ -17065,7 +17155,14 @@ export class LibraryService {
            FROM assets a WHERE a.linked_folder_id = ?`,
       ).all(input.folderId) as Array<{ asset_id: string; relative_file_path: string; ignored: number }>;
       for (const asset of assets) {
-        const ignored = this.linkedPathIsIgnored(asset.relative_file_path, rules);
+        const ignored = this.linkedPathIsIgnored(asset.relative_file_path, rules)
+          || this.isExplicitlyIgnored(
+            openLibrary,
+            'linked',
+            input.folderId,
+            asset.relative_file_path,
+            'asset',
+          );
         if (ignored && asset.ignored === 0) {
           openLibrary.connection.prepare(
             'INSERT OR REPLACE INTO linked_ignored_assets(asset_id, ignored_at) VALUES (?, ?)',
@@ -17320,7 +17417,18 @@ export class LibraryService {
     }
 
     const rules = this.getLinkedFolderRules({ libraryId: input.libraryId, folderId: input.folderId });
-    const entries = this.enumerateLinkedSources(linked.absolute_root_path, input.folderId, rules);
+      const entries = this.enumerateLinkedSources(
+        linked.absolute_root_path,
+        input.folderId,
+        rules,
+        (relativePath, pathKind) => this.isExplicitlyIgnored(
+          openLibrary,
+          'linked',
+          input.folderId,
+          relativePath,
+          pathKind,
+        ),
+      );
     const linkedAssets = openLibrary.connection.prepare(
       `SELECT a.asset_id, a.relative_file_path,
               EXISTS(SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id) AS ignored
@@ -18201,7 +18309,13 @@ export class LibraryService {
         canonicalRoot,
         folderId,
         defaultRules,
-        undefined,
+        (relativePath, pathKind) => this.isExplicitlyIgnored(
+          openLibrary,
+          'linked',
+          folderId,
+          relativePath,
+          pathKind,
+        ),
         (foundCount, entryBytes) => {
           scannedBytes += entryBytes;
           emitLinkedProgress('validate', foundCount, 0, scannedBytes, 0);
@@ -40039,10 +40153,7 @@ export class LibraryService {
     linkedFolderId: string | null,
     relativePath: string,
   ): boolean {
-    if (
-      locationKind === 'managed'
-      && gitignoreMatchesPath(openLibrary.gitignoreMatcher, relativePath, 'folder')
-    ) {
+    if (gitignoreMatchesPath(openLibrary.gitignoreMatcher, relativePath, 'folder', locationKind)) {
       return true;
     }
     // Serpent-verg review fix: libraries predating the ignore-rule table
@@ -40082,10 +40193,7 @@ export class LibraryService {
     if (pathKind === 'folder') {
       return this.explicitFolderIgnored(openLibrary, locationKind, linkedFolderId, relativePath);
     }
-    if (
-      locationKind === 'managed'
-      && gitignoreMatchesPath(openLibrary.gitignoreMatcher, relativePath, 'asset')
-    ) {
+    if (gitignoreMatchesPath(openLibrary.gitignoreMatcher, relativePath, 'asset', locationKind)) {
       return true;
     }
     const normalized = this.normalizeExplicitIgnorePath(
@@ -40188,14 +40296,12 @@ export class LibraryService {
     return { content: input.content };
   }
 
-  private updateManagedGitignoreRule(
+  private updateGitignoreRule(
     openLibrary: OpenLibrary,
-    relativePath: string,
-    pathKind: 'asset' | 'folder' | 'extension',
+    positive: string,
     ignored: boolean,
   ): void {
-    const positive = this.managedGitignoreRule(relativePath, pathKind);
-    if (positive === undefined) return;
+    if (positive.length === 0) return;
     const negative = `!${positive}`;
     const lines = openLibrary.gitignoreText.split(/\r?\n/u);
     const filtered = lines.filter((line) => {
@@ -40219,7 +40325,8 @@ export class LibraryService {
     this.syncGitignore(openLibrary, next);
   }
 
-  private managedGitignoreRule(
+  private ignoreGitignoreRule(
+    locationKind: 'managed' | 'linked',
     relativePath: string,
     pathKind: 'asset' | 'folder' | 'extension',
   ): string | undefined {
@@ -40227,9 +40334,18 @@ export class LibraryService {
       ? relativePath.trim().replace(/^\.+/u, '').toLowerCase()
       : this.normalizeExplicitIgnorePath(relativePath, false);
     if (!normalized) return undefined;
-    return pathKind === 'extension'
-      ? `*.${normalized}`
-      : `Assets/${normalized}${pathKind === 'folder' ? '/' : ''}`;
+    if (pathKind === 'extension') return `*.${normalized}`;
+    const suffix = pathKind === 'folder' ? '/' : '';
+    return locationKind === 'managed'
+      ? `Assets/${normalized}${suffix}`
+      : `${normalized}${suffix}`;
+  }
+
+  private managedGitignoreRule(
+    relativePath: string,
+    pathKind: 'asset' | 'folder' | 'extension',
+  ): string | undefined {
+    return this.ignoreGitignoreRule('managed', relativePath, pathKind);
   }
 
   listIgnoredPaths(libraryId: string): IgnoredPath[] {
@@ -40295,6 +40411,43 @@ export class LibraryService {
           display_name: asset.relative_path,
         });
       }
+      const linkedAssets = openLibrary.connection.prepare(
+        `SELECT linked_folder_id, relative_file_path AS relative_path
+           FROM assets
+          WHERE location_kind = 'linked' AND deleted_at IS NULL AND linked_folder_id IS NOT NULL
+          ORDER BY linked_folder_id, relative_file_path`,
+      ).all() as Array<{ linked_folder_id: string; relative_path: string }>;
+      const linkedPathsByFolder = new Map<string, string[]>();
+      for (const asset of linkedAssets) {
+        const paths = linkedPathsByFolder.get(asset.linked_folder_id);
+        if (paths) paths.push(asset.relative_path);
+        else linkedPathsByFolder.set(asset.linked_folder_id, [asset.relative_path]);
+        if (gitignoreMatchesPath(openLibrary.gitignoreMatcher, asset.relative_path, 'asset', 'linked')) {
+          rows.push({
+            location_kind: 'linked',
+            linked_folder_id: asset.linked_folder_id,
+            relative_path: asset.relative_path,
+            path_kind: 'asset',
+            ignored_at: ignoredAt,
+            display_name: asset.relative_path,
+          });
+        }
+      }
+      for (const [linkedFolderId, paths] of linkedPathsByFolder) {
+        for (const prefix of collectLinkedDirectoryPrefixes(paths)) {
+          if (!gitignoreMatchesPath(openLibrary.gitignoreMatcher, prefix, 'folder', 'linked')) {
+            continue;
+          }
+          rows.push({
+            location_kind: 'linked',
+            linked_folder_id: linkedFolderId,
+            relative_path: prefix,
+            path_kind: 'folder',
+            ignored_at: ignoredAt,
+            display_name: prefix,
+          });
+        }
+      }
     }
     return rows
       .sort((a, b) =>
@@ -40358,17 +40511,23 @@ export class LibraryService {
       ).get(linkedFolderId, input.libraryId);
       if (!row) throw new LibraryServiceError('FOLDER_NOT_FOUND');
     }
-    if (input.locationKind === 'managed') {
-      // Managed ignore state is file-backed.  Do not mirror it into
-      // explicit_ignored_paths: that table is reserved for linked-folder
-      // scoped entries, while .serpentignore is the single source of truth
-      // for everything under Assets/.
-      this.updateManagedGitignoreRule(openLibrary, relativePath, input.pathKind, input.ignored);
+    if (input.locationKind === 'managed' || !(input.pathKind === 'folder' && relativePath === '')) {
+      // File-backed ignore: one .serpentignore for managed and linked trees.
+      // An empty linked-root path still uses explicit_ignored_paths because
+      // there is no relative path to write into the ignore file.
+      const rule = this.ignoreGitignoreRule(input.locationKind, relativePath, input.pathKind);
+      if (rule !== undefined) this.updateGitignoreRule(openLibrary, rule, input.ignored);
+      if (input.locationKind === 'linked' && !input.ignored) {
+        openLibrary.connection.prepare(
+          `DELETE FROM explicit_ignored_paths
+            WHERE location_kind = ? AND linked_folder_id = ? AND relative_path = ? AND path_kind = ?`,
+        ).run(input.locationKind, linkedFolderId ?? '', relativePath, input.pathKind);
+      }
       return {
         ignored: input.ignored,
         path: {
-          locationKind: 'managed',
-          linkedFolderId: null,
+          locationKind: input.locationKind,
+          linkedFolderId: input.locationKind === 'linked' ? linkedFolderId : null,
           relativePath,
           pathKind: input.pathKind,
           displayName: relativePath || 'Assets',

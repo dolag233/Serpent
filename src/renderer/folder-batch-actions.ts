@@ -68,7 +68,8 @@ function skipList(buckets: Map<MenuSkipReasonCode, number>): FolderBatchSkip[] {
  * - 托管文件夹：四种动作都支持；
  * - 链接文件夹根：除「移入回收站」外都支持（2026-09-15 用户决定：链接条目没有
  *   回收站语义，只有强制删除 / 外观 / 忽略）；
- * - 链接文件夹子目录：只由磁盘删除按子树处理，外观/忽略/回收站都跳过（`linked`）；
+ * - 链接文件夹子目录：忽略写入同一份 `.serpentignore`；磁盘删除走子树；外观/
+ *   回收站仍跳过（`linked`）；
  * - 找不到的 id（资源库根、已删除、跨库残留）：跳过（`unresolved`）。
  */
 export function planFolderBatch(input: {
@@ -102,7 +103,17 @@ export function planFolderBatch(input: {
     if (linked) {
       const relativePath = linked.relativePath ?? "";
       if (relativePath !== "") {
-        // 链接子目录：外观 / 忽略没有意义；磁盘删除走子树；回收站不适用。
+        if (input.action === "ignore") {
+          targets.push({
+            folderId,
+            kind: "linked-folder",
+            name: linked.name,
+            relativePath,
+            linkedRelativePath: relativePath,
+          });
+          continue;
+        }
+        // 链接子目录：外观没有独立存储；磁盘删除走子树；回收站不适用。
         skips.set("linked", (skips.get("linked") ?? 0) + 1);
         continue;
       }

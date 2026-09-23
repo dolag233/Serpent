@@ -16,6 +16,14 @@
     "PingFang SC",
     "Microsoft YaHei",
     sans-serif;
+  /* Color emoji must not fall through to the UI CJK stack: YaHei / HarmonyOS
+     intercept emoji codepoints as monochrome glyphs on Windows. */
+  --font-emoji:
+    "Segoe UI Emoji",
+    "Segoe UI Symbol",
+    "Apple Color Emoji",
+    "Noto Color Emoji",
+    sans-serif;
   font-family: var(--font-ui);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -2218,6 +2226,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 .nav-entity-glyph-emoji {
   line-height: 1;
   font-size: 13px;
+  font-family: var(--font-emoji);
 }
 
 .nav-entity-glyph-badge {
@@ -9771,39 +9780,6 @@ select.ai-config-input.ai-config-languages {
 .workspace-notice-item.ui-feedback--error .workspace-notice-icon,
 .workspace-notice-item.ui-feedback--warning .workspace-notice-icon {
   color: inherit;
-}
-
-.ignored-paths-dialog {
-  width: min(560px, calc(100vw - 32px));
-}
-
-.ignored-paths-list {
-  display: grid;
-  gap: 8px;
-  max-height: 360px;
-  overflow: auto;
-  margin: 12px 0;
-}
-
-.ignored-path-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-}
-
-.ignored-path-row > div {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.ignored-path-row span {
-  color: var(--text-secondary);
-  font-size: calc(12px * var(--ui-font-scale));
 }
 
 .media-jobs-grid {

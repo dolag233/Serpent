@@ -470,7 +470,6 @@ import type {
   CollectionSummary,
   FilterClause,
   FolderBrowseEntry,
-  IgnoredPath,
   LinkedFolderRule,
   LinkedFolderSummary,
   ManagedFolderSummary,
@@ -1779,7 +1778,6 @@ function AppInner() {
   const [librarySettingsOpen, setLibrarySettingsOpen] = useState(false);
   const [openSyncLibraryOpen, setOpenSyncLibraryOpen] = useState(false);
   const [gitignoreContent, setGitignoreContent] = useState("");
-  const [ignoredPaths, setIgnoredPaths] = useState<IgnoredPath[]>([]);
   /** 同步传输进度（手动/自动），供资源库设置同步页显示进度条与速度。 */
   const [syncProgress, setSyncProgress] = useState<SyncProgressEvent | null>(null);
   const syncProgressRef = useRef(syncProgress);
@@ -9880,7 +9878,6 @@ function AppInner() {
         ignored: input.ignored,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      await refreshIgnoredPaths(library.libraryId);
       await reloadCurrentContent();
       if (input.ignored && input.pathKind === "extension") {
         setNotice(t("toast.ignoreExtensionUpdated", { extension: input.relativePath }));
@@ -11698,23 +11695,11 @@ function AppInner() {
   useEffect(() => {
     if (!librarySettingsOpen || !api || !library) return;
     const libraryId = library.libraryId;
-    void Promise.all([
-      api.getGitignore({ libraryId }),
-      api.listIgnoredPaths({ libraryId }),
-    ]).then(([gitignoreResult, ignoredResult]) => {
+    void api.getGitignore({ libraryId }).then((gitignoreResult) => {
       if (libraryRef.current?.libraryId !== libraryId) return;
       if (gitignoreResult.ok) setGitignoreContent(gitignoreResult.value.content);
-      if (ignoredResult.ok) setIgnoredPaths(ignoredResult.value);
     });
   }, [librarySettingsOpen, api, library]);
-
-  const refreshIgnoredPaths = useCallback(async (libraryId: string) => {
-    if (!api) return;
-    const result = await api.listIgnoredPaths({ libraryId });
-    if (result.ok && libraryRef.current?.libraryId === libraryId) {
-      setIgnoredPaths(result.value);
-    }
-  }, [api]);
 
   const probeStoredAiConnection = useCallback(async () => {
     if (!api) return;
@@ -14849,7 +14834,6 @@ function AppInner() {
         library={library}
         open={librarySettingsOpen}
         gitignoreContent={gitignoreContent}
-        ignoredPaths={ignoredPaths}
         onClose={() => {
           setLibrarySettingsOpen(false);
         }}
@@ -14872,18 +14856,7 @@ function AppInner() {
           }
           setGitignoreContent(result.value.content);
           setNotice(t("toast.librarySettingsSaved"));
-          await refreshIgnoredPaths(library.libraryId);
           await reloadCurrentContent();
-        }}
-        onUnignorePath={(path) => {
-          void setIgnoreState({
-            locationKind: path.locationKind,
-            linkedFolderId: path.linkedFolderId,
-            relativePath: path.relativePath,
-            pathKind: path.pathKind,
-            ignored: false,
-            name: path.displayName,
-          });
         }}
         syncCallbacks={{
           async syncListServers() {

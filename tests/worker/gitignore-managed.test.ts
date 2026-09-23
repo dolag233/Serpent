@@ -181,3 +181,167 @@ describe('managed ignore configuration', () => {
     expect(reopened.listAssets({ libraryId: library.libraryId, recursive: true })).toEqual([]);
   });
 });
+
+describe('linked ignore configuration', () => {
+  it('applies .*/ to linked trees and writes linked ignores into .serpentignore', () => {
+    const root = temporaryRoot();
+    const sourceRoot = path.join(root, 'source');
+    mkdirSync(sourceRoot);
+    writeFileSync(path.join(sourceRoot, 'keep.png'), 'keep');
+    mkdirSync(path.join(sourceRoot, '.hidden'));
+    writeFileSync(path.join(sourceRoot, '.hidden', 'secret.png'), 'secret');
+    mkdirSync(path.join(sourceRoot, 'notes'));
+    writeFileSync(path.join(sourceRoot, 'notes', 'page.png'), 'page');
+
+    const service = newService();
+    const library = service.createLibrary({
+      displayName: 'Linked ignore rules',
+      selectedParentPath: root,
+    });
+    const linked = service.importFolderAsLinked({
+      libraryId: library.libraryId,
+      sourceRootPath: sourceRoot,
+    });
+
+    expect(service.listLinkedFolders(library.libraryId)
+      .map((folder) => folder.relativePath)
+      .sort()).toEqual(['', '.hidden', 'notes']);
+
+    service.setGitignore({ libraryId: library.libraryId, content: '.*/\n' });
+    expect(service.listLinkedFolders(library.libraryId)
+      .map((folder) => folder.relativePath)
+      .sort()).toEqual(['', 'notes']);
+    expect(service.listAssets({ libraryId: library.libraryId, recursive: true })
+      .map((asset) => asset.relativeFilePath)
+      .sort()).toEqual(['keep.png', 'notes/page.png']);
+
+    service.setIgnore({
+      libraryId: library.libraryId,
+      locationKind: 'linked',
+      linkedFolderId: linked.folderId,
+      relativePath: 'notes',
+      pathKind: 'folder',
+      ignored: true,
+    });
+    expect(readFileSync(path.join(library.libraryPath, '.serpentignore'), 'utf8'))
+      .toBe('.*/\nnotes/\n');
+    expect(service.listLinkedFolders(library.libraryId)
+      .map((folder) => folder.relativePath)).toEqual(['']);
+    expect(service.listAssets({ libraryId: library.libraryId, recursive: true })
+      .map((asset) => asset.relativeFilePath)).toEqual(['keep.png']);
+  });
+
+  it('hides an empty linked .111 child after .*/ even when the sidebar cache is warm', () => {
+    const root = temporaryRoot();
+    const sourceRoot = path.join(root, '1Test');
+    mkdirSync(sourceRoot);
+    writeFileSync(path.join(sourceRoot, 'keep.png'), 'keep');
+    mkdirSync(path.join(sourceRoot, '.111'));
+
+    const service = newService();
+    const library = service.createLibrary({
+      displayName: 'Empty linked dot folder',
+      selectedParentPath: root,
+    });
+    const linked = service.importFolderAsLinked({
+      libraryId: library.libraryId,
+      sourceRootPath: sourceRoot,
+    });
+
+    expect(service.listLinkedFolders(library.libraryId)
+      .map((folder) => folder.relativePath)
+      .sort()).toEqual(['', '.111']);
+    // Renderer sidebar reads the navigation summary, not listLinkedFolders.
+    expect(service.getLibraryNavigationSummary({ libraryId: library.libraryId })
+      .linkedFolders.map((folder) => folder.relativePath)
+      .sort()).toEqual(['', '.111']);
+
+    service.setGitignore({ libraryId: library.libraryId, content: '.*/\n' });
+
+    expect(service.getLibraryNavigationSummary({ libraryId: library.libraryId })
+      .linkedFolders.map((folder) => folder.relativePath)
+      .sort()).toEqual(['']);
+    expect(service.listFolderBrowseEntries({
+      libraryId: library.libraryId,
+      parentFolderId: linked.folderId,
+    }).map((entry) => entry.name)).toEqual([]);
+  });
+
+  it('writes a right-click ignore for an empty linked .111 child', () => {
+    const root = temporaryRoot();
+    const sourceRoot = path.join(root, '1Test');
+    mkdirSync(sourceRoot);
+    writeFileSync(path.join(sourceRoot, 'keep.png'), 'keep');
+    mkdirSync(path.join(sourceRoot, '.111'));
+
+    const service = newService();
+    const library = service.createLibrary({
+      displayName: 'Ignore empty linked dot folder',
+      selectedParentPath: root,
+    });
+    const linked = service.importFolderAsLinked({
+      libraryId: library.libraryId,
+      sourceRootPath: sourceRoot,
+    });
+    service.getLibraryNavigationSummary({ libraryId: library.libraryId });
+
+    service.setIgnore({
+      libraryId: library.libraryId,
+      locationKind: 'linked',
+      linkedFolderId: linked.folderId,
+      relativePath: '.111',
+      pathKind: 'folder',
+      ignored: true,
+    });
+
+    expect(readFileSync(path.join(library.libraryPath, '.serpentignore'), 'utf8'))
+      .toBe('.111/\n');
+    expect(service.getLibraryNavigationSummary({ libraryId: library.libraryId })
+      .linkedFolders.map((folder) => folder.relativePath)
+      .sort()).toEqual(['']);
+  });
+});
+
+describe('managed nested dot-folder ignore', () => {
+  it('hides 1Test/.111 after .*/ and after a context-menu ignore', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const library = service.createLibrary({
+      displayName: 'Managed nested dot folder',
+      selectedParentPath: root,
+    });
+    const parent = service.createManagedFolder({
+      libraryId: library.libraryId,
+      name: '1Test',
+    });
+    service.createManagedFolder({
+      libraryId: library.libraryId,
+      name: '.111',
+      parentFolderId: parent.folderId,
+    });
+    service.getLibraryNavigationSummary({ libraryId: library.libraryId });
+
+    service.setGitignore({ libraryId: library.libraryId, content: '.*/\n' });
+    expect(service.getLibraryNavigationSummary({ libraryId: library.libraryId })
+      .folders.map((folder) => folder.relativePath)
+      .sort()).toEqual(['1Test']);
+
+    service.setGitignore({ libraryId: library.libraryId, content: '' });
+    expect(service.getLibraryNavigationSummary({ libraryId: library.libraryId })
+      .folders.map((folder) => folder.relativePath)
+      .sort()).toEqual(['1Test', '1Test/.111']);
+
+    service.setIgnore({
+      libraryId: library.libraryId,
+      locationKind: 'managed',
+      relativePath: '1Test/.111',
+      pathKind: 'folder',
+      ignored: true,
+    });
+    expect(readFileSync(path.join(library.libraryPath, '.serpentignore'), 'utf8'))
+      .toBe('Assets/1Test/.111/\n');
+    expect(service.getLibraryNavigationSummary({ libraryId: library.libraryId })
+      .folders.map((folder) => folder.relativePath)
+      .sort()).toEqual(['1Test']);
+  });
+});

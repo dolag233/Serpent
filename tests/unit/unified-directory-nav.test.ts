@@ -124,7 +124,7 @@ describe("buildUnifiedDirectoryNavEntries", () => {
         kind: "linked",
         folderId: "l2",
         name: "Linked Offline",
-        depth: 1,
+        depth: 0,
         parentFolderId: null,
         status: "offline",
         assetCount: 0,
@@ -135,7 +135,7 @@ describe("buildUnifiedDirectoryNavEntries", () => {
         kind: "linked",
         folderId: "l1",
         name: "Linked Online",
-        depth: 1,
+        depth: 0,
         parentFolderId: null,
         status: "available",
         assetCount: 3,
@@ -146,7 +146,7 @@ describe("buildUnifiedDirectoryNavEntries", () => {
         kind: "linked",
         folderId: "lfv:l1/notes",
         name: "notes",
-        depth: 2,
+        depth: 1,
         parentFolderId: "l1",
         status: "available",
         assetCount: 1,
@@ -212,12 +212,12 @@ describe("buildUnifiedDirectoryNavEntries", () => {
 
     expect(entries.map((entry) => [entry.folderId, entry.depth, entry.parentFolderId]))
       .toEqual([
-        ["link", 1, null],
-        ["lfv:link/notes", 2, "link"],
+        ["link", 0, null],
+        ["lfv:link/notes", 1, "link"],
       ]);
   });
 
-  it("keeps linked-only roots at depth 1", () => {
+  it("keeps linked-only roots at depth 0", () => {
     expect(
       buildUnifiedDirectoryNavEntries(
         [],
@@ -228,7 +228,7 @@ describe("buildUnifiedDirectoryNavEntries", () => {
         kind: "linked",
         folderId: "only",
         name: "Only Linked",
-        depth: 1,
+        depth: 0,
         parentFolderId: null,
         status: "available",
         assetCount: 1,

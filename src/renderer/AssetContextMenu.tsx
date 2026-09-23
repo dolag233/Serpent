@@ -68,7 +68,7 @@ import {
   type PluginMenuDescriptor,
 } from "./plugin-menu-contributions";
 import { createPluginMenuContributionContext } from "./plugin-contribution-context";
-import { linkedRevealFolderId } from "../shared/linked-folder-tree";
+import { linkedRevealFolderId, parseLinkedVirtualFolderId } from "../shared/linked-folder-tree";
 
 const isMac = isMacPlatform(navigator.userAgent);
 
@@ -1343,11 +1343,16 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       const managed = desc.locationKind === "managed"
                         ? managedFolders.find((folder) => folder.folderId === desc.folderId)
                         : undefined;
+                      const linkedRef = desc.locationKind === "linked"
+                        ? parseLinkedVirtualFolderId(desc.folderId)
+                        : null;
                       onSetIgnore({
                         locationKind: desc.locationKind,
-                        linkedFolderId: desc.locationKind === "linked" ? desc.folderId : null,
+                        linkedFolderId: desc.locationKind === "linked"
+                          ? linkedRef?.linkedFolderId ?? desc.folderId
+                          : null,
                         relativePath: desc.locationKind === "linked"
-                          ? desc.linkedRelativePath ?? ""
+                          ? desc.linkedRelativePath ?? linkedRef?.relativePath ?? ""
                           : managed?.relativePath ?? desc.name,
                         pathKind: "folder",
                         ignored: true,
@@ -1578,11 +1583,14 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     });
                   }
                   for (const target of folderTargets) {
+                    const linkedRef = parseLinkedVirtualFolderId(target.folderId);
                     onSetIgnore({
                       locationKind:
                         target.kind === "linked-folder" ? "linked" : "managed",
                       linkedFolderId:
-                        target.kind === "linked-folder" ? target.folderId : null,
+                        target.kind === "linked-folder"
+                          ? linkedRef?.linkedFolderId ?? target.folderId
+                          : null,
                       relativePath: target.relativePath,
                       pathKind: "folder",
                       ignored: true,

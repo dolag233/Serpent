@@ -53,15 +53,23 @@
 | FOLDER-REVEAL-001 | Ctrl+Shift+S 在资源管理器中打开文件夹 | 人类验收通过 | ① 在 Windows 上打开一个文件夹，不要选中资产，按 Ctrl+Shift+S。② 在左侧点中一个链接文件夹后再按。③ 选中一张资产后再按。④ 看文件夹右键菜单。 | ①② 在资源管理器中打开对应文件夹。③ 仍是显示该资产所在位置，而不是打开整个文件夹。菜单里「在文件浏览器中显示」旁有 Ctrl+Shift+S。macOS 对应为 ⌘⇧S。 | `sidebar-commands.ts` / `folder-shortcut-dispatch.ts` / `tests/unit/folder-shortcut-dispatch.test.ts` / `tests/unit/sidebar-commands.test.ts` | 2026-09-22 用户本人验收通过（用户原话「FOLDER-REVEAL-001通过」）。 |
 | SEARCH-HISTORY-001 | 搜索框显示最近搜索 | 人类验收通过 | ① 连续搜索多个不同的词，每次等结果出现。② 点回搜索框。③ 看历史是横排小标签，最多四排。④ 用方向键选一条后回车。⑤ 点「清空」后再聚焦。 | 历史以紧凑标签换行排列，标题为「搜索历史」，右侧为「清空」。超过四排的更早记录不显示。选中一条后回车用它搜索。清空后列表消失。换一个资源库不显示上一个库的记录。 | `search-history.ts` / `SearchHistoryPopover.tsx` / `tests/unit/search-history.test.ts` | 2026-09-23 用户本人验收通过（用户原话「搜索记录和CARD-PAD-001通过」）。紧凑标签最多四排；底色为 `--raised-2` 加细边。 |
 
+### 2026-09-23 链接忽略、侧栏缩进与 Windows 图标
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| IGNORE-DOTDIR-001 / `Serpent-c6d907` | `.*/` 与右键忽略对链接文件夹和普通文件夹用同一份忽略规则；设置里只有规则文本，没有「管理忽略项目」面板 | 待人类验收 | ① 完全退出后再打开含这次改动的构建。② 打开同时有普通文件夹和链接文件夹的资源库；准备 `资源库根目录 → 1Test → .111` 这种点开头子目录（空文件夹也可以）。③ 打开设置 → 忽略规则，确认没有「管理忽略项目」按钮；写入 `.*/` 并保存，回到侧栏。④ 若先不写 `.*/`，在 `.111` 上右键「忽略此文件夹」，再打开忽略规则文本。 | ③ 侧栏里 `.111` 立刻消失；设置页只有规则文本。④ 规则文本多出 `.111/`（链接）或 `Assets/1Test/.111/`（普通文件夹），文件夹从侧栏消失。 | [开发日志](../development/2026-09-23-linked-folder-ignore-indent-appearance-development-log.md) / `gitignore.ts` / `library-service.ts` / `LibrarySettingsDialog.tsx` / `tests/unit/gitignore.test.ts` / `tests/worker/gitignore-managed.test.ts` | 2026-09-23 用户验收不通过：空的链接子目录 `.111` 写入 `.*/` 后侧栏仍显示；设置里的「管理忽略项目」面板也不需要。已修导航缓存不失效，并去掉该面板，等待复验。 |
+| NAV-INDENT-001 / `Serpent-81e416` | 侧栏链接文件夹缩进与普通文件夹对齐 | 人类验收通过 | ① 完全退出后再打开含这次改动的构建。② 打开同时有普通根文件夹和链接根文件夹的资源库。③ 展开链接文件夹的子目录，对照旁边普通文件夹的缩进。④ 若有挂在普通文件夹下的链接根，看它是否比父级再深一级。 | 链接根与普通根在同一缩进档；链接子目录每一层加一档，不再整棵树偏右一级。挂在普通文件夹下的链接根仍比父级深一级。 | [开发日志](../development/2026-09-23-linked-folder-ignore-indent-appearance-development-log.md) / `linked-folder-tree.ts` / `unified-directory-nav.ts` / `tests/unit/linked-folder-tree.test.ts` / `tests/unit/unified-directory-nav.test.ts` | 2026-09-23 用户本人验收通过（用户原话「NAV-INDENT-001通过」）。 |
+| APPEAR-WIN-001 / `Serpent-d4c8a5` | Windows 上链接文件夹可以添加并显示图标 | 待人类验收 | ① 在 Windows 上完全退出后再打开含这次改动的构建。② 右键一个链接文件夹根（不是子目录），打开「图标与颜色」。③ 上半部分选一个 emoji，下半部分选一个矢量图标，看侧栏是否立刻换图标。④ 亮/暗主题各看一眼。 | 选取器和侧栏都能画出彩色 emoji 与矢量图标。链接根仍可叠链接角标。 | [开发日志](../development/2026-09-23-linked-folder-ignore-indent-appearance-development-log.md) / `styles.css` `--font-emoji` / `AppearanceGlyph.tsx` / `EntityAppearancePicker.tsx` | 2026-09-23 用户要求链接子目录也要能设图标，已另开 `Serpent-612345`。本条仍只验收链接根在 Windows 上的图标显示。 |
+
 ### 2026-09-23 已报未修（不进入待人类验收）
 
-功能尚未修改，不能按待人类验收操作。修复并补上自动化后再登记可操作条目。
+功能尚未修改，不能按待人类验收操作。实现并补上自动化后再登记可操作条目。
 
 | ID | 问题 | 记录 |
 | --- | --- | --- |
-| NAV-INDENT-001 / `Serpent-81e416` | 侧栏链接文件夹根比普通文件夹多缩进一级 | 2026-09-23 用户反馈：链接文件夹应向普通文件夹对齐，现在看起来刚好差一级。定位：普通根深度为 0，链接根 `linkedFolderDepth` 在空相对路径时返回 1；子级公式还减 1，改根深度时必须一起改。 |
-| APPEAR-WIN-001 / `Serpent-d4c8a5` | Windows 上链接文件夹不能添加图标 | 2026-09-23 用户反馈：macOS 上可以为链接文件夹添加图标，Windows 上没有。菜单代码没有按平台隐藏；链接子目录本来就没有这项（APPEAR-002）。嫌疑是 Windows 字体栈画不出 emoji，尚未在运行中的应用里点验。 |
-| IGNORE-DOTDIR-001 / `Serpent-c6d907` | `.*/` 没有隐藏所有以点开头的文件夹 | 2026-09-23 用户反馈：忽略说明中的 `.*/` 没有忽略名称以点开头的文件夹；截图中的点名称目录位于链接文件夹之下。托管路径的单测能命中 `.*/`；链接树不走这份 gitignore 匹配。 |
+| APPEAR-LINKED-CHILD-001 / `Serpent-612345` | 链接子目录也要能设置图标与颜色 | 2026-09-23 用户反馈：不能只给链接根。APPEAR-002 原先规定虚拟子目录没有这项。 |
+| LINK-RENAME-001 / `Serpent-fe3cd7` | 链接文件夹应自动跟上磁盘上的重命名 | 2026-09-23 用户反馈：需要自动探测文件夹重命名。当前改名后旧路径不存在，会标成离线。 |
+| LINK-GONE-001 / `Serpent-fc5466` | 链接源不存在时侧栏应显示断开链接图标 | 2026-09-23 用户反馈：源文件夹不存在时图标应变成断开链接。 |
 
 ### 2026-09-21 视频倍速下拉
 
@@ -452,7 +460,7 @@
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `Serpent-fa751f` / IGNORE-001 | 资源库设置显示实际命中的忽略项目 | 待人类验收 | 打开资源库设置 → 忽略规则；确认 `.serpentignore` 中已有扩展名、文件夹和文件规则；打开“管理忽略项目”；分别取消一个文件和一个文件夹忽略 | 列表显示相对路径并区分文件/文件夹；取消后列表立即消失，配置文件、浏览和搜索同步恢复；重新打开设置后状态保持 | [开发日志](../development/2026-09-03-filter-ignore-polish-development-log.md) / `LibrarySettingsDialog.tsx` / `library-service.ts` / `gitignore-managed.test.ts` | 自动化已通过；Computer Use、Windows、packaged 未执行 |
+| `Serpent-fa751f` / IGNORE-001 | 资源库设置显示实际命中的忽略项目 | 已撤回 | — | — | [开发日志](../development/2026-09-03-filter-ignore-polish-development-log.md) / `LibrarySettingsDialog.tsx` | 2026-09-23 用户要求设置里不要「管理忽略项目」按钮及面板；忽略只通过规则文本和右键「忽略此文件夹」。面板已删除。 |
 | `Serpent-77c919` / FILTER-026 | 标签过滤：最近筛选与全部标签滚动 | 待人类验收 | 打开画布标签过滤；确认面板同时显示“最近筛选”和“所有标签”；在名称/使用次数排序间切换；准备超过可视高度的标签并只滚动“所有标签”区域；输入一个不属于常用标签的搜索词 | 面板高度足够且“最近筛选”保持可见；“所有标签”包含当前范围内全部标签，不因使用量或排序方式截断；只有“所有标签”区域显示纵向滚动条；搜索覆盖全部标签并遵循当前排序；已选标签 chip 使用主题强调色高亮；亮暗主题均可读 | [开发日志](../development/2026-09-03-filter-ignore-polish-development-log.md) / `FilterTagPicker.tsx` / `filter-tag-picker.test.tsx` / `browsing-preferences.test.ts` / `Serpent-77c919` | 2026-09-03 用户明确拒收旧实现；本轮已移除“常用标签”语义，默认列表改为“最近筛选 + 所有标签”，所有标签独立滚动且底部“排除/按住 Shift 可多选”固定可见，并补充已选标签高亮。自动化与 macOS Computer Use 已重新执行，等待用户复验；Windows、packaged、窄屏/DPI 未验证 |
 | `Serpent-ca6408` / FILTER-027 | 过滤维度悬停延迟展开 | 待人类验收 | 鼠标快速扫过多个过滤按钮；再在一个按钮上停留至少 0.5 秒；移入弹出面板；用 Tab 聚焦按钮 | 快速扫过不弹出面板；停留约 500ms 后展开；移入 portal 面板不闪退；键盘聚焦仍即时打开，启用/关闭语义不变 | [开发日志](../development/2026-09-03-filter-ignore-polish-development-log.md) / `DimensionFilterBar.tsx` / `dimension-filter-bar.test.tsx` | 自动化已通过；Computer Use、Windows、触控/DPI 未执行 |
 | `Serpent-8f113d` / TYPO-001 | 四档应用字体大小与全界面排版适配 | 待人类验收 | 在设置 → 外观通过 slider 依次选择“紧凑 / 默认 / 舒适 / 更大”；依次检查顶栏、侧栏、筛选条、资产卡片、Inspector、设置页、菜单、标签管理、查看器、危险确认窗口；切换亮/暗主题与中英文；在窄窗口重复 | 四档只改变应用文字大小，不触发页面缩放；文字、字重、行高和控件布局协调，无遮挡/截断/横向溢出；偏好重启后保持；Windows 字体与不同 DPI/分辨率下仍可读 | [字体开发日志](../development/2026-09-03-font-size-development-log.md) / `src/renderer/font-size-preferences.ts:6-37` / `src/renderer/ui/tokens.css` / `src/renderer/styles.css` / `src/main/critical-confirmation-window.ts` | 自动化与 macOS Computer Use 已记录；Windows、packaged、真实 DPI 未验证 |

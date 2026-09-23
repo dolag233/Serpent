@@ -3,6 +3,13 @@ import ignore from "ignore";
 /** The two path kinds that are materialized from a library ignore file. */
 export type GitIgnorePathKind = "asset" | "folder";
 
+/**
+ * Managed assets live below Assets/; linked trees are matched from their
+ * own root. One .serpentignore file serves both, so a basename rule such as
+ * ".*" with a trailing slash hides the same folder names in every tree.
+ */
+export type GitIgnoreRootKind = "managed" | "linked";
+
 type IgnoreMatcher = ReturnType<typeof ignore>;
 
 /**
@@ -63,24 +70,30 @@ function normalizeIgnorePath(relativePath: string): string {
   return relativePath.replaceAll("\\", "/").replace(/^\/+|\/+$/gu, "");
 }
 
-function candidatePath(relativePath: string, pathKind: GitIgnorePathKind): string | undefined {
+function candidatePath(
+  relativePath: string,
+  pathKind: GitIgnorePathKind,
+  root: GitIgnoreRootKind,
+): string | undefined {
   const normalized = normalizeIgnorePath(relativePath);
   if (!normalized) return undefined;
-  const root = `Assets/${normalized}`;
-  return pathKind === "folder" ? `${root}/` : root;
+  const prefixed = root === "linked" ? normalized : `Assets/${normalized}`;
+  return pathKind === "folder" ? `${prefixed}/` : prefixed;
 }
 
 /**
  * Match a path against the complete rule list while retaining Git's
- * last-matching-rule and negation semantics.  The matcher evaluates the
- * canonical library-root path (`Assets/<relative path>`); parseGitignore adds
- * qualified variants for path rules written relative to `Assets/`.
+ * last-matching-rule and negation semantics.  Managed paths are evaluated as
+ * `Assets/<relative path>`; linked paths are evaluated from the linked root
+ * so the same file-backed rules apply to both trees. parseGitignore still
+ * adds qualified variants for path rules written relative to Assets/.
  */
 export function gitignoreMatchesPath(
   compiled: GitIgnoreMatcher,
   relativePath: string,
   pathKind: GitIgnorePathKind,
+  root: GitIgnoreRootKind = "managed",
 ): boolean {
-  const candidate = candidatePath(relativePath, pathKind);
+  const candidate = candidatePath(relativePath, pathKind, root);
   return candidate === undefined ? false : compiled.matcher.ignores(candidate);
 }
