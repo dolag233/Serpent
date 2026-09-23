@@ -2457,6 +2457,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     }
     case 'ignore.list':
     case 'ignore.gitignore.get':
+    case 'ignore.gitignore.preview':
     case 'ignore.gitignore.set':
     case 'ignore.set': {
       const result = executeIgnoreWorkerCommand(libraryService, request, {

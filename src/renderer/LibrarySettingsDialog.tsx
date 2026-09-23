@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { RendererLibrarySummary, SyncProgressEvent } from "../shared/protocol/responses";
 import type { SyncCapabilities, SyncReport } from "../shared/library-api";
+import type { GitignorePreview } from "../shared/asset-types";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import { DialogShell } from "./ui/patterns";
 import { Switch } from "./ui/primitives";
 import { formatBytes } from "./format-file-meta";
+import { GitignorePreviewPanel } from "./GitignorePreviewPanel";
 import type { SyncServerSummary } from "./sync-settings-types";
 
 type LibrarySettingsCategory = "general" | "ignore" | "sync";
@@ -336,6 +338,7 @@ export function LibrarySettingsDialog({
   focusNameOnOpen = false,
   onSaveName,
   onSaveGitignore,
+  onPreviewGitignore,
   syncCallbacks,
   syncProgress,
 }: {
@@ -346,6 +349,7 @@ export function LibrarySettingsDialog({
   focusNameOnOpen?: boolean;
   onSaveName: (name: string) => Promise<void>;
   onSaveGitignore: (content: string) => Promise<void>;
+  onPreviewGitignore: (content: string) => Promise<GitignorePreview | null>;
   syncCallbacks: SyncSettingsCallbacks;
   syncProgress: SyncProgressEvent | null;
 }): ReactNode {
@@ -353,10 +357,16 @@ export function LibrarySettingsDialog({
   const [category, setCategory] = useState<LibrarySettingsCategory>("general");
   const [name, setName] = useState(library?.displayName ?? "");
   const [gitignoreDraft, setGitignoreDraft] = useState(gitignoreContent);
+  const [prevGitignoreContent, setPrevGitignoreContent] = useState(gitignoreContent);
   const [savingName, setSavingName] = useState(false);
   const [savingIgnore, setSavingIgnore] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
+
+  if (gitignoreContent !== prevGitignoreContent) {
+    setPrevGitignoreContent(gitignoreContent);
+    setGitignoreDraft(gitignoreContent);
+  }
 
   useEffect(() => {
     if (!open || !focusNameOnOpen) return;
@@ -492,16 +502,21 @@ export function LibrarySettingsDialog({
                     aria-label={t("settings.gitignoreFile")}
                     className="library-settings-gitignore-editor"
                     onChange={(event) => setGitignoreDraft(event.target.value)}
-                    onBlur={() => void saveGitignore()}
                     spellCheck={false}
                     value={gitignoreDraft}
                   />
                   <div className="library-settings-gitignore-actions">
                     <span>{t("settings.gitignoreSaveHint")}</span>
-                    <button className="primary-button" disabled={savingIgnore} onClick={() => void saveGitignore()} type="button">
+                    <button
+                      className="primary-button"
+                      disabled={savingIgnore || gitignoreDraft === gitignoreContent}
+                      onClick={() => void saveGitignore()}
+                      type="button"
+                    >
                       {savingIgnore ? t("common.saving") : t("common.save")}
                     </button>
                   </div>
+                  <GitignorePreviewPanel draft={gitignoreDraft} onPreview={onPreviewGitignore} />
                 </section>
               </>
             ) : (

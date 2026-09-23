@@ -8,6 +8,12 @@ export function executeIgnoreMainCommand(
       return { type: "ignore.list", libraryId: request.libraryId };
     case "ignore.gitignore.get.request":
       return { type: "ignore.gitignore.get", libraryId: request.libraryId };
+    case "ignore.gitignore.preview.request":
+      return {
+        type: "ignore.gitignore.preview",
+        libraryId: request.libraryId,
+        content: request.content,
+      };
     case "ignore.gitignore.set.request":
       return {
         type: "ignore.gitignore.set",

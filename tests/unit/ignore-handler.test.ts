@@ -25,6 +25,25 @@ test('ignore.list returns ignored paths', () => {
   });
 });
 
+test('ignore.gitignore.preview returns the draft hit diff', () => {
+  const preview = { rows: [], currentCount: 0, addedCount: 1, removedCount: 0, truncated: false };
+  const previewGitignore = vi.fn(() => preview);
+  const libraryService = {
+    previewGitignore,
+  } as unknown as LibraryService;
+
+  expect(executeIgnoreWorkerCommand(
+    libraryService,
+    ignoreRequest({ type: 'ignore.gitignore.preview', libraryId: 'lib-1', content: '*.tmp\n' }),
+    { scheduleRefreshThumbnails: vi.fn() },
+  )).toEqual({
+    ok: true,
+    type: 'ignore.gitignore.preview',
+    preview,
+  });
+  expect(previewGitignore).toHaveBeenCalledWith('lib-1', '*.tmp\n');
+});
+
 test('ignore.set schedules a refresh thumbnail scene', () => {
   const libraryService = {
     setIgnore: vi.fn(() => ({ ignored: true, path: 'refs/sketch.png' })),

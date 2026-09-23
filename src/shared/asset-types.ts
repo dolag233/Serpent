@@ -155,6 +155,31 @@ export const ignoredPathSchema = z.strictObject({
 
 export type IgnoredPath = z.infer<typeof ignoredPathSchema>;
 
+/** Same visible-row cap as the official batch-renamer Host list. */
+export const GITIGNORE_PREVIEW_ROW_LIMIT = 500;
+
+export const gitignorePreviewChangeSchema = z.enum(['kept', 'added', 'removed']);
+export type GitignorePreviewChange = z.infer<typeof gitignorePreviewChangeSchema>;
+
+export const gitignorePreviewRowSchema = z.strictObject({
+  locationKind: z.enum(['managed', 'linked']),
+  linkedFolderId: nonBlankString.nullable(),
+  relativePath: z.string().max(4096),
+  pathKind: z.enum(['asset', 'folder']),
+  displayName: nonBlankString,
+  change: gitignorePreviewChangeSchema,
+});
+export type GitignorePreviewRow = z.infer<typeof gitignorePreviewRowSchema>;
+
+export const gitignorePreviewSchema = z.strictObject({
+  rows: z.array(gitignorePreviewRowSchema).max(GITIGNORE_PREVIEW_ROW_LIMIT),
+  currentCount: z.number().int().nonnegative(),
+  addedCount: z.number().int().nonnegative(),
+  removedCount: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+});
+export type GitignorePreview = z.infer<typeof gitignorePreviewSchema>;
+
 export const imageSequenceFrameSummarySchema = z.strictObject({
   assetId: nonBlankString,
   displayName: nonBlankString,

@@ -967,6 +967,13 @@ export const library: SerpentLibraryApi = Object.freeze({
     return { ok: true as const, value: { content: result.content } };
   },
 
+  async previewGitignore({ libraryId, content }: { libraryId: string; content: string }) {
+    const result = await request({ type: 'ignore.gitignore.preview.request', libraryId, content });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ignore.gitignore.preview') throw new Error('Unexpected gitignore-preview response.');
+    return { ok: true as const, value: result.preview };
+  },
+
   async setGitignore({ libraryId, content }: { libraryId: string; content: string }) {
     const result = await request({ type: 'ignore.gitignore.set.request', libraryId, content });
     if (!result.ok) return failure(result);

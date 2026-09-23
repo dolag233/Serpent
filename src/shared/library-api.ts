@@ -36,6 +36,7 @@ import type {
   CollectionSummary,
   FilterClause,
   FolderBrowseEntry,
+  GitignorePreview,
   IgnoredPath,
   LinkedFolderDirectoryMutation,
   LinkedFolderRule,
@@ -477,6 +478,7 @@ export interface SerpentLibraryApi {
   setLinkedFolderRules(input: { libraryId: string; folderId: string; rules: LinkedFolderRule[] }): Promise<LibraryApiResult<{ rules: LinkedFolderRule[]; hiddenCount: number; restoredCount: number }>>;
   listIgnoredPaths(input: { libraryId: string }): Promise<LibraryApiResult<IgnoredPath[]>>;
   getGitignore(input: { libraryId: string }): Promise<LibraryApiResult<{ content: string }>>;
+  previewGitignore(input: { libraryId: string; content: string }): Promise<LibraryApiResult<GitignorePreview>>;
   setGitignore(input: { libraryId: string; content: string }): Promise<LibraryApiResult<{ content: string }>>;
   setIgnore(input: { libraryId: string; locationKind: 'managed' | 'linked'; linkedFolderId?: string | null; relativePath: string; pathKind: 'asset' | 'folder' | 'extension'; ignored: boolean }): Promise<LibraryApiResult<{ ignored: boolean; path: IgnoredPath }>>;
   copyAssetsToLinkedFolder(input: { libraryId: string; folderId: string; relativePath?: string; assetIds: string[]; conflictStrategy: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ copiedCount: number; skippedCount: number; assets: AssetSummary[] }>>;

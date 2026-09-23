@@ -172,12 +172,17 @@ import {
   parseGitignore,
   type GitIgnoreMatcher,
 } from './gitignore';
+import { diffGitignoreHits } from './gitignore-preview';
+import {
+  gitignorePreviewCandidateKey,
+  type GitignorePreviewCandidate,
+} from '../shared/gitignore-preview';
 import { sanitizeAiDescription } from '../shared/ai-analysis-settings';
 import {
   CONTENT_REPLACE_BATCH_MAX_ITEMS,
   CONTENT_REPLACE_STAGE_CHUNK_MAX_BYTES,
 } from '../shared/content-replace';
-import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type BrowseLayoutEntry, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type IgnoredPath, type LinkedFolderDirectoryMutation, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchQuery, type SearchScope, type SortDefinition, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagCooccurrenceGraph, type TagSummary, type TrashedFolderSummary } from '../shared/asset-types';
+import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type BrowseLayoutEntry, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type GitignorePreview, type IgnoredPath, type LinkedFolderDirectoryMutation, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchQuery, type SearchScope, type SortDefinition, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagCooccurrenceGraph, type TagSummary, type TrashedFolderSummary } from '../shared/asset-types';
 import {
   parseWritableAppearance,
   sanitizeEntityAppearance,
@@ -16998,6 +17003,7 @@ export class LibraryService {
     linkedFolderId: string,
     rootPath: string,
     rules: LinkedFolderRule[],
+    includeGitignoreHidden = false,
   ): string[] {
     const prefixes = new Set<string>();
     const visit = (directoryPath: string, relativeDirectory: string): void => {
@@ -17021,7 +17027,7 @@ export class LibraryService {
         // Probe the folder target so folder rules (including default hidden
         // directories) are applied with the same matcher as asset scans.
         if (this.linkedPathIsIgnored(`${normalized}/__serpent_probe__`, rules)) continue;
-        if (this.explicitFolderIgnored(openLibrary, 'linked', linkedFolderId, normalized)) continue;
+        if (!includeGitignoreHidden && this.explicitFolderIgnored(openLibrary, 'linked', linkedFolderId, normalized)) continue;
         prefixes.add(normalized);
         visit(path.join(directoryPath, entry.name), normalized);
       }
@@ -40463,6 +40469,126 @@ export class LibraryService {
         displayName: row.display_name,
         ignoredAt: row.ignored_at,
       }));
+  }
+
+  previewGitignore(libraryId: string, content: string): GitignorePreview {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    return diffGitignoreHits(
+      this.collectGitignorePreviewCandidates(openLibrary),
+      openLibrary.gitignoreMatcher,
+      parseGitignore(content),
+    );
+  }
+
+  private collectGitignorePreviewCandidates(openLibrary: OpenLibrary): GitignorePreviewCandidate[] {
+    const byKey = new Map<string, GitignorePreviewCandidate>();
+    const add = (candidate: GitignorePreviewCandidate) => {
+      if (candidate.relativePath.length === 0) return;
+      byKey.set(gitignorePreviewCandidateKey(candidate), candidate);
+    };
+    const linkedFolders = hasTable(openLibrary.connection, 'linked_folders')
+      ? openLibrary.connection.prepare(
+        `SELECT folder_id, display_name, status, absolute_root_path
+           FROM linked_folders`,
+      ).all() as Array<{
+        folder_id: string;
+        display_name: string;
+        status: 'available' | 'offline';
+        absolute_root_path: string;
+      }>
+      : [];
+    const linkedNames = new Map(linkedFolders.map((folder) => [folder.folder_id, folder.display_name]));
+    const linkedDisplayName = (linkedFolderId: string, relativePath: string): string => {
+      const rootName = linkedNames.get(linkedFolderId);
+      return rootName === undefined ? relativePath : `${rootName}/${relativePath}`;
+    };
+
+    if (hasTable(openLibrary.connection, 'managed_folders')) {
+      const managedFolders = openLibrary.connection.prepare(
+        `SELECT relative_path FROM managed_folders ORDER BY relative_path`,
+      ).all() as Array<{ relative_path: string }>;
+      for (const folder of managedFolders) {
+        add({
+          locationKind: 'managed',
+          linkedFolderId: null,
+          relativePath: folder.relative_path,
+          pathKind: 'folder',
+          displayName: folder.relative_path,
+        });
+      }
+    }
+
+    if (hasTable(openLibrary.connection, 'assets')) {
+      const managedAssets = openLibrary.connection.prepare(
+        `SELECT relative_file_path AS relative_path
+           FROM assets
+          WHERE location_kind = 'managed' AND deleted_at IS NULL
+          ORDER BY relative_file_path`,
+      ).all() as Array<{ relative_path: string }>;
+      for (const asset of managedAssets) {
+        add({
+          locationKind: 'managed',
+          linkedFolderId: null,
+          relativePath: asset.relative_path,
+          pathKind: 'asset',
+          displayName: asset.relative_path,
+        });
+      }
+
+      const linkedAssets = openLibrary.connection.prepare(
+        `SELECT linked_folder_id, relative_file_path AS relative_path
+           FROM assets
+          WHERE location_kind = 'linked' AND deleted_at IS NULL AND linked_folder_id IS NOT NULL
+          ORDER BY linked_folder_id, relative_file_path`,
+      ).all() as Array<{ linked_folder_id: string; relative_path: string }>;
+      const linkedPathsByFolder = new Map<string, string[]>();
+      for (const asset of linkedAssets) {
+        const paths = linkedPathsByFolder.get(asset.linked_folder_id);
+        if (paths) paths.push(asset.relative_path);
+        else linkedPathsByFolder.set(asset.linked_folder_id, [asset.relative_path]);
+        add({
+          locationKind: 'linked',
+          linkedFolderId: asset.linked_folder_id,
+          relativePath: asset.relative_path,
+          pathKind: 'asset',
+          displayName: linkedDisplayName(asset.linked_folder_id, asset.relative_path),
+        });
+      }
+      for (const [linkedFolderId, paths] of linkedPathsByFolder) {
+        for (const prefix of collectLinkedDirectoryPrefixes(paths)) {
+          add({
+            locationKind: 'linked',
+            linkedFolderId,
+            relativePath: prefix,
+            pathKind: 'folder',
+            displayName: linkedDisplayName(linkedFolderId, prefix),
+          });
+        }
+      }
+    }
+
+    const libraryId = openLibrary.summary.libraryId;
+    for (const folder of linkedFolders) {
+      if (folder.status !== 'available' || this.linkedRootIsGone(folder.absolute_root_path)) continue;
+      const prefixes = this.collectLinkedDirectoryPrefixesFromDisk(
+        openLibrary,
+        folder.folder_id,
+        folder.absolute_root_path,
+        this.getLinkedFolderRules({ libraryId, folderId: folder.folder_id }),
+        true,
+      );
+      for (const prefix of prefixes) {
+        add({
+          locationKind: 'linked',
+          linkedFolderId: folder.folder_id,
+          relativePath: prefix,
+          pathKind: 'folder',
+          displayName: linkedDisplayName(folder.folder_id, prefix),
+        });
+      }
+    }
+
+    return [...byKey.values()];
   }
 
   setIgnore(input: {

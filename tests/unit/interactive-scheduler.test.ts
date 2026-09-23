@@ -169,6 +169,11 @@ describe('performance command classification', () => {
       libraryId: 'library-1',
     })).toBe('browse-session');
     expect(performanceInteractionKeyForCommand({
+      type: 'ignore.gitignore.preview',
+      libraryId: 'library-1',
+      content: '*.tmp\n',
+    })).toBe('ignore-preview');
+    expect(performanceInteractionKeyForCommand({
       type: 'browse.session.page',
       libraryId: 'library-1',
     })).toBeUndefined();

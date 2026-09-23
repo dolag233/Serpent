@@ -2379,6 +2379,7 @@ async function commandFor(
     }
     case "ignore.list.request":
     case "ignore.gitignore.get.request":
+    case "ignore.gitignore.preview.request":
     case "ignore.gitignore.set.request":
     case "ignore.set.request": {
       return executeIgnoreMainCommand(request);

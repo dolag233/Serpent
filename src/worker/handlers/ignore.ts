@@ -24,6 +24,12 @@ export function executeIgnoreWorkerCommand(
         type: 'ignore.gitignore',
         content: libraryService.getGitignore(request.command.libraryId).content,
       };
+    case 'ignore.gitignore.preview':
+      return {
+        ok: true,
+        type: 'ignore.gitignore.preview',
+        preview: libraryService.previewGitignore(request.command.libraryId, request.command.content),
+      };
     case 'ignore.gitignore.set': {
       const result = libraryService.setGitignore(request.command);
       hooks.scheduleRefreshThumbnails(request.command.libraryId);

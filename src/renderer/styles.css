@@ -9886,6 +9886,13 @@ select.ai-config-input.ai-config-languages {
   font-size: calc(12px * var(--ui-font-scale));
 }
 
+.library-settings-gitignore-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
 .about-dialog {
   position: relative;
   display: flex;

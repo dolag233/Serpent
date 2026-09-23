@@ -21,6 +21,18 @@ test("ignore.set maps managed path ignore flags", () => {
   });
 });
 
+test("ignore.gitignore.preview maps draft content", () => {
+  expect(executeIgnoreMainCommand({
+    type: "ignore.gitignore.preview.request",
+    libraryId: "lib-1",
+    content: ".*/\n",
+  })).toEqual({
+    type: "ignore.gitignore.preview",
+    libraryId: "lib-1",
+    content: ".*/\n",
+  });
+});
+
 test("unrelated renderer requests fall through", () => {
   expect(executeIgnoreMainCommand({ type: "library.list.request" })).toBeUndefined();
 });

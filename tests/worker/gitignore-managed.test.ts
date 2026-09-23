@@ -345,3 +345,45 @@ describe('managed nested dot-folder ignore', () => {
       .sort()).toEqual(['1Test']);
   });
 });
+
+describe('ignore settings preview', () => {
+  it('diffs current hits against a draft ignore file for managed and linked trees', () => {
+    const root = temporaryRoot();
+    const sourceRoot = path.join(root, '1Test');
+    mkdirSync(sourceRoot);
+    writeFileSync(path.join(sourceRoot, 'keep.png'), 'keep');
+    mkdirSync(path.join(sourceRoot, '.111'));
+
+    const service = newService();
+    const library = service.createLibrary({
+      displayName: 'Ignore preview library',
+      selectedParentPath: root,
+    });
+    const parent = service.createManagedFolder({
+      libraryId: library.libraryId,
+      name: '1Test',
+    });
+    service.createManagedFolder({
+      libraryId: library.libraryId,
+      name: '.111',
+      parentFolderId: parent.folderId,
+    });
+    service.importFolderAsLinked({
+      libraryId: library.libraryId,
+      sourceRootPath: sourceRoot,
+    });
+
+    const addingDotFolders = service.previewGitignore(library.libraryId, '.*/\n');
+    expect(addingDotFolders.currentCount).toBe(0);
+    expect(addingDotFolders.removedCount).toBe(0);
+    expect(addingDotFolders.rows.filter((row) => row.change === 'added').map((row) => row.relativePath).sort())
+      .toEqual(['.111', '1Test/.111']);
+
+    service.setGitignore({ libraryId: library.libraryId, content: '.*/\n' });
+    const clearingRules = service.previewGitignore(library.libraryId, '');
+    expect(clearingRules.addedCount).toBe(0);
+    expect(clearingRules.rows.filter((row) => row.change === 'removed').map((row) => row.relativePath).sort())
+      .toEqual(['.111', '1Test/.111']);
+    expect(clearingRules.rows.every((row) => row.change === 'removed')).toBe(true);
+  });
+});

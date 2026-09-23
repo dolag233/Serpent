@@ -14830,7 +14830,7 @@ function AppInner() {
         }}
       />
       <LibrarySettingsDialog
-        key={`${library?.libraryId ?? "none"}:${librarySettingsOpen ? "open" : "closed"}:${gitignoreContent}`}
+        key={`${library?.libraryId ?? "none"}:${librarySettingsOpen ? "open" : "closed"}`}
         library={library}
         open={librarySettingsOpen}
         gitignoreContent={gitignoreContent}
@@ -14857,6 +14857,12 @@ function AppInner() {
           setGitignoreContent(result.value.content);
           setNotice(t("toast.librarySettingsSaved"));
           await reloadCurrentContent();
+        }}
+        onPreviewGitignore={async (content) => {
+          if (!api || !library) return null;
+          const result = await api.previewGitignore({ libraryId: library.libraryId, content });
+          if (!result.ok) return null;
+          return result.value;
         }}
         syncCallbacks={{
           async syncListServers() {
