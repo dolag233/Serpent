@@ -22,6 +22,7 @@ const folderKeyboardCommandRegistry = createCommandRegistry(
 );
 
 const FOLDER_SHORTCUT_COMMAND_IDS = [
+  "folder.open-in-file-manager",
   "folder.create-subfolder",
   "folder.rename",
   "folder.move-to-trash",
@@ -58,6 +59,8 @@ export type UseFolderCommandShortcutsArgs = {
   readonly selectedAssetCount: number;
   readonly resolveManagedFolderName: (folderId: string) => string | undefined;
   readonly canRenameFolder?: (folderId: string) => boolean;
+  readonly canOpenFolder?: (folderId: string) => boolean;
+  readonly openFolderInFileManager: (folderId: string) => void;
   readonly createSubfolder: (parentFolderId: string | null) => void;
   readonly renameFolder: (folderId: string, currentName: string) => void;
   readonly trashManagedFolder: (folderId: string, name: string) => void;
@@ -85,6 +88,8 @@ export function useFolderCommandShortcuts(
     canRenameFolder,
     createSubfolder,
     renameFolder,
+    canOpenFolder,
+    openFolderInFileManager,
     trashManagedFolder,
     deleteFolderFromDisk,
     trashFolders,
@@ -110,6 +115,7 @@ export function useFolderCommandShortcuts(
           selectedAssetCount,
           resolveManagedFolderName,
           canRenameFolder,
+          canOpenFolder,
         });
         if (action.type === "none") continue;
 
@@ -124,6 +130,11 @@ export function useFolderCommandShortcuts(
         if (browseAction && !shouldForwardBrowseShortcut(browseAction)) return;
 
         event.preventDefault();
+        event.stopImmediatePropagation();
+        if (action.type === "open-in-file-manager") {
+          openFolderInFileManager(action.folderId);
+          return;
+        }
         if (action.type === "create-subfolder") {
           createSubfolder(action.parentFolderId);
           return;
@@ -177,6 +188,8 @@ export function useFolderCommandShortcuts(
     canRenameFolder,
     createSubfolder,
     renameFolder,
+    canOpenFolder,
+    openFolderInFileManager,
     trashManagedFolder,
     deleteFolderFromDisk,
     trashFolders,

@@ -5,6 +5,7 @@ import {
   formatVideoClockTime,
   isEditableKeyboardTarget,
   isTypingKeyboardTarget,
+  isVideoPlaybackRateMenuTarget,
   matchVideoPlaybackSeekKey,
   matchVideoPlaybackRateKey,
   nextFrameSeekTime,
@@ -25,10 +26,8 @@ import {
 } from "../../src/renderer/video-player-controls";
 
 describe("VIDEO_PLAYBACK_RATES", () => {
-  it("includes the required 0.5x / 1x / 1.5x / 2x rates", () => {
-    expect(VIDEO_PLAYBACK_RATES).toEqual(
-      expect.arrayContaining([0.5, 1, 1.5, 2]),
-    );
+  it("lists 0.25x through 4x as selectable steps", () => {
+    expect(VIDEO_PLAYBACK_RATES).toEqual([0.25, 0.5, 1, 1.5, 2, 4]);
   });
 });
 
@@ -42,8 +41,11 @@ describe("nextPlaybackIntent", () => {
 describe("parsePlaybackRate", () => {
   it("accepts known rates and falls back to 1", () => {
     expect(parsePlaybackRate("1.5")).toBe(1.5);
+    expect(parsePlaybackRate("0.25")).toBe(0.25);
+    expect(parsePlaybackRate("4")).toBe(4);
     expect(parsePlaybackRate("0.5")).toBe(0.5);
     expect(parsePlaybackRate("9")).toBe(1);
+    expect(parsePlaybackRate("0.75")).toBe(1);
     expect(parsePlaybackRate("nope")).toBe(1);
   });
 });
@@ -124,6 +126,34 @@ describe("shouldHandleVideoSpaceKey", () => {
         target: { tagName: "BUTTON" },
       }),
     ).toBe(true);
+  });
+
+  it("leaves Space to the rate listbox so options can be chosen", () => {
+    expect(
+      isVideoPlaybackRateMenuTarget({ tagName: "BUTTON", role: "option" }),
+    ).toBe(true);
+    expect(
+      shouldHandleVideoSpaceKey({
+        key: " ",
+        repeat: false,
+        target: {
+          tagName: "BUTTON",
+          closest: (selector: string) =>
+            selector === '[role="listbox"]' ? {} : null,
+        },
+      }),
+    ).toBe(false);
+    expect(
+      shouldHandleVideoSpaceKey({
+        key: " ",
+        repeat: false,
+        target: {
+          tagName: "BUTTON",
+          closest: (selector: string) =>
+            selector === '[aria-haspopup="listbox"]' ? {} : null,
+        },
+      }),
+    ).toBe(false);
   });
 
   it("owns Space after the video scrubber receives focus", () => {
@@ -253,10 +283,10 @@ describe("matchVideoPlaybackRateKey / stepVideoPlaybackRate (Serpent-soii)", () 
   it("maps X slower and C faster within discrete rates", () => {
     expect(matchVideoPlaybackRateKey({ ...base, key: "x" })).toBe("slower");
     expect(matchVideoPlaybackRateKey({ ...base, key: "C" })).toBe("faster");
-    expect(stepVideoPlaybackRate(1, "faster")).toBe(1.25);
-    expect(stepVideoPlaybackRate(1, "slower")).toBe(0.75);
-    expect(stepVideoPlaybackRate(0.5, "slower")).toBe(0.5);
-    expect(stepVideoPlaybackRate(2, "faster")).toBe(2);
+    expect(stepVideoPlaybackRate(1, "faster")).toBe(1.5);
+    expect(stepVideoPlaybackRate(1, "slower")).toBe(0.5);
+    expect(stepVideoPlaybackRate(0.25, "slower")).toBe(0.25);
+    expect(stepVideoPlaybackRate(4, "faster")).toBe(4);
   });
 
   it("matches X/C by physical code under IME Process keys", () => {

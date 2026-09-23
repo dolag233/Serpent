@@ -80,9 +80,9 @@ export type CanvasAssetLayoutIndex = {
   forEachAll: (visit: (item: CanvasAssetLayoutRect) => void) => void;
 };
 
-export const MASONRY_CAPTION_BAND_PX = 42;
+export const MASONRY_CAPTION_BAND_PX = 45;
 /** Three caption rows: resolution, filename, and size/date. */
-export const MASONRY_DIMENSIONS_CAPTION_BAND_PX = 56;
+export const MASONRY_DIMENSIONS_CAPTION_BAND_PX = 62;
 
 const publishedLayouts = new WeakMap<HTMLElement, readonly CanvasAssetLayoutRect[]>();
 const publishedLayoutIndexes = new WeakMap<HTMLElement, CanvasAssetLayoutIndex>();
@@ -132,7 +132,12 @@ export function estimateMasonryCardBodyPx(
   captionBandPx: CaptionBandSource = MASONRY_CAPTION_BAND_PX,
 ): number {
   return (
-    estimateMasonryPreviewHeightPx(asset.width, asset.height, columnWidthPx) +
+    estimateMasonryPreviewHeightPx(
+      asset.width,
+      asset.height,
+      columnWidthPx,
+      asset.mediaType,
+    ) +
     (showCaption ? resolveCaptionBandSource(captionBandPx, asset) : 0)
   );
 }
@@ -202,7 +207,7 @@ export function layoutJustifiedAssetRects(
   const rows = layoutJustifiedRows(
     assets.map((asset) => ({
       id: asset.assetId,
-      aspectRatio: aspectRatioForAsset(asset.width, asset.height),
+      aspectRatio: aspectRatioForAsset(asset.width, asset.height, asset.mediaType),
     })),
     availableWidth,
     cardSize,

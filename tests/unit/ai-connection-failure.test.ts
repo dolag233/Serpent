@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   INITIAL_CONNECTION_FAILURE_GATE,
+  aiConnectionFailureBodyKey,
+  dominantConnectionFailureCode,
   isAiConnectionFailureCode,
   listConnectionFailedJobIds,
   reduceConnectionFailureGate,
@@ -35,6 +37,33 @@ describe("listConnectionFailedJobIds (Serpent-kdnm)", () => {
   });
 });
 
+describe("dominantConnectionFailureCode / body key (Serpent-c7d64e)", () => {
+  it("picks the most common code and keeps first-seen ties", () => {
+    expect(
+      dominantConnectionFailureCode([
+        { errorCode: "AI_RATE_LIMIT" },
+        { errorCode: "AI_RATE_LIMIT" },
+        { errorCode: "AI_NETWORK" },
+      ]),
+    ).toBe("AI_RATE_LIMIT");
+    expect(
+      dominantConnectionFailureCode([
+        { errorCode: "AI_NETWORK" },
+        { errorCode: "AI_AUTH" },
+      ]),
+    ).toBe("AI_NETWORK");
+    expect(dominantConnectionFailureCode([])).toBeNull();
+  });
+
+  it("maps codes to cause-specific dialog copy keys", () => {
+    expect(aiConnectionFailureBodyKey("AI_RATE_LIMIT")).toBe("bodyRateLimit");
+    expect(aiConnectionFailureBodyKey("AI_AUTH")).toBe("bodyAuth");
+    expect(aiConnectionFailureBodyKey("AI_TIMEOUT")).toBe("bodyTimeout");
+    expect(aiConnectionFailureBodyKey("AI_NETWORK")).toBe("bodyNetwork");
+    expect(aiConnectionFailureBodyKey(null)).toBe("body");
+  });
+});
+
 describe("reduceConnectionFailureGate (Serpent-kdnm)", () => {
   it("does not open before a batch is armed", () => {
     const state = reduceConnectionFailureGate(INITIAL_CONNECTION_FAILURE_GATE, {
@@ -53,9 +82,11 @@ describe("reduceConnectionFailureGate (Serpent-kdnm)", () => {
     state = reduceConnectionFailureGate(state, {
       type: "jobs_snapshot",
       connectionFailedJobIds: ["old", "new1"],
+      failureCode: "AI_RATE_LIMIT",
     });
     expect(state.open).toBe(true);
     expect(state.failedJobIds).toEqual(["new1"]);
+    expect(state.failureCode).toBe("AI_RATE_LIMIT");
 
     const again = reduceConnectionFailureGate(state, {
       type: "jobs_snapshot",

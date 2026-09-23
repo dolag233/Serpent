@@ -106,6 +106,10 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
           : 'command.folder.revealInExplorer',
       ),
     group: 'open',
+    shortcut: {
+      mac: { label: '⌘⇧S', key: 's', metaKey: true, shiftKey: true },
+      windows: { label: 'Ctrl+Shift+S', key: 's', ctrlKey: true, shiftKey: true },
+    },
     visible: (ctx) => ctx.menuKind === 'folder',
     disabledReason: offlineReason,
     run: (ctx) => ctx.actions.openFolderInFileManager(revealFolderId(ctx)),
@@ -174,10 +178,10 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
     title: (ctx) =>
       translateForLocale(ctx.locale, 'command.folder.linkedRules'),
     group: 'organize',
-    visible: (ctx) =>
-      ctx.menuKind === 'folder' &&
-      ctx.locationKind === 'linked' &&
-      ctx.linkedFolderResolved,
+    // Serpent-c6d907: linked ignore is the same .serpentignore file as
+    // managed folders. Keep the command for automation; do not offer a
+    // separate rules window in the folder menu.
+    visible: () => false,
     run: (ctx) => {
       if (ctx.linkedFolder !== undefined) {
         ctx.actions.openLinkedRules(ctx.linkedFolder);

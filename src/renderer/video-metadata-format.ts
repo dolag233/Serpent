@@ -113,8 +113,6 @@ export function formatAudioTechnicalLine(
 ): string | null {
   const parts: string[] = [];
 
-  if (metadata.audioCodec) parts.push(metadata.audioCodec);
-
   const bitrate =
     parseProbeNumber(metadata.audioBitrate ?? null)
     ?? parseProbeNumber(metadata.containerBitrate ?? null);
@@ -130,4 +128,116 @@ export function formatAudioTechnicalLine(
   }
 
   return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+export type EmbeddedMetadataField =
+  | "title"
+  | "artist"
+  | "album"
+  | "albumArtist"
+  | "trackNumber"
+  | "discNumber"
+  | "genre"
+  | "composer"
+  | "date"
+  | "comment"
+  | "copyright"
+  | "custom";
+
+export interface EmbeddedMetadataRow {
+  field: EmbeddedMetadataField;
+  value: string;
+  /** Original tag name for custom fields; standard fields have no key. */
+  key?: string;
+}
+
+function addEmbeddedMetadataRow(
+  rows: EmbeddedMetadataRow[],
+  field: EmbeddedMetadataField,
+  value: string | null | undefined,
+): void {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (normalized) rows.push({ field, value: normalized });
+}
+
+/**
+ * Build the field/value rows used by the Inspector for embedded tags.
+ *
+ * Keeping these rows separate from the compact codec line makes audio/video
+ * metadata read the same way as the ARW/EXIF details below it and avoids
+ * losing the field name when several tags happen to share similar values.
+ */
+export function buildEmbeddedMetadataRows(
+  metadata: Pick<
+    ExtractedVideoMetadata,
+    | "title"
+    | "artist"
+    | "album"
+    | "albumArtist"
+    | "trackNumber"
+    | "discNumber"
+    | "genre"
+    | "composer"
+    | "comment"
+    | "copyright"
+    | "date"
+    | "customTags"
+  >,
+): EmbeddedMetadataRow[] {
+  const rows: EmbeddedMetadataRow[] = [];
+  addEmbeddedMetadataRow(rows, "title", metadata.title);
+  addEmbeddedMetadataRow(rows, "artist", metadata.artist);
+  addEmbeddedMetadataRow(rows, "album", metadata.album);
+  addEmbeddedMetadataRow(rows, "albumArtist", metadata.albumArtist);
+  addEmbeddedMetadataRow(rows, "trackNumber", metadata.trackNumber);
+  addEmbeddedMetadataRow(rows, "discNumber", metadata.discNumber);
+  addEmbeddedMetadataRow(rows, "genre", metadata.genre);
+  addEmbeddedMetadataRow(rows, "composer", metadata.composer);
+  addEmbeddedMetadataRow(rows, "date", metadata.date);
+  addEmbeddedMetadataRow(rows, "comment", metadata.comment);
+  addEmbeddedMetadataRow(rows, "copyright", metadata.copyright);
+  for (const tag of metadata.customTags ?? []) {
+    const key = tag.key.trim();
+    const value = tag.value.trim();
+    if (key && value) rows.push({ field: "custom", key, value });
+  }
+  return rows;
+}
+
+/** Compact human-readable line for standard embedded audio/video tags. */
+export function formatEmbeddedMetadataLine(
+  metadata: Pick<
+    ExtractedVideoMetadata,
+    | "title"
+    | "artist"
+    | "album"
+    | "albumArtist"
+    | "trackNumber"
+    | "discNumber"
+    | "genre"
+    | "composer"
+    | "comment"
+    | "copyright"
+    | "date"
+    | "customTags"
+  >,
+): string | null {
+  const parts: string[] = [];
+  if (metadata.title) parts.push(metadata.title);
+  if (metadata.artist) parts.push(metadata.artist);
+  if (metadata.album) parts.push(metadata.album);
+  if (metadata.albumArtist && metadata.albumArtist !== metadata.artist) parts.push(metadata.albumArtist);
+  if (metadata.trackNumber) parts.push(`#${metadata.trackNumber}`);
+  if (metadata.discNumber) parts.push(`disc ${metadata.discNumber}`);
+  if (metadata.genre) parts.push(metadata.genre);
+  if (metadata.composer) parts.push(metadata.composer);
+  if (metadata.date) parts.push(metadata.date);
+  if (metadata.comment) parts.push(metadata.comment);
+  if (metadata.copyright) parts.push(metadata.copyright);
+  for (const tag of metadata.customTags ?? []) {
+    if (tag.key && tag.value) parts.push(`${tag.key}: ${tag.value}`);
+  }
+  if (parts.length === 0) return null;
+  const line = parts.join(" · ");
+  return line.length > 1200 ? `${line.slice(0, 1197)}…` : line;
 }

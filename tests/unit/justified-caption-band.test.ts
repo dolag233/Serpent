@@ -21,7 +21,7 @@ describe("resolveJustifiedCaptionBandPx (Serpent-omn)", () => {
     ).toBe(0);
   });
 
-  it("sizes a dimensions-only band above the old 22px constant", () => {
+  it("keeps a dimensions-only band compact", () => {
     const band = resolveJustifiedCaptionBandPx({
       dimensions: true,
       name: false,
@@ -32,10 +32,10 @@ describe("resolveJustifiedCaptionBandPx (Serpent-omn)", () => {
         JUSTIFIED_CAPTION_DIMENSIONS_LINE_PX +
         JUSTIFIED_CAPTION_PAD_BOTTOM_PX,
     );
-    expect(band).toBeGreaterThan(22);
+    expect(band).toBe(30);
   });
 
-  it("matches the audited ~58px default (dimensions + name + meta)", () => {
+  it("matches the compact ~54px default (dimensions + name + meta)", () => {
     const band = resolveJustifiedCaptionBandPx({
       dimensions: true,
       name: true,
@@ -50,9 +50,10 @@ describe("resolveJustifiedCaptionBandPx (Serpent-omn)", () => {
         JUSTIFIED_CAPTION_SECONDARY_LINE_PX +
         JUSTIFIED_CAPTION_PAD_BOTTOM_PX,
     );
-    // Windows audit measured ~58px for the default three-line caption.
-    expect(band).toBeGreaterThanOrEqual(54);
-    expect(band).toBeLessThanOrEqual(62);
+    // The compact caption keeps the measured three-line content while trimming
+    // the bottom breathing room.
+    expect(band).toBeGreaterThanOrEqual(62);
+    expect(band).toBe(62);
   });
 
   it("grows when more lines are enabled", () => {
@@ -81,6 +82,6 @@ describe("resolveJustifiedCaptionBandPx (Serpent-omn)", () => {
     const large = resolveJustifiedCaptionBandPx(lines, 1.12);
 
     expect(large).toBeGreaterThan(base);
-    expect(large).toBe(67);
+    expect(large).toBe(71);
   });
 });

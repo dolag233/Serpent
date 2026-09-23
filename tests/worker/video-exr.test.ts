@@ -174,6 +174,10 @@ const CANNED_FFPROBE_JSON = JSON.stringify({
       codec_name: 'aac',
       channels: 2,
       sample_rate: '48000',
+      tags: {
+        album: 'Fixture Album',
+        genre: 'Ambient',
+      },
     },
   ],
   format: {
@@ -181,6 +185,13 @@ const CANNED_FFPROBE_JSON = JSON.stringify({
     format_name: 'mov,mp4,m4a,3gp,3g2,mj2',
     duration: '30.05',
     bit_rate: '5500000',
+    tags: {
+      title: 'Fixture Scene',
+      artist: 'Fixture Artist',
+      album_artist: 'Fixture Group',
+      track: '7/12',
+      custom_fixture: 'fixture-value',
+    },
   },
 });
 
@@ -390,7 +401,16 @@ describe('video (ffprobe + ffmpeg)', () => {
       videoBitrate: '5000000',
       hasAudio: true,
       containerBitrate: '5500000',
+      title: 'Fixture Scene',
+      artist: 'Fixture Artist',
+      album: 'Fixture Album',
+      trackNumber: '7/12',
+      customTags: [{ key: 'custom_fixture', value: 'fixture-value' }],
     });
+    expect(service.searchAssets({
+      libraryId: created.libraryId,
+      query: { clauses: [{ field: 'metadata_text', values: ['fixture-value'], exclude: false }] },
+    }).total).toBe(1);
 
     db.close();
     service.closeAll();
@@ -1984,7 +2004,7 @@ describe('EXR/TGA (oiiotool)', () => {
     expect(metadataRow).toMatchObject({
       width: 5184,
       height: 3464,
-      generator_version: 'exifr@7.1.3;raw-image-metadata-v1',
+      generator_version: 'exifr@7.1.3;embedded-image-metadata-v2',
     });
     const metadataPath = path.join(
       created.libraryPath,
@@ -2013,6 +2033,48 @@ describe('EXR/TGA (oiiotool)', () => {
       },
     });
     db.close();
+    service.closeAll();
+  });
+
+  it('extracts common image embedded metadata through the secondary queue', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService({
+      rawImageMetadataParser: {
+        parse: async () => ({
+          Title: 'Reference board',
+          Description: 'Fixture image',
+          GPSLatitude: [30, 15, 0],
+          GPSLatitudeRef: 'S',
+          GPSLongitude: [120, 30, 0],
+          GPSLongitudeRef: 'E',
+        }),
+      },
+    });
+    const created = service.createLibrary({ displayName: 'ImageMetadata', selectedParentPath: root });
+    const sourcePath = path.join(root, 'reference.png');
+    writeFileSync(sourcePath, VALID_1X1_PNG);
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    service.enqueueThumbnailJobs(created.libraryId, { assetIds: [asset.assetId] });
+    await service.processThumbnailQueue(created.libraryId);
+
+    expect(service.getExtractedMetadata({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    })).toMatchObject({
+      status: 'ready',
+      metadata: {
+        title: 'Reference board',
+        description: 'Fixture image',
+        gpsLatitude: -30.25,
+        gpsLongitude: 120.5,
+      },
+    });
+    expect(service.searchAssets({
+      libraryId: created.libraryId,
+      query: { clauses: [{ field: 'metadata_text', values: ['Reference board'], exclude: false }] },
+    }).total).toBe(1);
     service.closeAll();
   });
 
@@ -2798,11 +2860,13 @@ describe('EXR/TGA (oiiotool)', () => {
     ).run(generated.artifactId);
     db.close();
 
+    // Common TIFF metadata is now admitted as a secondary job alongside the
+    // legacy thumbnail repair check; the thumbnail itself remains current.
     expect(service.enqueueThumbnailJobs(created.libraryId, {
       assetIds: [asset.assetId],
       limit: 1,
       priority: 350,
-    })).toBe(0);
+    })).toBe(1);
     service.closeAll();
   });
 

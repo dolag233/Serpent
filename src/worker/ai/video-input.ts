@@ -33,6 +33,15 @@ export interface LoadVideoAiInputOptions {
     sharpFn?: AiAnalysisSharpFactory,
   ) => Promise<{ imageBase64: string; mime: 'image/jpeg' }>;
   sharpFn?: AiAnalysisSharpFactory;
+  signal?: AbortSignal;
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new DOMException('The operation was aborted.', 'AbortError');
+  }
 }
 
 function describeVideoMetadata(raw: unknown): string | undefined {
@@ -62,6 +71,7 @@ export async function loadVideoAiInput(
   mime: string;
   contactSheetDescription: string | undefined;
 }> {
+  throwIfAborted(options.signal);
   const contactSheet = options.service.getCurrentArtifact(
     options.libraryId,
     options.assetId,
@@ -75,13 +85,16 @@ export async function loadVideoAiInput(
     options.libraryId,
     contactSheet.artifactId,
   );
+  throwIfAborted(options.signal);
   const bytes = await readFile(contactSheetPath);
+  throwIfAborted(options.signal);
   const maxEdgePx = normalizeAiAnalysisImageEdgePx(
     options.maxEdgePx ?? DEFAULT_AI_ANALYSIS_IMAGE_EDGE_PX,
   );
   let contactSheetBase64: string;
   let contactSheetMime: string;
   try {
+    throwIfAborted(options.signal);
     const encoded = await (options.encodeImage ?? encodeAiAnalysisImage)(
       bytes,
       maxEdgePx,
@@ -90,6 +103,7 @@ export async function loadVideoAiInput(
     contactSheetBase64 = encoded.imageBase64;
     contactSheetMime = encoded.mime;
   } catch {
+    throwIfAborted(options.signal);
     contactSheetBase64 = bytes.toString('base64');
     contactSheetMime = contactSheet.mimeType;
   }
@@ -100,16 +114,20 @@ export async function loadVideoAiInput(
     options.assetId,
     'extracted_metadata',
   );
+  throwIfAborted(options.signal);
   if (metadata?.status === 'ready') {
     try {
       const metadataPath = options.service.getArtifactAbsolutePath(
         options.libraryId,
         metadata.artifactId,
       );
+      throwIfAborted(options.signal);
       contactSheetDescription = describeVideoMetadata(
         JSON.parse(await readFile(metadataPath, 'utf-8')),
       );
+      throwIfAborted(options.signal);
     } catch {
+      throwIfAborted(options.signal);
       // Metadata is contextual only; the contact sheet remains a valid input.
     }
   }

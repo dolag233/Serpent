@@ -172,12 +172,17 @@ import {
   parseGitignore,
   type GitIgnoreMatcher,
 } from './gitignore';
+import { diffGitignoreHits } from './gitignore-preview';
+import {
+  gitignorePreviewCandidateKey,
+  type GitignorePreviewCandidate,
+} from '../shared/gitignore-preview';
 import { sanitizeAiDescription } from '../shared/ai-analysis-settings';
 import {
   CONTENT_REPLACE_BATCH_MAX_ITEMS,
   CONTENT_REPLACE_STAGE_CHUNK_MAX_BYTES,
 } from '../shared/content-replace';
-import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type BrowseLayoutEntry, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type IgnoredPath, type LinkedFolderDirectoryMutation, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchQuery, type SearchScope, type SortDefinition, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagCooccurrenceGraph, type TagSummary, type TrashedFolderSummary } from '../shared/asset-types';
+import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type BrowseLayoutEntry, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type GitignorePreview, type IgnoredPath, type LinkedFolderDirectoryMutation, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchQuery, type SearchScope, type SortDefinition, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagCooccurrenceGraph, type TagSummary, type TrashedFolderSummary } from '../shared/asset-types';
 import {
   parseWritableAppearance,
   sanitizeEntityAppearance,
@@ -432,6 +437,8 @@ const MEDIA_JOB_LEASE_DURATION_MS = 60_000;
 const MEDIA_RESOURCE_RETRY_DELAY_MS = 30_000;
 const RAW_IMAGE_METADATA_RETRY_DELAY_MS = 30_000;
 const RAW_IMAGE_METADATA_MAX_ATTEMPTS = 3;
+const EMBEDDED_IMAGE_METADATA_GENERATOR = 'exifr@7.1.3;embedded-image-metadata-v2';
+const FFMPEG_METADATA_GENERATOR = `ffprobe@${FFMPEG_VERSION};embedded-metadata-v1`;
 /** Opaque ≈4:3 light-stage covers (Serpent-dxk); stale strip/dark covers requeue. */
 const AUDIO_WAVEFORM_GENERATOR = `ffmpeg@${FFMPEG_VERSION}+${AUDIO_WAVEFORM_COVER_GENERATOR_TAG}`;
 const VIDEO_PROXY_SCALE_FILTER =
@@ -612,6 +619,10 @@ import {
   type RawImageMetadata,
   type RawImageMetadataParser,
 } from './raw-image-metadata';
+import {
+  embeddedMetadataSearchText,
+  normalizeProbeEmbeddedMetadata,
+} from './embedded-metadata';
 import { extractRawEmbeddedJpegThumbnail } from './raw-embedded-thumbnail';
 import {
   queryModelCompanionAssets,
@@ -734,6 +745,8 @@ import {
   isSupportedVideoExtension,
   modelMimeForExtension,
   isRawImageExtension,
+  isEmbeddedImageMetadataExtension,
+  EMBEDDED_IMAGE_METADATA_EXTENSIONS,
   isChromiumDirectPlayVideoExtension,
   videoMimeForExtension,
 } from '../shared/media-formats';
@@ -763,6 +776,10 @@ import {
   type BrowseSessionLookup,
   type BrowseSessionSnapshot,
 } from './browse-session-store';
+import {
+  LibraryReconciliationOwner,
+  type LibraryReconciliationTask,
+} from './reconciliation-owner';
 import {
   MODEL_THUMBNAIL_GENERATOR_VERSION,
 } from '../shared/model-thumbnail-protocol';
@@ -2980,6 +2997,22 @@ function rawImageExtensionMatchSql(
   };
 }
 
+function embeddedImageMetadataExtensionMatchSql(
+  connection: DatabaseConnection,
+  alias: string,
+): { sql: string; params: readonly string[] } {
+  if (columnsFor(connection, 'assets').has('normalized_extension')) {
+    return {
+      sql: `${alias}.normalized_extension IN (${EMBEDDED_IMAGE_METADATA_EXTENSIONS.map(() => '?').join(',')})`,
+      params: EMBEDDED_IMAGE_METADATA_EXTENSIONS,
+    };
+  }
+  return {
+    sql: `(${EMBEDDED_IMAGE_METADATA_EXTENSIONS.map(() => `LOWER(${alias}.relative_file_path) LIKE ?`).join(' OR ')})`,
+    params: EMBEDDED_IMAGE_METADATA_EXTENSIONS.map((extension) => `%${extension}`),
+  };
+}
+
 function ensureLinkedFolderParentSchema(connection: DatabaseConnection): void {
   const columns = columnsFor(connection, 'linked_folders');
   if (!columns.has('parent_folder_id')) {
@@ -3721,6 +3754,7 @@ interface OpenLibrary {
     databasePath: string;
     schemaVersion: number;
     readThrough: NetworkReadThroughConnection;
+    writeThrough: NetworkReadThroughConnection;
     manifest?: NetworkMetadataCacheManifest;
     /** Fingerprint observed by this open generation; manifest mtime is advisory across opens. */
     observedSourceFingerprint?: NetworkMetadataSourceFingerprint;
@@ -3788,24 +3822,7 @@ interface RefreshManagedAssetsDiscovery {
   movedLinkedAssetsReconciled?: boolean;
 }
 
-interface OpenReconciliationTask {
-  controller: AbortController;
-  generation: number;
-  libraryId: string;
-  openLibrary: OpenLibrary;
-  promise: Promise<void>;
-  reason: 'open' | 'watcher' | 'network';
-  triggerScope?: string;
-  linkedFolderIds?: string[];
-  /** Existing linked source paths proven by precise native file-change events. */
-  linkedFilePathsByFolder?: Map<string, Set<string>>;
-  /**
-   * Serpent-be29a9: release the scheduler's background admission at a safe
-   * point and take it back before the next batch. Supplied by the Worker, which
-   * owns the scheduler; absent for reconciliations the Worker did not schedule.
-   */
-  admissionYield?: () => Promise<void>;
-}
+type OpenReconciliationTask = LibraryReconciliationTask<OpenLibrary>;
 
 interface ArtifactPathCacheEntry {
   absolutePath: string;
@@ -4702,6 +4719,52 @@ interface MediaExecutionContext {
   sourceByteSize?: number | null;
   sourceWidth?: number | null;
   sourceHeight?: number | null;
+}
+
+function throwIfMediaExecutionAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error ? signal.reason : new Error('Media operation aborted.');
+  }
+}
+
+async function waitForSharedMediaOperation(
+  entry: {
+    controller: AbortController;
+    promise: Promise<boolean>;
+    waiters: number;
+  },
+  signal: AbortSignal | undefined,
+): Promise<boolean> {
+  entry.waiters += 1;
+  try {
+    if (!signal) return await entry.promise;
+    if (signal.aborted) {
+      throw signal.reason instanceof Error ? signal.reason : new Error('Media operation aborted.');
+    }
+    return await new Promise<boolean>((resolve, reject) => {
+      const onAbort = (): void => {
+        cleanup();
+        reject(signal.reason instanceof Error ? signal.reason : new Error('Media operation aborted.'));
+      };
+      const cleanup = (): void => signal.removeEventListener('abort', onAbort);
+      signal.addEventListener('abort', onAbort, { once: true });
+      entry.promise.then(
+        (value) => {
+          cleanup();
+          resolve(value);
+        },
+        (error) => {
+          cleanup();
+          reject(error);
+        },
+      );
+    });
+  } finally {
+    entry.waiters -= 1;
+    if (entry.waiters === 0 && !entry.controller.signal.aborted) {
+      entry.controller.abort(new Error('All media operation waiters cancelled.'));
+    }
+  }
 }
 
 /**
@@ -6081,17 +6144,36 @@ function byteSizeLabel(byteSize: number): string {
   return 'xlarge';
 }
 
+const EMBEDDED_METADATA_MARKER = '__serpent_embedded_metadata__';
+
 function buildMetadataText(input: {
   availability: string;
   byteSize: number;
   relativeFilePath: string;
+  revisionId?: string | null;
+  embeddedMetadataText?: string;
 }): string {
   const extension = path.posix.extname(input.relativeFilePath).toLowerCase();
   const parts: string[] = [];
   if (extension.length > 0) parts.push(extension);
   parts.push(byteSizeLabel(input.byteSize));
   parts.push(input.availability);
+  const embedded = input.embeddedMetadataText?.trim();
+  if (embedded && input.revisionId) {
+    parts.push(`${EMBEDDED_METADATA_MARKER}=${input.revisionId}`, embedded);
+  }
   return parts.join(' ');
+}
+
+function embeddedMetadataFromSearchText(
+  metadataText: string | null | undefined,
+  revisionId: string | null | undefined,
+): string {
+  if (!metadataText || !revisionId) return '';
+  const marker = `${EMBEDDED_METADATA_MARKER}=${revisionId}`;
+  const markerIndex = metadataText.indexOf(marker);
+  if (markerIndex < 0) return '';
+  return metadataText.slice(markerIndex + marker.length).trim();
 }
 
 /** Both content layers are searchable; neither changes what the UI displays. */
@@ -6669,7 +6751,11 @@ export class LibraryService {
   /** Eagle imports keep their media previews but never enter auto-AI later. */
   private readonly autoAnalysisSuppressedAssetIds = new Map<string, Set<string>>();
   /** Serpent-140fe2 review fix: coalesce overlapping lazy contact-sheet generations. */
-  private readonly videoContactSheetInFlight = new Map<string, Promise<boolean>>();
+  private readonly videoContactSheetInFlight = new Map<string, {
+    controller: AbortController;
+    promise: Promise<boolean>;
+    waiters: number;
+  }>();
   /** Avoid synchronously probing missing tools on every visible-range request. */
   private readonly autoRepairProbeFailedAtByLibrary = new Map<
     string,
@@ -6719,8 +6805,7 @@ export class LibraryService {
    */
   private readonly deferredOpenMaintenanceByLibrary = new Map<string, ReturnType<typeof setTimeout>>();
   /** One cancellable reconciliation owner per open library generation. */
-  private readonly reconciliationByLibrary = new Map<string, OpenReconciliationTask>();
-  private readonly reconciliationGenerationByLibrary = new Map<string, number>();
+  private readonly reconciliationOwner = new LibraryReconciliationOwner<OpenLibrary>();
   /**
    * Open automation groups are keyed by their Main-owned execution source.
    * The value is an in-memory reservation until the first real step is
@@ -7850,7 +7935,7 @@ export class LibraryService {
   ): Promise<void> {
     const initialLibrary = this.openById.get(libraryId);
     if (!initialLibrary || initialLibrary.readOnly) return;
-    const previous = this.reconciliationByLibrary.get(libraryId);
+    const previous = this.reconciliationOwner.current(libraryId);
     if (previous) {
       try {
         await previous.promise;
@@ -7863,20 +7948,14 @@ export class LibraryService {
     const openLibrary = this.openById.get(libraryId);
     if (!openLibrary || openLibrary !== initialLibrary || openLibrary.readOnly) return;
 
-    const generation = (this.reconciliationGenerationByLibrary.get(libraryId) ?? 0) + 1;
-    this.reconciliationGenerationByLibrary.set(libraryId, generation);
-    const task: OpenReconciliationTask = {
-      controller: new AbortController(),
-      generation,
+    const task = this.reconciliationOwner.register({
       libraryId,
       openLibrary,
-      promise: Promise.resolve(),
       reason,
       ...(triggerScope === undefined ? {} : { triggerScope }),
       ...(linkedFolderIds === undefined ? {} : { linkedFolderIds }),
       ...(linkedFilePathsByFolder === undefined ? {} : { linkedFilePathsByFolder }),
-    };
-    this.reconciliationByLibrary.set(libraryId, task);
+    });
     task.promise = (async () => {
       try {
         await this.yieldReconciliation(task);
@@ -7899,9 +7978,7 @@ export class LibraryService {
     try {
       await task.promise;
     } finally {
-      if (this.reconciliationByLibrary.get(libraryId) === task) {
-        this.reconciliationByLibrary.delete(libraryId);
-      }
+      this.reconciliationOwner.clearIfCurrent(task);
     }
   }
 
@@ -9516,11 +9593,97 @@ export class LibraryService {
           insert.run(asset.relative_file_path, 'asset');
         }
       }
+      this.syncLinkedGitignoreHiddenAssets(openLibrary);
     });
     transaction();
     openLibrary.gitignoreText = migratedText;
     openLibrary.gitignoreMaterialized = true;
+    // Empty linked directories (for example `1Test/.111`) have no managed_folders
+    // row and no asset to write into linked_ignored_assets. Without this, the
+    // navigation summary cache keeps showing those folders after `.*/` or a
+    // right-click ignore (Serpent-c6d907).
+    this.invalidateNavigationSummary(openLibrary);
     this.rebindCurrentNetworkMetadataCache(openLibrary);
+  }
+
+  private invalidateNavigationSummary(openLibrary: OpenLibrary): void {
+    openLibrary.navigationSummaryCache = undefined;
+    if (!hasTable(openLibrary.connection, 'browse_change_sequence')) return;
+    openLibrary.connection.prepare(
+      'UPDATE browse_change_sequence SET sequence = sequence + 1 WHERE library_id = ?',
+    ).run(openLibrary.summary.libraryId);
+  }
+
+  /**
+   * Serpent-c6d907: `.serpentignore` is the single ignore file. Linked assets
+   * that match it are folded into `linked_ignored_assets` so browse/search SQL
+   * hides them the same way linked-folder default rules already do. Default
+   * `.git` / `node_modules` rules stay in `linked_folder_rules` and still win
+   * here; removing a gitignore rule must not un-hide those.
+   */
+  private syncLinkedGitignoreHiddenAssets(openLibrary: OpenLibrary): void {
+    if (
+      !hasTable(openLibrary.connection, 'linked_ignored_assets') ||
+      !hasTable(openLibrary.connection, 'linked_folders')
+    ) {
+      return;
+    }
+    const now = new Date().toISOString();
+    const hide = openLibrary.connection.prepare(
+      'INSERT OR REPLACE INTO linked_ignored_assets(asset_id, ignored_at) VALUES (?, ?)',
+    );
+    const reveal = openLibrary.connection.prepare(
+      'DELETE FROM linked_ignored_assets WHERE asset_id = ?',
+    );
+    const folders = openLibrary.connection
+      .prepare('SELECT folder_id FROM linked_folders WHERE library_id = ?')
+      .all(openLibrary.summary.libraryId) as Array<{ folder_id: string }>;
+    const hasLinkedRules = hasTable(openLibrary.connection, 'linked_folder_rules');
+    const loadRules = hasLinkedRules
+      ? openLibrary.connection.prepare(
+        `SELECT rule_id, action, target, pattern, enabled
+           FROM linked_folder_rules WHERE folder_id = ? ORDER BY position`,
+      )
+      : null;
+    for (const folder of folders) {
+      const rules = loadRules
+        ? (loadRules.all(folder.folder_id) as Array<{
+          rule_id: string;
+          action: 'include' | 'exclude';
+          target: LinkedFolderRule['target'];
+          pattern: string;
+          enabled: number;
+        }>).map((row) => ({
+          ruleId: row.rule_id,
+          action: row.action,
+          target: row.target,
+          pattern: row.pattern,
+          enabled: row.enabled === 1,
+        }))
+        : [];
+      const assets = openLibrary.connection.prepare(
+        `SELECT a.asset_id, a.relative_file_path,
+                EXISTS(SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id) AS ignored
+           FROM assets a
+          WHERE a.linked_folder_id = ? AND a.location_kind = 'linked' AND a.deleted_at IS NULL`,
+      ).all(folder.folder_id) as Array<{
+        asset_id: string;
+        relative_file_path: string;
+        ignored: number;
+      }>;
+      for (const asset of assets) {
+        const ignored = this.linkedPathIsIgnored(asset.relative_file_path, rules)
+          || this.isExplicitlyIgnored(
+            openLibrary,
+            'linked',
+            folder.folder_id,
+            asset.relative_file_path,
+            'asset',
+          );
+        if (ignored && asset.ignored === 0) hide.run(asset.asset_id, now);
+        else if (!ignored && asset.ignored === 1) reveal.run(asset.asset_id);
+      }
+    }
   }
 
   private migrateLegacyManagedIgnoreRules(openLibrary: OpenLibrary, text: string): string {
@@ -9582,8 +9745,100 @@ export class LibraryService {
   private requireOpenLibrary(libraryId: string): OpenLibrary {
     const openLibrary = this.openById.get(libraryId);
     if (!openLibrary) throw new LibraryServiceError('LIBRARY_NOT_OPEN');
+    if (!this.sqlitePrimaryIsOpen(openLibrary)) {
+      this.evictDeadOpenLibrary(libraryId, openLibrary);
+      throw new LibraryServiceError('LIBRARY_NOT_OPEN');
+    }
     this.syncGitignore(openLibrary);
     return openLibrary;
+  }
+
+  /**
+   * `openById` membership must mean the better-sqlite3 primary is still open.
+   * Network libraries wrap that primary in two adapters; checking the wrapper
+   * object's own `open` flag is not enough because the wrapper does not
+   * forward it.
+   */
+  private sqlitePrimaryIsOpen(openLibrary: OpenLibrary): boolean {
+    const primary = openLibrary.networkMetadataCache?.readThrough.primaryConnection
+      ?? openLibrary.connection;
+    return (primary as { open?: boolean }).open !== false;
+  }
+
+  private sqliteConnectionIsRegisteredPrimary(connection: DatabaseConnection | undefined): boolean {
+    if (!connection) return false;
+    for (const openLibrary of this.openById.values()) {
+      if (openLibrary.connection === connection || openLibrary.writeConnection === connection) {
+        return true;
+      }
+      const primary = openLibrary.networkMetadataCache?.readThrough.primaryConnection;
+      if (primary === connection) return true;
+    }
+    return false;
+  }
+
+  private findLibraryIdOwningSqliteConnection(
+    connection: DatabaseConnection | undefined,
+  ): string | undefined {
+    if (!connection) return undefined;
+    for (const [libraryId, openLibrary] of this.openById) {
+      if (openLibrary.connection === connection || openLibrary.writeConnection === connection) {
+        return libraryId;
+      }
+      if (openLibrary.networkMetadataCache?.readThrough.primaryConnection === connection) {
+        return libraryId;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Drop a handle whose SQLite primary is already closed. Do not run cancelJobs
+   * or checkpoint — those need a live connection and would throw TypeError.
+   */
+  private evictDeadOpenLibrary(libraryId: string, openLibrary: OpenLibrary): void {
+    this.cancelDeferredOpenMaintenance(libraryId);
+    this.cancelOpenBackgroundReconciliation(libraryId);
+    const backupTimer = this.databaseBackupTimers.get(libraryId);
+    if (backupTimer) {
+      clearTimeout(backupTimer);
+      this.databaseBackupTimers.delete(libraryId);
+    }
+    try { this.stopAssetWatcher(libraryId); } catch { /* handle is already unusable */ }
+    try { this.stopLinkedWatchers(libraryId); } catch { /* handle is already unusable */ }
+    try { openLibrary.changeSubscription.stop(); } catch { /* handle is already unusable */ }
+    this.openById.delete(libraryId);
+    this.openIdByPath.delete(openLibrary.summary.libraryPath);
+    this.invalidateArtifactPathCache(libraryId);
+    this.artifactDescriptorCache.invalidateLibrary(libraryId);
+    this.browseSessionStore.invalidateLibrary(libraryId);
+    this.dropPreparedStatementCache(libraryId);
+    this.clearTextAssetPreviewCache(libraryId);
+    this.autoRepairAttemptedByLibrary.delete(libraryId);
+    this.autoRepairProbeFailedAtByLibrary.delete(libraryId);
+    this.autoAnalysisSuppressedAssetIds.delete(libraryId);
+    this.interactiveIdleUntilByLibrary.delete(libraryId);
+    this.diagnose(
+      'library.handle.evicted-closed-primary',
+      new LibraryServiceError('LIBRARY_NOT_OPEN'),
+      { libraryId },
+    );
+  }
+
+  private probeCatalogIdentity(canonicalPath: string): string | undefined {
+    let probe: DatabaseConnection | undefined;
+    try {
+      probe = openConfiguredDatabase(
+        databasePath(canonicalPath),
+        this.options.sqliteBusyTimeoutMsForTests,
+        { readonly: true },
+      );
+      return readLibraryIdentity(probe, { skipQuickCheck: true }).library_id;
+    } catch {
+      return undefined;
+    } finally {
+      closeIgnoringFailure(probe);
+    }
   }
 
   /**
@@ -15824,7 +16079,11 @@ export class LibraryService {
       )
       : [];
     const prefixes = [...new Set([...assetPrefixes, ...diskPrefixes])].sort();
-    const children = directChildLinkedDirectories(prefixes, resolved.relativePath);
+    const children = directChildLinkedDirectories(prefixes, resolved.relativePath)
+      .filter((relativePath) =>
+        input.showIgnored === true
+        || !this.explicitFolderIgnored(openLibrary, 'linked', resolved.linkedFolderId, relativePath),
+      );
     if (children.length === 0) return [];
     const directoryChildCounts = countLinkedDirectoryChildren(prefixes);
 
@@ -16744,6 +17003,7 @@ export class LibraryService {
     linkedFolderId: string,
     rootPath: string,
     rules: LinkedFolderRule[],
+    includeGitignoreHidden = false,
   ): string[] {
     const prefixes = new Set<string>();
     const visit = (directoryPath: string, relativeDirectory: string): void => {
@@ -16767,7 +17027,7 @@ export class LibraryService {
         // Probe the folder target so folder rules (including default hidden
         // directories) are applied with the same matcher as asset scans.
         if (this.linkedPathIsIgnored(`${normalized}/__serpent_probe__`, rules)) continue;
-        if (this.explicitFolderIgnored(openLibrary, 'linked', linkedFolderId, normalized)) continue;
+        if (!includeGitignoreHidden && this.explicitFolderIgnored(openLibrary, 'linked', linkedFolderId, normalized)) continue;
         prefixes.add(normalized);
         visit(path.join(directoryPath, entry.name), normalized);
       }
@@ -16901,7 +17161,14 @@ export class LibraryService {
            FROM assets a WHERE a.linked_folder_id = ?`,
       ).all(input.folderId) as Array<{ asset_id: string; relative_file_path: string; ignored: number }>;
       for (const asset of assets) {
-        const ignored = this.linkedPathIsIgnored(asset.relative_file_path, rules);
+        const ignored = this.linkedPathIsIgnored(asset.relative_file_path, rules)
+          || this.isExplicitlyIgnored(
+            openLibrary,
+            'linked',
+            input.folderId,
+            asset.relative_file_path,
+            'asset',
+          );
         if (ignored && asset.ignored === 0) {
           openLibrary.connection.prepare(
             'INSERT OR REPLACE INTO linked_ignored_assets(asset_id, ignored_at) VALUES (?, ?)',
@@ -17156,7 +17423,18 @@ export class LibraryService {
     }
 
     const rules = this.getLinkedFolderRules({ libraryId: input.libraryId, folderId: input.folderId });
-    const entries = this.enumerateLinkedSources(linked.absolute_root_path, input.folderId, rules);
+      const entries = this.enumerateLinkedSources(
+        linked.absolute_root_path,
+        input.folderId,
+        rules,
+        (relativePath, pathKind) => this.isExplicitlyIgnored(
+          openLibrary,
+          'linked',
+          input.folderId,
+          relativePath,
+          pathKind,
+        ),
+      );
     const linkedAssets = openLibrary.connection.prepare(
       `SELECT a.asset_id, a.relative_file_path,
               EXISTS(SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id) AS ignored
@@ -18037,7 +18315,13 @@ export class LibraryService {
         canonicalRoot,
         folderId,
         defaultRules,
-        undefined,
+        (relativePath, pathKind) => this.isExplicitlyIgnored(
+          openLibrary,
+          'linked',
+          folderId,
+          relativePath,
+          pathKind,
+        ),
         (foundCount, entryBytes) => {
           scannedBytes += entryBytes;
           emitLinkedProgress('validate', foundCount, 0, scannedBytes, 0);
@@ -20143,10 +20427,12 @@ export class LibraryService {
   private syncAssetSearchContent(
     connection: DatabaseConnection,
     assetId: string,
+    embeddedMetadataText?: string,
+    embeddedMetadataRevisionId?: string,
   ): void {
     const asset = connection
       .prepare(
-        `SELECT a.relative_file_path, a.availability, r.byte_size,
+        `SELECT a.relative_file_path, a.availability, a.current_revision_id, r.byte_size,
                 m.description,
                 (SELECT GROUP_CONCAT(value, '\n')
                    FROM ai_content
@@ -20161,6 +20447,7 @@ export class LibraryService {
       .get(assetId) as {
         relative_file_path: string;
         availability: string;
+        current_revision_id: string | null;
         byte_size: number;
         description: string | null;
         ai_description: string | null;
@@ -20168,6 +20455,14 @@ export class LibraryService {
         author: string | null;
       } | undefined;
     if (!asset) return;
+
+    const existingSearchRow = connection
+      .prepare('SELECT metadata_text FROM asset_search_index WHERE asset_id = ?')
+      .get(assetId) as { metadata_text: string | null } | undefined;
+    const effectiveRevisionId = embeddedMetadataRevisionId ?? asset.current_revision_id;
+    const retainedEmbeddedMetadata = embeddedMetadataText === undefined
+      ? embeddedMetadataFromSearchText(existingSearchRow?.metadata_text, asset.current_revision_id)
+      : embeddedMetadataText;
 
     const tagRow = connection
       .prepare(
@@ -20210,10 +20505,12 @@ export class LibraryService {
         normalizeSearchText(buildFolderPath(asset.relative_file_path)),
         normalizeSearchText(
           buildMetadataText({
-            availability: asset.availability,
-            byteSize: asset.byte_size,
-            relativeFilePath: asset.relative_file_path,
-          }),
+          availability: asset.availability,
+          byteSize: asset.byte_size,
+          relativeFilePath: asset.relative_file_path,
+          revisionId: effectiveRevisionId,
+          embeddedMetadataText: retainedEmbeddedMetadata,
+        }),
         ),
       );
   }
@@ -25441,8 +25738,9 @@ export class LibraryService {
     )) return;
     const terminalArtifact = openLibrary.connection.prepare(
       `SELECT artifact_id, status FROM revision_artifacts WHERE revision_id = ? AND kind = 'extracted_metadata'
-        AND status IN ('ready', 'failed') AND invalidated_at IS NULL LIMIT 1`,
-    ).get(revisionId) as { artifact_id: string; status: 'ready' | 'failed' } | undefined;
+        AND status IN ('ready', 'failed') AND invalidated_at IS NULL
+        AND generator_version = ? LIMIT 1`,
+    ).get(revisionId, FFMPEG_METADATA_GENERATOR) as { artifact_id: string; status: 'ready' | 'failed' } | undefined;
     const active = openLibrary.connection.prepare(
       `SELECT job_id FROM jobs WHERE asset_id = ? AND revision_id = ? AND kind = 'extract_metadata'
         AND status IN ('queued', 'running', 'paused') LIMIT 1`,
@@ -25480,13 +25778,15 @@ export class LibraryService {
    */
   private requeueRawImageMetadataJobs(
     openLibrary: OpenLibrary,
-    options: { assetIds?: readonly string[]; limit: number },
+    options: { assetIds?: readonly string[]; limit: number; extensions?: 'raw' | 'embedded' },
   ): { admitted: number; probed: number } {
     const selectedIds = [...new Set(options.assetIds ?? [])].slice(0, 500);
     const selectedSql = selectedIds.length > 0
       ? `AND a.asset_id IN (${selectedIds.map(() => '?').join(',')})`
       : '';
-    const extensionMatch = rawImageExtensionMatchSql(openLibrary.connection, 'a');
+    const extensionMatch = options.extensions === 'embedded'
+      ? embeddedImageMetadataExtensionMatchSql(openLibrary.connection, 'a')
+      : rawImageExtensionMatchSql(openLibrary.connection, 'a');
     const limit = Math.max(1, Math.min(500, Math.trunc(options.limit)));
     const retryCutoff = new Date(Date.now() - RAW_IMAGE_METADATA_RETRY_DELAY_MS).toISOString();
     const retryRows = openLibrary.connection
@@ -25517,7 +25817,7 @@ export class LibraryService {
                  AND complete_metadata.kind = 'extracted_metadata'
                  AND complete_metadata.status = 'ready'
                  AND complete_metadata.invalidated_at IS NULL
-                 AND complete_metadata.generator_version NOT LIKE 'image-header@%'
+                 AND complete_metadata.generator_version = ?
             )
             AND NOT EXISTS (
               SELECT 1 FROM revision_artifacts failed_metadata
@@ -25535,6 +25835,7 @@ export class LibraryService {
         retryCutoff,
         ...selectedIds,
         ...extensionMatch.params,
+        EMBEDDED_IMAGE_METADATA_GENERATOR,
         limit,
       ) as Array<{ job_id: string }>;
     if (retryRows.length === 0) return { admitted: 0, probed: 0 };
@@ -25572,10 +25873,15 @@ export class LibraryService {
 
   private enqueueRawImageMetadataJobs(
     openLibrary: OpenLibrary,
-    options: { assetIds?: readonly string[]; limit?: number } = {},
+    options: {
+      assetIds?: readonly string[];
+      limit?: number;
+      /** The same durable job kind serves RAW and common image containers. */
+      extensions?: 'raw' | 'embedded';
+    } = {},
   ): RawMetadataBackfillProbeOutcome {
     const targeted = options.assetIds !== undefined;
-    const isBackfill = !targeted;
+    const isBackfill = options.extensions !== 'embedded' && !targeted;
     const selectedIds = [...new Set(options.assetIds ?? [])].slice(0, 500);
     if (targeted && selectedIds.length === 0) {
       return { admitted: 0, probed: 0, budgetCapped: true };
@@ -25583,7 +25889,9 @@ export class LibraryService {
     const selectedSql = selectedIds.length > 0
       ? `AND a.asset_id IN (${selectedIds.map(() => '?').join(',')})`
       : '';
-    const extensionMatch = rawImageExtensionMatchSql(openLibrary.connection, 'a');
+    const extensionMatch = options.extensions === 'embedded'
+      ? embeddedImageMetadataExtensionMatchSql(openLibrary.connection, 'a')
+      : rawImageExtensionMatchSql(openLibrary.connection, 'a');
     // Metadata is a secondary Inspector aid. Keep each enqueue call bounded;
     // the regular background scheduler will admit the next batch after the
     // primary thumbnail wave yields.
@@ -25628,6 +25936,7 @@ export class LibraryService {
     const cursorParams = cursorSql === '' ? [] : [cursorAssetId];
     const retryAdmission = this.requeueRawImageMetadataJobs(openLibrary, {
       ...(targeted ? { assetIds: selectedIds } : {}),
+      ...(options.extensions === undefined ? {} : { extensions: options.extensions }),
       limit: availableAdmissionLimit,
     });
     const retryRows = retryAdmission.probed;
@@ -25684,7 +25993,7 @@ export class LibraryService {
                  AND complete_metadata.kind = 'extracted_metadata'
                  AND complete_metadata.status = 'ready'
                  AND complete_metadata.invalidated_at IS NULL
-                 AND complete_metadata.generator_version NOT LIKE 'image-header@%'
+                 AND complete_metadata.generator_version = ?
             )
             AND NOT EXISTS (
               SELECT 1 FROM revision_artifacts failed_metadata
@@ -25703,6 +26012,7 @@ export class LibraryService {
         openLibrary.summary.libraryId,
         openLibrary.summary.libraryId,
         openLibrary.summary.libraryId,
+        EMBEDDED_IMAGE_METADATA_GENERATOR,
         remainingLimit,
       ) as Array<{ asset_id: string; current_revision_id: string }>;
     // A change observed between the token sampled at admission and the end
@@ -25824,7 +26134,7 @@ export class LibraryService {
     // state. The secondary scheduler must treat them as having no retryable
     // RAW work instead of issuing a schema-incompatible query on every pump.
     if (!columnsFor(openLibrary.connection, 'revision_artifacts').has('status')) return null;
-    const extensionMatch = rawImageExtensionMatchSql(openLibrary.connection, 'a');
+    const extensionMatch = embeddedImageMetadataExtensionMatchSql(openLibrary.connection, 'a');
     const row = openLibrary.connection
       .prepare(
         `SELECT MIN(j.updated_at) AS updated_at
@@ -25851,7 +26161,7 @@ export class LibraryService {
                  AND complete_metadata.kind = 'extracted_metadata'
                  AND complete_metadata.status = 'ready'
                  AND complete_metadata.invalidated_at IS NULL
-                 AND complete_metadata.generator_version NOT LIKE 'image-header@%'
+                 AND complete_metadata.generator_version = ?
             )
             AND NOT EXISTS (
               SELECT 1 FROM revision_artifacts failed_metadata
@@ -25865,6 +26175,7 @@ export class LibraryService {
         openLibrary.summary.libraryId,
         RAW_IMAGE_METADATA_MAX_ATTEMPTS,
         ...extensionMatch.params,
+        EMBEDDED_IMAGE_METADATA_GENERATOR,
       ) as { updated_at: string | null } | undefined;
     if (!row?.updated_at) return null;
     const updatedAt = Date.parse(row.updated_at);
@@ -26194,6 +26505,7 @@ export class LibraryService {
     assetId: string,
     execution: MediaExecutionContext = { signal: undefined },
   ): Promise<boolean> {
+    throwIfMediaExecutionAborted(execution.signal);
     const openLibrary = this.requireOpenLibrary(libraryId);
     const assetRow = openLibrary.connection
       .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ?')
@@ -26211,7 +26523,7 @@ export class LibraryService {
     // UNIQUE(revision_id, kind) and mask the real outcome.
     const inFlightKey = `${libraryId}\u0000${revisionId}`;
     const inFlight = this.videoContactSheetInFlight.get(inFlightKey);
-    if (inFlight) return inFlight;
+    if (inFlight) return await waitForSharedMediaOperation(inFlight, execution.signal);
     if (existing) {
       // Explicit retry: clear the previous terminal row so either outcome —
       // a fresh ready sheet or a renewed failed marker — can register without
@@ -26222,17 +26534,33 @@ export class LibraryService {
         )
         .run(revisionId);
     }
-    const generation = (async () => {
+    const controller = new AbortController();
+    const entry: {
+      controller: AbortController;
+      promise: Promise<boolean>;
+      waiters: number;
+    } = {
+      controller,
+      promise: Promise.resolve(false),
+      waiters: 0,
+    };
+    entry.promise = (async () => {
       try {
         return await this.generateQueuedVideoArtifact(
-          libraryId, assetId, revisionId, 'generate_contact_sheet', execution,
+          libraryId,
+          assetId,
+          revisionId,
+          'generate_contact_sheet',
+          { ...execution, signal: controller.signal },
         );
       } finally {
-        this.videoContactSheetInFlight.delete(inFlightKey);
+        if (this.videoContactSheetInFlight.get(inFlightKey) === entry) {
+          this.videoContactSheetInFlight.delete(inFlightKey);
+        }
       }
     })();
-    this.videoContactSheetInFlight.set(inFlightKey, generation);
-    return generation;
+    this.videoContactSheetInFlight.set(inFlightKey, entry);
+    return await waitForSharedMediaOperation(entry, execution.signal);
   }
 
   private async generateQueuedVideoArtifact(
@@ -26306,6 +26634,7 @@ export class LibraryService {
         Math.max(durationSec, 0.1), dimensions, ffprobePath, execution,
       );
     } catch (error) {
+      if (execution.signal?.aborted) throw error;
       // Serpent-140fe2: persist the terminal failure so the terminal-artifact
       // guard in ensureVideoContactSheet stops regenerating this sheet. The
       // next revision change resets it naturally.
@@ -26349,7 +26678,10 @@ export class LibraryService {
       resolveFfprobePath(),
       execution,
     );
-    return true;
+    const currentAfterProbe = openLibrary.connection
+      .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ?')
+      .get(assetId) as { current_revision_id: string | null } | undefined;
+    return currentAfterProbe?.current_revision_id === queuedRevisionId;
   }
 
   private async generateQueuedRawImageMetadata(
@@ -26369,7 +26701,7 @@ export class LibraryService {
       } | undefined;
     if (!asset?.current_revision_id) throw new LibraryServiceError('ASSET_NOT_FOUND');
     if (asset.current_revision_id !== queuedRevisionId) return false;
-    if (!isRawImageExtension(asset.relative_file_path)) return false;
+    if (!isEmbeddedImageMetadataExtension(asset.relative_file_path)) return false;
 
     const assetPath = this.resolveAssetPath(libraryId, assetId);
     const extraction = await extractRawImageMetadataDetailed(
@@ -26397,6 +26729,7 @@ export class LibraryService {
       });
     const persisted = await this.persistRawImageMetadata(
       openLibrary,
+      assetId,
       queuedRevisionId,
       assetPath,
       metadata,
@@ -26508,15 +26841,19 @@ export class LibraryService {
         videoBitrate: videoStream?.bit_rate || null,
         pixelFormat: videoStream?.pix_fmt || null,
         hasAudio: !!audioStream,
+        hasCoverArt: hasAttachedPicture,
         audioCodec: audioStream?.codec_name || null,
         audioBitrate: audioStream?.bit_rate || null,
         sampleRate: audioStream?.sample_rate || null,
         channels: audioStream?.channels || null,
         containerBitrate: probeJson.format?.bit_rate || null,
+        ...normalizeProbeEmbeddedMetadata(probeJson),
       };
 
+      throwIfMediaExecutionAborted(execution.signal);
       writeFileSync(artifactAbsPath, JSON.stringify(metadata, null, 2), 'utf-8');
       const outputStat = statSync(artifactAbsPath);
+      throwIfMediaExecutionAborted(execution.signal);
 
       // Serpent-140fe2: replace any prior extracted_metadata row (e.g. a
       // width/height-only row written by an external conversion) in the same
@@ -26541,16 +26878,31 @@ export class LibraryService {
           .run(
             artifactId, revisionId, outputStat.size, artifactRelPath,
             width, height, metadata.durationMs,
-            `ffprobe@${FFMPEG_VERSION}`,
+            FFMPEG_METADATA_GENERATOR,
             new Date().toISOString(),
           );
       })();
+      const currentRevision = openLibrary.connection
+        .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ?')
+        .get(input.assetId) as { current_revision_id: string | null } | undefined;
+      if (currentRevision?.current_revision_id === revisionId) {
+        this.syncAssetSearchContent(
+          openLibrary.connection,
+          input.assetId,
+          embeddedMetadataSearchText(metadata),
+          revisionId,
+        );
+      }
 
       return { durationSec, width, height, hasAttachedPicture };
     } catch (error) {
+      if (execution.signal?.aborted) {
+        rmSync(artifactAbsPath, { force: true });
+        throw error;
+      }
       // Write failed artifact
-      this.writeFailedArtifact(openLibrary, artifactId, revisionId, 'extracted_metadata',
-        'application/json', artifactRelPath, `ffprobe@${FFMPEG_VERSION}`, error);
+        this.writeFailedArtifact(openLibrary, artifactId, revisionId, 'extracted_metadata',
+        'application/json', artifactRelPath, FFMPEG_METADATA_GENERATOR, error);
       throw error;
     }
   }
@@ -26611,6 +26963,10 @@ export class LibraryService {
 
       return artifactId;
     } catch (error) {
+      if (execution.signal?.aborted) {
+        rmSync(artifactAbsPath, { force: true });
+        throw error;
+      }
       this.writeFailedArtifact(openLibrary, artifactId, revisionId, 'video_poster',
         'image/jpeg', artifactRelPath, `ffmpeg@${FFMPEG_VERSION}`, error);
       throw error;
@@ -26703,6 +27059,10 @@ export class LibraryService {
 
       return artifactId;
     } catch (error) {
+      if (execution.signal?.aborted) {
+        rmSync(artifactAbsPath, { force: true });
+        throw error;
+      }
       this.writeFailedArtifact(openLibrary, artifactId, revisionId, 'contact_sheet',
         'image/jpeg', artifactRelPath, `ffmpeg@${FFMPEG_VERSION}`, error);
       throw error;
@@ -27091,7 +27451,7 @@ export class LibraryService {
           new Date().toISOString(),
         );
       if (rawMetadata) {
-        await this.persistRawImageMetadata(openLibrary, revisionId, assetPath, rawMetadata, {
+        await this.persistRawImageMetadata(openLibrary, input.assetId, revisionId, assetPath, rawMetadata, {
           width: execution.sourceWidth,
           height: execution.sourceHeight,
         });
@@ -27242,7 +27602,7 @@ export class LibraryService {
               : `oiio@${OIIO_VERSION};${isViewerImage ? 'viewer-full;' : ''}ocio=studio-v4-aces2;colorspace=${inputColorSpace ?? 'auto'};exposure=${exposureStops};subimage=${subimage}`,
           new Date().toISOString());
       if (rawMetadata) {
-        await this.persistRawImageMetadata(openLibrary, revisionId, assetPath, rawMetadata, {
+        await this.persistRawImageMetadata(openLibrary, input.assetId, revisionId, assetPath, rawMetadata, {
           width: execution.sourceWidth,
           height: execution.sourceHeight,
         });
@@ -27294,12 +27654,13 @@ export class LibraryService {
   }
 
   /**
-   * Store the small, allow-listed EXIF/IPTC/XMP projection used by the RAW
-   * Inspector. Metadata extraction is deliberately best-effort: a camera file
-   * with no readable EXIF must still keep its successful thumbnail.
+   * Store the small, allow-listed EXIF/IPTC/XMP projection used by the image
+   * Inspector. Metadata extraction is deliberately best-effort: a file with
+   * no readable embedded metadata must still keep its successful thumbnail.
    */
   private async persistRawImageMetadata(
     openLibrary: OpenLibrary,
+    assetId: string,
     revisionId: string,
     assetPath: string,
     metadata: RawImageMetadata,
@@ -27344,10 +27705,21 @@ export class LibraryService {
             artifactRelPath,
             metadata.width ?? headerSize?.width ?? null,
             metadata.height ?? headerSize?.height ?? null,
-            'exifr@7.1.3;raw-image-metadata-v1',
+            EMBEDDED_IMAGE_METADATA_GENERATOR,
             now,
         );
       })();
+      const currentRevision = openLibrary.connection
+        .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ?')
+        .get(assetId) as { current_revision_id: string | null } | undefined;
+      if (currentRevision?.current_revision_id === revisionId) {
+        this.syncAssetSearchContent(
+          openLibrary.connection,
+          assetId,
+          embeddedMetadataSearchText(metadata),
+          revisionId,
+        );
+      }
       return true;
     } catch (error) {
       rmSync(artifactAbsPath, { force: true });
@@ -29588,6 +29960,7 @@ export class LibraryService {
       undefined,
       {
         allowSnapshotReads: false,
+        ownsPrimary: false,
         onPrimaryMutation: () => readThrough.invalidateReadConnection(),
       },
     );
@@ -29607,6 +29980,7 @@ export class LibraryService {
         databasePath: sourceDatabasePath,
         schemaVersion: input.primarySchemaVersion,
         readThrough,
+        writeThrough,
         ...(loaded ? { observedSourceFingerprint: loaded.manifest.sourceFingerprint } : {}),
         observedSourceChangeSequence: loaded?.manifest.sourceChangeSequence,
         ...(loaded ? { manifest: loaded.manifest } : {}),
@@ -29848,6 +30222,8 @@ export class LibraryService {
       expectedSourceChangeSequence,
     });
     if (rebound.state?.readThrough.readCacheActive) {
+      state.readThrough.release();
+      state.writeThrough.release();
       openLibrary.connection = rebound.connection;
       openLibrary.writeConnection = rebound.writeConnection;
       openLibrary.networkMetadataCache = rebound.state;
@@ -29961,20 +30337,14 @@ export class LibraryService {
     const openLibrary = this.openById.get(libraryId);
     if (!openLibrary || openLibrary.readOnly) return;
     this.cancelDeferredOpenMaintenance(libraryId);
-    const previous = this.reconciliationByLibrary.get(libraryId);
-    previous?.controller.abort();
-    const generation = (this.reconciliationGenerationByLibrary.get(libraryId) ?? 0) + 1;
-    this.reconciliationGenerationByLibrary.set(libraryId, generation);
-    const task: OpenReconciliationTask = {
-      controller: new AbortController(),
-      generation,
+    this.reconciliationOwner.abort(libraryId);
+    const task = this.reconciliationOwner.register({
       libraryId,
       openLibrary,
-      promise: Promise.resolve(),
       reason: 'open',
       ...(options?.admissionYield === undefined ? {} : { admissionYield: options.admissionYield }),
-    };
-    this.reconciliationByLibrary.set(libraryId, task);
+    });
+    const generation = task.generation;
     const stageLog = process.env.SERPENT_REFRESH_STAGE_LOG === '1';
     const startedAt = performance.now();
     let stageMark = startedAt;
@@ -30079,15 +30449,13 @@ export class LibraryService {
     try {
       await task.promise;
     } finally {
-      if (this.reconciliationByLibrary.get(libraryId) === task) {
-        this.reconciliationByLibrary.delete(libraryId);
-      }
+      this.reconciliationOwner.clearIfCurrent(task);
     }
   }
 
   /** Request the current open-generation owner to stop at its next safe point. */
   cancelOpenBackgroundReconciliation(libraryId: string): void {
-    this.reconciliationByLibrary.get(libraryId)?.controller.abort();
+    this.reconciliationOwner.abort(libraryId);
   }
 
   /**
@@ -31111,10 +31479,20 @@ export class LibraryService {
     // RAW card generation is deliberately independent from the EXIF/IPTC/XMP
     // parser. Keep the metadata admission bounded and lower priority so the
     // embedded-JPEG/OIIO card path is the first useful result after open.
-    enqueued += this.enqueueRawImageMetadataJobs(openLibrary, {
+    // Do not fold these secondary admissions into the thumbnail enqueue
+    // count — callers and tests treat that number as generate_thumbnail rows.
+    this.enqueueRawImageMetadataJobs(openLibrary, {
       ...(options.assetIds === undefined ? {} : { assetIds: selectedIds }),
       ...(limit === undefined ? {} : { limit }),
-    }).admitted;
+    });
+    // JPEG/PNG/TIFF/WebP/AVIF metadata uses the same bounded exifr projection
+    // as RAW files, but is admitted separately so the historical RAW backfill
+    // cursor and retry policy remain compatible with existing libraries.
+    this.enqueueRawImageMetadataJobs(openLibrary, {
+      ...(options.assetIds === undefined ? {} : { assetIds: selectedIds }),
+      ...(limit === undefined ? {} : { limit }),
+      extensions: 'embedded',
+    });
 
     // Native audio is source-first just like native video. Its waveform cover
     // and viewer strip are still generated above, but an Ogg playback proxy is
@@ -39781,10 +40159,7 @@ export class LibraryService {
     linkedFolderId: string | null,
     relativePath: string,
   ): boolean {
-    if (
-      locationKind === 'managed'
-      && gitignoreMatchesPath(openLibrary.gitignoreMatcher, relativePath, 'folder')
-    ) {
+    if (gitignoreMatchesPath(openLibrary.gitignoreMatcher, relativePath, 'folder', locationKind)) {
       return true;
     }
     // Serpent-verg review fix: libraries predating the ignore-rule table
@@ -39824,10 +40199,7 @@ export class LibraryService {
     if (pathKind === 'folder') {
       return this.explicitFolderIgnored(openLibrary, locationKind, linkedFolderId, relativePath);
     }
-    if (
-      locationKind === 'managed'
-      && gitignoreMatchesPath(openLibrary.gitignoreMatcher, relativePath, 'asset')
-    ) {
+    if (gitignoreMatchesPath(openLibrary.gitignoreMatcher, relativePath, 'asset', locationKind)) {
       return true;
     }
     const normalized = this.normalizeExplicitIgnorePath(
@@ -39930,14 +40302,12 @@ export class LibraryService {
     return { content: input.content };
   }
 
-  private updateManagedGitignoreRule(
+  private updateGitignoreRule(
     openLibrary: OpenLibrary,
-    relativePath: string,
-    pathKind: 'asset' | 'folder' | 'extension',
+    positive: string,
     ignored: boolean,
   ): void {
-    const positive = this.managedGitignoreRule(relativePath, pathKind);
-    if (positive === undefined) return;
+    if (positive.length === 0) return;
     const negative = `!${positive}`;
     const lines = openLibrary.gitignoreText.split(/\r?\n/u);
     const filtered = lines.filter((line) => {
@@ -39961,7 +40331,8 @@ export class LibraryService {
     this.syncGitignore(openLibrary, next);
   }
 
-  private managedGitignoreRule(
+  private ignoreGitignoreRule(
+    locationKind: 'managed' | 'linked',
     relativePath: string,
     pathKind: 'asset' | 'folder' | 'extension',
   ): string | undefined {
@@ -39969,9 +40340,18 @@ export class LibraryService {
       ? relativePath.trim().replace(/^\.+/u, '').toLowerCase()
       : this.normalizeExplicitIgnorePath(relativePath, false);
     if (!normalized) return undefined;
-    return pathKind === 'extension'
-      ? `*.${normalized}`
-      : `Assets/${normalized}${pathKind === 'folder' ? '/' : ''}`;
+    if (pathKind === 'extension') return `*.${normalized}`;
+    const suffix = pathKind === 'folder' ? '/' : '';
+    return locationKind === 'managed'
+      ? `Assets/${normalized}${suffix}`
+      : `${normalized}${suffix}`;
+  }
+
+  private managedGitignoreRule(
+    relativePath: string,
+    pathKind: 'asset' | 'folder' | 'extension',
+  ): string | undefined {
+    return this.ignoreGitignoreRule('managed', relativePath, pathKind);
   }
 
   listIgnoredPaths(libraryId: string): IgnoredPath[] {
@@ -40037,6 +40417,43 @@ export class LibraryService {
           display_name: asset.relative_path,
         });
       }
+      const linkedAssets = openLibrary.connection.prepare(
+        `SELECT linked_folder_id, relative_file_path AS relative_path
+           FROM assets
+          WHERE location_kind = 'linked' AND deleted_at IS NULL AND linked_folder_id IS NOT NULL
+          ORDER BY linked_folder_id, relative_file_path`,
+      ).all() as Array<{ linked_folder_id: string; relative_path: string }>;
+      const linkedPathsByFolder = new Map<string, string[]>();
+      for (const asset of linkedAssets) {
+        const paths = linkedPathsByFolder.get(asset.linked_folder_id);
+        if (paths) paths.push(asset.relative_path);
+        else linkedPathsByFolder.set(asset.linked_folder_id, [asset.relative_path]);
+        if (gitignoreMatchesPath(openLibrary.gitignoreMatcher, asset.relative_path, 'asset', 'linked')) {
+          rows.push({
+            location_kind: 'linked',
+            linked_folder_id: asset.linked_folder_id,
+            relative_path: asset.relative_path,
+            path_kind: 'asset',
+            ignored_at: ignoredAt,
+            display_name: asset.relative_path,
+          });
+        }
+      }
+      for (const [linkedFolderId, paths] of linkedPathsByFolder) {
+        for (const prefix of collectLinkedDirectoryPrefixes(paths)) {
+          if (!gitignoreMatchesPath(openLibrary.gitignoreMatcher, prefix, 'folder', 'linked')) {
+            continue;
+          }
+          rows.push({
+            location_kind: 'linked',
+            linked_folder_id: linkedFolderId,
+            relative_path: prefix,
+            path_kind: 'folder',
+            ignored_at: ignoredAt,
+            display_name: prefix,
+          });
+        }
+      }
     }
     return rows
       .sort((a, b) =>
@@ -40052,6 +40469,126 @@ export class LibraryService {
         displayName: row.display_name,
         ignoredAt: row.ignored_at,
       }));
+  }
+
+  previewGitignore(libraryId: string, content: string): GitignorePreview {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    return diffGitignoreHits(
+      this.collectGitignorePreviewCandidates(openLibrary),
+      openLibrary.gitignoreMatcher,
+      parseGitignore(content),
+    );
+  }
+
+  private collectGitignorePreviewCandidates(openLibrary: OpenLibrary): GitignorePreviewCandidate[] {
+    const byKey = new Map<string, GitignorePreviewCandidate>();
+    const add = (candidate: GitignorePreviewCandidate) => {
+      if (candidate.relativePath.length === 0) return;
+      byKey.set(gitignorePreviewCandidateKey(candidate), candidate);
+    };
+    const linkedFolders = hasTable(openLibrary.connection, 'linked_folders')
+      ? openLibrary.connection.prepare(
+        `SELECT folder_id, display_name, status, absolute_root_path
+           FROM linked_folders`,
+      ).all() as Array<{
+        folder_id: string;
+        display_name: string;
+        status: 'available' | 'offline';
+        absolute_root_path: string;
+      }>
+      : [];
+    const linkedNames = new Map(linkedFolders.map((folder) => [folder.folder_id, folder.display_name]));
+    const linkedDisplayName = (linkedFolderId: string, relativePath: string): string => {
+      const rootName = linkedNames.get(linkedFolderId);
+      return rootName === undefined ? relativePath : `${rootName}/${relativePath}`;
+    };
+
+    if (hasTable(openLibrary.connection, 'managed_folders')) {
+      const managedFolders = openLibrary.connection.prepare(
+        `SELECT relative_path FROM managed_folders ORDER BY relative_path`,
+      ).all() as Array<{ relative_path: string }>;
+      for (const folder of managedFolders) {
+        add({
+          locationKind: 'managed',
+          linkedFolderId: null,
+          relativePath: folder.relative_path,
+          pathKind: 'folder',
+          displayName: folder.relative_path,
+        });
+      }
+    }
+
+    if (hasTable(openLibrary.connection, 'assets')) {
+      const managedAssets = openLibrary.connection.prepare(
+        `SELECT relative_file_path AS relative_path
+           FROM assets
+          WHERE location_kind = 'managed' AND deleted_at IS NULL
+          ORDER BY relative_file_path`,
+      ).all() as Array<{ relative_path: string }>;
+      for (const asset of managedAssets) {
+        add({
+          locationKind: 'managed',
+          linkedFolderId: null,
+          relativePath: asset.relative_path,
+          pathKind: 'asset',
+          displayName: asset.relative_path,
+        });
+      }
+
+      const linkedAssets = openLibrary.connection.prepare(
+        `SELECT linked_folder_id, relative_file_path AS relative_path
+           FROM assets
+          WHERE location_kind = 'linked' AND deleted_at IS NULL AND linked_folder_id IS NOT NULL
+          ORDER BY linked_folder_id, relative_file_path`,
+      ).all() as Array<{ linked_folder_id: string; relative_path: string }>;
+      const linkedPathsByFolder = new Map<string, string[]>();
+      for (const asset of linkedAssets) {
+        const paths = linkedPathsByFolder.get(asset.linked_folder_id);
+        if (paths) paths.push(asset.relative_path);
+        else linkedPathsByFolder.set(asset.linked_folder_id, [asset.relative_path]);
+        add({
+          locationKind: 'linked',
+          linkedFolderId: asset.linked_folder_id,
+          relativePath: asset.relative_path,
+          pathKind: 'asset',
+          displayName: linkedDisplayName(asset.linked_folder_id, asset.relative_path),
+        });
+      }
+      for (const [linkedFolderId, paths] of linkedPathsByFolder) {
+        for (const prefix of collectLinkedDirectoryPrefixes(paths)) {
+          add({
+            locationKind: 'linked',
+            linkedFolderId,
+            relativePath: prefix,
+            pathKind: 'folder',
+            displayName: linkedDisplayName(linkedFolderId, prefix),
+          });
+        }
+      }
+    }
+
+    const libraryId = openLibrary.summary.libraryId;
+    for (const folder of linkedFolders) {
+      if (folder.status !== 'available' || this.linkedRootIsGone(folder.absolute_root_path)) continue;
+      const prefixes = this.collectLinkedDirectoryPrefixesFromDisk(
+        openLibrary,
+        folder.folder_id,
+        folder.absolute_root_path,
+        this.getLinkedFolderRules({ libraryId, folderId: folder.folder_id }),
+        true,
+      );
+      for (const prefix of prefixes) {
+        add({
+          locationKind: 'linked',
+          linkedFolderId: folder.folder_id,
+          relativePath: prefix,
+          pathKind: 'folder',
+          displayName: linkedDisplayName(folder.folder_id, prefix),
+        });
+      }
+    }
+
+    return [...byKey.values()];
   }
 
   setIgnore(input: {
@@ -40100,17 +40637,23 @@ export class LibraryService {
       ).get(linkedFolderId, input.libraryId);
       if (!row) throw new LibraryServiceError('FOLDER_NOT_FOUND');
     }
-    if (input.locationKind === 'managed') {
-      // Managed ignore state is file-backed.  Do not mirror it into
-      // explicit_ignored_paths: that table is reserved for linked-folder
-      // scoped entries, while .serpentignore is the single source of truth
-      // for everything under Assets/.
-      this.updateManagedGitignoreRule(openLibrary, relativePath, input.pathKind, input.ignored);
+    if (input.locationKind === 'managed' || !(input.pathKind === 'folder' && relativePath === '')) {
+      // File-backed ignore: one .serpentignore for managed and linked trees.
+      // An empty linked-root path still uses explicit_ignored_paths because
+      // there is no relative path to write into the ignore file.
+      const rule = this.ignoreGitignoreRule(input.locationKind, relativePath, input.pathKind);
+      if (rule !== undefined) this.updateGitignoreRule(openLibrary, rule, input.ignored);
+      if (input.locationKind === 'linked' && !input.ignored) {
+        openLibrary.connection.prepare(
+          `DELETE FROM explicit_ignored_paths
+            WHERE location_kind = ? AND linked_folder_id = ? AND relative_path = ? AND path_kind = ?`,
+        ).run(input.locationKind, linkedFolderId ?? '', relativePath, input.pathKind);
+      }
       return {
         ignored: input.ignored,
         path: {
-          locationKind: 'managed',
-          linkedFolderId: null,
+          locationKind: input.locationKind,
+          linkedFolderId: input.locationKind === 'linked' ? linkedFolderId : null,
           relativePath,
           pathKind: input.pathKind,
           displayName: relativePath || 'Assets',
@@ -43829,16 +44372,15 @@ export class LibraryService {
   }
 
   private reconciliationAbortError(): Error {
-    const error = new Error('Open-library reconciliation was cancelled.');
-    error.name = 'AbortError';
-    return error;
+    return this.reconciliationOwner.abortError();
   }
 
   private assertReconciliationActive(task: OpenReconciliationTask): void {
     if (
       task.controller.signal.aborted
-      || this.reconciliationByLibrary.get(task.libraryId) !== task
+      || !this.reconciliationOwner.isCurrent(task)
       || this.openById.get(task.libraryId) !== task.openLibrary
+      || !this.sqlitePrimaryIsOpen(task.openLibrary)
     ) {
       throw this.reconciliationAbortError();
     }
@@ -43881,7 +44423,7 @@ export class LibraryService {
       this.deferredOpenMaintenanceByLibrary.delete(libraryId);
       if (
         this.openById.get(libraryId) !== openLibrary
-        || this.reconciliationGenerationByLibrary.get(libraryId) !== generation
+        || this.reconciliationOwner.generation(libraryId) !== generation
       ) return;
       const remainingMs = (this.interactiveIdleUntilByLibrary.get(libraryId) ?? 0) - Date.now();
       if (remainingMs > 0) {
@@ -43899,7 +44441,7 @@ export class LibraryService {
           await this.createDatabaseBackupForOpenLibrary(openLibrary, 'open');
           if (
             this.openById.get(libraryId) !== openLibrary
-            || this.reconciliationGenerationByLibrary.get(libraryId) !== generation
+            || this.reconciliationOwner.generation(libraryId) !== generation
           ) return;
           readLibraryIdentity(openLibrary.connection);
         } catch (error) {
@@ -45476,12 +46018,16 @@ export class LibraryService {
     const existingOpen = this.openById.get(input.libraryId);
     if (!existingOpen) return undefined;
     if (existingOpen.summary.libraryPath === input.canonicalPath) {
-      closeIgnoringFailure(input.connection);
+      if (!this.sqliteConnectionIsRegisteredPrimary(input.connection)) {
+        closeIgnoringFailure(input.connection);
+      }
       this.openIdByPath.set(input.canonicalPath, existingOpen.summary.libraryId);
       return existingOpen.summary;
     }
     if (input.replaceExisting !== true) {
-      closeIgnoringFailure(input.connection);
+      if (!this.sqliteConnectionIsRegisteredPrimary(input.connection)) {
+        closeIgnoringFailure(input.connection);
+      }
       throw new LibraryServiceError('LIBRARY_ALREADY_OPEN');
     }
     // Keep the already-opened connection for the chosen path. Release the
@@ -45702,6 +46248,8 @@ export class LibraryService {
           expectedSourceChangeSequence,
         });
         if (rebound.state?.readThrough.readCacheActive) {
+          activeNetworkMetadataCache.readThrough.release();
+          activeNetworkMetadataCache.writeThrough.release();
           openLibrary.connection = rebound.connection;
           openLibrary.writeConnection = rebound.writeConnection;
           openLibrary.networkMetadataCache = rebound.state;
@@ -45793,7 +46341,11 @@ export class LibraryService {
     }
     markStage('path-resolution');
     const alreadyOpenId = this.openIdByPath.get(canonicalPath);
-    if (alreadyOpenId) return this.openById.get(alreadyOpenId)!.summary;
+    if (alreadyOpenId) {
+      const existing = this.openById.get(alreadyOpenId);
+      if (existing && this.sqlitePrimaryIsOpen(existing)) return existing.summary;
+      if (existing) this.evictDeadOpenLibrary(alreadyOpenId, existing);
+    }
 
     for (const directoryName of REQUIRED_DIRECTORIES) {
       if (!realDirectoryExists(path.join(canonicalPath, directoryName))) {
@@ -45808,6 +46360,26 @@ export class LibraryService {
       ?? classifyLibraryStorage(canonicalPath);
     const networkStorage = storageKind === 'network';
     markStage('storage-classification');
+
+    // Identity check before a second writable SQLite connection. Opening and
+    // migrating a catalog that this Worker already holds is undefined on
+    // rollback-journal NAS volumes and is how a live primary can be closed
+    // while openById still points at the wrapper.
+    if (this.openById.size > 0) {
+      const probedCatalogId = this.probeCatalogIdentity(canonicalPath);
+      if (probedCatalogId) {
+        const existing = this.openById.get(probedCatalogId);
+        if (existing && this.sqlitePrimaryIsOpen(existing)) {
+          if (existing.summary.libraryPath === canonicalPath) return existing.summary;
+          if (options?.replaceExisting !== true) {
+            throw new LibraryServiceError('LIBRARY_ALREADY_OPEN');
+          }
+          this.closeLibrary(existing.summary.libraryId);
+        } else if (existing) {
+          this.evictDeadOpenLibrary(probedCatalogId, existing);
+        }
+      }
+    }
 
     let connection: DatabaseConnection | undefined;
     let migrationAttempted = false;
@@ -45923,7 +46495,17 @@ export class LibraryService {
           // The primary failure remains more useful than a record failure.
         }
       }
-      closeIgnoringFailure(connection);
+      const registeredId = this.findLibraryIdOwningSqliteConnection(connection);
+      if (registeredId) {
+        const registered = this.openById.get(registeredId);
+        try {
+          this.closeLibrary(registeredId);
+        } catch {
+          if (registered) this.evictDeadOpenLibrary(registeredId, registered);
+        }
+      } else {
+        closeIgnoringFailure(connection);
+      }
       throw serviceError(error, 'LIBRARY_CORRUPT');
     }
   }
@@ -48091,7 +48673,7 @@ export class LibraryService {
       );
     };
     this.cancelDeferredOpenMaintenance(libraryId);
-    const reconciliation = this.reconciliationByLibrary.get(libraryId);
+    const reconciliation = this.reconciliationOwner.current(libraryId);
     this.cancelOpenBackgroundReconciliation(libraryId);
     if (reconciliation) {
       const reconciliationStartedAt = performance.now();

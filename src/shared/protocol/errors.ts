@@ -343,6 +343,12 @@ export function classifyUnknownFailure(
   if (isDecoderMissingInputError(error)) {
     return { code: 'ASSET_NOT_FOUND', reason: 'SOURCE_NOT_FOUND' };
   }
+  if (
+    error instanceof TypeError
+    && error.message === 'The database connection is not open'
+  ) {
+    return { code: 'LIBRARY_NOT_OPEN' };
+  }
 
   for (const { code, message } of walkErrorCodes(error)) {
     if (code === 'ENOSPC' || code === 'EDQUOT' || code === 'SQLITE_FULL') {

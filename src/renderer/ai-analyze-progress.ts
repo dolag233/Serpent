@@ -114,6 +114,69 @@ export function cancellationAffectsAiBatch(
   return !cancelledJobIds || cancelledJobIds.some((jobId) => activeJobIds.includes(jobId));
 }
 
+export type AiProgressJobUpdate = {
+  jobId: string;
+  status: "queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled";
+  errorCode?: string | null;
+};
+
+/**
+ * Fold progress-event job updates into the user batch snapshot.
+ * Jobs outside the current action are ignored so background work cannot
+ * move this banner.
+ */
+export function mergeAiProgressJobUpdates(
+  knownJobs: ReadonlyArray<AiProgressJobUpdate>,
+  changedJobs: ReadonlyArray<AiProgressJobUpdate>,
+  batchJobIds: ReadonlySet<string>,
+): AiProgressJobUpdate[] {
+  const byId = new Map<string, AiProgressJobUpdate>();
+  for (const job of knownJobs) {
+    if (!batchJobIds.has(job.jobId)) continue;
+    byId.set(job.jobId, job);
+  }
+  for (const job of changedJobs) {
+    if (!batchJobIds.has(job.jobId)) continue;
+    byId.set(job.jobId, job);
+  }
+  return [...byId.values()];
+}
+
+/**
+ * Live banner progress from Worker `ai.progress` events.
+ *
+ * `ai.status` shares a Worker lane with `ai.process-queue`, so it cannot
+ * refresh while a batch is running. Events already cross the process
+ * boundary; prefer per-job updates, and fall back to counter deltas only
+ * when this wave has not yet named any batch jobs.
+ */
+export function progressFromAiProgressEvent(input: {
+  jobIds: readonly string[];
+  knownJobs: ReadonlyArray<AiProgressJobUpdate>;
+  changedJobs?: ReadonlyArray<AiProgressJobUpdate>;
+  skipped?: number;
+  baseline: { succeeded: number; failed: number };
+  counters: AiQueueCounters;
+}): { knownJobs: AiProgressJobUpdate[]; progress: AiBatchProgressSnapshot } {
+  const batchJobIds = new Set(input.jobIds);
+  const knownJobs = mergeAiProgressJobUpdates(
+    input.knownJobs,
+    input.changedJobs ?? [],
+    batchJobIds,
+  );
+  const skipped = input.skipped ?? 0;
+  if (knownJobs.length > 0) {
+    return {
+      knownJobs,
+      progress: computeAiBatchProgressForJobs(input.jobIds, knownJobs, { skipped }),
+    };
+  }
+  return {
+    knownJobs,
+    progress: computeAiBatchProgress(input.jobIds.length + skipped, input.baseline, input.counters),
+  };
+}
+
 /** Distinct recent failure codes for toast summary (stable order). */
 export function collectRecentAiFailureCodes(
   jobs: ReadonlyArray<{ status: string; errorCode: string | null }>,

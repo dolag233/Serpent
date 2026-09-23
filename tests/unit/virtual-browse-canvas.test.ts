@@ -187,7 +187,7 @@ describe("virtual browse canvas geometry", () => {
     const unsizedColumn = geometry[1];
     if (!sizedColumn || !unsizedColumn) throw new Error("expected two columns");
     // Each card carries its own band: the sized card keeps the resolution line
-    // (56px), the undecoded one drops to the two-line band (42px).
+    // (54px), the undecoded one drops to the two-line band (37px).
     expect(sizedColumn.heights[0]).toBe(
       estimateMasonryPreviewHeightPx(100, 100, 200) + MASONRY_DIMENSIONS_CAPTION_BAND_PX,
     );

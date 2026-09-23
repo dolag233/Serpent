@@ -93,4 +93,16 @@ describe("RAW image metadata", () => {
       { field: "focalLength", value: "56 毫米" },
     ]));
   });
+
+  it("normalizes GPS degree-minute-second coordinates", () => {
+    expect(normalizeRawImageMetadata({
+      GPSLatitude: [30, 15, 0],
+      GPSLatitudeRef: "S",
+      GPSLongitude: [120, 30, 0],
+      GPSLongitudeRef: "E",
+    })).toMatchObject({
+      gpsLatitude: -30.25,
+      gpsLongitude: 120.5,
+    });
+  });
 });

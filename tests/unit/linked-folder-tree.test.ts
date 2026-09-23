@@ -42,8 +42,9 @@ describe("linked-folder-tree", () => {
     expect(linkedAssetIsDirectChild("notes/a.png", "notes")).toBe(true);
     expect(linkedAssetIsUnderDirectory("notes/2024/a.png", "notes")).toBe(true);
     expect(linkedAssetIsUnderDirectory("other/a.png", "notes")).toBe(false);
-    expect(linkedFolderDepth("")).toBe(1);
-    expect(linkedFolderDepth("notes/2024")).toBe(3);
+    expect(linkedFolderDepth("")).toBe(0);
+    expect(linkedFolderDepth("notes")).toBe(1);
+    expect(linkedFolderDepth("notes/2024")).toBe(2);
   });
 
   it("counts direct and recursive assets by walking each path's ancestors", () => {

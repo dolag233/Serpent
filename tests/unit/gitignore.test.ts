@@ -19,11 +19,19 @@ describe("library ignore-file matching", () => {
 
     expect(gitignoreMatchesPath(rules, ".cache", "folder")).toBe(true);
     expect(gitignoreMatchesPath(rules, "build/.cache", "folder")).toBe(true);
+    expect(gitignoreMatchesPath(rules, "1Test/.111", "folder")).toBe(true);
+    expect(gitignoreMatchesPath(rules, ".111", "folder")).toBe(true);
     expect(gitignoreMatchesPath(rules, ".cache/file.bin", "asset")).toBe(true);
     expect(gitignoreMatchesPath(rules, ".cache-file", "asset")).toBe(false);
     expect(gitignoreMatchesPath(rules, ".cache-file", "folder")).toBe(true);
     expect(gitignoreMatchesPath(rules, "cache-file", "folder")).toBe(false);
     expect(gitignoreMatchesPath(rules, ".cache.txt", "asset")).toBe(false);
+    expect(gitignoreMatchesPath(rules, ".cache", "folder", "linked")).toBe(true);
+    expect(gitignoreMatchesPath(rules, "build/.cache", "folder", "linked")).toBe(true);
+    expect(gitignoreMatchesPath(rules, ".111", "folder", "linked")).toBe(true);
+    expect(gitignoreMatchesPath(rules, "1Test/.111", "folder", "linked")).toBe(true);
+    expect(gitignoreMatchesPath(rules, ".cache/file.bin", "asset", "linked")).toBe(true);
+    expect(gitignoreMatchesPath(rules, "notes/readme.txt", "asset", "linked")).toBe(false);
   });
 
   it("supports recursive globs, character classes, comments, and negation", () => {

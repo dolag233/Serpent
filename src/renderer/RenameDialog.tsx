@@ -41,17 +41,13 @@ export function RenameDialog({
   const isAsset = kind === "asset";
 
   // Asset rename preselects its editable name; collection and smart
-  // collection rename place the caret at the end so typing appends.
+  // collection rename select the current name for replacement.
   useEffect(() => {
     if (!open) return;
     const input = inputRef.current;
     if (!input) return;
     input.focus();
-    if (isAsset) {
-      input.select();
-    } else {
-      input.setSelectionRange(input.value.length, input.value.length);
-    }
+    input.select();
   }, [open, isAsset]);
 
   if (!open) return null;

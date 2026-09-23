@@ -18,7 +18,12 @@ export type RawMetadataField =
   | "exposureProgram"
   | "meteringMode"
   | "flash"
-  | "focalLength";
+  | "focalLength"
+  | "title"
+  | "description"
+  | "gpsLatitude"
+  | "gpsLongitude"
+  | "orientation";
 
 export interface RawMetadataRow {
   field: RawMetadataField;
@@ -136,6 +141,8 @@ export function buildRawImageMetadataRows(
     width && height ? `${width} × ${height}` : null,
   );
   addRow(rows, "author", author);
+  addRow(rows, "title", scalarText(metadata?.title));
+  addRow(rows, "description", scalarText(metadata?.description));
   addRow(rows, "cameraMake", scalarText(metadata?.cameraMake));
   addRow(rows, "cameraModel", scalarText(metadata?.cameraModel));
   addRow(rows, "lensModel", scalarText(metadata?.lensModel));
@@ -246,5 +253,10 @@ export function buildRawImageMetadataRows(
       ? scalarText(metadata?.focalLength)
       : `${formatNumber(focalLength)}${locale === "zh-CN" ? " 毫米" : " mm"}`,
   );
+  const latitude = scalarNumber(metadata?.gpsLatitude);
+  const longitude = scalarNumber(metadata?.gpsLongitude);
+  addRow(rows, "gpsLatitude", latitude === null ? null : `${formatNumber(latitude)}°`);
+  addRow(rows, "gpsLongitude", longitude === null ? null : `${formatNumber(longitude)}°`);
+  addRow(rows, "orientation", scalarText(metadata?.orientation));
   return rows;
 }

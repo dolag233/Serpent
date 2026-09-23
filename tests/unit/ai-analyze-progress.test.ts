@@ -5,6 +5,7 @@ import {
   collectRecentAiFailureCodes,
   computeAiBatchProgressForJobs,
   computeAiBatchProgress,
+  progressFromAiProgressEvent,
 } from "../../src/renderer/ai-analyze-progress";
 
 describe("computeAiBatchProgress (Serpent-k3dw)", () => {
@@ -89,6 +90,41 @@ describe("computeAiBatchProgress (Serpent-k3dw)", () => {
     );
 
     expect(snapshot).toMatchObject({ batchTotal: 5, done: 1, skipped: 1, ratio: 0.2 });
+  });
+});
+
+describe("progressFromAiProgressEvent (Serpent-f01d8e)", () => {
+  it("advances done from progress-event job updates without a status snapshot", () => {
+    const first = progressFromAiProgressEvent({
+      jobIds: ["job-1", "job-2", "job-3"],
+      knownJobs: [],
+      changedJobs: [{ jobId: "job-1", status: "succeeded" }],
+      baseline: { succeeded: 40, failed: 9 },
+      counters: { queued: 2, running: 1, succeeded: 40, failed: 9 },
+    });
+    expect(first.progress).toMatchObject({ batchTotal: 3, done: 1, succeeded: 1, ratio: 1 / 3 });
+
+    const second = progressFromAiProgressEvent({
+      jobIds: ["job-1", "job-2", "job-3"],
+      knownJobs: first.knownJobs,
+      changedJobs: [{ jobId: "job-2", status: "failed", errorCode: "AI_RATE_LIMIT" }],
+      baseline: { succeeded: 40, failed: 9 },
+      counters: { queued: 1, running: 1, succeeded: 40, failed: 10 },
+    });
+    expect(second.progress).toMatchObject({ done: 2, succeeded: 1, failed: 1, ratio: 2 / 3 });
+  });
+
+  it("ignores jobs from other actions and falls back to counter deltas", () => {
+    const snapshot = progressFromAiProgressEvent({
+      jobIds: ["job-new"],
+      knownJobs: [],
+      changedJobs: [{ jobId: "job-old", status: "succeeded" }],
+      skipped: 0,
+      baseline: { succeeded: 10, failed: 0 },
+      counters: { queued: 0, running: 1, succeeded: 11, failed: 0 },
+    });
+    expect(snapshot.knownJobs).toEqual([]);
+    expect(snapshot.progress).toMatchObject({ batchTotal: 1, done: 1, succeeded: 1 });
   });
 });
 

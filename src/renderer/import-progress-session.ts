@@ -62,8 +62,8 @@ function isRetiredImportId(
   if (!importId) return false;
   if (dismissedImportId && dismissedImportId === importId) return true;
   if (!retiredImportIds) return false;
-  if (Array.isArray(retiredImportIds)) return retiredImportIds.includes(importId);
-  return retiredImportIds.has(importId);
+  if ("has" in retiredImportIds) return retiredImportIds.has(importId);
+  return retiredImportIds.includes(importId);
 }
 
 /**

@@ -16,6 +16,14 @@
     "PingFang SC",
     "Microsoft YaHei",
     sans-serif;
+  /* Color emoji must not fall through to the UI CJK stack: YaHei / HarmonyOS
+     intercept emoji codepoints as monochrome glyphs on Windows. */
+  --font-emoji:
+    "Segoe UI Emoji",
+    "Segoe UI Symbol",
+    "Apple Color Emoji",
+    "Noto Color Emoji",
+    sans-serif;
   font-family: var(--font-ui);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -1657,6 +1665,74 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   right: 29px;
 }
 
+.search-history-popover {
+  right: 0;
+  width: max(100%, 280px);
+  gap: 8px;
+  padding: 10px;
+}
+
+.search-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.search-history-header span {
+  color: var(--text);
+  font-size: calc(13px * var(--ui-font-scale));
+  font-weight: var(--ui-font-weight-medium);
+}
+
+.search-history-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 6px;
+  max-height: calc(4 * var(--shell-chip-height) + 18px);
+  overflow: hidden;
+}
+
+.search-history-item {
+  display: inline-flex;
+  max-width: 100%;
+  height: var(--shell-chip-height);
+  align-items: center;
+  overflow: hidden;
+  padding: 0 8px;
+  border: 1px solid var(--divider-soft);
+  border-radius: 4px;
+  background: var(--raised-2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: calc(12px * var(--ui-font-scale));
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-history-item.is-highlighted,
+.search-history-item:hover {
+  border-color: var(--divider);
+  background: color-mix(in srgb, var(--text) 6%, var(--raised-2));
+}
+
+.search-history-clear {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+  font-size: calc(12px * var(--ui-font-scale));
+}
+
+.search-history-clear:hover {
+  color: var(--text);
+}
+
 .search-syntax-help:hover {
   border-color: color-mix(in srgb, var(--divider) 78%, transparent);
   background: color-mix(in srgb, var(--raised-2) 74%, transparent);
@@ -1856,13 +1932,13 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   border-radius: 999px;
   background: linear-gradient(
     to right,
-    #f00,
-    #ff0,
-    #0f0,
-    #0ff,
-    #00f,
-    #f0f,
-    #f00
+    hsl(0 100% 50%),
+    hsl(60 100% 50%),
+    hsl(120 100% 50%),
+    hsl(180 100% 50%),
+    hsl(240 100% 50%),
+    hsl(300 100% 50%),
+    hsl(360 100% 50%)
   );
   cursor: pointer;
 }
@@ -2150,6 +2226,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 .nav-entity-glyph-emoji {
   line-height: 1;
   font-size: 13px;
+  font-family: var(--font-emoji);
 }
 
 .nav-entity-glyph-badge {
@@ -5105,6 +5182,8 @@ body.serpent-modal-open .app-shell {
   color: var(--text);
   font-size: calc(11px * var(--ui-font-scale));
   backdrop-filter: blur(10px);
+  /* Rate listbox is position:absolute above this bar; do not clip it. */
+  overflow: visible;
 }
 .preview-video-playpause,
 .preview-video-fit,
@@ -5183,6 +5262,12 @@ body.serpent-modal-open .app-shell {
   outline-offset: 3px;
   border-radius: 4px;
 }
+.preview-video-rate-host {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  overflow: visible;
+}
 .preview-video-rate {
   display: grid;
   flex: 0 0 auto;
@@ -5202,6 +5287,14 @@ body.serpent-modal-open .app-shell {
 .preview-video-rate:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+.ui-menu-surface.preview-video-rate-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: var(--ui-layer-menu);
+  min-width: 4.75rem;
+  width: max-content;
 }
 .preview-viewer-volume {
   display: flex;
@@ -5671,7 +5764,8 @@ body.serpent-modal-open .app-shell {
    not keep the transport bar visible after the idle timer expires. */
 .workspace-viewer.is-chrome-idle .preview-chrome-fade:hover,
 .workspace-viewer.is-chrome-idle:not(:fullscreen) .preview-chrome-fade:focus-within,
-.workspace-viewer.is-chrome-idle .preview-chrome-fade:has(.preview-viewer-volume.is-adjusting) {
+.workspace-viewer.is-chrome-idle .preview-chrome-fade:has(.preview-viewer-volume.is-adjusting),
+.workspace-viewer.is-chrome-idle .preview-chrome-fade:has(.preview-video-rate-host.is-open) {
   opacity: 1;
   pointer-events: auto;
 }
@@ -9688,39 +9782,6 @@ select.ai-config-input.ai-config-languages {
   color: inherit;
 }
 
-.ignored-paths-dialog {
-  width: min(560px, calc(100vw - 32px));
-}
-
-.ignored-paths-list {
-  display: grid;
-  gap: 8px;
-  max-height: 360px;
-  overflow: auto;
-  margin: 12px 0;
-}
-
-.ignored-path-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-}
-
-.ignored-path-row > div {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.ignored-path-row span {
-  color: var(--text-secondary);
-  font-size: calc(12px * var(--ui-font-scale));
-}
-
 .media-jobs-grid {
   font-size: calc(11px * var(--ui-font-scale));
 }
@@ -9823,6 +9884,13 @@ select.ai-config-input.ai-config-languages {
 .library-settings-gitignore-actions {
   color: var(--text-tertiary);
   font-size: calc(12px * var(--ui-font-scale));
+}
+
+.library-settings-gitignore-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
 }
 
 .about-dialog {
@@ -10426,7 +10494,7 @@ select.ai-config-input.ai-config-languages {
   box-sizing: border-box;
   height: var(--justified-caption-band, auto);
   min-height: 0;
-  padding-top: calc(4px * var(--ui-font-scale));
+  padding-top: calc(8px * var(--ui-font-scale));
   overflow: hidden;
 }
 
@@ -11446,8 +11514,13 @@ select.ai-config-input.ai-config-languages {
   display: flex;
   min-width: 0;
   flex-direction: column;
+  /* Masonry reserves a deterministic caption band for scrollbar geometry.
+     Font rasterization can make the actual line boxes a fraction shorter;
+     centering the remaining space keeps the visible top and bottom edge
+     breathing room equal instead of leaving all rounding at the bottom. */
+  justify-content: center;
   gap: calc(3px * var(--ui-font-scale));
-  padding: calc(7px * var(--ui-font-scale))
+  padding: calc(8px * var(--ui-font-scale))
     calc(8px * var(--ui-font-scale))
     calc(8px * var(--ui-font-scale));
   /* Keep filename/meta above any preview overflow on tall portraits. */
@@ -11481,6 +11554,7 @@ select.ai-config-input.ai-config-languages {
   color: var(--text);
   font-size: calc(11px * var(--ui-font-scale));
   font-weight: var(--ui-font-weight-medium);
+  line-height: calc(14px * var(--ui-font-scale));
   letter-spacing: 0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -11512,6 +11586,10 @@ select.ai-config-input.ai-config-languages {
   color: var(--tertiary);
   font-family: "IBM Plex Mono", monospace;
   font-size: calc(9px * var(--ui-font-scale));
+  line-height: calc(12px * var(--ui-font-scale));
+}
+.asset-caption .asset-dimensions {
+  line-height: calc(14px * var(--ui-font-scale));
 }
 .asset-caption strong.asset-caption-filename span {
   color: inherit;
@@ -12069,6 +12147,11 @@ select.ai-config-input.ai-config-languages {
   gap: 12px;
   min-width: 0;
   width: 100%;
+  /* Match the Inspector description field so Chinese metadata stays readable. */
+  font-family: var(--font-ui);
+  font-size: calc(11.5px * var(--ui-font-scale));
+  font-weight: var(--ui-font-weight-regular);
+  line-height: 1.35;
 }
 
 .inspector-raw-tech-label,

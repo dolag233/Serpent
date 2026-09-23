@@ -574,6 +574,11 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     content: z.string().max(1_000_000),
   }),
   z.strictObject({
+    type: z.literal('ignore.gitignore.preview.request'),
+    libraryId: identifierSchema,
+    content: z.string().max(1_000_000),
+  }),
+  z.strictObject({
     type: z.literal('ignore.set.request'),
     libraryId: identifierSchema,
     locationKind: z.enum(['managed', 'linked']),
@@ -1720,6 +1725,11 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('ignore.gitignore.set'),
+    libraryId: identifierSchema,
+    content: z.string().max(1_000_000),
+  }),
+  z.strictObject({
+    type: z.literal('ignore.gitignore.preview'),
     libraryId: identifierSchema,
     content: z.string().max(1_000_000),
   }),

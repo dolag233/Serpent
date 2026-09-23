@@ -103,10 +103,14 @@ export function buildUnifiedDirectoryNavEntries(
         ? undefined
         : managedDepthById.get(parentFolderId);
     const nested = parentFolderId !== null && parentDepth !== undefined;
+    // Serpent-81e416: linkedFolderDepth is 0-based like managed relativePathDepth.
+    // Children add that depth onto the root's resolved depth (including a
+    // managed parent). Do not subtract 1 — that compensated for the old
+    // empty-path depth of 1.
     const depth = nested
       ? parentDepth + 1
       : linkedRootDepthById.get(linkedFolderId) !== undefined
-        ? linkedRootDepthById.get(linkedFolderId)! + linkedFolderDepth(relativePath) - 1
+        ? linkedRootDepthById.get(linkedFolderId)! + linkedFolderDepth(relativePath)
         : linkedFolderDepth(relativePath);
     if (relativePath === "") linkedRootDepthById.set(linkedFolderId, depth);
     linkedEntries.push({

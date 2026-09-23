@@ -500,7 +500,8 @@ function buildJustifiedRowGeometry(input: {
   for (const entry of entries) {
     captionBand = Math.max(captionBand, resolveCaptionBandSource(input.captionBand, entry));
   }
-  const ratios = entries.map((entry) => aspectRatioForAsset(entry.width, entry.height));
+  const ratios = entries.map((entry) =>
+    aspectRatioForAsset(entry.width, entry.height, entry.mediaType));
   const usable = Math.max(1, width - Math.max(0, count - 1) * ASSET_GRID_GAP_PX);
   const naturalWidth = ratios.reduce((sum, ratio) => sum + ratio, 0) * targetHeight;
   let scale = naturalWidth > 0 ? usable / naturalWidth : 1;

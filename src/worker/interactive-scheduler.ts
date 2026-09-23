@@ -96,6 +96,15 @@ type ActiveEntry = {
   yieldState?: { promise: Promise<void>; release: () => void };
 };
 
+type ReleasedEntry = {
+  active: ActiveEntry;
+  ready: boolean;
+  /** Number of concurrent external operations sharing this owner. */
+  pendingCount: number;
+  promise: Promise<void>;
+  resolve: () => void;
+};
+
 export type ScheduleOptions = {
   /** Abort a safe-to-stop background owner when a mutation needs the lane. */
   cancel?: () => void;
@@ -167,6 +176,8 @@ export class InteractiveScheduler {
   readonly #active = new Set<ActiveEntry>();
   /** Serpent-be29a9: active owners that released their admission at a safe point. */
   readonly #yielded = new Set<ActiveEntry>();
+  /** Owners doing external async work without occupying a scheduler lane. */
+  readonly #released = new Map<ActiveEntry, ReleasedEntry>();
   readonly #latestGenerationByKey = new Map<string, number>();
   readonly #options: InteractiveSchedulerOptions;
   #sequence = 0;
@@ -285,7 +296,11 @@ export class InteractiveScheduler {
    */
   cancelActiveBackgroundForLibrary(libraryId: string): number {
     let requested = 0;
-    for (const active of [...this.#active, ...this.#yielded]) {
+    for (const active of [
+      ...this.#active,
+      ...this.#yielded,
+      ...[...this.#released.keys()],
+    ]) {
       if (active.request.libraryId !== libraryId) continue;
       if (!isBackgroundPerformanceLane(active.request.lane) || !active.cancel) continue;
       active.cancel();
@@ -301,7 +316,11 @@ export class InteractiveScheduler {
    */
   cancelActiveBackgroundOwners(): number {
     let requested = 0;
-    for (const active of [...this.#active, ...this.#yielded]) {
+    for (const active of [
+      ...this.#active,
+      ...this.#yielded,
+      ...[...this.#released.keys()],
+    ]) {
       if (!isBackgroundPerformanceLane(active.request.lane) || !active.cancel) continue;
       active.cancel();
       requested += 1;
@@ -341,6 +360,61 @@ export class InteractiveScheduler {
     this.#yielded.add(entry);
     this.drain();
     await promise;
+  }
+
+  /**
+   * Run an external asynchronous operation without holding this scheduler's
+  * admission. The active request is re-admitted before the returned promise
+  * resolves, so callers can safely perform their short commit/cleanup phase
+  * under the normal lane policy. This is intentionally different from
+   * `yieldAdmission`: it releases even when no foreground request is queued.
+   * Concurrent callers using the same request id share one released scope and
+   * only reacquire after the last external operation finishes.
+   */
+  async runWithoutAdmission<T>(
+    requestId: string,
+    work: () => Promise<T> | T,
+  ): Promise<T> {
+    const active = [...this.#active]
+      .find((candidate) => candidate.request.requestId === requestId);
+    const released = [...this.#released.values()]
+      .find((candidate) => candidate.active.request.requestId === requestId);
+    if (released) {
+      released.pendingCount += 1;
+      try {
+        return await work();
+      } finally {
+        released.pendingCount -= 1;
+        if (released.pendingCount === 0) {
+          released.ready = true;
+          this.tryReacquireReleased();
+        }
+        await released.promise;
+      }
+    }
+    if (!active) return work();
+
+    let resolve!: () => void;
+    const state: ReleasedEntry = {
+      active,
+      ready: false,
+      pendingCount: 1,
+      promise: new Promise<void>((done) => { resolve = done; }),
+      resolve: () => resolve(),
+    };
+    this.#released.set(active, state);
+    this.#active.delete(active);
+    this.drain();
+    try {
+      return await work();
+    } finally {
+      state.pendingCount -= 1;
+      if (state.pendingCount === 0) {
+        state.ready = true;
+        this.tryReacquireReleased();
+      }
+      await state.promise;
+    }
   }
 
   private hasWaitingInteractiveOrMutation(): boolean {
@@ -481,6 +555,7 @@ export class InteractiveScheduler {
         const yieldState = active.yieldState;
         active.yieldState = undefined;
         yieldState?.release();
+        this.tryReacquireReleased();
         this.drain();
       });
     }
@@ -573,9 +648,13 @@ export class InteractiveScheduler {
 
   private stallInfo(waitedMs: number): SchedulerStallInfo {
     const now = Date.now();
+    const activeEntries = [
+      ...this.#active,
+      ...[...this.#released.keys()],
+    ];
     return {
       waitedMs,
-      active: [...this.#active].map((entry) => ({
+      active: activeEntries.map((entry) => ({
         label: entry.request.label ?? entry.request.requestId,
         lane: entry.request.lane,
         ...(entry.request.libraryId === undefined ? {} : { libraryId: entry.request.libraryId }),
@@ -588,6 +667,25 @@ export class InteractiveScheduler {
         queuedMs: now - entry.enqueuedAt,
       })),
     };
+  }
+
+  private tryReacquireReleased(): boolean {
+    if (this.#active.size > 0) return false;
+    const priorityWaiting = this.#queue.some((entry) =>
+      entry.request.lane === 'mutation' || isInteractivePerformanceLane(entry.request.lane),
+    );
+    if (priorityWaiting) {
+      this.drain();
+      return false;
+    }
+    for (const [entry, state] of this.#released) {
+      if (!state.ready) continue;
+      this.#released.delete(entry);
+      this.#active.add(entry);
+      state.resolve();
+      return true;
+    }
+    return false;
   }
 
   private nextRunnableIndex(): number {

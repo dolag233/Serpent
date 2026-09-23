@@ -181,7 +181,7 @@ function RegularJustifiedAssetRows({
     () => layoutJustifiedRows(
       layoutEntries.map((asset) => ({
         id: asset.assetId,
-        aspectRatio: aspectRatioForAsset(asset.width, asset.height),
+        aspectRatio: aspectRatioForAsset(asset.width, asset.height, asset.mediaType),
       })),
       availableWidth,
       cardSize,

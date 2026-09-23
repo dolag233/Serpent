@@ -22,6 +22,8 @@ import path from 'node:path';
 
 import type { ModelCompanionAsset } from '../shared/model-companions';
 import {
+  IMAGE_EXTENSIONS,
+  MODEL_EXTENSIONS,
   isSupportedModelExtension,
   modelMimeForExtension,
 } from '../shared/media-formats';
@@ -45,6 +47,23 @@ export interface ModelCompanionQueryConnection {
  * the returned set (spec 3D-12: material falls back instead of crashing).
  */
 export const MODEL_COMPANION_MAX_ASSETS = 1_000;
+const MODEL_COMPANION_ALLOWED_EXTENSIONS = new Set<string>([
+  ...IMAGE_EXTENSIONS,
+  ...MODEL_EXTENSIONS,
+  '.bin',
+  '.json',
+  '.mtl',
+]);
+
+/** Keep the IPC contract bounded and deterministic for unusual file suffixes. */
+function canonicalCompanionExtension(relativeFilePath: string): string | null {
+  const extension = path.posix.extname(relativeFilePath).toLowerCase();
+  // The wire schema allows at most 16 characters including the dot. Restrict
+  // this to ordinary filename extensions so a malformed/very long suffix
+  // cannot invalidate the entire model render request.
+  if (!/^\.[a-z0-9]{1,15}$/u.test(extension)) return null;
+  return MODEL_COMPANION_ALLOWED_EXTENSIONS.has(extension) ? extension : null;
+}
 
 export interface ModelPreviewResolution {
   mediaType: 'model';
@@ -125,7 +144,7 @@ export function queryModelCompanionAssets(
   }>) {
     if (row.relative_file_path === modelRelativePath) continue;
     if (!row.current_revision_id) continue;
-    const extension = path.posix.extname(row.relative_file_path).toLowerCase();
+    const extension = canonicalCompanionExtension(row.relative_file_path);
     if (!extension) continue;
     companions.push({
       relativeFilePath: row.relative_file_path,

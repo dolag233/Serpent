@@ -32,6 +32,7 @@ import {
 import {
   browsePageOffset,
   compactBrowseLayoutIsComplete,
+  browsePageOffsetsForIndices,
   contiguousBrowsePageRuns,
   mergeLoadedBrowsePage,
   nextUnfilledBrowsePageOffset,
@@ -50,6 +51,8 @@ const browseDiagnosticsEnabled = Boolean(
 
 /** Page size for browse/search first load and window fetches. */
 export const BROWSE_PAGE_SIZE = 100;
+/** Scattered shuffle viewports must not enqueue the whole corpus. */
+const SHUFFLE_VISIBLE_PAGE_FETCH_CAP = 6;
 
 /**
  * The tail sentinel is deliberately disabled while the compact layout index
@@ -294,6 +297,8 @@ export type UseBrowsePaginationResult = {
   beginPage: (definition: BrowsePageDefinition, firstPage: BrowseFirstPage) => void;
   /** Fetch the page covering this index range (scrollbar jumps, not sequential). */
   ensureVisibleRange: (startIndex: number, endIndex: number) => Promise<void>;
+  /** Fetch pages that contain these ranks (client shuffle, not a min..max span). */
+  ensureVisibleIndices: (indices: readonly number[]) => Promise<void>;
   /** Fetch the next unfilled page (scroll sentinel fallback). */
   appendNextPage: () => Promise<void>;
   /** Full-scope asset ids for select-all / invert (idsOnly query). */
@@ -351,9 +356,15 @@ export function browseWindowQueryMode(input: {
 }
 
 export function isBrowseSessionPageUnusable(
-  result: { ok: boolean; value?: { stale?: boolean } },
+  result: { ok: boolean; value?: unknown },
 ): boolean {
-  return result.ok === true && result.value?.stale === true;
+  return (
+    result.ok === true &&
+    typeof result.value === "object" &&
+    result.value !== null &&
+    "stale" in result.value &&
+    (result.value as { stale?: unknown }).stale === true
+  );
 }
 
 export function useBrowsePagination(
@@ -725,6 +736,63 @@ export function useBrowsePagination(
     [api, noteVirtualVisibleRange, fetchPageAt, getLoadedBrowseLayout],
   );
 
+  const ensureVisibleIndices = useCallback(
+    async (indices: readonly number[]) => {
+      const definition = definitionRef.current;
+      if (!definition || !api || indices.length === 0) return;
+      const generation = generationRef.current;
+      const total = totalRef.current;
+      const ranks = [
+        ...new Set(
+          indices
+            .map((index) => Math.trunc(index))
+            .filter(
+              (index) => Number.isSafeInteger(index) && index >= 0 && index < total,
+            ),
+        ),
+      ];
+      if (ranks.length === 0) return;
+      for (const rank of ranks) noteVirtualVisibleRange(rank, rank);
+      const offsets = browsePageOffsetsForIndices({
+        indices: ranks,
+        total,
+        pageSize: BROWSE_PAGE_SIZE,
+      }).filter(
+        (offset) =>
+          !filledOffsetsRef.current.has(offset)
+          && !inFlightOffsetsRef.current.has(offset),
+      );
+      if (offsets.length === 0) {
+        layoutRef.current = getLoadedBrowseLayout();
+        return;
+      }
+      const hits = new Map<number, number>();
+      for (const rank of ranks) {
+        const offset = browsePageOffset(rank, BROWSE_PAGE_SIZE);
+        hits.set(offset, (hits.get(offset) ?? 0) + 1);
+      }
+      offsets.sort(
+        (left, right) => (hits.get(right) ?? 0) - (hits.get(left) ?? 0),
+      );
+      const selected = offsets.slice(0, SHUFFLE_VISIBLE_PAGE_FETCH_CAP);
+      const runs = contiguousBrowsePageRuns(
+        [...selected].sort((left, right) => left - right),
+        BROWSE_PAGE_SIZE,
+      );
+      for (const run of runs) {
+        if (generation !== generationRef.current) return;
+        const requestOffset = run[0]!;
+        const requestLimit = Math.min(
+          500,
+          run.at(-1)! - requestOffset + BROWSE_PAGE_SIZE,
+        );
+        await fetchPageAt(requestOffset, generation, requestLimit);
+      }
+      layoutRef.current = getLoadedBrowseLayout();
+    },
+    [api, noteVirtualVisibleRange, fetchPageAt, getLoadedBrowseLayout],
+  );
+
   const appendNextPage = useCallback(async () => {
     const total = totalRef.current;
     if (total <= 0) return;
@@ -893,6 +961,7 @@ export function useBrowsePagination(
   return {
     beginPage,
     ensureVisibleRange,
+    ensureVisibleIndices,
     appendNextPage,
     fetchScopeAssetIds,
     removeLocally,

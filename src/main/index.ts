@@ -37,7 +37,7 @@ import {
   NativeAssetDragCache,
   startNativeAssetDrag,
 } from "./native-asset-drag";
-import { nativeDragAssetsForResult, NativeAssetDragPrimeScheduler } from "./native-asset-drag-prime";
+import { NativeAssetDragPrimeScheduler } from "./native-asset-drag-prime";
 import {
   clearViewerVideoShortcutCapture,
   isViewerVideoShortcutContentsActive,
@@ -51,13 +51,59 @@ import { artifactProtocolMimeForExtension } from "../shared/media-formats";
 import {
   selectImportSources as selectImportSourcesDialog,
   selectLibraryDirectory,
-  selectOpenDirectory,
-  selectOpenLibrarySource,
   selectOpenFile,
   selectSavePath,
   selectPluginPackage,
   type NativeDialogHost,
 } from "./native-dialogs";
+import { executeLibraryMainCommand } from "./commands/library";
+import { tryHandleLibraryOwnedRequest, tryBuildOpenRecentCommand } from "./library-request/library";
+import {
+  tryBuildIngestionCommand,
+  maybeProbeImportSequences,
+  tryHandleIngestionOwnedRequest,
+  applyImportWorkerResult,
+} from "./library-request/ingestion";
+import {
+  tryHandleSyncOwnedRequest,
+  applySyncWorkerBindings,
+  runSyncProbeWithRetry,
+  type SyncServerRecord,
+  type SyncBindingRecord,
+} from "./library-request/sync";
+import { tryHandleAiOwnedRequest } from "./library-request/ai";
+import { tryHandlePreviewOwnedRequest } from "./library-request/preview";
+import { tryHandleMediaShellWorkerResult } from "./library-request/media-shell";
+import { maybePrimeNativeDrag } from "./library-request/native-drag";
+import { toRendererResult } from "./library-request/renderer-result";
+import { tryHandleRelinkOwnedRequest, maybeRememberRelinkPreview } from "./library-request/relink";
+import {
+  prepareLibraryLifecycle,
+  applyLibraryWorkerSideEffects,
+  applyExternalLibrarySourceCleanup,
+  mapBillfishInspectedDisplayName,
+  applyLibraryRendererLifecycle,
+  tryHandleRecoveryReport,
+  maybeBeginLibraryDeleteFromDisk,
+  applyLibraryReplacementAfterWorker,
+  maybeDelayE2eTrash,
+  externalSourceRootFromCommand,
+} from "./library-request/lifecycle";
+import { executeFolderMainCommand } from "./commands/folders";
+import { executeAssetIngestionMainCommand } from "./commands/asset-ingestion";
+import { executeLinkedFolderMainCommand } from "./commands/linked-folders";
+import { executeIgnoreMainCommand } from "./commands/ignore";
+import { executeTagMainCommand } from "./commands/tags";
+import { executeCollectionMainCommand } from "./commands/collections";
+import { executeAssetQueryMainCommand } from "./commands/asset-query";
+import { executeBrowseSessionMainCommand } from "./commands/browse-session";
+import { executeSmartCollectionMainCommand } from "./commands/smart-collections";
+import { executeAssetMutationMainCommand } from "./commands/asset-mutations";
+import { executeLibraryTransferMainCommand } from "./commands/library-transfer";
+import { executeAiMainCommand } from "./commands/ai";
+import { executeMediaJobMainCommand } from "./commands/media-jobs";
+import { executeSyncMainCommand } from "./commands/sync";
+import { executeMediaPathMainCommand } from "./commands/media-paths";
 import {
   ExternalLibraryArchiveError,
   materializeExternalLibrarySource,
@@ -182,7 +228,6 @@ import {
   mcpSettingsSnapshotSchema,
   type McpSettingsRequest,
 } from '../shared/mcp';
-import { normalizeWebDAVBaseUrl } from '../shared/sync-paths';
 import { registerAutomationScriptIpc } from './automation-script-ipc';
 import { AutomationScriptFileService } from './automation-script-file-service';
 import {
@@ -241,17 +286,14 @@ import {
   type OpenExternalUrlResult,
   type RevealAppLogResult,
 } from "../shared/external-url";
-import { libraryExportDefaultName } from "../shared/library-export-name";
 import { parseReadAppLogRequest, type ReadAppLogResult } from "../shared/app-log";
 import type { ShowEditContextMenuResult } from "../shared/edit-context-menu";
 import {
   createPublicError,
-  publicReasonFromError,
   toPublicError,
 } from "../shared/protocol/errors";
 import {
   LibraryParentError,
-  resolveWritableLibraryParent,
 } from "../worker/library-parent";
 import {
   parseNativeAssetDragRequest,
@@ -261,11 +303,9 @@ import {
   type WorkerCommand,
 } from "../shared/protocol/requests";
 import {
-  parseRendererResult,
   parseRendererLifecycleEvent,
   type RendererLifecycleEvent,
   type RendererResult,
-  type WorkerResult,
   type AssetChangeEvent,
   parseAssetChangeEvent,
   type LibraryChangedEvent,
@@ -284,7 +324,6 @@ import {
 import { LibraryWorkerClient, WorkerRequestTimeoutError } from "./worker-client";
 import { performanceConsumerIdForWindow } from "../shared/performance-contract";
 import { SyncAutoScheduler, type SyncBindingLike } from "./sync-auto-scheduler";
-import { resolveImageSequenceImportPaths } from "./image-sequence-import";
 import { AppLogger } from "./app-logger";
 import { chooseUniqueSessionLogPath, pruneSessionLogs } from "./session-log";
 import {
@@ -314,7 +353,6 @@ import {
   writeExternalLibraryStagingRoots,
 } from "./external-library-staging-store";
 import { AiQueueScheduler } from "./ai-queue-scheduler";
-import { aiSearchFailureReason, planAiSearch } from "./ai-search-planner";
 import {
   DEFAULT_AI_ANALYSIS_SETTINGS,
   normalizeAiAnalysisSettings,
@@ -339,7 +377,6 @@ import {
   DEFAULT_AI_API_FORMAT,
   DEFAULT_AI_LANGUAGES,
   DEFAULT_AI_MODELS,
-  listAiModels,
   migrateLegacyProviderToApiFormat,
   normalizeAiLanguages,
   type AiApiFormat,
@@ -381,16 +418,9 @@ import {
 import { resolveExtensionSaveRouting } from "./extension-save-context";
 import { RelinkPreviewStore } from "./relink-preview-store";
 import {
-  classifyDroppedSourcePaths,
   cleanupClipboardImage,
   cleanupStaleClipboardImages,
-  readClipboardImage,
-  stageClipboardImage,
 } from "./desktop-ingestion";
-import {
-  createWebImportCollectionCommand,
-  createWebImportCommand,
-} from "./web-ingestion";
 import { serpentProtocolSchemes } from "./serpent-protocol-privileges";
 import {
   parsePluginUiAssetRequestFromNavigation,
@@ -1074,36 +1104,6 @@ function aiKeyPath(): string {
 }
 
 // ── Serpent-xffq: 同步服务器（全局）与库绑定持久化 ───────────────────
-interface SyncServerRecord {
-  id: string;
-  baseUrl: string;
-  username?: string;
-  /** safeStorage 加密后的密码（base64）。 */
-  passwordEncrypted?: string;
-  allowInsecureTls: boolean;
-}
-
-interface SyncBindingRecord {
-  serverId: string;
-  /** 同步文件夹名称（远端目录名，默认库名）。 */
-  directoryName?: string;
-  /** 旧格式字段：subPath 曾是同步文件夹名（Serpent-xffq 早期）；读取时兼容。 */
-  subPath?: string;
-  /** 上次成功同步时间（ISO 字符串）。 */
-  lastSyncedAt?: string;
-  /** 自动同步开关（用户决定：在资源库设置里开启/关闭）。 */
-  enabled?: boolean;
-  /** 云端变化轮询间隔（毫秒，用户可设置；缺省 5000）。 */
-  pollIntervalMs?: number;
-  /** 卡片右下角同步状态；缺省 true（Serpent-871f34）。 */
-  showCardSyncStatus?: boolean;
-}
-
-/** 兼容旧格式绑定：directoryName 优先，其次旧 subPath。 */
-function effectiveSyncDirectoryName(binding: SyncBindingRecord | undefined): string | undefined {
-  return binding?.directoryName ?? binding?.subPath;
-}
-
 function syncServersPath(): string {
   return path.join(app.getPath("userData"), "sync-servers.json");
 }
@@ -2149,166 +2149,59 @@ async function processAiQueueBatch(
   if (!config.hasKey || !workerClient) return { processed: 0, requeued: 0 };
   try {
     const apiKey = getDecryptedApiKey();
-    const result = await workerClient.request({
-      type: "ai.process-queue",
-      libraryId,
-      apiFormat: config.apiFormat,
-      model: config.model,
-      apiKey,
-      ...(config.baseUrl.trim() ? { baseUrl: config.baseUrl.trim() } : {}),
-      enabledFields: {
-        description: config.descriptionEnabled,
-        tags: config.tagEnabled,
-        rating: config.ratingEnabled,
-      },
-      analysisSettings: toWireAiAnalysisSettings(config.analysisSettings),
-      languages: config.languages,
-      concurrencyLimit: config.concurrencyLimit,
-      maxAnalysisImageEdgePx: config.maxAnalysisImageEdgePx,
-      requestTimeoutMs: config.reliabilitySettings.requestTimeoutMs,
-      maxAttempts: config.reliabilitySettings.maxAttempts,
-      maxJobs,
-    });
-    if (!result.ok) {
-      logger?.error(
-        "ai.queue.process",
-        new Error(`Worker rejected AI queue batch: ${result.error.code}`),
-      );
-      return { processed: 0, requeued: 0 };
+    // Keep each Worker admission bounded. A 32-job batch with 16 external
+    // waits used to be one long scheduler request; slice it into short
+    // continuations so claim/commit ownership is reacquired between waves.
+    const sliceSize = Math.max(1, Math.min(config.concurrencyLimit, 8));
+    let processed = 0;
+    let requeued = 0;
+    while (processed < maxJobs) {
+      const requested = Math.min(sliceSize, maxJobs - processed);
+      const result = await workerClient.request({
+        type: "ai.process-queue",
+        libraryId,
+        apiFormat: config.apiFormat,
+        model: config.model,
+        apiKey,
+        ...(config.baseUrl.trim() ? { baseUrl: config.baseUrl.trim() } : {}),
+        enabledFields: {
+          description: config.descriptionEnabled,
+          tags: config.tagEnabled,
+          rating: config.ratingEnabled,
+        },
+        analysisSettings: toWireAiAnalysisSettings(config.analysisSettings),
+        languages: config.languages,
+        concurrencyLimit: config.concurrencyLimit,
+        maxAnalysisImageEdgePx: config.maxAnalysisImageEdgePx,
+        requestTimeoutMs: config.reliabilitySettings.requestTimeoutMs,
+        maxAttempts: config.reliabilitySettings.maxAttempts,
+        maxJobs: requested,
+      });
+      if (!result.ok) {
+        logger?.error(
+          "ai.queue.process",
+          new Error(`Worker rejected AI queue batch: ${result.error.code}`),
+        );
+        break;
+      }
+      if (result.type !== "ai.jobs.processed") {
+        logger?.error(
+          "ai.queue.process",
+          new Error(`Unexpected AI queue result: ${result.type}`),
+        );
+        break;
+      }
+      processed += result.processed;
+      requeued += result.requeued;
+      if (result.requeued > 0 || result.processed < requested) break;
+      await new Promise<void>((resolve) => setImmediate(resolve));
     }
-    if (result.type !== "ai.jobs.processed") {
-      logger?.error(
-        "ai.queue.process",
-        new Error(`Unexpected AI queue result: ${result.type}`),
-      );
-      return { processed: 0, requeued: 0 };
-    }
-    return { processed: result.processed, requeued: result.requeued };
+    return { processed, requeued };
   } catch (error) {
     logger?.error("ai.queue.process", error);
     return { processed: 0, requeued: 0 };
   }
 }
-
-function toRendererResult(
-  result: WorkerResult,
-  relinkPreviewId?: string,
-): RendererResult {
-  if (!result.ok) return parseRendererResult(result);
-  if (result.type === "library.opened") {
-    return parseRendererResult({
-      ok: true,
-      type: result.type,
-      library: {
-        libraryId: result.library.libraryId,
-        displayName: result.library.displayName,
-        displayPath: result.library.libraryPath,
-        // Serpent-033e: read-only degrade for newer-schema libraries.
-        readOnly: result.library.readOnly,
-        networkStorage: result.library.networkStorage,
-        libraryVersion: result.library.libraryVersion,
-        supportedSchemaVersion: result.library.supportedSchemaVersion,
-        // Serpent-verg.5: read-only because the migration is stuck.
-        migrationStuck: result.library.migrationStuck,
-        // Keep the recovery report path inside Main/Worker. Renderer receives
-        // only a boolean affordance so the filesystem boundary stays intact.
-        recovery: result.library.recovery
-          ? {
-              mode: result.library.recovery.mode,
-              ...(result.library.recovery.reportPath
-                ? { reportAvailable: true }
-                : {}),
-              ...(result.library.recovery.recoveredAssetCount === undefined
-                ? {}
-                : { recoveredAssetCount: result.library.recovery.recoveredAssetCount }),
-              ...(result.library.recovery.metadataRecovered === undefined
-                ? {}
-                : { metadataRecovered: result.library.recovery.metadataRecovered }),
-              ...(result.library.recovery.metadataLosses === undefined
-                ? {}
-                : { metadataLosses: result.library.recovery.metadataLosses }),
-            }
-          : undefined,
-      },
-    });
-  }
-  if (result.type === "library.renamed") {
-    return parseRendererResult({
-      ok: true,
-      type: result.type,
-      library: {
-        libraryId: result.library.libraryId,
-        displayName: result.library.displayName,
-        displayPath: result.library.libraryPath,
-        networkStorage: result.library.networkStorage,
-      },
-    });
-  }
-  if (result.type === "asset.recovery-probe") {
-    return parseRendererResult({
-      ok: true,
-      type: "asset.recovery-probe.result",
-      assetId: result.assetId,
-      probe: result.probe,
-    });
-  }
-  if (result.type === "library.list") {
-    return parseRendererResult({
-      ok: true,
-      type: result.type,
-      libraries: result.libraries.map((library) => ({
-        libraryId: library.libraryId,
-        displayName: library.displayName,
-        displayPath: library.libraryPath,
-        networkStorage: library.networkStorage,
-      })),
-    });
-  }
-  // library.imported includes libraryPath but the renderer schema strips it.
-  if (result.type === "library.imported") {
-    // Use libraryPath for lifecycle but strip from renderer result.
-    // The lifecycle is published in handleLibraryRequest above.
-    return parseRendererResult({
-      ok: true,
-      type: "library.imported",
-      importId: result.importId,
-      libraryId: result.libraryId,
-      displayName: result.displayName,
-    });
-  }
-  // library.deleted includes libraryPath for Main recent-store cleanup only.
-  if (result.type === "library.deleted") {
-    return parseRendererResult({
-      ok: true,
-      type: "library.deleted",
-      libraryId: result.libraryId,
-      displayName: result.displayName,
-      // Serpent-65d837: the library root is gone, but a `.del-*` aside may
-      // still exist; the Renderer shows a deferred-cleanup notice.
-      ...(result.pendingAsidePath ? { pendingCleanup: true } : {}),
-    });
-  }
-  if (result.type === "asset.relink-batch.preview") {
-    if (!relinkPreviewId) {
-      throw new Error("Batch relink preview is missing its Main-process token.");
-    }
-    return parseRendererResult({
-      ...result,
-      previewId: relinkPreviewId,
-    });
-  }
-  return parseRendererResult(result);
-}
-
-/**
- * Serpent-v4jf/Serpent-29125f: how many sorted-list-head assets to prime
- * synchronously before a card-bearing response reaches the renderer. Native
- * drag can only use entries that are ready when dragstart enters Electron's
- * nested OS loop, but priming hundreds of cards here serializes every browse
- * response behind Worker work. The renderer's overscan window is normally a
- * few dozen cards, so keep this bounded to a small first-screen cushion.
- */
-const NATIVE_DRAG_PRIME_VISIBLE_COUNT = 64;
 
 function createNativeDialogHost(): NativeDialogHost {
   return {
@@ -2393,1408 +2286,277 @@ async function commandFor(
   },
 ): Promise<WorkerCommand | undefined> {
   switch (request.type) {
-    case "library.create.request": {
-      const selectedParentPath = await selectDirectory("createLibrary");
-      return selectedParentPath
-        ? {
-            type: "library.create",
-            displayName: request.displayName,
-            selectedParentPath,
-          }
-        : undefined;
-    }
-    case "library.open.request": {
-      const selectedLibraryPath =
-        request.libraryPath ?? (await selectDirectory("openLibrary"));
-      return selectedLibraryPath
-        ? {
-            type: "library.open",
-            selectedLibraryPath,
-            ...(request.replaceExisting === true ? { replaceExisting: true } : {}),
-          }
-        : undefined;
-    }
+    case "library.create.request":
+    case "library.open.request":
     case "library.recovery-report.request":
-      // The Worker resolves the report path from its Main-owned library state;
-      // Renderer only receives a shell acknowledgement.
-      return { type: "library.recovery-report", libraryId: request.libraryId };
-    case "library.inspect-eagle.request": {
-      await cleanupExternalSource(pendingEagleOpenSourcePath);
-      pendingEagleOpenSourcePath = undefined;
-      await cleanupExternalSource(pendingBillfishOpenSourcePath);
-      pendingBillfishOpenSourcePath = undefined;
-      const selectedSourcePath = await selectOpenLibrarySource(
-        createNativeDialogHost(),
-        "openEagleLibrary",
-        process.env.SERPENT_E2E_OPEN_EAGLE_LIBRARY,
-        ["zip", "eaglepack", "rar", "7z", "tar", "gz", "tgz", "bz2", "tbz", "tbz2", "xz", "txz"],
-      );
-      if (!selectedSourcePath) return undefined;
-      const materialized = await materializeSelectedExternalLibrary({
-        sourcePath: selectedSourcePath,
-        kind: "eagle",
-        fallbackDirectory: path.dirname(path.resolve(selectedSourcePath)),
-      });
-      const sourceRootPath = rememberExternalSource(materialized);
-      return sourceRootPath
-        ? { type: "library.inspect-eagle", sourceRootPath }
-        : undefined;
-    }
-    case "library.inspect-billfish.request": {
-      await cleanupExternalSource(pendingBillfishOpenSourcePath);
-      pendingBillfishOpenSourcePath = undefined;
-      await cleanupExternalSource(pendingEagleOpenSourcePath);
-      pendingEagleOpenSourcePath = undefined;
-      const selectedSourcePath = await selectOpenFile(
-        createNativeDialogHost(),
-        "openBillfishLibrary",
-        process.env.SERPENT_E2E_OPEN_BILLFISH_LIBRARY,
-        [{ name: "Billfish Pack", extensions: ["billfishpack"] }],
-      );
-      if (!selectedSourcePath) return undefined;
-      callbacks?.onBillfishSourceSelected?.();
-      const materialized = await materializeSelectedExternalLibrary({
-        sourcePath: selectedSourcePath,
-        kind: "billfish",
-        fallbackDirectory: path.dirname(path.resolve(selectedSourcePath)),
-      });
-      const sourceRootPath = rememberExternalSource(materialized);
-      return sourceRootPath
-        ? {
-            type: "library.inspect-billfish",
-            sourceRootPath,
-            ...(materialized.sourceDisplayName === undefined
-              ? {}
-              : { sourceDisplayName: materialized.sourceDisplayName }),
-          }
-        : undefined;
-    }
+    case "library.inspect-eagle.request":
+    case "library.inspect-billfish.request":
     case "library.inspect-eagle.cancel.request":
-      await cleanupExternalSource(pendingEagleOpenSourcePath);
-      pendingEagleOpenSourcePath = undefined;
-      return undefined;
     case "library.inspect-billfish.cancel.request":
-      await cleanupExternalSource(pendingBillfishOpenSourcePath);
-      pendingBillfishOpenSourcePath = undefined;
-      return undefined;
-    case "library.open-eagle.request": {
-      const sourceRootPath = pendingEagleOpenSourcePath;
-      if (!sourceRootPath) return undefined;
-      const selectedParentPath = await selectOpenDirectory(
-        createNativeDialogHost(),
-        "openEagleLibraryDestination",
-        process.env.SERPENT_E2E_OPEN_EAGLE_PARENT,
-        { createDirectory: true },
-      );
-      return selectedParentPath
-        ? {
-            type: "library.open-eagle",
-            sourceRootPath,
-            selectedParentPath,
-            displayName: request.displayName,
-          }
-        : undefined;
-    }
-    case "library.open-billfish.request": {
-      const sourceRootPath = pendingBillfishOpenSourcePath;
-      if (!sourceRootPath) return undefined;
-      const selectedParentPath = await selectOpenDirectory(
-        createNativeDialogHost(),
-        "openEagleLibraryDestination",
-        process.env.SERPENT_E2E_OPEN_BILLFISH_PARENT,
-        { createDirectory: true },
-      );
-      return selectedParentPath
-        ? {
-            type: "library.open-billfish",
-            sourceRootPath,
-            selectedParentPath,
-            displayName: request.displayName,
-          }
-        : undefined;
-    }
+    case "library.open-eagle.request":
+    case "library.open-billfish.request":
     case "library.close.request":
-      return { type: "library.close", libraryId: request.libraryId };
     case "library.rename.request":
-      return { type: "library.rename", libraryId: request.libraryId, displayName: request.displayName };
     case "library.delete-from-disk.request":
-      return { type: "library.delete-from-disk", libraryId: request.libraryId };
     case "library.list.request":
-      return { type: "library.list" };
     case "history.status.request":
-      return { type: "history.status", libraryId: request.libraryId };
     case "history.undo.request":
-      return {
-        type: "history.undo",
-        libraryId: request.libraryId,
-        expectedHistoryEntryId: request.expectedHistoryEntryId,
-      };
     case "history.redo.request":
-      return {
-        type: "history.redo",
-        libraryId: request.libraryId,
-        expectedHistoryEntryId: request.expectedHistoryEntryId,
-      };
     case "library.list-recent.request":
     case "library.open-recent.request":
     case "library.forget-recent.request":
-      // Both are handled directly in handleLibraryRequest: the list comes from
-      // the Main-owned recent libraries store, and open-recent validates store
-      // membership before building the same library.open command used here.
-      // forget-recent only mutates the Main store (Serpent-ucx).
-      return undefined;
+    case "library.open-cancel.request":
+    case "library.choose-path.request": {
+      return executeLibraryMainCommand(request, {
+        selectDirectory,
+        createNativeDialogHost,
+        cleanupExternalSource,
+        getPendingEagleOpenSourcePath: () => pendingEagleOpenSourcePath,
+        setPendingEagleOpenSourcePath: (value) => { pendingEagleOpenSourcePath = value; },
+        getPendingBillfishOpenSourcePath: () => pendingBillfishOpenSourcePath,
+        setPendingBillfishOpenSourcePath: (value) => { pendingBillfishOpenSourcePath = value; },
+        materializeSelectedExternalLibrary,
+        rememberExternalSource,
+      }, callbacks);
+    }
     case "folder.create.request":
-      return {
-        type: "folder.create",
-        libraryId: request.libraryId,
-        parentFolderId: request.parentFolderId,
-        name: request.name,
-      };
     case "folder.rename.request":
-      return {
-        type: "folder.rename",
-        libraryId: request.libraryId,
-        folderId: request.folderId,
-        newName: request.newName,
-      };
     case "appearance.set.request":
-      return {
-        type: "appearance.set",
-        libraryId: request.libraryId,
-        target: request.target,
-        appearance: request.appearance,
-      };
     case "folder.list.request":
-      return { type: "folder.list", libraryId: request.libraryId, showIgnored: request.showIgnored };
     case "folder.browse-entries.request":
-      return {
-        type: "folder.browse-entries",
-        libraryId: request.libraryId,
-        parentFolderId: request.parentFolderId,
-        showIgnored: request.showIgnored,
-      };
     case "folder.entries-request":
-      return {
-        type: "folder.entries",
-        libraryId: request.libraryId,
-        refs: request.refs,
-      };
     case "folder.trash.request":
-      return {
-        type: "folder.trash",
-        libraryId: request.libraryId,
-        folderId: request.folderId,
-      };
     case "selection.trash.request":
-      return {
-        type: "selection.trash",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-        folderIds: request.folderIds,
-      };
     case "folder.delete-from-disk.request":
-      return {
-        type: "folder.delete-from-disk",
-        libraryId: request.libraryId,
-        folderId: request.folderId,
-      };
     case "linked-folder.remove.request":
-      return {
-        type: "linked-folder.remove",
-        libraryId: request.libraryId,
-        folderId: request.folderId,
-      };
     case "linked-folder.delete-subtree.request":
-      return {
-        type: "linked-folder.delete-subtree",
-        libraryId: request.libraryId,
-        linkedFolderId: request.linkedFolderId,
-        relativePath: request.relativePath,
-        deleteFromDisk: request.deleteFromDisk,
-      };
     case "linked-folder.create-directory.request":
-      return {
-        type: "linked-folder.create-directory",
-        libraryId: request.libraryId,
-        linkedFolderId: request.linkedFolderId,
-        relativePath: request.relativePath,
-        name: request.name,
-      };
     case "linked-folder.rename-directory.request":
-      return {
-        type: "linked-folder.rename-directory",
-        libraryId: request.libraryId,
-        linkedFolderId: request.linkedFolderId,
-        relativePath: request.relativePath,
-        newName: request.newName,
-      };
     case "folder.open-in-file-manager.request":
-      // Handled directly in handleLibraryRequest because it requires shell.openPath.
-      return {
-        type: "folder.get-path",
-        libraryId: request.libraryId,
-        folderId: request.folderId,
-      };
     case "folder.open-with.request":
-      // Handled directly in handleLibraryRequest (macOS picker / Windows Open With).
-      return {
-        type: "folder.get-path",
-        libraryId: request.libraryId,
-        folderId: request.folderId,
-      };
     case "folder.copy-path.request":
-      // Handled directly in handleLibraryRequest because it requires clipboard.writeText.
-      return {
-        type: "folder.get-path",
-        libraryId: request.libraryId,
-        folderId: request.folderId,
-      };
     case "folder.copy.request":
-      // OS file clipboard (clarification #5); path resolved then written in Main.
-      return {
-        type: "folder.get-path",
-        libraryId: request.libraryId,
-        folderId: request.folderId,
-      };
     case "folder.paste.request":
-      // Clipboard paths are read in handleLibraryRequest, then imported.
-      return undefined;
     case "folder.clone.request":
-      return {
-        type: "folder.clone",
-        libraryId: request.libraryId,
-        folderId: request.folderId,
-      };
-    case "folder.move.request":
-      return {
-        type: "folder.move",
-        libraryId: request.libraryId,
-        folderIds: request.folderIds,
-        targetParentFolderId: request.targetParentFolderId,
-        conflictStrategy: request.conflictStrategy,
-      };
-    case "asset.list.request":
-      return {
-        type: "asset.list",
-        libraryId: request.libraryId,
-        folderId: request.folderId,
-        recursive: request.recursive,
-        showIgnored: request.showIgnored,
-        ...(request.assetIds && request.assetIds.length > 0
-          ? { assetIds: request.assetIds }
-          : {}),
-      };
-    case "asset.import-files.request": {
-      const sourcePaths = await selectImportSources("files");
-      return sourcePaths
-        ? {
-            type: "asset.import.prepare",
-            libraryId: request.libraryId,
-            targetFolderId: request.targetFolderId,
-            sourceKind: "files" as const,
-            sourcePaths,
-            expandImageSequences:
-              !app.isPackaged && process.env.SERPENT_E2E === "1",
-            ...(request.detectImageSequences === false ||
-            request.autoDetectImageSequences === false
-              ? { createImageSequence: false }
-              : {}),
-            imageSequenceFps:
-              !app.isPackaged && process.env.SERPENT_E2E === "1"
-                ? 30
-                : undefined,
-          }
-        : undefined;
+    case "folder.move.request": {
+      return executeFolderMainCommand(request);
     }
-    case "asset.import-folder.request": {
-      const sourcePaths = await selectImportSources("folder");
-      return sourcePaths
-        ? {
-            type: "asset.import.prepare",
-            libraryId: request.libraryId,
-            targetFolderId: request.targetFolderId,
-            sourceKind: "folder",
-            sourcePaths,
-            ...(request.detectImageSequences === false ||
-            request.autoDetectImageSequences === false
-              ? { createImageSequence: false }
-              : {}),
-          }
-        : undefined;
+    case "asset.list.request": {
+      return executeAssetQueryMainCommand(request);
     }
-    case "asset.import-eagle.request": {
-      const selectedSourcePath = await selectOpenLibrarySource(
-        createNativeDialogHost(),
-        "importEagleLibrary",
-        process.env.SERPENT_E2E_IMPORT_EAGLE_LIBRARY,
-        ["zip", "eaglepack", "rar", "7z", "tar", "gz", "tgz", "bz2", "tbz", "tbz2", "xz", "txz"],
-      );
-      if (!selectedSourcePath) return undefined;
-      const materialized = await materializeSelectedExternalLibrary({
-        sourcePath: selectedSourcePath,
-        kind: "eagle",
-        fallbackDirectory: fallbackDirectoryForLibraryId(request.libraryId),
-      });
-      const sourceRootPath = rememberExternalSource(materialized);
-      return sourceRootPath
-        ? {
-            type: "asset.import-eagle",
-            libraryId: request.libraryId,
-            sourceRootPath,
-          }
-        : undefined;
-    }
-    case "asset.import-billfish.request": {
-      const selectedSourcePath = await selectOpenFile(
-        createNativeDialogHost(),
-        "importBillfishLibrary",
-        process.env.SERPENT_E2E_IMPORT_BILLFISH_LIBRARY,
-        [{ name: "Billfish Pack", extensions: ["billfishpack"] }],
-      );
-      if (!selectedSourcePath) return undefined;
-      const materialized = await materializeSelectedExternalLibrary({
-        sourcePath: selectedSourcePath,
-        kind: "billfish",
-        fallbackDirectory: fallbackDirectoryForLibraryId(request.libraryId),
-      });
-      const sourceRootPath = rememberExternalSource(materialized);
-      return sourceRootPath
-        ? {
-            type: "asset.import-billfish",
-            libraryId: request.libraryId,
-            sourceRootPath,
-          }
-        : undefined;
-    }
+    case "asset.import-files.request":
+    case "asset.import-folder.request":
+    case "asset.import-eagle.request":
+    case "asset.import-billfish.request":
     case "asset.import-drop.request":
-      // Classified in handleLibraryRequest because classification failures need
-      // a renderer-safe, specific public error instead of an INTERNAL_ERROR.
-      return undefined;
     case "asset.resolve-dropped-paths.request":
-      return {
-        type: "media.resolve-asset-paths",
-        libraryId: request.libraryId,
-        sourcePaths: request.sourcePaths,
-      };
     case "asset.import-sequence.confirm":
-      // Resolved against Main-held offer paths in handleLibraryRequest.
-      return undefined;
     case "asset.import-drop-invalid.report":
-      return undefined;
     case "asset.import-web.request":
-      return createWebImportCommand(request);
     case "asset.import-web-invalid.report":
-      return undefined;
     case "asset.import-clipboard.request":
-      // Clipboard bytes are read and staged in handleLibraryRequest. Renderer
-      // never sends clipboard bytes or a source path.
-      return undefined;
     case "asset.import.resolve":
-      return {
-        type: "asset.import.resolve",
-        importId: request.importId,
-        suspectedDuplicate: request.suspectedDuplicate,
-        nameConflict: request.nameConflict,
-      };
     case "asset.import.skip-source-failure":
-      return {
-        type: "asset.import.skip-source-failure",
-        importId: request.importId,
-        applyToRest: request.applyToRest,
-      };
     case "asset.import.abandon":
-      return { type: "asset.import.abandon", importId: request.importId };
     case "asset.refresh.request":
-      return { type: "asset.refresh", libraryId: request.libraryId };
     case "asset.import-linked.request": {
-      const sourceRootPath = await selectOpenDirectory(
-        createNativeDialogHost(),
-        "linkFolder",
-        process.env.SERPENT_E2E_LINKED_SOURCE,
-      );
-      return sourceRootPath
-        ? {
-            type: "asset.import-linked",
-            libraryId: request.libraryId,
-            displayName: request.displayName,
-            sourceRootPath,
-            parentFolderId: request.parentFolderId,
-          }
-        : undefined;
+      return executeAssetIngestionMainCommand(request, {
+        selectImportSources,
+        createNativeDialogHost,
+        materializeSelectedExternalLibrary,
+        rememberExternalSource,
+        fallbackDirectoryForLibraryId,
+        isUnpackagedE2e: () => !app.isPackaged && process.env.SERPENT_E2E === "1",
+      });
     }
     case "linked-folder.list.request":
-      return { type: "linked-folder.list", libraryId: request.libraryId };
-    case "linked-folder.relink.request": {
-      const newRootPath = await selectOpenDirectory(
-        createNativeDialogHost(),
-        "relinkFolder",
-        process.env.SERPENT_E2E_LINKED_NEW_ROOT,
-      );
-      return newRootPath
-        ? {
-            type: "linked-folder.relink",
-            libraryId: request.libraryId,
-            folderId: request.folderId,
-            newRootPath,
-          }
-        : undefined;
-    }
+    case "linked-folder.relink.request":
     case "linked-folder.rules.get.request":
-      return {
-        type: "linked-folder.rules.get",
-        libraryId: request.libraryId,
-        folderId: request.folderId,
-      };
-    case "linked-folder.rules.set.request":
-      return {
-        type: "linked-folder.rules.set",
-        libraryId: request.libraryId,
-        folderId: request.folderId,
-        rules: request.rules,
-      };
+    case "linked-folder.rules.set.request": {
+      return executeLinkedFolderMainCommand(request, {
+        createNativeDialogHost,
+      });
+    }
     case "ignore.list.request":
-      return { type: "ignore.list", libraryId: request.libraryId };
     case "ignore.gitignore.get.request":
-      return { type: "ignore.gitignore.get", libraryId: request.libraryId };
+    case "ignore.gitignore.preview.request":
     case "ignore.gitignore.set.request":
-      return {
-        type: "ignore.gitignore.set",
-        libraryId: request.libraryId,
-        content: request.content,
-      };
-    case "ignore.set.request":
-      return {
-        type: "ignore.set",
-        libraryId: request.libraryId,
-        locationKind: request.locationKind,
-        linkedFolderId: request.linkedFolderId,
-        relativePath: request.relativePath,
-        pathKind: request.pathKind,
-        ignored: request.ignored,
-      };
+    case "ignore.set.request": {
+      return executeIgnoreMainCommand(request);
+    }
     case "linked-folder.assets.copy.request":
-      return {
-        type: "linked-folder.assets.copy",
-        libraryId: request.libraryId,
-        folderId: request.folderId,
-        relativePath: request.relativePath,
-        assetIds: request.assetIds,
-        conflictStrategy: request.conflictStrategy,
-      };
-    case "linked-folder.convert.request":
-      return {
-        type: "linked-folder.convert",
-        libraryId: request.libraryId,
-        folderId: request.folderId,
-        targetFolderId: request.targetFolderId,
-      };
+    case "linked-folder.convert.request": {
+      return executeLinkedFolderMainCommand(request, {
+        createNativeDialogHost,
+      });
+    }
     case "tag.list.request":
-      return { type: "tag.list", libraryId: request.libraryId };
     case "tag.create.request":
-      return {
-        type: "tag.create",
-        libraryId: request.libraryId,
-        name: request.name,
-      };
     case "tag.rename.request":
-      return {
-        type: "tag.rename",
-        libraryId: request.libraryId,
-        tagId: request.tagId,
-        name: request.name,
-      };
     case "tag.delete.request":
-      return {
-        type: "tag.delete",
-        libraryId: request.libraryId,
-        tagId: request.tagId,
-      };
     case "tag.delete-many.request":
-      return {
-        type: "tag.delete-many",
-        libraryId: request.libraryId,
-        tagIds: request.tagIds,
-      };
     case "tag.merge.request":
-      return {
-        type: "tag.merge",
-        libraryId: request.libraryId,
-        sourceTagIds: request.sourceTagIds,
-        name: request.name,
-      };
     case "tag.cooccurrence.request":
-      return {
-        type: "tag.cooccurrence",
-        libraryId: request.libraryId,
-        minWeight: request.minWeight,
-        maxNodes: request.maxNodes,
-        maxEdges: request.maxEdges,
-      };
     case "tag.assign.request":
-      return {
-        type: "tag.assign",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-        tagIds: request.tagIds,
-      };
-    case "tag.remove.request":
-      return {
-        type: "tag.remove",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-        tagIds: request.tagIds,
-      };
+    case "tag.remove.request": {
+      return executeTagMainCommand(request);
+    }
     case "collection.list.request":
-      return { type: "collection.list", libraryId: request.libraryId };
     case "collection.create.request":
-      return {
-        type: "collection.create",
-        libraryId: request.libraryId,
-        parentId: request.parentId,
-        name: request.name,
-      };
     case "collection.update.request":
-      return {
-        type: "collection.update",
-        libraryId: request.libraryId,
-        collectionId: request.collectionId,
-        name: request.name,
-        parentId: request.parentId,
-        description: request.description,
-        coverAssetId: request.coverAssetId,
-        position: request.position,
-      };
     case "collection.reorder.request":
-      return {
-        type: "collection.reorder",
-        libraryId: request.libraryId,
-        orderedCollectionIds: request.orderedCollectionIds,
-      };
     case "collection.delete.request":
-      return {
-        type: "collection.delete",
-        libraryId: request.libraryId,
-        collectionId: request.collectionId,
-      };
     case "collection.assets.add.request":
-      return {
-        type: "collection.assets.add",
-        libraryId: request.libraryId,
-        collectionId: request.collectionId,
-        assetIds: request.assetIds,
-      };
     case "collection.assets.remove.request":
-      return {
-        type: "collection.assets.remove",
-        libraryId: request.libraryId,
-        collectionId: request.collectionId,
-        assetIds: request.assetIds,
-      };
     case "collection.assets.reorder.request":
-      return {
-        type: "collection.assets.reorder",
-        libraryId: request.libraryId,
-        collectionId: request.collectionId,
-        orderedAssetIds: request.orderedAssetIds,
-      };
     case "collection.assets.list.request":
-      return {
-        type: "collection.assets.list",
-        libraryId: request.libraryId,
-        collectionId: request.collectionId,
-        recursive: request.recursive,
-      };
-    case "collection.assets.memberships.request":
-      return {
-        type: "collection.assets.memberships",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-      };
+    case "collection.assets.memberships.request": {
+      return executeCollectionMainCommand(request);
+    }
     case "asset.metadata.get.request":
-      return {
-        type: "asset.metadata.get",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-      };
     case "asset.extracted-metadata.get.request":
-      return {
-        type: "asset.extracted-metadata.get",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-      };
     case "asset.color-space.set.request":
-      return {
-        type: "asset.color-space.set",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-        colorSpace: request.colorSpace,
-      };
     case "asset.metadata.set.request":
-      return {
-        type: "asset.metadata.set",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-        expectedVersion: request.expectedVersion,
-        description: request.description,
-        rating: request.rating,
-        favorite: request.favorite,
-        palette: request.palette,
-        sourcePageUrl: request.sourcePageUrl,
-        author: request.author,
-      };
     case "asset.metadata.backfill.request":
-      return { type: "asset.metadata.backfill", libraryId: request.libraryId };
     case "asset.rating.set.request":
-      return {
-        type: "asset.rating.set",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-        rating: request.rating,
-      };
-    case "asset.search.request":
-      return {
-        type: "asset.search",
-        libraryId: request.libraryId,
-        query: request.query,
-        filters: request.filters,
-        scope: request.scope,
-        sort: request.sort,
-        scopeMode: request.scopeMode,
-        idsOnly: request.idsOnly,
-        layoutOnly: request.layoutOnly,
-        limit: request.limit,
-        offset: request.offset,
-        showIgnored: request.showIgnored,
-      };
+    case "asset.search.request": {
+      return executeAssetQueryMainCommand(request);
+    }
     case "browse.session.open.request":
-      return {
-        type: "browse.session.open",
-        libraryId: request.libraryId,
-        ...(request.navigationId === undefined ? {} : { navigationId: request.navigationId }),
-        query: request.query,
-        filters: request.filters,
-        scope: request.scope,
-        sort: request.sort,
-        smartCollectionId: request.smartCollectionId,
-        limit: request.limit,
-        showIgnored: request.showIgnored,
-      };
     case "browse.session.page.request":
-      return {
-        type: "browse.session.page",
-        libraryId: request.libraryId,
-        sessionId: request.sessionId,
-        limit: request.limit,
-        offset: request.offset,
-      };
     case "browse.session.ids.request":
-      return {
-        type: "browse.session.ids",
-        libraryId: request.libraryId,
-        sessionId: request.sessionId,
-      };
     case "browse.session.close.request":
-      return {
-        type: "browse.session.close",
-        libraryId: request.libraryId,
-        sessionId: request.sessionId,
-      };
     case "library.navigation-summary.request":
-      return {
-        type: "library.navigation-summary",
-        libraryId: request.libraryId,
-        showIgnored: request.showIgnored,
-        includeTrashedFolders: request.includeTrashedFolders,
-      };
-    case "ai.search-plan.request":
-      // Planned directly in Main so provider credentials never enter the
-      // Renderer response or Library Worker command stream.
-      return undefined;
+    case "ai.search-plan.request": {
+      return executeBrowseSessionMainCommand(request);
+    }
     case "smart-collection.list.request":
-      return { type: "smart-collection.list", libraryId: request.libraryId };
     case "smart-collection.create.request":
-      return {
-        type: "smart-collection.create",
-        libraryId: request.libraryId,
-        name: request.name,
-        queryDefinitionJson: request.queryDefinitionJson,
-      };
     case "smart-collection.update.request":
-      return {
-        type: "smart-collection.update",
-        libraryId: request.libraryId,
-        collectionId: request.collectionId,
-        name: request.name,
-        queryDefinitionJson: request.queryDefinitionJson,
-        position: request.position,
-      };
     case "smart-collection.delete.request":
-      return {
-        type: "smart-collection.delete",
-        libraryId: request.libraryId,
-        collectionId: request.collectionId,
-      };
-    case "smart-collection.execute.request":
-      return {
-        type: "smart-collection.execute",
-        libraryId: request.libraryId,
-        collectionId: request.collectionId,
-        scopeMode: request.scopeMode,
-        idsOnly: request.idsOnly,
-        layoutOnly: request.layoutOnly,
-        limit: request.limit,
-        offset: request.offset,
-      };
+    case "smart-collection.execute.request": {
+      return executeSmartCollectionMainCommand(request);
+    }
     case "asset.trash.request":
-      return {
-        type: "asset.trash",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-      };
     case "asset.sequence.create.request":
-      return {
-        type: "asset.sequence.create",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-        fps: request.fps,
-      };
     case "asset.sequence.dissolve.request":
-      return {
-        type: "asset.sequence.dissolve",
-        libraryId: request.libraryId,
-        sequenceId: request.sequenceId,
-      };
     case "asset.sequence.dissolve-batch.request":
-      return {
-        type: "asset.sequence.dissolve-batch",
-        libraryId: request.libraryId,
-        sequenceIds: request.sequenceIds,
-      };
     case "asset.sequence.set-fps.request":
-      return {
-        type: "asset.sequence.set-fps",
-        libraryId: request.libraryId,
-        sequenceId: request.sequenceId,
-        fps: request.fps,
-      };
     case "asset.restore.request":
-      return {
-        type: "asset.restore",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-        targetFolderId: request.targetFolderId,
-        conflictStrategy: request.conflictStrategy,
-      };
     case "asset.restore-preview.request":
-      return {
-        type: "asset.restore-preview",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-        targetFolderId: request.targetFolderId,
-      };
     case "asset.move.request":
-      return {
-        type: "asset.move",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-        targetFolderId: request.targetFolderId,
-        conflictStrategy: request.conflictStrategy,
-      };
     case "asset.move-undo.request":
-      return {
-        type: "asset.move-undo",
-        libraryId: request.libraryId,
-        operationId: request.operationId,
-        conflictStrategy: request.conflictStrategy,
-      };
     case "asset.copy.request":
-      return {
-        type: "asset.copy",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-        targetFolderId: request.targetFolderId,
-        conflictStrategy: request.conflictStrategy,
-      };
     case "asset.copy-undo.request":
-      return {
-        type: "asset.copy-undo",
-        libraryId: request.libraryId,
-        operationId: request.operationId,
-        conflictStrategy: request.conflictStrategy,
-      };
     case "asset.rename-file.request":
-      return {
-        type: "asset.rename-file",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-        ...(request.newBaseName === undefined ? {} : { newBaseName: request.newBaseName }),
-        ...(request.newFileName === undefined ? {} : { newFileName: request.newFileName }),
-      };
     case "asset.text.read.request":
-      return {
-        type: "asset.text.read",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-        maxBytes: request.maxBytes,
-      };
     case "asset.text.save.request":
-      return {
-        type: "asset.text.save",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-        content: request.content,
-        expectedRevisionId: request.expectedRevisionId,
-        createRevision: request.createRevision,
-      };
     case "asset.delete-permanent.request":
-      return {
-        type: "asset.delete-permanent",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-      };
     case "asset.delete-from-disk.request":
-      return {
-        type: "asset.delete-from-disk",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-      };
     case "trash.list.request":
-      return { type: "asset.list-trash", libraryId: request.libraryId };
     case "trash.list-folders.request":
-      return { type: "folder.list-trashed", libraryId: request.libraryId };
     case "trash.restore-folder.request":
-      return {
-        type: "folder.restore-trashed",
-        libraryId: request.libraryId,
-        tombstoneId: request.tombstoneId,
-      };
     case "trash.purge.request":
-      return { type: "asset.purge-trash", libraryId: request.libraryId };
     case "asset.delete-linked.request":
-      return {
-        type: "asset.delete-linked",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-        deleteSourceFile: request.deleteSourceFile,
-      };
-    case "asset.relink.request": {
-      const newAbsolutePath = await selectOpenFile(
-        createNativeDialogHost(),
-        "locateMissingAsset",
-        process.env.SERPENT_E2E_RELINK_FILE,
-      );
-      return newAbsolutePath
-        ? {
-            type: "asset.relink",
-            libraryId: request.libraryId,
-            assetId: request.assetId,
-            newAbsolutePath,
-          }
-        : undefined;
+    case "asset.relink.request":
+    case "asset.relink-batch.preview-at-root.request":
+    case "asset.relink-batch.request":
+    case "asset.relink-batch.apply.request":
+    case "asset.relink-batch.cancel.request": {
+      return executeAssetMutationMainCommand(request, {
+        createNativeDialogHost,
+        consumeRelinkPreview: (libraryId, previewId) =>
+          pendingRelinkPreviews.consume(libraryId, previewId),
+      });
     }
-    case "asset.relink-batch.preview-at-root.request": {
-      return {
-        type: "asset.relink-batch.preview",
-        libraryId: request.libraryId,
-        newRootPath: request.newRootPath,
-      };
-    }
-    case "asset.relink-batch.request": {
-      const newRootPath = await selectOpenDirectory(
-        createNativeDialogHost(),
-        "selectRelinkRoot",
-        process.env.SERPENT_E2E_RELINK_ROOT,
-      );
-      if (newRootPath) {
-        return {
-          type: "asset.relink-batch.preview",
-          libraryId: request.libraryId,
-          newRootPath,
-        };
-      }
-      return undefined;
-    }
-    case "asset.relink-batch.apply.request": {
-      const newRootPath = pendingRelinkPreviews.consume(
-        request.libraryId,
-        request.previewId,
-      );
-      if (!newRootPath) return undefined;
-      return {
-        type: "asset.relink-batch.apply",
-        libraryId: request.libraryId,
-        newRootPath,
-        keepMetadata: request.keepMetadata,
-      };
-    }
-    case "asset.relink-batch.cancel.request":
-      // Handled directly in handleLibraryRequest; no root path crosses to Worker.
-      return undefined;
-    case "library.export.request": {
-      const host = createNativeDialogHost();
-      const defaultExportName = libraryExportDefaultName(
-        request.libraryName ?? "serpent-library-export",
-        request.format,
-      );
-      // Windows 的保存对话框对文件名-only 的 defaultPath 不预填文件名
-      // （electron#812：SetDefaultFolder vs SetFolder），macOS 特判可用——
-      // 统一拼上 downloads 目录的完整路径，两平台都预填库名。
-      const defaultExportPath = path.join(
-        app.getPath("downloads"),
-        defaultExportName,
-      );
-      const destinationPath =
-        request.format === "zip"
-          ? await selectSavePath(
-              host,
-              "exportZip",
-              process.env.SERPENT_E2E_EXPORT_DEST_ZIP,
-              {
-                defaultPath: defaultExportPath,
-                filters: [{ name: "ZIP", extensions: ["zip"] }],
-              },
-            )
-          : await selectSavePath(
-              host,
-              "exportFolder",
-              process.env.SERPENT_E2E_EXPORT_DEST,
-              { defaultPath: defaultExportPath },
-            );
-      return destinationPath
-        ? {
-            type: "library.export",
-            libraryId: request.libraryId,
-            destinationPath,
-            format: request.format,
-            includeLinkedContent: request.includeLinkedContent,
-          }
-        : undefined;
-    }
+    case "library.export.request":
     case "library.export.cancel.request":
-      return { type: "library.export-cancel", exportId: request.exportId };
-    case "library.import.request": {
-      const sourceFolderPath = await selectOpenDirectory(
-        createNativeDialogHost(),
-        "importLibraryFolder",
-        process.env.SERPENT_E2E_IMPORT_SOURCE,
-      );
-      if (!sourceFolderPath) return undefined;
-      // Store source path for later use in copy/in-place decision.
-      const importId = `import-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-      pendingImportSources.set(importId, sourceFolderPath);
-      return { type: "library.import-validate", importId, sourceFolderPath };
-    }
-    case "library.import-zip.request": {
-      const host = createNativeDialogHost();
-      const sourceZipPath = await selectOpenFile(
-        host,
-        "importZip",
-        process.env.SERPENT_E2E_IMPORT_SOURCE_ZIP,
-        [{ name: "ZIP", extensions: ["zip"] }],
-      );
-      if (!sourceZipPath) return undefined;
-      const destinationParentPath = await selectOpenDirectory(
-        host,
-        "importZipDestination",
-        process.env.SERPENT_E2E_IMPORT_COPY_PARENT,
-        { createDirectory: true },
-      );
-      if (!destinationParentPath) return undefined;
-      return {
-        type: "library.import-zip",
-        sourceZipPath,
-        destinationParentPath,
-      };
-    }
+    case "library.import.request":
+    case "library.import-zip.request":
     case "library.import.cancel.request":
-      return {
-        type: "library.import-cancel",
-        importId: request.importId,
-        ...(request.mode === undefined ? {} : { mode: request.mode }),
-      };
     case "asset.delete-cancel.request":
-      return { type: "asset.delete-cancel", operationId: request.operationId };
-    case "library.import.copy.request": {
-      const importId = request.importId;
-      const sourcePath = pendingImportSources.get(importId);
-      if (!sourcePath) return undefined;
-      const copyToParentPath = await selectOpenDirectory(
-        createNativeDialogHost(),
-        "importCopyDestination",
-        process.env.SERPENT_E2E_IMPORT_COPY_PARENT,
-        { createDirectory: true },
-      );
-      pendingImportSources.delete(importId);
-      if (!copyToParentPath) return undefined;
-      return {
-        type: "library.import-folder",
-        sourceFolderPath: sourcePath,
-        copyToParentPath,
-      };
-    }
+    case "library.import.copy.request":
     case "library.import.open-in-place.request": {
-      const importId = request.importId;
-      const sourcePath = pendingImportSources.get(importId);
-      if (!sourcePath) return undefined;
-      pendingImportSources.delete(importId);
-      return { type: "library.import-folder", sourceFolderPath: sourcePath };
+      return executeLibraryTransferMainCommand(request, {
+        createNativeDialogHost,
+        downloadsPath: () => app.getPath("downloads"),
+        pendingImportSources,
+      });
     }
     case "ai.config.get.request":
     case "ai.config.set.request":
     case "ai.list-models.request":
-      // Handled directly in handleLibraryRequest — should never reach here.
-      return undefined;
-    case "ai.test-connection.request": {
-      // Resolve plaintext key in Main (safeStorage lives here). Pass ephemeral
-      // plaintext to Worker on the private channel — same pattern as asset.analyze.
-      // Do not re-encrypt for Worker: UtilityProcess cannot decrypt Main ciphertext.
-      let apiKey = request.apiKey?.trim() ?? "";
-      if (!apiKey) {
-        try {
-          apiKey = getDecryptedApiKey();
-        } catch {
-          return undefined;
-        }
-      }
-      return {
-        type: "ai.test-connection",
-        apiFormat: request.apiFormat,
-        model: request.model,
-        apiKey,
-        ...(request.baseUrl?.trim()
-          ? { baseUrl: request.baseUrl.trim() }
-          : {}),
-      };
+    case "ai.test-connection.request":
+    case "ai.clear-content.request": {
+      return executeAiMainCommand(request, {
+        loadAiConfig,
+        getDecryptedApiKey,
+      });
     }
-    case "ai.clear-content.request":
-      return {
-        type: "ai.clear-content",
-        libraryId: request.libraryId,
-        scope: request.scope,
-        confirm: request.confirm,
-        ...(request.fields ? { fields: request.fields } : {}),
-      };
     case "media.job-summary.request":
-      return {
-        type: "media.job-summary",
-        libraryId: request.libraryId,
-      };
     case "media.list-jobs.request":
-      return {
-        type: "media.list-jobs",
-        libraryId: request.libraryId,
-        ...(request.summaryOnly === undefined ? {} : { summaryOnly: request.summaryOnly }),
-        ...(request.cursor === undefined ? {} : { cursor: request.cursor }),
-        ...(request.limit === undefined ? {} : { limit: request.limit }),
-      };
     case "plugin.list-jobs.request":
-      return { type: "plugin.jobs.list", libraryId: request.libraryId };
     case "media.pause-jobs.request":
-      return {
-        type: "media.pause-jobs",
-        libraryId: request.libraryId,
-        jobIds: request.jobIds,
-      };
     case "media.resume-jobs.request":
-      return {
-        type: "media.resume-jobs",
-        libraryId: request.libraryId,
-        jobIds: request.jobIds,
-      };
     case "media.cancel-jobs.request":
-      return {
-        type: "media.cancel-jobs",
-        libraryId: request.libraryId,
-        jobIds: request.jobIds,
-      };
-    case "media.retry-jobs.request":
-      return {
-        type: "media.retry-jobs",
-        libraryId: request.libraryId,
-        jobIds: request.jobIds,
-      };
+    case "media.retry-jobs.request": {
+      return executeMediaJobMainCommand(request);
+    }
     case "ai.pause-jobs.request":
-      return {
-        type: "ai.pause-jobs",
-        libraryId: request.libraryId,
-        jobIds: request.jobIds,
-      };
     case "ai.resume-jobs.request":
-      return {
-        type: "ai.resume-jobs",
-        libraryId: request.libraryId,
-        jobIds: request.jobIds,
-      };
     case "ai.cancel-jobs.request":
-      return {
-        type: "ai.cancel-jobs",
-        libraryId: request.libraryId,
-        jobIds: request.jobIds,
-      };
     case "ai.retry-jobs.request":
-      return {
-        type: "ai.retry-jobs",
-        libraryId: request.libraryId,
-        jobIds: request.jobIds,
-      };
     case "ai.status.request":
-      return {
-        type: "ai.status",
-        libraryId: request.libraryId,
-        ...(request.jobIds ? { jobIds: request.jobIds } : {}),
-      };
     case "ai.pending-assets.request":
-      return {
-        type: "ai.pending-assets.request",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-      };
-    case "asset.analyze.request": {
-      const config = loadAiConfig();
-      if (!config.hasKey) return undefined; // Will be handled as error downstream.
-      if (!config.apiFormat) return undefined;
-      let apiKey: string;
-      try {
-        apiKey = getDecryptedApiKey();
-      } catch {
-        return undefined;
-      }
-      return {
-        type: "asset.analyze",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-        apiFormat: config.apiFormat,
-        model: config.model,
-        apiKey,
-        ...(config.baseUrl.trim() ? { baseUrl: config.baseUrl.trim() } : {}),
-        enabledFields: {
-          description: config.descriptionEnabled,
-          tags: config.tagEnabled,
-          rating: config.ratingEnabled,
-        },
-        analysisSettings: toWireAiAnalysisSettings(config.analysisSettings),
-        languages: config.languages,
-        maxAnalysisImageEdgePx: config.maxAnalysisImageEdgePx,
-      };
-    }
+    case "asset.analyze.request":
     case "assets.analyze.request":
-      // Handled before generic Worker-command dispatch because it atomically
-      // enqueues the whole selected batch and starts the scheduler once.
-      return undefined;
-    case "ai.content.get.request":
-      return {
-        type: "ai.content.get",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-      };
+    case "ai.content.get.request": {
+      return executeAiMainCommand(request, {
+        loadAiConfig,
+        getDecryptedApiKey,
+      });
+    }
     case "asset.thumbnail.request":
-      return {
-        type: "media.generate-thumbnail",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-      };
-    case "asset.thumbnail.visible-window.request":
-      return {
-        type: "asset.thumbnail.visible-window",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-        ...(request.consumerId === undefined ? {} : { consumerId: request.consumerId }),
-        ...(request.libraryGeneration === undefined
-          ? {}
-          : { libraryGeneration: request.libraryGeneration }),
-        ...(request.interactionGeneration === undefined
-          ? {}
-          : { interactionGeneration: request.interactionGeneration }),
-        ...(request.viewportGeneration === undefined
-          ? {}
-          : { viewportGeneration: request.viewportGeneration }),
-        ...(request.direction === undefined ? {} : { direction: request.direction }),
-        ...(request.focusedAssetIds === undefined
-          ? {}
-          : { focusedAssetIds: request.focusedAssetIds }),
-        ...(request.nearForwardAssetIds === undefined
-          ? {}
-          : { nearForwardAssetIds: request.nearForwardAssetIds }),
-        ...(request.nearBackwardAssetIds === undefined
-          ? {}
-          : { nearBackwardAssetIds: request.nearBackwardAssetIds }),
-        ...(request.scopeWarmAssetIds === undefined
-          ? {}
-          : { scopeWarmAssetIds: request.scopeWarmAssetIds }),
-      };
+    case "asset.thumbnail.visible-window.request": {
+      return executeMediaPathMainCommand(request);
+    }
     case "sync.asset-card-status.request":
-      return {
-        type: "sync.asset-card-status",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-      };
-    case "sync.probe.request": {
-      const server = resolveSyncServerCredentials(request.serverId);
-      if (!server) throw new Error("同步服务器不存在，请先在通用设置中配置。");
-      return {
-        type: "sync.probe",
-        baseUrl: server.baseUrl,
-        username: server.username,
-        password: server.password,
-        allowInsecureTls: server.allowInsecureTls,
-      };
-    }
-    case "sync.preview.request": {
-      const server = resolveSyncServerCredentials(request.serverId);
-      if (!server) throw new Error("同步服务器不存在，请先在通用设置中配置。");
-      return {
-        type: "sync.preview",
-        libraryId: request.libraryId,
-        deviceId: syncDeviceId(),
-        baseUrl: server.baseUrl,
-        username: server.username,
-        password: server.password,
-        allowInsecureTls: server.allowInsecureTls,
-        directoryName: request.directoryName,
-      };
-    }
-    case "sync.run.request": {
-      const server = resolveSyncServerCredentials(request.serverId);
-      if (!server) throw new Error("同步服务器不存在，请先在通用设置中配置。");
-      return {
-        type: "sync.run",
-        libraryId: request.libraryId,
-        deviceId: syncDeviceId(),
-        baseUrl: server.baseUrl,
-        username: server.username,
-        password: server.password,
-        allowInsecureTls: server.allowInsecureTls,
-        directoryName: request.directoryName,
-      };
-    }
-    case "sync.list-remote-libraries.request": {
-      const server = resolveSyncServerCredentials(request.serverId);
-      if (!server) throw new Error("同步服务器不存在，请先在通用设置中配置。");
-      return {
-        type: "sync.list-remote-libraries",
-        baseUrl: server.baseUrl,
-        username: server.username,
-        password: server.password,
-        allowInsecureTls: server.allowInsecureTls,
-      };
-    }
+    case "sync.probe.request":
+    case "sync.preview.request":
+    case "sync.run.request":
+    case "sync.list-remote-libraries.request":
     case "sync.open-remote-library.request": {
-      const server = resolveSyncServerCredentials(request.serverId);
-      if (!server) throw new Error("同步服务器不存在，请先在通用设置中配置。");
-      const host = createNativeDialogHost();
-      const selectedParentPath = await selectOpenDirectory(
-        host,
-        "openSyncLibraryDestination",
-        process.env.SERPENT_E2E_OPEN_SYNC_LIBRARY_PARENT,
-        { createDirectory: true },
-      );
-      if (!selectedParentPath) return undefined;
-      return {
-        type: "sync.open-remote-library",
-        baseUrl: server.baseUrl,
-        username: server.username,
-        password: server.password,
-        allowInsecureTls: server.allowInsecureTls,
-        libraryId: request.libraryId,
-        displayName: request.displayName,
-        directoryName: request.directoryName,
-        selectedParentPath,
-      };
+      return executeSyncMainCommand(request, {
+        resolveSyncServerCredentials,
+        syncDeviceId,
+        createNativeDialogHost,
+      });
     }
     case "model.resolve-companions.request":
-      // Slice C (Serpent-qvc6): 3D viewer companion-texture index. The worker
-      // command already exists (slice A); this is the renderer request bridge.
-      return {
-        type: "model.resolve-companions",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-      };
     case "model.convert-fbx.request":
-      // Slice C: FBX→GLB conversion (worker command from slice B). The
-      // renderer routes `failed` results to the FBXLoader fallback.
-      return {
-        type: "model.convert-fbx",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-      };
     case "asset.preview.request":
-      // Handled directly in handleLibraryRequest because it requires constructing
-      // a serpent:// URL after the Worker lookup.
-      return {
-        type: "media.get-preview-artifact",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-        ...(request.intent === undefined ? {} : { intent: request.intent }),
-        ...(request.exrPlane === undefined ? {} : { exrPlane: request.exrPlane }),
-        ...(request.colorSpace === undefined ? {} : { colorSpace: request.colorSpace }),
-      };
     case "asset.close-preview.request":
-      // Preview close is a no-op on the Main side; renderer handles UI state.
-      return undefined;
     case "asset.preview-error.report":
-      // Main records this before command dispatch.
-      return undefined;
     case "asset.recovery-probe.request":
-      return {
-        type: "asset.recovery-probe",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-      };
     case "asset.open-external.request":
-      // Handled directly in handleLibraryRequest because it requires shell.openPath.
-      return {
-        type: "media.get-asset-path",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-      };
     case "asset.open-with.request":
-      // Handled directly in handleLibraryRequest (macOS picker / Windows Open With).
-      return {
-        type: "media.get-asset-path",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-      };
     case "asset.reveal-in-folder.request":
-      // Handled directly in handleLibraryRequest because it requires shell.showItemInFolder.
-      return {
-        type: "media.get-asset-path",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-      };
     case "asset.copy-file-path.request":
-      // Handled directly in handleLibraryRequest because it requires clipboard.writeText.
-      return {
-        type: "media.get-asset-path",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-      };
     case "asset.copy-files.request":
-      // OS file clipboard (clarification #5); paths resolved then written in Main.
-      return {
-        type: "media.get-asset-paths",
-        libraryId: request.libraryId,
-        assetIds: request.assetIds,
-      };
-    case "asset.retry-artifact.request":
-      return {
-        type: "media.retry-artifact",
-        libraryId: request.libraryId,
-        assetId: request.assetId,
-        kind: request.kind,
-      };
+    case "asset.retry-artifact.request": {
+      return executeMediaPathMainCommand(request);
+    }
     case "sync.servers.list.request":
     case "sync.servers.upsert.request":
     case "sync.servers.delete.request":
     case "sync.library.binding.save.request":
-    case "sync.library.binding.get.request":
-      // Main-owned local config; handled before Worker dispatch.
-      return undefined;
-    case "library.open-cancel.request":
-      // Main-only request; handled before Worker dispatch.
-      return undefined;
-    case "library.choose-path.request":
-      // Main-only request (native picker); handled before Worker dispatch.
-      return undefined;
+    case "sync.library.binding.get.request": {
+      return executeSyncMainCommand(request, {
+        resolveSyncServerCredentials,
+        syncDeviceId,
+        createNativeDialogHost,
+      });
+    }
     default:
       return assertNever(request);
   }
@@ -3802,61 +2564,6 @@ async function commandFor(
 
 function assertNever(value: never): never {
   throw new Error(`Unhandled Renderer request: ${String(value)}`);
-}
-
-/** 测试连接的最大尝试次数（含首次）。 */
-const SYNC_PROBE_MAX_ATTEMPTS = 3;
-const SYNC_PROBE_RETRY_DELAY_MS = [1_000, 2_000];
-
-/**
- * 测试连接（sync.probe）：单次请求超时或网络类失败后自动重试，
- * 最大重试后返回带“已自动重试”提示的可读错误（用户决定 2026-08-17）。
- * 认证失败等确定性错误不重试，直接返回。
- */
-async function runSyncProbeWithRetry(
-  command: Extract<WorkerCommand, { type: "sync.probe" }>,
-): Promise<WorkerResult> {
-  if (!workerClient) throw new Error("Library Worker is unavailable.");
-  let lastError: WorkerResult & { ok: false } | undefined;
-  let lastTimeout = false;
-  for (let attempt = 0; attempt < SYNC_PROBE_MAX_ATTEMPTS; attempt += 1) {
-    try {
-      const result = await workerClient.request(command);
-      if (result.ok) return result;
-      // 确定性错误（认证失败/服务器不支持等）不重试。
-      if (!isRetryableProbeError(result.error)) return result;
-      lastError = result;
-    } catch (error) {
-      if (error instanceof WorkerRequestTimeoutError) {
-        lastTimeout = true;
-      } else {
-        throw error;
-      }
-    }
-    if (attempt < SYNC_PROBE_MAX_ATTEMPTS - 1) {
-      await new Promise((resolve) => setTimeout(resolve, SYNC_PROBE_RETRY_DELAY_MS[attempt] ?? 1_000));
-    }
-  }
-  if (lastTimeout) {
-    return {
-      ok: false,
-      error: createPublicError("SYNC_CONNECTION_FAILED", "SYNC_TIMEOUT"),
-    } satisfies WorkerResult;
-  }
-  return lastError ?? {
-    ok: false,
-    error: createPublicError("SYNC_CONNECTION_FAILED", "SYNC_NETWORK"),
-  } satisfies WorkerResult;
-}
-
-function isRetryableProbeError(error: { code: string; reason?: string }): boolean {
-  if (error.code !== "SYNC_CONNECTION_FAILED") return false;
-  return (
-    error.reason === "SYNC_TIMEOUT"
-    || error.reason === "SYNC_DNS"
-    || error.reason === "SYNC_CONNECTION_REFUSED"
-    || error.reason === "SYNC_NETWORK"
-  );
 }
 
 /**
@@ -3928,26 +2635,26 @@ async function handleLibraryRequest(
       });
     }
 
-    if (request.type === "library.open-cancel.request") {
-      if (activeLibraryOpenCancellation) {
-        activeLibraryOpenCancellation.cancelled = true;
-        logger?.info("library.open.cancel-requested", "Library opening cancellation requested.");
-      }
-      return {
-        ok: true,
-        type: "library.open-cancelled",
-      } satisfies RendererResult;
-    }
-    if (request.type === "library.choose-path.request") {
-      // Dialog only. The renderer starts its loading UI/timer only after this
-      // resolves, so the progress overlay never covers the native picker.
-      const chosenPath = await selectDirectory("openLibrary");
-      return {
-        ok: true,
-        type: "library.choose-path",
-        path: chosenPath ?? null,
-      } satisfies RendererResult;
-    }
+    const libraryOwnedResult = await tryHandleLibraryOwnedRequest(request, {
+      getActiveLibraryOpenCancellation: () => activeLibraryOpenCancellation,
+      logInfo: (scope, message) => {
+        logger?.info(scope, message);
+      },
+      logError: (scope, error) => {
+        logger?.error(scope, error);
+      },
+      selectDirectory,
+      recentLibraryPath,
+      readRecentLibraryEntries,
+      removeRecentLibrary,
+      refreshApplicationMenuRecentLibraries,
+      cleanupExternalSource,
+      getPendingEagleOpenSourcePath: () => pendingEagleOpenSourcePath,
+      setPendingEagleOpenSourcePath: (value) => { pendingEagleOpenSourcePath = value; },
+      getPendingBillfishOpenSourcePath: () => pendingBillfishOpenSourcePath,
+      setPendingBillfishOpenSourcePath: (value) => { pendingBillfishOpenSourcePath = value; },
+    });
+    if (libraryOwnedResult) return libraryOwnedResult;
     openCancellation = isLibraryOpenRequest(request)
       ? { cancelled: false }
       : undefined;
@@ -3962,1024 +2669,188 @@ async function handleLibraryRequest(
       if (!(await confirmCriticalRendererRequest(request))) return cancelled();
     }
 
-    if (request.type === "library.delete-from-disk.request") {
-      // Drop serpent:// file handles before the Worker tries to rm the root.
-      // Always end this fence in `finally`; ZIP import preserves library_id.
-      deleteFromDiskLibraryId = request.libraryId;
-      beginLibraryDeleteMediaFence(request.libraryId);
-      clearNativeAssetDragCache(request.libraryId);
+    const deleteFromDiskLibraryIdFromRequest = maybeBeginLibraryDeleteFromDisk(request, {
+      beginFence: beginLibraryDeleteMediaFence,
+      clearNativeAssetDragCache,
+    });
+    if (deleteFromDiskLibraryIdFromRequest) {
+      deleteFromDiskLibraryId = deleteFromDiskLibraryIdFromRequest;
     }
 
-    if (request.type === "asset.import-drop-invalid.report") {
-      logger?.error(
-        "desktop-ingestion.drop-file-handle",
-        new Error(
-          "Electron could not resolve one or more dropped File handles.",
-        ),
-        { libraryId: request.libraryId },
-      );
-      return {
-        ok: false,
-        error: createPublicError("INVALID_DROP_SELECTION"),
-      } satisfies RendererResult;
-    }
-
-    if (request.type === "asset.import-web-invalid.report") {
-      logger?.error(
-        "web-ingestion.drop-metadata",
-        new Error(`Browser drag metadata was rejected: ${request.failure}.`),
-        { libraryId: request.libraryId, failure: request.failure },
-      );
-      return {
-        ok: false,
-        error: createPublicError(request.failure),
-      } satisfies RendererResult;
-    }
-
-    // The recent libraries store is Main-owned; listing never touches the Worker.
-    if (request.type === "library.list-recent.request") {
-      return {
-        ok: true,
-        type: "library.recent-list",
-        libraries: readRecentLibraryEntries(recentLibraryPath(), (error) => {
-          logger?.error("recent-library.read", error);
-        }),
-      } satisfies RendererResult;
-    }
-
-    if (request.type === "library.forget-recent.request") {
-      if (!path.isAbsolute(request.libraryPath)) {
-        return {
-          ok: false,
-          error: createPublicError("LIBRARY_NOT_FOUND"),
-        } satisfies RendererResult;
-      }
-      removeRecentLibrary(recentLibraryPath(), request.libraryPath, (error) => {
-        logger?.error("recent-library.forget", error);
-      });
-      refreshApplicationMenuRecentLibraries();
-      return {
-        ok: true,
-        type: "library.forgotten",
-        libraryPath: request.libraryPath,
-      } satisfies RendererResult;
-    }
-
-    if (request.type === "library.inspect-eagle.cancel.request") {
-      await cleanupExternalSource(pendingEagleOpenSourcePath);
-      pendingEagleOpenSourcePath = undefined;
-      return {
-        ok: true,
-        type: "library.eagle-inspect-cancelled",
-      } satisfies RendererResult;
-    }
-
-    if (request.type === "library.inspect-billfish.cancel.request") {
-      await cleanupExternalSource(pendingBillfishOpenSourcePath);
-      pendingBillfishOpenSourcePath = undefined;
-      return {
-        ok: true,
-        type: "library.billfish-inspect-cancelled",
-      } satisfies RendererResult;
-    }
+    const ingestionOwnedResult = await tryHandleIngestionOwnedRequest(request, {
+      logError: (scope, error, context) => {
+        logger?.error(scope, error, context);
+      },
+    });
+    if (ingestionOwnedResult) return ingestionOwnedResult;
 
     // Serpent-xffq: 同步服务器与库绑定是 Main 本地配置（凭据经 safeStorage）。
-    if (request.type === "sync.servers.list.request") {
-      const servers = readSyncServers().map((server) => ({
-        id: server.id,
-        baseUrl: server.baseUrl,
-        username: server.username,
-        hasPassword: server.passwordEncrypted !== undefined,
-        allowInsecureTls: server.allowInsecureTls,
-      }));
-      return { ok: true, type: "sync.servers.listed", servers } satisfies RendererResult;
-    }
+    const syncOwnedResult = await tryHandleSyncOwnedRequest(request, {
+      readSyncServers,
+      writeSyncServers,
+      readSyncBindings,
+      writeSyncBindings,
+      encryptPassword: (password) =>
+        safeStorage.encryptString(password).toString("base64"),
+      syncNow: (libraryId) => {
+        syncAutoScheduler?.syncNow(libraryId);
+      },
+    });
+    if (syncOwnedResult) return syncOwnedResult;
 
-    if (request.type === "sync.servers.upsert.request") {
-      const servers = readSyncServers();
-      const id = request.id ?? randomUUID();
-      // Serpent-fatf: 保存时即校验/规范化 URL（缺协议自动补 http://），
-      // 让非法地址在保存瞬间给出可读提示，而不是等到连接时才报笼统错误。
-      // 远端码体系已删除 INVALID_SYNC_URL，用 SYNC_CONNECTION_FAILED +
-      // SYNC_INVALID_URL reason 表达同一语义。
-      const normalized = normalizeWebDAVBaseUrl(request.baseUrl);
-      if (!normalized.ok) {
-        return {
-          ok: false,
-          error: createPublicError("SYNC_CONNECTION_FAILED", "SYNC_INVALID_URL"),
-        } satisfies RendererResult;
-      }
-      const passwordEncrypted = request.password
-        ? safeStorage.encryptString(request.password).toString("base64")
-        : request.id
-          ? (servers.find((entry) => entry.id === id)?.passwordEncrypted)
-          : undefined;
-      const record: SyncServerRecord = {
-        id,
-        baseUrl: normalized.value,
-        username: request.username || undefined,
-        passwordEncrypted,
-        allowInsecureTls: request.allowInsecureTls ?? false,
-      };
-      const existing = servers.findIndex((entry) => entry.id === id);
-      if (existing >= 0) servers[existing] = record;
-      else servers.push(record);
-      writeSyncServers(servers);
-      return { ok: true, type: "sync.server.saved", id } satisfies RendererResult;
-    }
-
-    if (request.type === "sync.servers.delete.request") {
-      writeSyncServers(readSyncServers().filter((entry) => entry.id !== request.id));
-      return { ok: true, type: "sync.server.deleted", id: request.id } satisfies RendererResult;
-    }
-
-    if (request.type === "sync.library.binding.save.request") {
-      const bindings = readSyncBindings();
-      const previous = bindings[request.libraryId];
-      bindings[request.libraryId] = {
-        serverId: request.serverId,
-        directoryName: request.directoryName,
-        lastSyncedAt: previous?.lastSyncedAt,
-        enabled: request.enabled ?? previous?.enabled ?? false,
-        pollIntervalMs: request.pollIntervalMs ?? previous?.pollIntervalMs,
-        showCardSyncStatus: request.showCardSyncStatus ?? previous?.showCardSyncStatus ?? true,
-      };
-      writeSyncBindings(bindings);
-      // Serpent-7405ef: 保存绑定（含开启自动同步）后立即触发一次同步，
-      // 用户不需要等下一个 5s 轮询周期（更不会等不到同步）。
-      const savedBinding = bindings[request.libraryId];
-      if (savedBinding?.enabled) {
-        syncAutoScheduler?.syncNow(request.libraryId);
-      }
-      return {
-        ok: true,
-        type: "sync.binding.saved",
-        libraryId: request.libraryId,
-        serverId: request.serverId,
-        directoryName: request.directoryName,
-        enabled: request.enabled ?? previous?.enabled ?? false,
-      } satisfies RendererResult;
-    }
-
-    if (request.type === "sync.library.binding.get.request") {
-      const binding = readSyncBindings()[request.libraryId] ?? null;
-      return {
-        ok: true,
-        type: "sync.binding.got",
-        libraryId: request.libraryId,
-        binding: binding
-          ? {
-              serverId: binding.serverId,
-              directoryName: effectiveSyncDirectoryName(binding),
-              lastSyncedAt: binding.lastSyncedAt,
-              enabled: binding.enabled ?? false,
-              pollIntervalMs: binding.pollIntervalMs,
-              showCardSyncStatus: binding.showCardSyncStatus ?? true,
-            }
-          : null,
-      } satisfies RendererResult;
-    }
-
-    // A selected batch must be enqueued atomically. Sending one IPC request per
-    // asset lets the first scheduler batch observe only one job and serializes
-    // the entire operation despite a higher configured lane limit.
-    if (request.type === "assets.analyze.request") {
-      const config = loadAiConfig();
-      if (!config.hasKey || !config.apiFormat) {
-        return {
-          ok: false,
-          error: createPublicError("AI_ANALYSIS_FAILED", "AI_NOT_CONFIGURED"),
-        } satisfies RendererResult;
-      }
-      try {
-        getDecryptedApiKey();
-      } catch {
-        return {
-          ok: false,
-          error: createPublicError("AI_ANALYSIS_FAILED", "AI_NOT_CONFIGURED"),
-        } satisfies RendererResult;
-      }
-      if (!workerClient) throw new Error("Library Worker is unavailable.");
-      try {
-        const enqueueResult = await workerClient.request({
-          type: "ai.enqueue-analysis",
-          libraryId: request.libraryId,
-          assetIds: request.assetIds,
-          resumePaused: true,
-          // 手动分析可覆盖已有 AI 结果（8-09 WIP 恢复：worker 已支持）
-          forceExisting: true,
-        });
-        if (enqueueResult.ok && enqueueResult.type === "ai.jobs.enqueued") {
-          const jobIds = [
-            ...enqueueResult.jobIds,
-            ...enqueueResult.alreadyPendingJobIds,
-          ];
-          if (jobIds.length > 0) {
-            void processAiQueue(request.libraryId);
-            return {
-              ok: true,
-              type: "assets.analyze-queued",
-              assetIds: request.assetIds,
-              jobIds,
-              skippedAssetIds: enqueueResult.skippedAssetIds,
-              enqueued: enqueueResult.enqueued,
-            } satisfies RendererResult;
-          }
-        }
-      } catch (error) {
-        logger?.error("ai.analyze.batch-enqueue", error);
-      }
-      return {
-        ok: false,
-        error: createPublicError("AI_ANALYSIS_FAILED"),
-      } satisfies RendererResult;
-    }
-
-    // Manual analyze: prefer the AI job queue so Renderer gets progress events
-    // and the background-jobs panel updates. Fall through to sync analyze only
-    // when the asset could not be queued (and is not already pending).
-    if (request.type === "asset.analyze.request") {
-      const config = loadAiConfig();
-      if (!config.hasKey || !config.apiFormat) {
-        return {
-          ok: false,
-          error: createPublicError("AI_ANALYSIS_FAILED", "AI_NOT_CONFIGURED"),
-        } satisfies RendererResult;
-      }
-      try {
-        getDecryptedApiKey();
-      } catch {
-        return {
-          ok: false,
-          error: createPublicError("AI_ANALYSIS_FAILED", "AI_NOT_CONFIGURED"),
-        } satisfies RendererResult;
-      }
-      if (!workerClient) throw new Error("Library Worker is unavailable.");
-      try {
-        const enqueueResult = await workerClient.request({
-          type: "ai.enqueue-analysis",
-          libraryId: request.libraryId,
-          assetIds: [request.assetId],
-          // 手动分析可覆盖已有 AI 结果（8-09 WIP 恢复：worker 已支持）
-          forceExisting: true,
-        });
-        if (
-          enqueueResult.ok &&
-          enqueueResult.type === "ai.jobs.enqueued" &&
-          enqueueResult.enqueued > 0
-        ) {
-          void processAiQueue(request.libraryId);
-          return {
-            ok: true,
-            type: "asset.analyze-queued",
-            assetId: request.assetId,
-            enqueued: enqueueResult.enqueued,
-          } satisfies RendererResult;
-        }
-        if (
-          enqueueResult.ok &&
-          enqueueResult.type === "ai.jobs.enqueued" &&
-          enqueueResult.enqueued === 0
-        ) {
-          const statusResult = await workerClient.request({
-            type: "ai.status",
-            libraryId: request.libraryId,
-          });
-          const alreadyPending =
-            statusResult.ok &&
-            statusResult.type === "ai.jobs.status" &&
-            statusResult.jobs.some(
-              (job) =>
-                job.assetId === request.assetId &&
-                (job.status === "queued" ||
-                  job.status === "running" ||
-                  job.status === "paused"),
-            );
-          if (alreadyPending) {
-            void processAiQueue(request.libraryId);
-            return {
-              ok: true,
-              type: "asset.analyze-queued",
-              assetId: request.assetId,
-              enqueued: 1,
-            } satisfies RendererResult;
-          }
-        }
-      } catch (error) {
-        logger?.error("ai.analyze.enqueue", error);
-      }
-      // Fall through to synchronous asset.analyze for eligibility errors.
-    }
-
-    // Handle AI config requests entirely in the main process — no Worker involved.
-    if (request.type === "ai.config.get.request") {
-      const config = loadAiConfig();
-      return {
-        ok: true,
-        type: "ai.config.got",
-        apiFormat: config.apiFormat,
-        model: config.model,
-        baseUrl: config.baseUrl ?? "",
-        hasKey: config.hasKey,
-        enabledFields: {
-          description: config.descriptionEnabled,
-          tags: config.tagEnabled,
-          rating: config.ratingEnabled,
-        },
-        analysisSettings: toWireAiAnalysisSettings(config.analysisSettings),
-        languages: config.languages,
-        concurrencyLimit: config.concurrencyLimit,
-        maxAnalysisImageEdgePx: config.maxAnalysisImageEdgePx,
-        reliabilitySettings: config.reliabilitySettings,
-        autoAnalyzeEnabled: config.autoAnalyzeEnabled,
-        disclaimerAccepted: config.disclaimerAccepted,
-      } satisfies RendererResult;
-    }
-
-    if (request.type === "ai.config.set.request") {
-      const currentConfig = loadAiConfig();
-      if (request.autoAnalyzeEnabled && !request.disclaimerAccepted) {
-        return {
-          ok: false,
-          error: createPublicError("CONFIRMATION_REQUIRED"),
-        } satisfies RendererResult;
-      }
-      if (!request.apiKey && !currentConfig.hasKey) {
-        return {
-          ok: false,
-          error: createPublicError("AI_SETTINGS_INCOMPLETE"),
-        } satisfies RendererResult;
-      }
-      const savedConfig: AiConfig = {
-        apiFormat: request.apiFormat,
-        model: request.model,
-        baseUrl: (request.baseUrl ?? "").trim(),
-        descriptionEnabled: request.enabledFields?.description ?? true,
-        tagEnabled: request.enabledFields?.tags ?? true,
-        ratingEnabled: request.enabledFields?.rating ?? true,
-        analysisSettings: normalizeAiAnalysisSettings({
-          ...DEFAULT_AI_ANALYSIS_SETTINGS,
-          ...request.analysisSettings,
-          descriptionEnabled: request.enabledFields?.description ?? true,
-          tagEnabled: request.enabledFields?.tags ?? true,
-          ratingEnabled: request.enabledFields?.rating ?? true,
-        }),
-        concurrencyLimit: normalizeAiAnalysisConcurrency(
-          request.concurrencyLimit ?? currentConfig.concurrencyLimit,
-        ),
-        maxAnalysisImageEdgePx: normalizeAiAnalysisImageEdgePx(
-          request.maxAnalysisImageEdgePx ?? currentConfig.maxAnalysisImageEdgePx,
-        ),
-        // Retry policy remains durable but is no longer a user-facing setting.
-        reliabilitySettings: request.reliabilitySettings
-          ? normalizeAiReliabilitySettings(request.reliabilitySettings)
-          : currentConfig.reliabilitySettings,
-        languages: normalizeAiLanguages(
-          request.languages ?? request.language ?? DEFAULT_AI_LANGUAGES,
-        ),
-        autoAnalyzeEnabled: request.autoAnalyzeEnabled,
-        disclaimerAccepted: request.disclaimerAccepted,
-      };
-      saveAiConfig(savedConfig);
-      if (request.apiKey) saveEncryptedApiKey(request.apiKey);
-      if (workerClient) {
-        try {
-          const update = await workerClient.request({
-            type: 'ai.set-concurrency-limit',
-            concurrencyLimit: savedConfig.concurrencyLimit,
-          });
-          if (!update.ok || update.type !== 'ai.concurrency.updated') {
-            logger?.error(
-              'ai.config.concurrency-update',
-              new Error('Library Worker did not acknowledge the AI concurrency update.'),
-              { concurrencyLimit: savedConfig.concurrencyLimit },
-            );
-          }
-        } catch (error) {
-          // Saving stays durable even if the Worker is restarting. The next
-          // queue batch always reapplies this value before dispatching work.
-          logger?.error('ai.config.concurrency-update', error, {
-            concurrencyLimit: savedConfig.concurrencyLimit,
-          });
-        }
-      }
-      return { ok: true, type: "ai.config.saved" } satisfies RendererResult;
-    }
-
-    if (request.type === "ai.test-connection.request") {
-      // Resolve credentials here so a missing key returns AI_NOT_CONFIGURED
-      // instead of the generic CANCELLED path from commandFor().
-      let apiKey = request.apiKey?.trim() ?? "";
-      if (!apiKey) {
-        try {
-          apiKey = getDecryptedApiKey();
-        } catch {
-          return {
-            ok: false,
-            error: createPublicError("AI_ANALYSIS_FAILED", "AI_NOT_CONFIGURED"),
-          } satisfies RendererResult;
-        }
-      }
-      if (!workerClient) throw new Error("Library Worker is unavailable.");
-      const workerResult = await workerClient.request({
-        type: "ai.test-connection",
-        apiFormat: request.apiFormat,
-        model: request.model,
-        apiKey,
-        ...(request.baseUrl?.trim()
-          ? { baseUrl: request.baseUrl.trim() }
-          : {}),
-      });
-      if (!workerResult.ok) {
-        return {
-          ok: false,
-          error: workerResult.error,
-        } satisfies RendererResult;
-      }
-      if (workerResult.type !== "ai.test-connection.result") {
-        return {
-          ok: false,
-          error: createPublicError("AI_ANALYSIS_FAILED"),
-        } satisfies RendererResult;
-      }
-      return {
-        ok: true,
-        type: "ai.test-connection.result",
-        success: workerResult.success,
-        ...(workerResult.errorKind
-          ? { errorKind: workerResult.errorKind }
-          : {}),
-        ...(workerResult.reason ? { reason: workerResult.reason } : {}),
-      } satisfies RendererResult;
-    }
-
-    if (request.type === "ai.list-models.request") {
-      let apiKey = request.apiKey?.trim() ?? "";
-      if (!apiKey) {
-        try {
-          apiKey = getDecryptedApiKey();
-        } catch {
-          return {
-            ok: true,
-            type: "ai.list-models.result",
-            models: [],
-            errorKind: "auth",
-            reason: "API key is required to list models.",
-          } satisfies RendererResult;
-        }
-      }
-      const listed = await listAiModels({
-        apiFormat: request.apiFormat,
-        apiKey,
-        baseUrl: request.baseUrl,
-      });
-      if (!listed.ok) {
-        return {
-          ok: true,
-          type: "ai.list-models.result",
-          models: [],
-          errorKind: listed.errorKind,
-          reason: listed.reason,
-        } satisfies RendererResult;
-      }
-      return {
-        ok: true,
-        type: "ai.list-models.result",
-        models: listed.models,
-      } satisfies RendererResult;
-    }
-
-    if (request.type === "ai.search-plan.request") {
-      const config = loadAiConfig();
-      if (!config.hasKey || !config.disclaimerAccepted) {
-        logger?.info(
-          "ai.search-plan.unavailable",
-          "AI search requires configured credentials and accepted disclosure.",
-          {
-            apiFormat: config.apiFormat,
-            hasKey: config.hasKey,
-            disclaimerAccepted: config.disclaimerAccepted,
-          },
-        );
-        return {
-          ok: false,
-          error: createPublicError("AI_SEARCH_FAILED", "AI_NOT_CONFIGURED"),
-        } satisfies RendererResult;
-      }
-      let apiKey: string;
-      try {
-        apiKey = getDecryptedApiKey();
-      } catch (caught) {
-        logger?.error("ai.search-plan.credentials", caught, {
-          apiFormat: config.apiFormat,
-        });
-        return {
-          ok: false,
-          error: createPublicError("AI_SEARCH_FAILED", "AI_NOT_CONFIGURED"),
-        } satisfies RendererResult;
-      }
-      try {
-        const plan = await planAiSearch({
-          apiFormat: config.apiFormat,
-          model: config.model,
-          apiKey,
-          baseUrl: config.baseUrl,
-          languages: config.languages,
-          naturalQuery: request.naturalQuery,
-        });
-        logger?.info("ai.search-plan.completed", "AI search plan validated.", {
-          apiFormat: config.apiFormat,
-          model: config.model,
-          keywordCount: plan.keywords.length,
-          synonymCount: plan.synonyms.length,
-          exclusionCount: plan.exclusions.length,
-          filterCount: plan.filters.length,
-        });
-        return {
-          ok: true,
-          type: "ai.search-plan.result",
-          plan,
-          apiFormat: config.apiFormat,
-          model: config.model,
-        } satisfies RendererResult;
-      } catch (caught) {
-        const reason = aiSearchFailureReason(caught);
-        logger?.error("ai.search-plan.failed", caught, {
-          apiFormat: config.apiFormat,
-          model: config.model,
-          reason,
-        });
-        return {
-          ok: false,
-          error: createPublicError("AI_SEARCH_FAILED", reason),
-        } satisfies RendererResult;
-      }
-    }
-
-    if (request.type === "asset.close-preview.request") {
-      return {
-        ok: true,
-        type: "asset.preview.closed",
-        assetId: request.assetId,
-      } satisfies RendererResult;
-    }
-
-    if (request.type === "asset.preview-error.report") {
-      logger?.error(
-        "media.preview.renderer",
-        new Error(`Renderer media element reported ${request.errorCode}.`),
-        {
-          libraryId: request.libraryId,
-          assetId: request.assetId,
-          errorCode: request.errorCode,
-          detail: request.detail,
-        },
-      );
-      return {
-        ok: true,
-        type: "asset.preview-error.recorded",
-        assetId: request.assetId,
-      } satisfies RendererResult;
-    }
-
-    if (request.type === "asset.relink-batch.cancel.request") {
-      pendingRelinkPreviews.cancel(request.libraryId, request.previewId);
-      return {
-        ok: true,
-        type: "asset.relink-batch.cancelled",
-        previewId: request.previewId,
-      } satisfies RendererResult;
-    }
-
-    if (request.type === "library.open-recent.request") {
-      // The renderer may only reopen a library that Main itself recorded in the
-      // recent libraries store — never an arbitrary path. This keeps the same
-      // open-by-path pipeline the restart restore uses.
-      const recentEntries = readRecentLibraryEntries(
-        recentLibraryPath(),
-        (error) => {
-          logger?.error("recent-library.read", error);
-        },
-      );
-      if (
-        !path.isAbsolute(request.libraryPath) ||
-        !recentEntries.some((entry) => entry.path === request.libraryPath)
-      ) {
-        return {
-          ok: false,
-          error: createPublicError("LIBRARY_NOT_FOUND"),
-        } satisfies RendererResult;
-      }
-      command = {
-        type: "library.open",
-        selectedLibraryPath: request.libraryPath,
-      };
-    } else if (request.type === "asset.import-drop.request") {
-      let sourceKind: "files" | "folder";
-      try {
-        sourceKind = classifyDroppedSourcePaths(request.sourcePaths);
-      } catch (error) {
-        logger?.error("desktop-ingestion.drop-selection", error, {
-          sourceCount: request.sourcePaths.length,
-        });
-        const isSelectionShapeError =
-          error instanceof Error && error.message === "INVALID_DROP_SELECTION";
-        return {
-          ok: false,
-          error: isSelectionShapeError
-            ? createPublicError("INVALID_DROP_SELECTION")
-            : createPublicError(
-                "INVALID_IMPORT_SOURCE",
-                publicReasonFromError(error),
-              ),
-        } satisfies RendererResult;
-      }
-      const e2eAutoExpand =
-        !app.isPackaged &&
-        process.env.SERPENT_E2E === "1" &&
-        // Serpent-866c20：序列帧确认面板（含导入前预览）只能在确认流程里跑，
-        // 需要一条 E2E 保持真实交互，而不是被 E2E 自动展开吞掉。
-        process.env.SERPENT_E2E_SEQUENCE_PROMPT !== "1";
-      const disableSequenceCreate =
-        request.detectImageSequences === false ||
-        request.autoDetectImageSequences === false;
-      if (
-        sourceKind === "files" &&
-        request.imageSequenceDecision?.action === "import-sequence"
-      ) {
+    const aiOwnedResult = await tryHandleAiOwnedRequest(request, {
+      loadAiConfig,
+      getDecryptedApiKey,
+      saveAiConfig,
+      saveEncryptedApiKey,
+      workerAvailable: () => Boolean(workerClient),
+      requestWorker: (command) => {
         if (!workerClient) throw new Error("Library Worker is unavailable.");
-        const probeResult = await workerClient.request({
-          type: "asset.import.probe-sequences",
-          libraryId: request.libraryId,
-          targetFolderId: request.targetFolderId,
-          targetCollectionId: request.targetCollectionId,
-          sourcePaths: request.sourcePaths,
-        });
-        if (!probeResult.ok) {
-          return {
-            ok: false,
-            error: probeResult.error,
-          } satisfies RendererResult;
-        }
-        if (
-          probeResult.type !== "asset.import.sequence-offer" ||
-          probeResult.offer.sequences.length === 0
-        ) {
-          command = {
-            type: "asset.import.prepare",
-            libraryId: request.libraryId,
-            targetFolderId: request.targetFolderId,
-            sourceKind,
-            sourcePaths: request.sourcePaths,
-            expandImageSequences: false,
-          };
-        } else {
-          const sequenceIndex = request.imageSequenceDecision.sequenceIndex ?? 0;
-          const sequence =
-            probeResult.offer.sequences[sequenceIndex] ??
-            probeResult.offer.sequences[0]!;
-          const firstFrame =
-            request.imageSequenceDecision.firstFrame ?? sequence.firstFrame;
-          const lastFrame =
-            request.imageSequenceDecision.lastFrame ?? sequence.lastFrame;
-          const rangedPaths: string[] = [];
-          const framePaths = sequence.framePaths ?? [];
-          for (let index = 0; index < framePaths.length; index += 1) {
-            const frameNumber = sequence.firstFrame + index;
-            if (frameNumber < firstFrame || frameNumber > lastFrame) continue;
-            rangedPaths.push(framePaths[index]!);
-          }
-          command = {
-            type: "asset.import.prepare",
-            libraryId: request.libraryId,
-            targetFolderId: request.targetFolderId,
-            sourceKind: "files",
-            sourcePaths:
-              request.imageSequenceDecision.applyToRest
-                ? request.sourcePaths
-                : rangedPaths.length >= 3
-                  ? rangedPaths
-                  : framePaths,
-            expandImageSequences: false,
-            createImageSequence: true,
-            imageSequenceFps:
-              request.imageSequenceDecision.fps ??
-              probeResult.offer.defaultFps,
-          };
-        }
-      } else {
-        command = {
-          type: "asset.import.prepare",
-          libraryId: request.libraryId,
-          targetFolderId: request.targetFolderId,
-          sourceKind,
-          sourcePaths: request.sourcePaths,
-          expandImageSequences: e2eAutoExpand && sourceKind === "files",
-          ...(disableSequenceCreate ? { createImageSequence: false } : {}),
-          imageSequenceFps: e2eAutoExpand ? 30 : undefined,
-        };
-      }
-    } else if (request.type === "asset.import-sequence.confirm") {
-      const pending = pendingImageSequenceOffers.get(request.offerId);
-      if (!pending || pending.expiresAt <= Date.now()) {
-        pendingImageSequenceOffers.delete(request.offerId);
-        return {
-          ok: false,
-          error: createPublicError("IMPORT_NOT_FOUND"),
-        } satisfies RendererResult;
-      }
-      if (pending.offer.libraryId !== request.libraryId) {
-        return {
-          ok: false,
-          error: createPublicError("IMPORT_NOT_FOUND"),
-        } satisfies RendererResult;
-      }
-      const stored = pending.offer;
-      const sequenceIndex = request.sequenceIndex ?? pending.nextSequenceIndex;
-      if (sequenceIndex !== pending.nextSequenceIndex) {
-        return {
-          ok: false,
-          error: createPublicError("IMPORT_NOT_FOUND"),
-        } satisfies RendererResult;
-      }
-      const sequence = stored.sequences[sequenceIndex];
-      const decision = resolveImageSequenceImportPaths({
-        action: request.action,
-        applyToRest: request.applyToRest === true,
-        firstFrame: request.firstFrame ?? sequence?.firstFrame ?? 0,
-        lastFrame: request.lastFrame ?? sequence?.lastFrame ?? 0,
-        offer: stored,
-        sequenceIndex,
-      });
-      if (decision.sourcePaths.length === 0) {
-        return {
-          ok: false,
-          error: createPublicError("INVALID_SELECTION"),
-        } satisfies RendererResult;
-      }
-      command = {
-        type: "asset.import.prepare",
-        libraryId: request.libraryId,
-        targetFolderId: stored.targetFolderId,
-        sourceKind: "files",
-        sourcePaths: decision.sourcePaths,
-        expandImageSequences: false,
-        createImageSequence: decision.createImageSequence,
-        ...(decision.createImageSequence
-          ? { imageSequenceFps: request.fps ?? stored.defaultFps }
-          : {}),
-      };
-      if (decision.nextSequenceIndex === null) {
-        pendingImageSequenceOffers.delete(request.offerId);
-      } else {
-        pending.nextSequenceIndex = decision.nextSequenceIndex;
-      }
-    } else if (request.type === "asset.import-clipboard.request") {
-      let image;
-      try {
-        if (
-          !app.isPackaged &&
-          process.env.SERPENT_E2E === "1" &&
-          process.env.SERPENT_E2E_CLIPBOARD_IMAGE_PATH
-        ) {
-          image = nativeImage.createFromBuffer(
-            readFileSync(process.env.SERPENT_E2E_CLIPBOARD_IMAGE_PATH),
-          );
-        } else {
-          // Windows clipboard images arrive in several layouts; walk them all
-          // (Chromium bitmap, registered PNG, bare DIB, HTML references).
-          const extracted = readClipboardImage({
-            readImage: () => clipboard.readImage(),
-            readBuffer: (format) => clipboard.readBuffer(format),
-            readHTML: () => clipboard.readHTML(),
-            createFromBuffer: (buffer) => nativeImage.createFromBuffer(buffer),
-          });
-          if (!extracted) {
-            logger?.info(
-              "desktop-ingestion.clipboard-formats",
-              "no importable image on the clipboard",
-              { formats: clipboard.availableFormats() },
-            );
-            throw new Error("CLIPBOARD_IMAGE_NOT_FOUND");
-          }
-          image = extracted.image;
-        }
-        const injectedNow =
-          !app.isPackaged &&
-          process.env.SERPENT_E2E === "1" &&
-          process.env.SERPENT_E2E_CLIPBOARD_NOW
-            ? new Date(process.env.SERPENT_E2E_CLIPBOARD_NOW)
-            : new Date();
-        const staged = stageClipboardImage(
-          image,
-          app.getPath("temp"),
-          injectedNow,
-        );
-        clipboardStageDirectory = staged.directoryPath;
-        command = {
-          type: "asset.import.prepare",
-          libraryId: request.libraryId,
-          targetFolderId: request.targetFolderId,
-          sourceKind: "files",
-          sourcePaths: [staged.filePath],
-        };
-      } catch (error) {
-        logger?.error("desktop-ingestion.clipboard-stage", error);
-        const code =
-          error instanceof Error &&
-          error.message === "CLIPBOARD_IMAGE_NOT_FOUND"
-            ? "CLIPBOARD_IMAGE_NOT_FOUND"
-            : "INVALID_IMPORT_SOURCE";
-        return {
-          ok: false,
-          error: createPublicError(
-            code,
-            code === "INVALID_IMPORT_SOURCE"
-              ? publicReasonFromError(error)
-              : undefined,
-          ),
-        } satisfies RendererResult;
-      }
-    } else if (request.type === "folder.paste.request") {
-      try {
-        const injectedPaths =
-          !app.isPackaged &&
-          process.env.SERPENT_E2E === "1" &&
-          process.env.SERPENT_E2E_CLIPBOARD_FILE_PATHS
-            ? process.env.SERPENT_E2E_CLIPBOARD_FILE_PATHS.split("\n").filter(
-                Boolean,
-              )
-            : null;
-        const sourcePaths =
-          injectedPaths ??
-          readFilePathsFromClipboard(createFileClipboardDeps());
-        if (sourcePaths.length === 0) {
-          return {
-            ok: false,
-            error: createPublicError("CLIPBOARD_FILES_NOT_FOUND"),
-          } satisfies RendererResult;
-        }
-        const sourceKind = classifyDroppedSourcePaths(sourcePaths);
-        command = {
-          type: "asset.import.prepare",
-          libraryId: request.libraryId,
-          targetFolderId: request.folderId ?? undefined,
-          sourceKind,
-          sourcePaths,
-          // Paste must never auto-group into an image sequence. Users expect
-          // ordinary import + name/content conflict dialogs (PASTE-001).
-          expandImageSequences: false,
-          createImageSequence: false,
-        };
-      } catch (error) {
-        logger?.error("desktop-ingestion.clipboard-files", error);
-        const isSelectionShapeError =
-          error instanceof Error && error.message === "INVALID_DROP_SELECTION";
-        return {
-          ok: false,
-          error: isSelectionShapeError
-            ? createPublicError("INVALID_DROP_SELECTION")
-            : createPublicError(
-                "INVALID_IMPORT_SOURCE",
-                publicReasonFromError(error),
-              ),
-        } satisfies RendererResult;
-      }
+        return workerClient.request(command);
+      },
+      processAiQueue,
+      logInfo: (scope, message, context) => {
+        logger?.info(scope, message, context);
+      },
+      logError: (scope, error, context) => {
+        logger?.error(scope, error, context);
+      },
+    });
+    if (aiOwnedResult) return aiOwnedResult;
+
+    const previewOwnedResult = await tryHandlePreviewOwnedRequest(request, {
+      logError: (scope, error, context) => {
+        logger?.error(scope, error, context);
+      },
+    });
+    if (previewOwnedResult) return previewOwnedResult;
+
+    const relinkOwnedResult = await tryHandleRelinkOwnedRequest(request, {
+      cancelRelinkPreview: (libraryId, previewId) => {
+        pendingRelinkPreviews.cancel(libraryId, previewId);
+      },
+    });
+    if (relinkOwnedResult) return relinkOwnedResult;
+
+    const openRecent = tryBuildOpenRecentCommand(request, {
+      getActiveLibraryOpenCancellation: () => activeLibraryOpenCancellation,
+      logInfo: (scope, message) => {
+        logger?.info(scope, message);
+      },
+      logError: (scope, error) => {
+        logger?.error(scope, error);
+      },
+      selectDirectory,
+      recentLibraryPath,
+      readRecentLibraryEntries,
+      removeRecentLibrary,
+      refreshApplicationMenuRecentLibraries,
+      cleanupExternalSource,
+      getPendingEagleOpenSourcePath: () => pendingEagleOpenSourcePath,
+      setPendingEagleOpenSourcePath: (value) => { pendingEagleOpenSourcePath = value; },
+      getPendingBillfishOpenSourcePath: () => pendingBillfishOpenSourcePath,
+      setPendingBillfishOpenSourcePath: (value) => { pendingBillfishOpenSourcePath = value; },
+    });
+    if (openRecent?.kind === "result") return openRecent.result;
+    if (openRecent?.kind === "command") {
+      command = openRecent.command;
     } else {
-      command = await commandFor(
-        request,
-        request.type === "library.inspect-billfish.request"
-          ? {
-              onBillfishSourceSelected: () => {
-                operation = "open-billfish";
-                lifecyclePublished = true;
-                publishLifecycle({
-                  type: "library.opening",
-                  operation: "open-billfish",
-                });
-              },
-            }
-          : undefined,
-      );
+      const ingestion = await tryBuildIngestionCommand(request, {
+        isUnpackagedE2e: () => !app.isPackaged && process.env.SERPENT_E2E === "1",
+        e2eEnv: (name) => process.env[name],
+        workerAvailable: () => Boolean(workerClient),
+        requestWorker: (workerCommand) => {
+          if (!workerClient) throw new Error("Library Worker is unavailable.");
+          return workerClient.request(workerCommand);
+        },
+        logInfo: (scope, message, context) => {
+          logger?.info(scope, message, context);
+        },
+        logError: (scope, error, context) => {
+          logger?.error(scope, error, context);
+        },
+        getPendingSequenceOffer: (offerId) => pendingImageSequenceOffers.get(offerId),
+        deletePendingSequenceOffer: (offerId) => {
+          pendingImageSequenceOffers.delete(offerId);
+        },
+        setPendingSequenceNextIndex: (offerId, nextSequenceIndex) => {
+          const pending = pendingImageSequenceOffers.get(offerId);
+          if (pending) pending.nextSequenceIndex = nextSequenceIndex;
+        },
+        tempPath: () => app.getPath("temp"),
+        now: () => new Date(),
+        createImageFromBuffer: (buffer) => nativeImage.createFromBuffer(buffer),
+        readFileBuffer: (filePath) => readFileSync(filePath),
+        clipboardImageDeps: {
+          readImage: () => clipboard.readImage(),
+          readBuffer: (format) => clipboard.readBuffer(format),
+          readHTML: () => clipboard.readHTML(),
+          createFromBuffer: (buffer) => nativeImage.createFromBuffer(buffer),
+        },
+        clipboardAvailableFormats: () => clipboard.availableFormats(),
+        readClipboardFilePaths: () => readFilePathsFromClipboard(createFileClipboardDeps()),
+      });
+      if (ingestion?.kind === "result") return ingestion.result;
+      if (ingestion?.kind === "command") {
+        command = ingestion.command;
+        clipboardStageDirectory = ingestion.clipboardStageDirectory;
+      } else {
+        command = await commandFor(
+          request,
+          request.type === "library.inspect-billfish.request"
+            ? {
+                onBillfishSourceSelected: () => {
+                  operation = "open-billfish";
+                  lifecyclePublished = true;
+                  publishLifecycle({
+                    type: "library.opening",
+                    operation: "open-billfish",
+                  });
+                },
+              }
+            : undefined,
+        );
+      }
     }
     if (!command || openCancellation?.cancelled) return cancelled();
-    if (
-      command.type === "asset.import.prepare" &&
-      command.sourceKind === "files" &&
-      command.expandImageSequences !== true &&
-      (request.type === "asset.import-files.request"
-        ? false
-        : true) &&
-      request.type !== "asset.import-drop.request" &&
-      request.type !== "asset.import-sequence.confirm" &&
-      // Clipboard paste into a folder must keep ordinary conflict flows
-      // (name-conflict / content-duplicate). Sequence probing here wrongly
-      // offered a sequence dialog when pasting a single copied image
-      // (PASTE-001 / Serpent-el2g).
-      request.type !== "folder.paste.request" &&
-      !(
-        !app.isPackaged &&
-        process.env.SERPENT_E2E === "1"
-      )
-    ) {
-      if (!workerClient) throw new Error("Library Worker is unavailable.");
-      const probeResult = await workerClient.request({
-        type: "asset.import.probe-sequences",
-        libraryId: command.libraryId,
-        targetFolderId: command.targetFolderId,
-        sourcePaths: command.sourcePaths,
-      });
-      if (!probeResult.ok) {
-        return {
-          ok: false,
-          error: probeResult.error,
-        } satisfies RendererResult;
-      }
-      if (
-        probeResult.type === "asset.import.sequence-offer" &&
-        probeResult.offer.sequences.length > 0
-      ) {
-        return {
-          ok: true,
-          type: "asset.import.sequence-offer",
-          offer: rememberImageSequenceOffer(probeResult.offer),
-        } satisfies RendererResult;
-      }
-      // The explicit normal-file path must not run the legacy post-import
-      // sequence detector. Folder imports and automation calls that opt into
-      // expansion keep the existing behavior above.
-      command = { ...command, createImageSequence: false };
-    }
-    if (
-      (request.type === "asset.relink-batch.request" ||
-        request.type === "asset.relink-batch.preview-at-root.request") &&
-      command.type === "asset.relink-batch.preview"
-    ) {
-      const previewId = pendingRelinkPreviews.create(
-        request.libraryId,
-        command.newRootPath,
-      );
-      relinkPreviewContext = { libraryId: request.libraryId, previewId };
-    }
+    const sequenceProbe = await maybeProbeImportSequences(request, command, {
+      isUnpackagedE2e: () => !app.isPackaged && process.env.SERPENT_E2E === "1",
+      workerAvailable: () => Boolean(workerClient),
+      requestWorker: (workerCommand) => {
+        if (!workerClient) throw new Error("Library Worker is unavailable.");
+        return workerClient.request(workerCommand);
+      },
+      rememberSequenceOffer: rememberImageSequenceOffer,
+    });
+    if (sequenceProbe?.kind === "result") return sequenceProbe.result;
+    if (sequenceProbe?.kind === "command") command = sequenceProbe.command;
+    relinkPreviewContext = maybeRememberRelinkPreview(
+      request,
+      command,
+      (libraryId, newRootPath) => pendingRelinkPreviews.create(libraryId, newRootPath),
+    );
     if (!workerClient) throw new Error("Library Worker is unavailable.");
-    if (command.type === "library.create") operation = "create";
-    if (command.type === "library.open") operation = "open";
-    if (
-      command.type === "library.import-folder" ||
-      command.type === "library.import-zip"
-    )
-      operation = "import";
-    // Billfish inspection is the first point at which a validated source is
-    // ready to replace the active library. Detach the old library before the
-    // name panel appears, so a slow archive/metadata read is visible as an
-    // opening operation instead of looking like a stale browse session.
-    if (command.type === "library.inspect-billfish") operation = "open-billfish";
-    if (command.type === "library.open-eagle" || command.type === "library.open-billfish") {
-      try {
-        const selectedParentPath = resolveWritableLibraryParent({
-          selectedParentPath: command.selectedParentPath,
-          sourceRootPath: command.sourceRootPath,
-          createIfMissing: true,
-        });
-        command = { ...command, selectedParentPath };
-      } catch (error) {
-        if (error instanceof LibraryParentError) {
-          return {
-            ok: false,
-            error: createPublicError(error.code, error.reason),
-          } satisfies RendererResult;
-        }
-        throw error;
-      }
-      if (command.type === "library.open-eagle") {
-        pendingEagleOpenSourcePath = undefined;
-        operation = "open-eagle";
-      } else {
-        pendingBillfishOpenSourcePath = undefined;
-        operation = "open-billfish";
-      }
-    }
-    if (operation && !lifecyclePublished) publishLifecycle({ type: "library.opening", operation });
-    if (command.type === "library.open-eagle" || command.type === "library.open-billfish") {
-      previousLibraryPaths = await closeOpenLibrariesBeforeReplacement();
-    }
+    const lifecycle = await prepareLibraryLifecycle(command, {
+      operation,
+      lifecyclePublished,
+    }, {
+      closeOpenLibrariesBeforeReplacement,
+      publishOpening: (nextOperation) => {
+        publishLifecycle({ type: "library.opening", operation: nextOperation });
+      },
+    });
+    if (lifecycle.kind === "result") return lifecycle.result;
+    command = lifecycle.command;
+    operation = lifecycle.operation;
+    previousLibraryPaths = lifecycle.previousLibraryPaths;
+    if (lifecycle.clearPendingEagle) pendingEagleOpenSourcePath = undefined;
+    if (lifecycle.clearPendingBillfish) pendingBillfishOpenSourcePath = undefined;
 
-    // Deterministic E2E seam for optimistic asset deletion. The renderer must
-    // remove the card before this real IPC/Worker request resolves; production
-    // never delays requests because this branch is gated by SERPENT_E2E.
-    if (
-      !app.isPackaged &&
-      process.env.SERPENT_E2E === "1" &&
-      command.type === "asset.trash"
-    ) {
-      const delayMs = Number.parseInt(
-        process.env.SERPENT_E2E_TRASH_DELAY_MS ?? "",
-        10,
-      );
-      if (Number.isInteger(delayMs) && delayMs > 0 && delayMs <= 10_000) {
-        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-      }
-    }
+    await maybeDelayE2eTrash(command, {
+      isUnpackagedE2e: () => !app.isPackaged && process.env.SERPENT_E2E === "1",
+      env: (name) => process.env[name],
+      delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    });
 
     // 测试连接（sync.probe）：单次超时后自动重试，最大重试后给出提醒
     // （用户决定 2026-08-17；传输数据本身无墙钟超时）。
@@ -4989,7 +2860,10 @@ async function handleLibraryRequest(
       : 0;
     const navigationWorkerStartedAt = navigationTrace ? performance.now() : 0;
     const workerResult = command.type === "sync.probe"
-      ? await runSyncProbeWithRetry(command)
+      ? await runSyncProbeWithRetry(command, (probe) => {
+        if (!workerClient) throw new Error("Library Worker is unavailable.");
+        return workerClient.request(probe);
+      })
       : await (async () => {
         const traceLibraryRequest = libraryRequestTraceEnabled();
         if (traceLibraryRequest) {
@@ -5027,96 +2901,37 @@ async function handleLibraryRequest(
         errorCode: workerResult.ok ? undefined : workerResult.error.code,
       });
     }
-    if (openCancellation?.cancelled) {
-      if (workerResult.ok && workerResult.type === "library.opened") {
-        try {
-          await workerClient.request({
-            type: "library.close",
-            libraryId: workerResult.library.libraryId,
-          }, { consumerId: options.consumerId });
-        } catch (error) {
-          logger?.error("library.open.cancel-close", error, {
-            libraryId: workerResult.library.libraryId,
-          });
-        }
-      }
-      if (previousLibraryPaths.length > 0) {
-        await reopenLibrariesAfterFailedReplacement(previousLibraryPaths);
-      }
-      if (operation) {
-        publishLifecycle({
-          type: "library.open-failed",
-          operation,
-          error: createPublicError("CANCELLED"),
-        });
-      }
-      return cancelled();
-    }
-    if (!workerResult.ok && previousLibraryPaths.length > 0) {
-      await reopenLibrariesAfterFailedReplacement(previousLibraryPaths);
-    }
+    const replacementOutcome = await applyLibraryReplacementAfterWorker(workerResult, {
+      cancelled: Boolean(openCancellation?.cancelled),
+      previousLibraryPaths,
+      operation,
+    }, {
+      closeOpenedLibrary: async (libraryId) => {
+        if (!workerClient) throw new Error("Library Worker is unavailable.");
+        await workerClient.request({
+          type: "library.close",
+          libraryId,
+        }, { consumerId: options.consumerId });
+      },
+      logError: (scope, error, context) => {
+        logger?.error(scope, error, context);
+      },
+      reopenLibrariesAfterFailedReplacement,
+      publishLifecycle,
+    });
+    if (replacementOutcome) return replacementOutcome;
 
-    if (
-      command.type === "library.open-eagle" ||
-      command.type === "library.open-billfish" ||
-      command.type === "asset.import-eagle" ||
-      command.type === "asset.import-billfish"
-    ) {
-      await cleanupExternalSource(command.sourceRootPath);
-    } else if (
-      command.type === "library.inspect-eagle" ||
-      command.type === "library.inspect-billfish"
-    ) {
-      const expectedType = command.type === "library.inspect-eagle"
-        ? "library.eagle-inspected"
-        : "library.billfish-inspected";
-      if (workerResult.ok && workerResult.type === expectedType) retainExternalSource = true;
-      else await cleanupExternalSource(command.sourceRootPath);
-    }
+    const externalSource = await applyExternalLibrarySourceCleanup(command, workerResult, {
+      cleanupExternalSource,
+    });
+    retainExternalSource = externalSource.retainExternalSource;
 
-    // Native file drag must be requested during renderer dragstart.
-    // Preheat every card-bearing result before it reaches Renderer; a later
-    // Worker round trip would miss Electron's native drag window. Upserting
-    // instead of replacing avoids an auxiliary count query evicting the cards
-    // visible in a concurrent search request.
-    //
-    // Serpent-v4jf: only the visible first screen (the sorted list head, i.e.
-    // what the user actually sees and can drag immediately) blocks the
-    // response. The rest primes in fire-and-forget chunks so a 50k browse
-    // result no longer stalls the renderer behind a full-cache worker burst.
-    const nativeDragAssets = nativeDragAssetsForResult(workerResult);
-    // Conflict resolution requests intentionally carry only importId; the
-    // library context is retained from the earlier conflicts response until
-    // the completion branch below consumes it.
-    const nativeDragLibraryId =
-      "libraryId" in request && typeof request.libraryId === "string"
-        ? request.libraryId
-        : (request.type === "asset.import.resolve" ||
-          request.type === "asset.import.skip-source-failure")
-          ? pendingImportLibraries.get(request.importId)
-          : undefined;
-    if (
-      nativeDragAssets.length > 0 &&
-      nativeDragLibraryId
-    ) {
-      const dragAssetIds = nativeDragAssets.flatMap((asset) =>
-        asset.sequence?.frames.map((frame) => frame.assetId) ?? [asset.assetId],
-      );
-      // Serpent-8ee170（第三轮纠偏）: the browse result must reach the Renderer
-      // without waiting for any drag-cache work. `media.get-asset-drag-infos`
-      // shares the background-primary lane with reconciliation, so awaiting it
-      // here held a 1.206 s browse response behind a ~68 s maintenance owner —
-      // the measured cause of "the command is fast but the content does not
-      // change for a minute". The visible first screen still warms in the
-      // background (bounded by NATIVE_DRAG_PRIME_VISIBLE_COUNT); the rest of a
-      // large result is no longer primed at all — a card resolves on demand
-      // when a drag actually starts.
-      void nativeAssetDragPrimer.primeImmediately(
-        nativeDragLibraryId,
-        dragAssetIds.slice(0, NATIVE_DRAG_PRIME_VISIBLE_COUNT),
-        "upsert",
-      );
-    }
+    maybePrimeNativeDrag(request, workerResult, {
+      pendingImportLibraries,
+      primeImmediately: (libraryId, assetIds, mode) => {
+        void nativeAssetDragPrimer.primeImmediately(libraryId, assetIds, mode);
+      },
+    });
 
     if (!workerResult.ok && relinkPreviewContext) {
       pendingRelinkPreviews.cancel(
@@ -5125,731 +2940,116 @@ async function handleLibraryRequest(
       );
     }
 
-    if (workerResult.ok && workerResult.type === "library.opened") {
-      rememberOpenedLibrary(
-        workerResult.library.libraryPath,
-        workerResult.library.displayName,
-        workerResult.library.libraryId,
-      );
-    } else if (
-      workerResult.ok &&
-      workerResult.type === "library.eagle-inspected" &&
-      command.type === "library.inspect-eagle"
-    ) {
-      pendingEagleOpenSourcePath = command.sourceRootPath;
-    } else if (
-      workerResult.ok &&
-      workerResult.type === "library.billfish-inspected" &&
-      command.type === "library.inspect-billfish"
-    ) {
-      pendingBillfishOpenSourcePath = command.sourceRootPath;
-    } else if (workerResult.ok && workerResult.type === "library.renamed") {
-      rememberOpenedLibrary(
-        workerResult.library.libraryPath,
-        workerResult.library.displayName,
-        workerResult.library.libraryId,
-      );
-    } else if (workerResult.ok && workerResult.type === "library.imported") {
-      rememberOpenedLibrary(workerResult.libraryPath, workerResult.displayName, workerResult.libraryId);
-    } else if (workerResult.ok && workerResult.type === "library.deleted") {
-      removeRecentLibrary(
-        recentLibraryPath(),
-        workerResult.libraryPath,
-        (error) => {
-          logger?.error("recent-library.remove", error);
-        },
-      );
-      // Serpent-140fe2 review: deleted libraries must not leave phantom
-      // preview mirrors consuming the LRU budget.
-      if ("libraryId" in request) {
-        void previewCache?.purgeLibrary(request.libraryId);
-      }
-      // Serpent-65d837: a leftover `.del-*` aside must never be silently
-      // forgotten — persist it for deferred cleanup and kick the retry loop.
-      if (workerResult.pendingAsidePath) {
-        const pendingPath = pendingLibraryCleanupPath();
-        const current = readPendingCleanupAsidePaths(pendingPath, (error) => {
-          logger?.error("pending-library-cleanup.read", error);
-        });
-        writePendingCleanupAsidePaths(
-          pendingPath,
-          [...current, workerResult.pendingAsidePath],
-          (error) => {
-            logger?.error("pending-library-cleanup.write", error);
-          },
-        );
+    applyLibraryWorkerSideEffects(request, command, workerResult, {
+      rememberOpenedLibrary,
+      removeRecentLibrary,
+      recentLibraryPath,
+      logError: (scope, error, context) => {
+        logger?.error(scope, error, context);
+      },
+      setPendingEagleOpenSourcePath: (value) => {
+        pendingEagleOpenSourcePath = value;
+      },
+      setPendingBillfishOpenSourcePath: (value) => {
+        pendingBillfishOpenSourcePath = value;
+      },
+      purgePreviewLibrary: (libraryId) => {
+        void previewCache?.purgeLibrary(libraryId);
+      },
+      pendingCleanupPath: pendingLibraryCleanupPath,
+      readPendingCleanupAsidePaths,
+      writePendingCleanupAsidePaths,
+      retryPendingLibraryCleanups: () => {
         void retryPendingLibraryCleanups();
-      }
-    }
+      },
+      clearRelinkLibrary: (libraryId) => pendingRelinkPreviews.clearLibrary(libraryId),
+      clearSourcePathLibrary: (libraryId) => sourcePathCache.clearLibrary(libraryId),
+      clearArtifactPathCache,
+      cancelArtifactPathBatches,
+      clearPendingImportsForLibrary: (libraryId) => {
+        for (const [importId, pendingLibraryId] of pendingImportLibraries) {
+          if (pendingLibraryId !== libraryId) continue;
+          pendingImportLibraries.delete(importId);
+          pendingImportCollections.delete(importId);
+        }
+      },
+      processAiQueue: (libraryId) => {
+        void processAiQueue(libraryId);
+      },
+      notifyLibraryOpened: (input) => {
+        notifyLibraryOpenedSideEffects(input).catch((error) => {
+          logger?.error("plugin.activation.library-opened", error, {
+            libraryId: input.libraryId,
+          });
+        });
+      },
+      onLibraryClosed: (libraryId) => {
+        pluginActivationCoordinator?.onLibraryClosed(libraryId);
+        for (const [executionId, context] of pluginAutomationContexts) {
+          if (context.libraryId === libraryId) {
+            pluginAutomationContexts.delete(executionId);
+          }
+        }
+      },
+    });
 
-    // Serpent-xffq: 同步成功即记录绑定与上次同步时间，供“已同步”状态展示。
-    if (workerResult.ok && request.type === "sync.run.request") {
-      const syncBindings = readSyncBindings();
-      const previous = syncBindings[request.libraryId];
-      syncBindings[request.libraryId] = {
-        serverId: request.serverId,
-        directoryName: request.directoryName ?? effectiveSyncDirectoryName(previous),
-        lastSyncedAt: new Date().toISOString(),
-        enabled: previous?.enabled ?? false,
-      };
-      writeSyncBindings(syncBindings);
-    }
+    applySyncWorkerBindings(request, workerResult, {
+      readSyncBindings,
+      writeSyncBindings,
+      now: () => new Date(),
+    });
 
-    // 打开同步资源库成功：自动绑定服务器并开启自动同步（用户决定），
-    // 免去手动进入资源库设置重选服务器；此后本地变更/云端变更自动同步。
-    if (workerResult.ok && request.type === "sync.open-remote-library.request") {
-      const syncBindings = readSyncBindings();
-      const previous = syncBindings[request.libraryId];
-      syncBindings[request.libraryId] = {
-        serverId: request.serverId,
-        directoryName: request.directoryName ?? effectiveSyncDirectoryName(previous),
-        lastSyncedAt: new Date().toISOString(),
-        enabled: true,
-      };
-      writeSyncBindings(syncBindings);
-    }
-
-    if (!workerResult.ok && request.type === "asset.import-web.request") {
-      logger?.error(
-        "web-ingestion.download",
-        new Error(
-          `Library Worker rejected the browser media import: ${workerResult.error.code}.`,
+    const mediaShellResult = await tryHandleMediaShellWorkerResult(request, workerResult, {
+      logInfo: (scope, message, context) => {
+        logger?.info(scope, message, context);
+      },
+      logError: (scope, error, context) => {
+        logger?.error(scope, error, context);
+      },
+      openPath: (absolutePath) => shell.openPath(absolutePath),
+      showItemInFolder: (absolutePath) => {
+        shell.showItemInFolder(absolutePath);
+      },
+      writeClipboardText: (text) => {
+        clipboard.writeText(text);
+      },
+      writeClipboardFilePaths: (absolutePaths) =>
+        writeFilePathsToClipboard(absolutePaths, createFileClipboardDeps()),
+      openWith: (absolutePath) =>
+        openPathWithOtherApplication(
+          absolutePath,
+          createOpenWithDeps(appLocale, () => mainWindow ?? null),
         ),
-        {
-          libraryId: request.libraryId,
-          targetFolderId: request.targetFolderId,
-          targetCollectionId: request.targetCollectionId,
-          code: workerResult.error.code,
-          reason: workerResult.error.reason,
-        },
-      );
-    }
+    });
+    if (mediaShellResult) return mediaShellResult;
 
-    if (!workerResult.ok && (request.type === "asset.import.resolve" ||
-          request.type === "asset.import.skip-source-failure")) {
-      pendingImportLibraries.delete(request.importId);
-      pendingImportCollections.delete(request.importId);
-    }
-    if (workerResult.ok && request.type === "library.close.request") {
-      pendingRelinkPreviews.clearLibrary(request.libraryId);
-      for (const [importId, libraryId] of pendingImportLibraries) {
-        if (libraryId !== request.libraryId) continue;
-        pendingImportLibraries.delete(importId);
-        pendingImportCollections.delete(importId);
-      }
-      clearArtifactPathCache(request.libraryId);
-      cancelArtifactPathBatches(request.libraryId);
-    }
-    if (workerResult.ok && request.type === "library.delete-from-disk.request") {
-      pendingRelinkPreviews.clearLibrary(request.libraryId);
-      sourcePathCache.clearLibrary(request.libraryId);
-      clearArtifactPathCache(request.libraryId);
-      cancelArtifactPathBatches(request.libraryId);
-      for (const [importId, libraryId] of pendingImportLibraries) {
-        if (libraryId !== request.libraryId) continue;
-        pendingImportLibraries.delete(importId);
-        pendingImportCollections.delete(importId);
-      }
-    }
+    const importPostProcess = await applyImportWorkerResult(request, workerResult, {
+      pendingImportLibraries,
+      pendingImportCollections,
+      logError: (scope, error, context) => {
+        logger?.error(scope, error, context);
+      },
+      requestWorker: (workerCommand) => {
+        if (!workerClient) throw new Error("Library Worker is unavailable.");
+        return workerClient.request(workerCommand);
+      },
+      enqueueAutoAnalyzeAfterImport: (libraryId, assetIds, importedFolderId) => {
+        void enqueueAutoAnalyzeAfterImport(libraryId, assetIds, importedFolderId);
+      },
+    });
+    if (importPostProcess) return importPostProcess;
 
-    if (
-      workerResult.ok &&
-      (request.type === "ai.resume-jobs.request" ||
-        request.type === "ai.retry-jobs.request")
-    ) {
-      void processAiQueue(request.libraryId);
-    }
-    if (
-      workerResult.ok &&
-      (workerResult.type === "library.opened" ||
-        workerResult.type === "library.imported")
-    ) {
-      const openedLibraryId =
-        workerResult.type === "library.opened"
-          ? workerResult.library.libraryId
-          : workerResult.libraryId;
-      const openedLibraryPath =
-        workerResult.type === "library.opened"
-          ? workerResult.library.libraryPath
-          : workerResult.libraryPath;
-      notifyLibraryOpenedSideEffects({
-        libraryId: openedLibraryId,
-        libraryDirectory: openedLibraryPath,
-      }).catch((error) => {
-        logger?.error("plugin.activation.library-opened", error, {
-          libraryId: openedLibraryId,
-        });
-      });
-    }
-    if (workerResult.ok && workerResult.type === "library.closed") {
-      sourcePathCache.clearLibrary(workerResult.libraryId);
-      clearArtifactPathCache(workerResult.libraryId);
-      cancelArtifactPathBatches(workerResult.libraryId);
-      pluginActivationCoordinator?.onLibraryClosed(workerResult.libraryId);
-      for (const [executionId, context] of pluginAutomationContexts) {
-        if (context.libraryId === workerResult.libraryId) {
-          pluginAutomationContexts.delete(executionId);
-        }
-      }
-    }
+    const recoveryReport = tryHandleRecoveryReport(request, workerResult, {
+      showItemInFolder: (absolutePath) => {
+        shell.showItemInFolder(absolutePath);
+      },
+      logError: (scope, error) => {
+        logger?.error(scope, error);
+      },
+    });
+    if (recoveryReport) return recoveryReport;
 
-    // Post-process preview and open-external requests
-    if (
-      workerResult.ok &&
-      request.type === "asset.preview.request" &&
-      workerResult.type === "media.preview-artifact"
-    ) {
-      const url =
-        workerResult.status === "ready"
-          ? workerResult.playbackMode === "source" &&
-            workerResult.sourceRevisionId
-            ? `serpent://source/${request.libraryId}/${request.assetId}?revision=${encodeURIComponent(workerResult.sourceRevisionId)}`
-            : workerResult.artifactId
-              ? `serpent://${workerResult.playbackMode === "proxy" ? "proxy" : "preview"}/${request.libraryId}/${workerResult.artifactId}`
-              : undefined
-          : undefined;
-      const posterUrl = workerResult.posterArtifactId
-        ? `serpent://preview/${request.libraryId}/${workerResult.posterArtifactId}`
-        : undefined;
-      if (
-        workerResult.status === "failed" ||
-        workerResult.status === "missing"
-      ) {
-        logger?.info("media.preview.unavailable", "Preview is not available.", {
-          assetId: request.assetId,
-          status: workerResult.status,
-          errorCode: workerResult.errorCode,
-        });
-      }
-      return {
-        ok: true,
-        type: "asset.preview.resolved",
-        assetId: request.assetId,
-        mediaType: workerResult.mediaType,
-        status: workerResult.status,
-        kind: workerResult.kind,
-        ...(url ? { url } : {}),
-        ...(posterUrl ? { posterUrl } : {}),
-        ...(workerResult.errorCode
-          ? { errorCode: workerResult.errorCode }
-          : {}),
-        ...(workerResult.playbackMode
-          ? { playbackMode: workerResult.playbackMode }
-          : {}),
-        ...(workerResult.sourceMimeType
-          ? { sourceMimeType: workerResult.sourceMimeType }
-          : {}),
-        ...(workerResult.sourceContainer
-          ? { sourceContainer: workerResult.sourceContainer }
-          : {}),
-        ...(workerResult.sourceCodecs
-          ? { sourceCodecs: workerResult.sourceCodecs }
-          : {}),
-        ...(workerResult.sourceRevisionId
-          ? {
-              playbackToken: `${request.assetId}:${workerResult.sourceRevisionId}`,
-            }
-          : {}),
-        ...(workerResult.exrPlanes ? { exrPlanes: workerResult.exrPlanes } : {}),
-        ...(workerResult.selectedExrPlane === undefined
-          ? {}
-          : { selectedExrPlane: workerResult.selectedExrPlane }),
-        ...(workerResult.colorSpacePending === undefined
-          ? {}
-          : { colorSpacePending: workerResult.colorSpacePending }),
-        ...(workerResult.colorSpace ? { colorSpace: workerResult.colorSpace } : {}),
-      } satisfies RendererResult;
-    }
-    if (
-      workerResult.ok &&
-      request.type === "asset.open-external.request" &&
-      workerResult.type === "media.asset-path"
-    ) {
-      try {
-        const openError = await shell.openPath(workerResult.absolutePath);
-        if (openError) {
-          logger?.error("main.open-external", new Error(openError));
-          return {
-            ok: false,
-            error: createPublicError("INTERNAL_ERROR"),
-          } satisfies RendererResult;
-        }
-        return {
-          ok: true,
-          type: "asset.open-external.requested",
-          assetId: request.assetId,
-        } satisfies RendererResult;
-      } catch (error) {
-        logger?.error("main.open-external", error);
-        return {
-          ok: false,
-          error: createPublicError("INTERNAL_ERROR"),
-        } satisfies RendererResult;
-      }
-    }
-    if (
-      workerResult.ok &&
-      request.type === "asset.open-with.request" &&
-      workerResult.type === "media.asset-path"
-    ) {
-      const outcome = await openPathWithOtherApplication(
-        workerResult.absolutePath,
-        createOpenWithDeps(appLocale, () => mainWindow ?? null),
-      );
-      if (outcome === "failed") {
-        logger?.error("main.open-with", new Error("open-with failed"));
-        return {
-          ok: false,
-          error: createPublicError("INTERNAL_ERROR"),
-        } satisfies RendererResult;
-      }
-      // cancelled → quiet ok (no toast); opened → quiet ok.
-      return {
-        ok: true,
-        type: "asset.open-with.requested",
-        assetId: request.assetId,
-      } satisfies RendererResult;
-    }
-    if (
-      workerResult.ok &&
-      request.type === "asset.reveal-in-folder.request" &&
-      workerResult.type === "media.asset-path"
-    ) {
-      try {
-        shell.showItemInFolder(workerResult.absolutePath);
-        return {
-          ok: true,
-          type: "asset.reveal-in-folder.requested",
-          assetId: request.assetId,
-        } satisfies RendererResult;
-      } catch (error) {
-        logger?.error("main.reveal-in-folder", error);
-        return {
-          ok: false,
-          error: createPublicError("INTERNAL_ERROR"),
-        } satisfies RendererResult;
-      }
-    }
-    if (
-      workerResult.ok &&
-      request.type === "asset.copy-file-path.request" &&
-      workerResult.type === "media.asset-path"
-    ) {
-      try {
-        clipboard.writeText(workerResult.absolutePath);
-        return {
-          ok: true,
-          type: "asset.copy-file-path.requested",
-          assetId: request.assetId,
-        } satisfies RendererResult;
-      } catch (error) {
-        logger?.error("main.copy-file-path", error);
-        return {
-          ok: false,
-          error: createPublicError("INTERNAL_ERROR"),
-        } satisfies RendererResult;
-      }
-    }
-    if (
-      workerResult.ok &&
-      request.type === "asset.copy-files.request" &&
-      workerResult.type === "media.asset-paths"
-    ) {
-      try {
-        const wrote = writeFilePathsToClipboard(
-          workerResult.absolutePaths,
-          createFileClipboardDeps(),
-        );
-        if (!wrote) {
-          logger?.error(
-            "main.copy-asset-files",
-            new Error("clipboard file copy produced no file list"),
-          );
-          return {
-            ok: false,
-            error: createPublicError("INTERNAL_ERROR"),
-          } satisfies RendererResult;
-        }
-        return {
-          ok: true,
-          type: "asset.copy-files.requested",
-          assetIds: workerResult.assetIds,
-        } satisfies RendererResult;
-      } catch (error) {
-        logger?.error("main.copy-asset-files", error);
-        return {
-          ok: false,
-          error: createPublicError("INTERNAL_ERROR"),
-        } satisfies RendererResult;
-      }
-    }
-    if (
-      workerResult.ok &&
-      request.type === "asset.resolve-dropped-paths.request" &&
-      workerResult.type === "media.asset-ids-resolved"
-    ) {
-      return {
-        ok: true,
-        type: "asset.dropped-paths.resolved",
-        assetIds: workerResult.assetIds,
-      } satisfies RendererResult;
-    }
-    if (
-      workerResult.ok &&
-      request.type === "folder.open-in-file-manager.request" &&
-      workerResult.type === "folder.path"
-    ) {
-      try {
-        const openError = await shell.openPath(workerResult.absolutePath);
-        if (openError) {
-          logger?.error(
-            "main.open-folder-in-file-manager",
-            new Error(openError),
-          );
-          return {
-            ok: false,
-            error: createPublicError("INTERNAL_ERROR"),
-          } satisfies RendererResult;
-        }
-        return {
-          ok: true,
-          type: "folder.open-in-file-manager.requested",
-          folderId: request.folderId,
-        } satisfies RendererResult;
-      } catch (error) {
-        logger?.error("main.open-folder-in-file-manager", error);
-        return {
-          ok: false,
-          error: createPublicError("INTERNAL_ERROR"),
-        } satisfies RendererResult;
-      }
-    }
-    if (
-      workerResult.ok &&
-      request.type === "folder.open-with.request" &&
-      workerResult.type === "folder.path"
-    ) {
-      const outcome = await openPathWithOtherApplication(
-        workerResult.absolutePath,
-        createOpenWithDeps(appLocale, () => mainWindow ?? null),
-      );
-      if (outcome === "failed") {
-        logger?.error("main.folder-open-with", new Error("open-with failed"));
-        return {
-          ok: false,
-          error: createPublicError("INTERNAL_ERROR"),
-        } satisfies RendererResult;
-      }
-      return {
-        ok: true,
-        type: "folder.open-with.requested",
-        folderId: request.folderId,
-      } satisfies RendererResult;
-    }
-    if (
-      workerResult.ok &&
-      request.type === "folder.copy-path.request" &&
-      workerResult.type === "folder.path"
-    ) {
-      try {
-        clipboard.writeText(workerResult.absolutePath);
-        return {
-          ok: true,
-          type: "folder.copy-path.requested",
-          folderId: request.folderId,
-        } satisfies RendererResult;
-      } catch (error) {
-        logger?.error("main.copy-folder-path", error);
-        return {
-          ok: false,
-          error: createPublicError("INTERNAL_ERROR"),
-        } satisfies RendererResult;
-      }
-    }
-    if (
-      workerResult.ok &&
-      request.type === "folder.copy.request" &&
-      workerResult.type === "folder.path"
-    ) {
-      try {
-        const wrote = writeFilePathsToClipboard(
-          [workerResult.absolutePath],
-          createFileClipboardDeps(),
-        );
-        if (!wrote) {
-          logger?.error(
-            "main.copy-folder-files",
-            new Error("clipboard file copy produced no file list"),
-          );
-          return {
-            ok: false,
-            error: createPublicError("INTERNAL_ERROR"),
-          } satisfies RendererResult;
-        }
-        return {
-          ok: true,
-          type: "folder.copy.requested",
-          folderId: request.folderId,
-        } satisfies RendererResult;
-      } catch (error) {
-        logger?.error("main.copy-folder-files", error);
-        return {
-          ok: false,
-          error: createPublicError("INTERNAL_ERROR"),
-        } satisfies RendererResult;
-      }
-    }
-    if (
-      workerResult.ok &&
-      request.type === "asset.retry-artifact.request" &&
-      workerResult.type === "media.retry-artifact.queued"
-    ) {
-      return {
-        ok: true,
-        type: "asset.retry-artifact.started",
-        assetId: workerResult.assetId,
-        kind: request.kind,
-      } satisfies RendererResult;
-    }
-    if (
-      workerResult.ok &&
-      request.type === "asset.thumbnail.request" &&
-      workerResult.type === "media.thumbnail.generated"
-    ) {
-      return {
-        ok: true,
-        type: "asset.thumbnail.generated",
-        assetId: workerResult.assetId,
-        artifactId: workerResult.artifactId,
-      } satisfies RendererResult;
-    }
-
-    // Auto-analyze on import: after a successful ordinary import
-    // (resolveImport or importFolderAsLinked), enqueue AI analysis for
-    // imported images. Eagle/external-library imports intentionally do not
-    // enter this branch: importing an external catalogue must never enqueue
-    // thousands of AI jobs, even when the global auto-analyze preference is on.
-    //
-    // Track importId -> libraryId mapping for resolve flows where libraryId
-    // is not carried in the resolve request itself.
-    if (
-      workerResult.ok &&
-      (workerResult.type === "asset.import.conflicts" ||
-        workerResult.type === "asset.import.source-failure")
-    ) {
-      pendingImportLibraries.set(
-        workerResult.plan.importId,
-        (request as { libraryId?: string }).libraryId ?? "",
-      );
-      if (
-        (request.type === "asset.import-drop.request" ||
-          request.type === "asset.import-clipboard.request") &&
-        request.targetCollectionId
-      ) {
-        pendingImportCollections.set(
-          workerResult.plan.importId,
-          request.targetCollectionId,
-        );
-      }
-    }
-
-    if (request.type === "asset.import.abandon") {
-      pendingImportCollections.delete(request.importId);
-    }
-
-    if (workerResult.ok && workerResult.type === "asset.import.completed") {
-      const collectionId =
-        (request.type === "asset.import.resolve" ||
-          request.type === "asset.import.skip-source-failure")
-          ? pendingImportCollections.get(request.importId)
-          : request.type === "asset.import-drop.request" ||
-              request.type === "asset.import-clipboard.request"
-            ? request.targetCollectionId
-            : undefined;
-      if ((request.type === "asset.import.resolve" ||
-          request.type === "asset.import.skip-source-failure"))
-        pendingImportCollections.delete(request.importId);
-      if (collectionId && workerResult.completion.assets.length > 0) {
-        const importLibraryId =
-          (request.type === "asset.import.resolve" ||
-          request.type === "asset.import.skip-source-failure")
-            ? pendingImportLibraries.get(request.importId)
-            : request.type === "asset.import-drop.request" ||
-                request.type === "asset.import-clipboard.request"
-              ? request.libraryId
-              : undefined;
-        if (!importLibraryId) {
-          logger?.error(
-            "desktop-ingestion.collection-assign",
-            new Error("The import library context was not found."),
-            {
-              collectionId,
-              importedCount: workerResult.completion.assets.length,
-            },
-          );
-          return {
-            ok: false,
-            error: createPublicError("IMPORT_COLLECTION_ASSIGN_FAILED"),
-          } satisfies RendererResult;
-        }
-        const relationResult = await workerClient.request({
-          type: "collection.assets.add",
-          libraryId: importLibraryId,
-          collectionId,
-          assetIds: workerResult.completion.assets.map(
-            (asset) => asset.assetId,
-          ),
-        });
-        if (
-          !relationResult.ok ||
-          relationResult.type !== "collection.assets.added"
-        ) {
-          logger?.error(
-            "desktop-ingestion.collection-assign",
-            new Error(
-              "Imported assets could not be assigned to the collection.",
-            ),
-            {
-              collectionId,
-              importedCount: workerResult.completion.assets.length,
-              code: relationResult.ok
-                ? "UNEXPECTED_RESULT"
-                : relationResult.error.code,
-              reason: relationResult.ok
-                ? undefined
-                : relationResult.error.reason,
-            },
-          );
-          if ((request.type === "asset.import.resolve" ||
-          request.type === "asset.import.skip-source-failure"))
-            pendingImportLibraries.delete(request.importId);
-          return {
-            ok: false,
-            error: createPublicError("IMPORT_COLLECTION_ASSIGN_FAILED"),
-          } satisfies RendererResult;
-        }
-      }
-    }
-
-    if (
-      workerResult.ok &&
-      workerResult.type === "extension.asset-saved" &&
-      request.type === "asset.import-web.request" &&
-      request.targetCollectionId
-    ) {
-      const relationCommand = createWebImportCollectionCommand(
-        request,
-        workerResult.asset.assetId,
-      )!;
-      const relationResult = await workerClient.request(relationCommand);
-      if (
-        !relationResult.ok ||
-        relationResult.type !== "collection.assets.added"
-      ) {
-        logger?.error(
-          "web-ingestion.collection-assign",
-          new Error(
-            "Downloaded browser media could not be assigned to the collection.",
-          ),
-          {
-            libraryId: request.libraryId,
-            collectionId: request.targetCollectionId,
-            assetId: workerResult.asset.assetId,
-            code: relationResult.ok
-              ? "UNEXPECTED_RESULT"
-              : relationResult.error.code,
-            reason: relationResult.ok ? undefined : relationResult.error.reason,
-          },
-        );
-        return {
-          ok: false,
-          error: createPublicError("IMPORT_COLLECTION_ASSIGN_FAILED"),
-        } satisfies RendererResult;
-      }
-    }
-
-    if (
-      workerResult.ok &&
-      (workerResult.type === "asset.import.completed" ||
-        workerResult.type === "asset.import-linked.completed")
-    ) {
-      let assetIds: string[] = [];
-      let libId: string | undefined;
-      let importedFolderId: string | undefined;
-
-      if (workerResult.type === "asset.import.completed") {
-        assetIds = workerResult.completion.assets.map((a) => a.assetId);
-        // libId from original request or from pending import tracker
-        if (
-          request.type === "asset.import-files.request" ||
-          request.type === "asset.import-folder.request" ||
-          request.type === "asset.import-drop.request" ||
-          request.type === "asset.import-clipboard.request"
-        ) {
-          libId = request.libraryId;
-        } else if ((request.type === "asset.import.resolve" ||
-          request.type === "asset.import.skip-source-failure")) {
-          libId = pendingImportLibraries.get(request.importId);
-          pendingImportLibraries.delete(request.importId);
-        }
-      } else {
-        // import-linked has libraryId in the request
-        if (request.type === "asset.import-linked.request") {
-          libId = request.libraryId;
-          importedFolderId = workerResult.linkedFolder.folderId;
-        }
-      }
-
-      if (libId && (assetIds.length > 0 || importedFolderId)) {
-        void enqueueAutoAnalyzeAfterImport(libId, assetIds, importedFolderId);
-      }
-    }
-
-    if (
-      workerResult.ok &&
-      workerResult.type === "extension.asset-saved" &&
-      request.type === "asset.import-web.request"
-    ) {
-      void enqueueAutoAnalyzeAfterImport(request.libraryId, [
-        workerResult.asset.assetId,
-      ]);
-    }
-
-    if (
-      workerResult.ok &&
-      request.type === "library.recovery-report.request" &&
-      workerResult.type === "library.recovery-report"
-    ) {
-      try {
-        // Keep the report path Main-owned. Showing the containing directory
-        // also lets users inspect the quarantined damaged database beside it.
-        shell.showItemInFolder(workerResult.reportPath);
-        return {
-          ok: true,
-          type: "library.recovery-report.requested",
-          libraryId: request.libraryId,
-        } satisfies RendererResult;
-      } catch (error) {
-        logger?.error("main.recovery-report", error);
-        return {
-          ok: false,
-          error: createPublicError("INTERNAL_ERROR"),
-        } satisfies RendererResult;
-      }
-    }
-
-    // A Billfish archive has no stable library root name after extraction:
-    // the worker sees a temporary `serpent-external-library-*` directory.
-    // Keep the archive stem as the user-facing default all the way through
-    // the Main→Renderer boundary, even if an older worker response falls
-    // back to that temporary directory name.
-    const rendererWorkerResult =
-      workerResult.ok &&
-      workerResult.type === "library.billfish-inspected" &&
-      command.type === "library.inspect-billfish" &&
-      command.sourceDisplayName
-        ? { ...workerResult, displayName: command.sourceDisplayName }
-        : workerResult;
+    const rendererWorkerResult = mapBillfishInspectedDisplayName(command, workerResult);
     const result = toRendererResult(
       rendererWorkerResult,
       relinkPreviewContext?.previewId,
@@ -5865,61 +3065,18 @@ async function handleLibraryRequest(
         resultType: result.ok ? result.type : undefined,
       });
     }
-    if (!result.ok) {
-      if (operation) {
-        publishLifecycle({
-          type: "library.open-failed",
-          operation,
-          error: result.error,
-        });
-        // Serpent-s0oq: an invalid recent library (folder gone, corrupt, or
-        // unmigratable) must disappear from every recent list — the switcher
-        // menu and the no-library create dialog share the same store. Only
-        // deterministic invalid-open codes remove the entry; transient
-        // failures (picker cancel, busy) and same-catalog identity prompts
-        // (LIBRARY_ALREADY_OPEN) keep it.
-        if (
-          operation === "open" &&
-          command.type === "library.open" &&
-          (result.error?.code === "LIBRARY_NOT_FOUND" ||
-            result.error?.code === "LIBRARY_CORRUPT" ||
-            result.error?.code === "LIBRARY_MIGRATION_FAILED" ||
-            result.error?.code === "LIBRARY_VERSION_TOO_NEW")
-        ) {
-          removeRecentLibrary(
-            recentLibraryPath(),
-            (command as { selectedLibraryPath: string }).selectedLibraryPath,
-            (error) => {
-              logger?.error("recent-library.remove-invalid", error);
-            },
-          );
-        }
-      }
-      return result;
-    }
-    if (result.type === "library.opened") {
-      unblockLibraryMediaReads(result.library.libraryId);
-      publishLifecycle({ type: "library.opened", library: result.library });
-    } else if (workerResult.ok && workerResult.type === "library.imported") {
-      unblockLibraryMediaReads(workerResult.libraryId);
-      publishLifecycle({
-        type: "library.opened",
-        library: {
-          libraryId: workerResult.libraryId,
-          displayName: workerResult.displayName,
-          displayPath: workerResult.libraryPath,
-        },
-      });
-    } else if (result.type === "library.closed") {
-      clearNativeAssetDragCache(result.libraryId);
-      clearActiveRecentLibrary(recentLibraryPath(), (error) => {
-        logger?.error("recent-library.clear", error);
-      });
-      publishLifecycle({ type: "library.closed", libraryId: result.libraryId });
-    } else if (result.type === "library.deleted") {
-      clearNativeAssetDragCache(result.libraryId);
-      publishLifecycle({ type: "library.closed", libraryId: result.libraryId });
-    }
+    applyLibraryRendererLifecycle(command, result, workerResult, operation, {
+      removeRecentLibrary,
+      recentLibraryPath,
+      logError: (scope, error) => {
+        logger?.error(scope, error);
+      },
+      unblockLibraryMediaReads,
+      publishLifecycle,
+      clearNativeAssetDragCache,
+      clearActiveRecentLibrary,
+    });
+    if (!result.ok) return result;
     logNavigationStage("main-return", {
       mainToIpcReturnMs: navigationTrace?.workerReturnedAt === undefined
         ? undefined
@@ -5960,16 +3117,7 @@ async function handleLibraryRequest(
       endLibraryDeleteMediaFence(deleteFromDiskLibraryId);
     }
     if (!retainExternalSource) {
-      const sourceRootPath =
-        command?.type === "library.inspect-eagle" ||
-        command?.type === "library.open-eagle" ||
-        command?.type === "asset.import-eagle" ||
-        command?.type === "library.inspect-billfish" ||
-        command?.type === "library.open-billfish" ||
-        command?.type === "asset.import-billfish"
-          ? command.sourceRootPath
-          : undefined;
-      await cleanupExternalSource(sourceRootPath);
+      await cleanupExternalSource(externalSourceRootFromCommand(command));
     }
     if (clipboardStageDirectory) {
       try {
@@ -6596,6 +3744,9 @@ async function startApplication(): Promise<void> {
     return renderer.renderModelThumbnail(request).finally(() => {
       clearModelThumbnailSourceAuthorizations(sourceAuthorizations);
     });
+  });
+  workerClient.onModelThumbnailRenderCancel((requestId) => {
+    offscreenThumbnailRenderer?.cancelModelThumbnail(requestId);
   });
   // Serpent-8ca259: HTML document thumbnails capture the source in a fresh
   // offscreen window in Main; the Worker persists the artifact bytes.

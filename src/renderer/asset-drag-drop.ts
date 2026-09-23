@@ -67,6 +67,21 @@ export function parseManagedAssetDrag(transfer: DataTransfer): string[] | null {
   }
 }
 
+/**
+ * Ids for an in-app asset drop. An empty HTML5 payload or an empty in-memory
+ * snapshot is not a drop: native OS drags carry File handles instead, and
+ * treating `[]` as success skips that resolution.
+ */
+export function resolveInternalAssetDropIds(
+  transfer: DataTransfer,
+  fallbackIds: readonly string[] | null,
+): string[] | null {
+  const parsed = parseManagedAssetDrag(transfer);
+  if (parsed && parsed.length > 0) return parsed;
+  if (fallbackIds && fallbackIds.length > 0) return [...fallbackIds];
+  return null;
+}
+
 /** Map the Option/Alt modifier to move vs copy. */
 export function resolveDragDropMode(modifiers: {
   readonly altKey: boolean;

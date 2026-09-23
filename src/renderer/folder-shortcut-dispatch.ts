@@ -8,6 +8,7 @@
 
 export type FolderShortcutCommandId =
   | "folder.create-subfolder"
+  | "folder.open-in-file-manager"
   | "folder.rename"
   | "folder.move-to-trash"
   | "folder.delete-from-disk";
@@ -19,6 +20,7 @@ export type FocusedNavFolder = {
 
 export type FolderShortcutAction =
   | { readonly type: "create-subfolder"; readonly parentFolderId: string | null }
+  | { readonly type: "open-in-file-manager"; readonly folderId: string }
   | {
       readonly type: "rename";
       readonly folderId: string;
@@ -49,6 +51,8 @@ export type FolderShortcutResolveInput = {
   readonly resolveManagedFolderName: (folderId: string) => string | undefined;
   /** Optional availability guard for managed and linked folders. */
   readonly canRenameFolder?: (folderId: string) => boolean;
+  /** Optional guard for opening a folder in the OS file manager. */
+  readonly canOpenFolder?: (folderId: string) => boolean;
 };
 
 /**
@@ -105,7 +109,12 @@ export function resolveFolderShortcutAction(
     selectedAssetCount,
     resolveManagedFolderName,
     canRenameFolder,
+    canOpenFolder,
   } = input;
+
+  if (commandId === "folder.open-in-file-manager") {
+    return resolveOpenFolderShortcut(input, canOpenFolder);
+  }
 
   if (commandId === "folder.create-subfolder") {
     if (focusedNav?.locationKind === "managed" || focusedNav?.locationKind === "linked") {
@@ -233,4 +242,26 @@ export function resolveFolderShortcutAction(
   }
 
   return { type: "none" };
+}
+
+/**
+ * Ctrl/Cmd+Shift+S opens one folder in the OS file manager.
+ * A selected asset keeps the asset reveal chord. One focused row or one
+ * selected folder card wins over the folder currently open in browse.
+ */
+function resolveOpenFolderShortcut(
+  input: FolderShortcutResolveInput,
+  canOpenFolder: ((folderId: string) => boolean) | undefined,
+): FolderShortcutAction {
+  if (input.selectedAssetCount > 0) return { type: "none" };
+  const folderId = input.focusedNav
+    ? input.focusedNav.folderId
+    : input.selectedFolderCardIds.length === 1
+      ? input.selectedFolderCardIds[0]
+      : input.selectedFolderCardIds.length === 0
+        ? input.browseManagedFolderId
+        : null;
+  if (!folderId) return { type: "none" };
+  if (canOpenFolder && !canOpenFolder(folderId)) return { type: "none" };
+  return { type: "open-in-file-manager", folderId };
 }

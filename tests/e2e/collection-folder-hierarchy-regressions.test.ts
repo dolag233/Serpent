@@ -112,7 +112,7 @@ async function renameCollection(window: Page, oldName: string, newName: string) 
     element.selectionStart,
     element.selectionEnd,
   ]);
-  expect(selection).toEqual([oldName.length, oldName.length]);
+  expect(selection).toEqual([0, oldName.length]);
   await input.fill(newName);
   await input.press("Enter");
   await expect(window.locator(".nav-inline-edit")).toHaveCount(0);
@@ -136,7 +136,7 @@ async function renameFolder(window: Page, oldName: string, newName: string) {
     element.selectionStart,
     element.selectionEnd,
   ]);
-  expect(selection).toEqual([oldName.length, oldName.length]);
+  expect(selection).toEqual([0, oldName.length]);
   await input.fill(newName);
   await input.press("Enter");
   await expect(window.locator(".nav-inline-edit")).toHaveCount(0);
@@ -145,7 +145,7 @@ async function renameFolder(window: Page, oldName: string, newName: string) {
   );
 }
 
-test("places the smart-collection rename caret at the end of its name", async () => {
+test("selects the smart-collection name when rename opens", async () => {
   const temporaryRoot = mkdtempSync(
     path.join(tmpdir(), "serpent-smart-rename-caret-"),
   );
@@ -207,10 +207,7 @@ test("places the smart-collection rename caret at the end of its name", async ()
       element.selectionStart,
       element.selectionEnd,
     ]);
-    expect(selection).toEqual([
-      smartCollectionName.length,
-      smartCollectionName.length,
-    ]);
+    expect(selection).toEqual([0, smartCollectionName.length]);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { recursive: true, force: true });

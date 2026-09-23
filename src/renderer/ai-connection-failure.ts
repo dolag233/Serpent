@@ -30,16 +30,67 @@ export interface AiJobFailureRef {
 }
 
 /** Terminal connection failures (status=failed + connection-class code). */
+export function listConnectionFailedJobs(
+  jobs: ReadonlyArray<AiJobFailureRef>,
+): AiJobFailureRef[] {
+  return jobs.filter(
+    (job) => job.status === "failed" && isAiConnectionFailureCode(job.errorCode),
+  );
+}
+
 export function listConnectionFailedJobIds(
   jobs: ReadonlyArray<AiJobFailureRef>,
 ): string[] {
-  const ids: string[] = [];
+  return listConnectionFailedJobs(jobs).map((job) => job.jobId);
+}
+
+/** Most common error code in a connection-failure wave; ties keep first seen. */
+export function dominantConnectionFailureCode(
+  jobs: ReadonlyArray<Pick<AiJobFailureRef, "errorCode">>,
+): string | null {
+  const counts = new Map<string, number>();
+  const order: string[] = [];
   for (const job of jobs) {
-    if (job.status !== "failed") continue;
-    if (!isAiConnectionFailureCode(job.errorCode)) continue;
-    ids.push(job.jobId);
+    const code = job.errorCode;
+    if (!code) continue;
+    if (!counts.has(code)) order.push(code);
+    counts.set(code, (counts.get(code) ?? 0) + 1);
   }
-  return ids;
+  let best: string | null = null;
+  let bestCount = 0;
+  for (const code of order) {
+    const count = counts.get(code) ?? 0;
+    if (count > bestCount) {
+      best = code;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+export type AiConnectionFailureBodyKey =
+  | "body"
+  | "bodyNetwork"
+  | "bodyTimeout"
+  | "bodyRateLimit"
+  | "bodyAuth";
+
+/** Dialog body key for the observed failure class (Serpent-c7d64e). */
+export function aiConnectionFailureBodyKey(
+  code: string | null | undefined,
+): AiConnectionFailureBodyKey {
+  switch (code) {
+    case "AI_RATE_LIMIT":
+      return "bodyRateLimit";
+    case "AI_AUTH":
+      return "bodyAuth";
+    case "AI_TIMEOUT":
+      return "bodyTimeout";
+    case "AI_NETWORK":
+      return "bodyNetwork";
+    default:
+      return "body";
+  }
 }
 
 export function listFailedJobIds(
@@ -62,6 +113,8 @@ export interface ConnectionFailureGateState {
   promptedJobIds: ReadonlySet<string>;
   /** Job IDs currently offered for Retry. */
   failedJobIds: string[];
+  /** Dominant connection-class code among offered jobs; drives dialog copy. */
+  failureCode: string | null;
 }
 
 export const INITIAL_CONNECTION_FAILURE_GATE: ConnectionFailureGateState = {
@@ -71,6 +124,7 @@ export const INITIAL_CONNECTION_FAILURE_GATE: ConnectionFailureGateState = {
   baselineFailedJobIds: new Set(),
   promptedJobIds: new Set(),
   failedJobIds: [],
+  failureCode: null,
 };
 
 export type ConnectionFailureGateEvent =
@@ -82,6 +136,8 @@ export type ConnectionFailureGateEvent =
       type: "jobs_snapshot";
       /** All current terminal connection-failed job IDs. */
       connectionFailedJobIds: readonly string[];
+      /** Dominant code among those jobs; omitted snapshots keep the previous value. */
+      failureCode?: string | null;
     }
   | {
       type: "resolved";
@@ -110,6 +166,7 @@ export function reduceConnectionFailureGate(
         baselineFailedJobIds: newSet(event.baselineFailedJobIds),
         promptedJobIds: new Set(),
         failedJobIds: [],
+        failureCode: null,
       };
     case "jobs_snapshot": {
       if (!state.armed && !state.open) return state;
@@ -121,14 +178,17 @@ export function reduceConnectionFailureGate(
       const offered = event.connectionFailedJobIds.filter(
         (id) => !state.baselineFailedJobIds.has(id),
       );
+      const failureCode =
+        event.failureCode === undefined ? state.failureCode : event.failureCode;
       if (state.open) {
         if (
           offered.length === state.failedJobIds.length &&
-          offered.every((id, index) => id === state.failedJobIds[index])
+          offered.every((id, index) => id === state.failedJobIds[index]) &&
+          failureCode === state.failureCode
         ) {
           return state;
         }
-        return { ...state, failedJobIds: offered };
+        return { ...state, failedJobIds: offered, failureCode };
       }
       if (state.suppressedUntilNextBatch || fresh.length === 0) {
         return state;
@@ -137,6 +197,7 @@ export function reduceConnectionFailureGate(
         ...state,
         open: true,
         failedJobIds: offered,
+        failureCode,
         promptedJobIds: newSet([...state.promptedJobIds, ...fresh]),
       };
     }
@@ -148,6 +209,7 @@ export function reduceConnectionFailureGate(
           armed: false,
           suppressedUntilNextBatch: true,
           failedJobIds: [],
+          failureCode: null,
         };
       }
       return {
@@ -155,6 +217,7 @@ export function reduceConnectionFailureGate(
         open: false,
         promptedJobIds: new Set(),
         failedJobIds: [],
+        failureCode: null,
       };
   }
 }

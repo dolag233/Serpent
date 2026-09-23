@@ -8,6 +8,7 @@ import {
   resolveDragDropMode,
   resolveDraggedAssetIds,
   resolveFolderDrop,
+  resolveInternalAssetDropIds,
   resolveManagedDropEffect,
   resolveNewCollectionMembers,
   resolveTrashDrop,
@@ -177,6 +178,32 @@ describe('resolveTrashDrop (REQ-DND-002)', () => {
 
 // Serpent-374266: dropping into a collection the assets already belong to
 // changes nothing, so the caller must not report an add that did not happen.
+describe('resolveInternalAssetDropIds', () => {
+  it('uses a non-empty HTML5 payload', () => {
+    expect(
+      resolveInternalAssetDropIds(
+        transfer([MANAGED_ASSETS_DRAG_TYPE], JSON.stringify(['asset-1'])),
+        ['fallback'],
+      ),
+    ).toEqual(['asset-1']);
+  });
+
+  it('ignores an empty snapshot so a native file drop can still resolve', () => {
+    expect(
+      resolveInternalAssetDropIds(transfer(['Files']), []),
+    ).toBeNull();
+    expect(
+      resolveInternalAssetDropIds(transfer(['Files']), null),
+    ).toBeNull();
+  });
+
+  it('uses the in-memory snapshot when the HTML5 payload is empty', () => {
+    expect(
+      resolveInternalAssetDropIds(transfer(['Files']), ['asset-root']),
+    ).toEqual(['asset-root']);
+  });
+});
+
 describe('resolveNewCollectionMembers', () => {
   it('keeps only the assets that are not members of that collection yet', () => {
     expect(

@@ -94,6 +94,12 @@ export const PLATFORM_SHORTCUT_TABLE: readonly PlatformShortcutRow[] = [
     windows: { label: "F5", key: "F5" },
   },
   {
+    id: "folder.open-in-file-manager",
+    purpose: "Open the focused, selected, or current folder in Finder / File Explorer",
+    mac: { label: "⌘⇧S", key: "s", metaKey: true, shiftKey: true },
+    windows: { label: "Ctrl+Shift+S", key: "s", ctrlKey: true, shiftKey: true },
+  },
+  {
     id: "folder.create-subfolder",
     purpose: "Create a managed subfolder under the focused/browse folder",
     mac: { label: "⌘⇧N", key: "n", metaKey: true, shiftKey: true },

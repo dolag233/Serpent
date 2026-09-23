@@ -361,6 +361,7 @@ export function performanceInteractionKeyForCommand(command: WorkerCommandLike):
   // Rapid folder/collection clicks must drop the previous queued open, not
   // run them back-to-back on a high-latency network volume.
   if (command.type === 'browse.session.open') return 'browse-session';
+  if (command.type === 'ignore.gitignore.preview') return 'ignore-preview';
   if (command.assetId === undefined) return undefined;
   switch (command.type) {
     case 'asset.preview': return `viewer:${command.assetId}`;

@@ -2106,7 +2106,12 @@ describe('worker request protocol', () => {
       running: 1,
       succeeded: 4,
       failed: 1,
-    })).toMatchObject({ running: 1, succeeded: 4 });
+      changedJobs: [{ jobId: 'job-1', status: 'succeeded' }],
+    })).toMatchObject({
+      running: 1,
+      succeeded: 4,
+      changedJobs: [{ jobId: 'job-1', status: 'succeeded' }],
+    });
     expect(parseAiAnalysisCompletedEvent({
       type: 'ai.analysis.completed',
       libraryId: 'library-1',
@@ -2427,6 +2432,12 @@ describe('public errors', () => {
       code: 'SQLITE_ERROR',
     });
     expect(classifyUnknownFailure(sqliteError)).toEqual({ code: 'LIBRARY_ENGINE_UNAVAILABLE' });
+  });
+
+  it('classifies a closed better-sqlite3 handle as LIBRARY_NOT_OPEN', () => {
+    expect(classifyUnknownFailure(new TypeError('The database connection is not open'))).toEqual({
+      code: 'LIBRARY_NOT_OPEN',
+    });
   });
 
   it('classifies unqualified SQLite IOERR as a disk I/O library error without copying the message', () => {

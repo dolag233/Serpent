@@ -106,6 +106,39 @@ export interface FramePipelineDeps extends FrameEnvironmentDeps, FrameModelDeps 
   enableHdri?: boolean;
 }
 
+/** A custom-protocol environment request must never strand a model render. */
+const HDRI_LOAD_TIMEOUT_MS = 1_500;
+
+async function loadWithTimeout<T>(
+  load: Promise<T>,
+  timeoutMs: number,
+  onLateValue?: (value: T) => void,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  // The underlying custom-protocol request may not be abortable. If it
+  // finishes after the fail-open budget, dispose any resource it created
+  // instead of leaving a detached PMREM/texture alive in the page.
+  const trackedLoad = load.then((value) => {
+    if (timedOut) onLateValue?.(value);
+    return value;
+  });
+  try {
+    return await Promise.race([
+      trackedLoad,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          reject(new Error('HDRI load timed out.'));
+        }, timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export type FrameOutcome =
   | {
       status: 'ok';
@@ -165,19 +198,23 @@ export async function renderModelThumbnailFrame(
   try {
     // Environment failure degrades to the contact-shadow key light only — the
     // model stays visible (3D-11: not black), same policy as the viewer.
-    const preset = deps.enableHdri === false
+    const preset = job.data.enableHdri === false || deps.enableHdri === false
       ? null
       : getBundledHdriPreset(job.data.hdriPresetId);
     if (preset) {
       try {
         log('offscreen-thumbnail.stage.hdri-loading', { presetId: preset.id });
-        environment = await loadHdrEnvironmentForFrame(
-          `serpent://app-assets/hdri/${preset.fileName}`,
-          {
-            renderer: deps.renderer,
-            pmrem: deps.pmrem,
-            loadHdrData: deps.loadHdrData,
-          },
+        environment = await loadWithTimeout(
+          loadHdrEnvironmentForFrame(
+            `serpent://app-assets/hdri/${preset.fileName}`,
+            {
+              renderer: deps.renderer,
+              pmrem: deps.pmrem,
+              loadHdrData: deps.loadHdrData,
+            },
+          ),
+          HDRI_LOAD_TIMEOUT_MS,
+          (lateEnvironment) => lateEnvironment.dispose(),
         );
         composer.setEnvironment(environment.environmentTexture);
         log('offscreen-thumbnail.stage.hdri-ready', { presetId: preset.id });

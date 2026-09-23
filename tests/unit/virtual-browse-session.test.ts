@@ -13,6 +13,7 @@ import {
   evictVirtualSummaryPage,
   mergeVirtualSummaryPage,
   patchVirtualLayoutGeometry,
+  permuteVirtualBrowseLayout,
   virtualIndexMatchesFirstPage,
   virtualLayoutEntryAt,
   virtualLayoutPublishedId,
@@ -302,5 +303,28 @@ describe("virtual browse geometry", () => {
       patched,
       new Map([["asset-0", { width: 1920, height: 1080 }]]),
     )).toBe(patched);
+  });
+});
+
+describe("permuteVirtualBrowseLayout (client shuffle)", () => {
+  it("moves source slots onto display ranks and keeps source placeholder ids", () => {
+    const layout = createVirtualBrowseLayoutFromIndex({
+      total: 4,
+      entries: [
+        { assetId: "a", width: 10, height: 10 },
+        { assetId: "b", width: 20, height: 20 },
+      ],
+    });
+    const shuffled = permuteVirtualBrowseLayout(layout, [2, 0, 3, 1]);
+    expect(virtualLayoutPublishedId(shuffled, 1)).toBe("a");
+    expect(virtualLayoutPublishedId(shuffled, 3)).toBe("b");
+    expect(virtualLayoutPublishedId(shuffled, 0)).toBe(geometryPlaceholderId(2));
+    expect(virtualLayoutEntryAt(shuffled, 0).assetId).toBe(geometryPlaceholderId(2));
+    expect(virtualLayoutEntryAt(shuffled, 1)).toMatchObject({
+      assetId: "a",
+      width: 10,
+      height: 10,
+    });
+    expect(shuffled.indexByAssetId.get("a")).toBe(1);
   });
 });

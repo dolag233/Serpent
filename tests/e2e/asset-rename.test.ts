@@ -116,7 +116,7 @@ test("renames an asset file from the context menu and renames the real file on d
   }
 });
 
-test("places the F2 asset-rename caret immediately before the extension", async () => {
+test("selects the F2 asset basename while leaving the extension unselected", async () => {
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), "serpent-rename-caret-"));
   const libraryName = "Rename Caret";
   const libraryPath = path.join(temporaryRoot, libraryName);
@@ -143,7 +143,7 @@ test("places the F2 asset-rename caret immediately before the extension", async 
       element.selectionStart,
       element.selectionEnd,
     ]);
-    expect(selection).toEqual([4, 4]);
+    expect(selection).toEqual([0, 4]);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { recursive: true, force: true });

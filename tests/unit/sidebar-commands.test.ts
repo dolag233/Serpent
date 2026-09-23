@@ -183,7 +183,6 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
       'folder.expand-all',
       'folder.collapse-all',
       'folder.rename',
-      'folder.linked-rules',
       'folder.copy-path',
       'folder.copy',
       'folder.paste',
@@ -207,7 +206,6 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
       'folder.expand-all',
       'folder.collapse-all',
       'folder.rename',
-      'folder.linked-rules',
       'folder.copy-path',
       'folder.copy',
       'folder.paste',
@@ -251,7 +249,6 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
       'folder.expand-all',
       'folder.collapse-all',
       'folder.rename',
-      'folder.linked-rules',
       'folder.copy-path',
       'folder.copy',
       'folder.paste',
@@ -354,6 +351,10 @@ describe('文件夹分支：平台条件标题', () => {
       findItem(registry.resolveMenu(mac.ctx), 'folder.open-in-file-manager')
         .label,
     ).toBe('在 Finder 中打开');
+    expect(
+      findItem(registry.resolveMenu(mac.ctx), 'folder.open-in-file-manager')
+        .shortcutLabel,
+    ).toBe('⌘⇧S');
     const windows = makeCtx({ platform: 'windows' });
     expect(
       findItem(
@@ -386,15 +387,17 @@ describe('文件夹分支：平台条件标题', () => {
     expect(resolveIds(ctx)).not.toContain('folder.move-to');
   });
 
-  it('folder.linked-rules 标题为「链接规则…」', () => {
+  it('folder.linked-rules 仍注册，但不出现在文件夹菜单', () => {
     const { ctx } = makeCtx({
       locationKind: 'linked',
       linkedFolderResolved: true,
       linkedFolder: LINKED_FOLDER,
     });
+    const def = registry.get('folder.linked-rules');
     expect(
-      findItem(registry.resolveMenu(ctx), 'folder.linked-rules').label,
+      typeof def?.title === 'function' ? def.title(ctx) : def?.title,
     ).toBe('链接规则…');
+    expect(resolveIds(ctx)).not.toContain('folder.linked-rules');
   });
 });
 

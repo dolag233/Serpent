@@ -90,6 +90,8 @@ export const modelThumbnailRenderRequestSchema = z.object({
   renderUrl: z.string().min(1).max(4096),
   companionMap: z.array(modelThumbnailCompanionSchema).max(5000),
   hdriPresetId: z.string().min(1).max(128),
+  /** Background jobs may skip the optional environment map and use key light. */
+  enableHdri: z.boolean().optional(),
   width: z.number().int().min(64).max(2048),
   height: z.number().int().min(64).max(2048),
   /** Optional camera directions for multi-view renders (e.g. AI four views). */
@@ -162,6 +164,17 @@ export const modelThumbnailRenderResponseSchema = z.object({
   result: modelThumbnailRenderResultSchema,
 });
 export type ModelThumbnailRenderResponse = z.infer<typeof modelThumbnailRenderResponseSchema>;
+
+/** Worker → Main cancellation envelope for a queued/active model render. */
+export const modelThumbnailRenderCancelSchema = z.object({
+  type: z.literal('model-thumbnail.render-cancel'),
+  requestId: z.string().trim().min(1).max(255),
+});
+export type ModelThumbnailRenderCancel = z.infer<typeof modelThumbnailRenderCancelSchema>;
+
+export function parseModelThumbnailRenderCancel(input: unknown): ModelThumbnailRenderCancel {
+  return modelThumbnailRenderCancelSchema.parse(input);
+}
 
 export function parseModelThumbnailRenderResponse(input: unknown): ModelThumbnailRenderResponse {
   return modelThumbnailRenderResponseSchema.parse(input);

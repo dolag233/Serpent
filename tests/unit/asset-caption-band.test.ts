@@ -80,6 +80,8 @@ describe("masonry caption band (Serpent-b1b0f2)", () => {
     expect(
       resolveMasonryCaptionBandPx({ dimensions: true, name: true, secondary: true }),
     ).toBe(MASONRY_DIMENSIONS_CAPTION_BAND_PX);
+    expect(MASONRY_CAPTION_BAND_PX).toBe(45);
+    expect(MASONRY_DIMENSIONS_CAPTION_BAND_PX).toBe(62);
   });
 
   it("returns no band when every caption line is off", () => {
@@ -122,13 +124,20 @@ describe("createCaptionBandResolver (Serpent-b1b0f2)", () => {
     expect(resolver(VISUAL_WITH_SIZE)).toBe(0);
   });
 
-  it("keeps the flat-view band above the waterfall band for the same lines", () => {
-    // The two views use different caption padding; this guards the split so a
-    // future refactor cannot silently make one view read the other's metrics.
-    expect(
-      resolveAssetCaptionBandPx({ mode: "justified", fields: ALL_FIELDS, asset: VISUAL_WITH_SIZE }),
-    ).toBe(
+  it("keeps both views on the same compact caption metrics", () => {
+    const justified = resolveAssetCaptionBandPx({
+      mode: "justified",
+      fields: ALL_FIELDS,
+      asset: VISUAL_WITH_SIZE,
+    });
+    const masonry = resolveAssetCaptionBandPx({
+      mode: "masonry",
+      fields: ALL_FIELDS,
+      asset: VISUAL_WITH_SIZE,
+    });
+    expect(justified).toBe(
       resolveJustifiedCaptionBandPx({ dimensions: true, name: true, secondary: true }),
     );
+    expect(masonry).toBe(justified);
   });
 });

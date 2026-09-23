@@ -40,9 +40,10 @@ export function parentLinkedRelativePath(relativePath: string): string | null {
   return slash === -1 ? "" : relativePath.slice(0, slash);
 }
 
+/** Sidebar indent: 0 at the linked root, then one per path segment — same as managed folders. */
 export function linkedFolderDepth(relativePath: string): number {
-  if (relativePath === "") return 1;
-  return relativePath.split("/").length + 1;
+  if (relativePath === "") return 0;
+  return relativePath.split("/").length;
 }
 
 export function linkedAssetDirectory(relativeFilePath: string): string {

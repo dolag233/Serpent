@@ -63,6 +63,15 @@ import { TagManagementWorkspace } from "./TagManagementWorkspace";
 import { useFolderDeleteActions } from "./use-folder-delete-actions";
 import { useFolderOrganizeActions } from "./use-folder-organize-actions";
 import { useFolderCommandShortcuts } from "./use-folder-command-shortcuts";
+import { SearchHistoryPopover } from "./SearchHistoryPopover";
+import {
+  clearSearchHistory,
+  filterSearchHistory,
+  moveSearchHistoryIndex,
+  readSearchHistory,
+  readVisibleSearchHistoryCount,
+  rememberSearchQuery,
+} from "./search-history";
 import { useWindowsBrowseShortcutBridge } from "./use-windows-browse-shortcut-bridge";
 import { useCollectionCommandShortcuts } from "./use-collection-command-shortcuts";
 import { ExportDialog } from "./ExportDialog";
@@ -248,7 +257,9 @@ import {
   cancellationAffectsAiBatch,
   collectRecentAiFailureCodes,
   computeAiBatchProgressForJobs,
+  progressFromAiProgressEvent,
   type AiBatchProgressSnapshot,
+  type AiProgressJobUpdate,
 } from "./ai-analyze-progress";
 import { summarizeAiFailureCodes } from "./ai-job-error-message";
 import {
@@ -433,7 +444,7 @@ import { invertSelection } from "./invert-selection";
 import { trashedFoldersToBrowseEntries } from "./trashed-folder-entries";
 import { computeMasonrySelectionAssetIds } from "./masonry-selection-order";
 import { resolveMasonryTabTarget } from "./masonry-focus-order";
-import { shuffleBrowseItems } from "./client-shuffle";
+import { shuffleBrowseItems, shuffledIndexOrder } from "./client-shuffle";
 import {
   toMessage,
   messageForPublicError,
@@ -459,7 +470,6 @@ import type {
   CollectionSummary,
   FilterClause,
   FolderBrowseEntry,
-  IgnoredPath,
   LinkedFolderRule,
   LinkedFolderSummary,
   ManagedFolderSummary,
@@ -533,6 +543,7 @@ import { assetSummaryFromLayoutEntry, browseRankFromPublishedId } from "./browse
 import { isGeometryPlaceholder } from "./browse/use-virtual-browse-session";
 import { deferNavigationHydration } from "./browse/defer-navigation-hydration";
 import {
+  permuteVirtualBrowseLayout,
   virtualLayoutEntryForAsset,
   virtualLayoutPublishedId,
   type VirtualBrowseLayout,
@@ -1243,6 +1254,23 @@ function AppInner() {
   >(null);
   const [searchValue, setSearchValue] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const [storedSearchHistory, setStoredSearchHistory] = useState<{
+    libraryId: string;
+    queries: string[];
+  } | null>(null);
+  const [searchHistoryOpen, setSearchHistoryOpen] = useState(false);
+  const [searchHistoryActiveIndex, setSearchHistoryActiveIndex] = useState(-1);
+  const searchHistoryLibraryId = library?.libraryId ?? null;
+  const searchHistory =
+    searchHistoryLibraryId === null
+      ? []
+      : storedSearchHistory?.libraryId === searchHistoryLibraryId
+        ? storedSearchHistory.queries
+        : readSearchHistory(window.localStorage, searchHistoryLibraryId);
+  function publishSearchHistory(queries: string[]) {
+    if (!searchHistoryLibraryId) return;
+    setStoredSearchHistory({ libraryId: searchHistoryLibraryId, queries });
+  }
   const [formatFilter, setFormatFilter] = useState("");
   const [excludeFormatFilter, setExcludeFormatFilter] = useState(false);
   const [colorFilter, setColorFilter] = useState("");
@@ -1550,6 +1578,7 @@ function AppInner() {
   const {
     beginPage: beginBrowsePage,
     ensureVisibleRange: ensureBrowseVisibleRange,
+    ensureVisibleIndices: ensureBrowseVisibleIndices,
     fetchScopeAssetIds: fetchBrowseScopeAssetIds,
     removeLocally: removeLocallyFromBrowse,
     applyGeometryPatches: applyBrowseGeometryPatches,
@@ -1749,7 +1778,6 @@ function AppInner() {
   const [librarySettingsOpen, setLibrarySettingsOpen] = useState(false);
   const [openSyncLibraryOpen, setOpenSyncLibraryOpen] = useState(false);
   const [gitignoreContent, setGitignoreContent] = useState("");
-  const [ignoredPaths, setIgnoredPaths] = useState<IgnoredPath[]>([]);
   /** 同步传输进度（手动/自动），供资源库设置同步页显示进度条与速度。 */
   const [syncProgress, setSyncProgress] = useState<SyncProgressEvent | null>(null);
   const syncProgressRef = useRef(syncProgress);
@@ -2090,10 +2118,19 @@ function AppInner() {
   const analyzingBatchSizeRef = useRef(0);
   const aiBatchJobIdsRef = useRef<string[]>([]);
   const aiBatchSkippedCountRef = useRef(0);
+  const aiBatchKnownJobsRef = useRef<AiProgressJobUpdate[]>([]);
+  const aiBatchCounterBaselineRef = useRef({ succeeded: 0, failed: 0 });
   const lastAiBatchJobIdsRef = useRef<string[]>([]);
   const lastAiBatchAssetIdRef = useRef<string | null>(null);
   const aiBatchStatusRequestRef = useRef(0);
   const refreshAiBatchStatusRef = useRef<() => void>(() => undefined);
+  const applyLiveAiProgressRef = useRef<(event: {
+    queued: number;
+    running: number;
+    succeeded: number;
+    failed: number;
+    changedJobs?: AiProgressJobUpdate[];
+  }) => void>(() => undefined);
   const [aiBatchProgress, setAiBatchProgress] =
     useState<AiBatchProgressSnapshot | null>(null);
   const [aiUiPrefs, setAiUiPrefs] = useState<AiUiPreferences>(() =>
@@ -2591,6 +2628,11 @@ function AppInner() {
     aiBatchStatusRequestRef.current++;
     aiBatchJobIdsRef.current = retryJobIds;
     aiBatchSkippedCountRef.current = 0;
+    aiBatchKnownJobsRef.current = [];
+    aiBatchCounterBaselineRef.current = {
+      succeeded: aiJobs?.succeeded ?? 0,
+      failed: aiJobs?.failed ?? 0,
+    };
     analyzingAssetIdRef.current = lastAiBatchAssetIdRef.current;
     analyzingBatchSizeRef.current = retryJobIds.length;
     setAiBatchProgress(computeAiBatchProgressForJobs(retryJobIds, []));
@@ -2599,7 +2641,7 @@ function AppInner() {
       setAiAnalyzing(true);
       setAiProgressBannerVisible(true);
     });
-    void refreshAiBatchStatusRef.current();
+    // Progress events drive the banner; a status RPC would wait behind the queue.
   }, [aiConnectionFailureGate.failedJobIds, onAiConnectionFailureRetry]);
 
 
@@ -2705,6 +2747,17 @@ function AppInner() {
   const visibleBrowseLayout = useMemo(() => {
     return shuffleBrowseItems(browseLayout, shuffleSeed, !showTrash);
   }, [browseLayout, showTrash, shuffleSeed]);
+  const shuffleOrder = useMemo(() => {
+    if (shuffleSeed === null || showTrash) return null;
+    const total = virtualBrowseLayout?.total ?? 0;
+    if (total <= 0) return null;
+    return shuffledIndexOrder(total, shuffleSeed);
+  }, [shuffleSeed, showTrash, virtualBrowseLayout?.total]);
+  const visibleVirtualBrowseLayout = useMemo(() => {
+    if (!virtualBrowseLayout) return null;
+    if (!shuffleOrder) return virtualBrowseLayout;
+    return permuteVirtualBrowseLayout(virtualBrowseLayout, shuffleOrder);
+  }, [shuffleOrder, virtualBrowseLayout]);
 
   // Report mounted cards and real layout slots. A fresh scrollbar destination
   // can queue its thumbnail work before the page summaries mount, while the
@@ -2729,15 +2782,15 @@ function AppInner() {
       );
       const orderedIds = orderedIdsForViewportPriorityReport({
         visibleIds: intersectingIds,
-        ...(virtualBrowseLayout
+        ...(visibleVirtualBrowseLayout
           ? {
               virtualLayout: {
-                indexOf: (assetId) => virtualBrowseLayout.indexByAssetId.get(assetId),
+                indexOf: (assetId) => visibleVirtualBrowseLayout.indexByAssetId.get(assetId),
                 idAt: (index) => {
-                  const published = virtualLayoutPublishedId(virtualBrowseLayout, index);
+                  const published = virtualLayoutPublishedId(visibleVirtualBrowseLayout, index);
                   return isGeometryPlaceholder({ assetId: published }) ? undefined : published;
                 },
-                total: virtualBrowseLayout.total,
+                total: visibleVirtualBrowseLayout.total,
               },
             }
           : {}),
@@ -2790,7 +2843,7 @@ function AppInner() {
       if (frame !== undefined) window.cancelAnimationFrame(frame);
       if (debounceTimer !== undefined) window.clearTimeout(debounceTimer);
     };
-  }, [api, library, assetViewMode, browseLayout, virtualBrowseLayout]);
+  }, [api, library, assetViewMode, browseLayout, visibleVirtualBrowseLayout]);
 
   // Map the scrollbar to the compact real-asset index. One-frame coalescing
   // avoids request spam without spending 50ms of the 500ms loading budget.
@@ -2864,18 +2917,27 @@ function AppInner() {
           }
         }
         if (visibleRanks.length > 0) {
-          void ensureBrowseVisibleRange(
-            Math.min(...visibleRanks),
-            Math.max(...visibleRanks),
-          );
+          if (shuffleOrder) {
+            void ensureBrowseVisibleIndices(visibleRanks);
+          } else {
+            void ensureBrowseVisibleRange(
+              Math.min(...visibleRanks),
+              Math.max(...visibleRanks),
+            );
+          }
           return;
         }
         const maxScroll = Math.max(0, canvas.scrollHeight - canvas.clientHeight);
         const ratio = maxScroll <= 0 ? 0 : canvas.scrollTop / maxScroll;
-        const center = Math.round(ratio * Math.max(0, total - 1));
+        const displayCenter = Math.round(ratio * Math.max(0, total - 1));
+        const sourceCenter = shuffleOrder?.[displayCenter] ?? displayCenter;
         // Neighbor pages are added by browsePageOffsetsForRange. Passing a
         // ±page-size span here would queue 3–4 windows behind a jump.
-        void ensureBrowseVisibleRange(center, center);
+        if (shuffleOrder) {
+          void ensureBrowseVisibleIndices([sourceCenter]);
+        } else {
+          void ensureBrowseVisibleRange(sourceCenter, sourceCenter);
+        }
       });
     };
     canvas.addEventListener("scroll", schedule, { passive: true });
@@ -2888,7 +2950,9 @@ function AppInner() {
     api,
     browseLayout,
     ensureBrowseVisibleRange,
+    ensureBrowseVisibleIndices,
     library,
+    shuffleOrder,
     virtualBrowseLayout,
   ]);
 
@@ -4874,7 +4938,7 @@ function AppInner() {
               jobs: [],
             },
       );
-      if (aiAnalyzingRef.current) refreshAiBatchStatusRef.current();
+      applyLiveAiProgressRef.current(event);
     });
     const unsubscribeCompleted = api.onAiCompleted((event) => {
       if (event.libraryId !== library.libraryId) return;
@@ -8125,6 +8189,17 @@ function AppInner() {
       linkedFolders.some(
         (folder) => folder.folderId === folderId && folder.status === "available",
       ),
+    canOpenFolder: (folderId) => {
+      if (folders.some((folder) => folder.folderId === folderId)) return true;
+      const virtual = parseLinkedVirtualFolderId(folderId);
+      const rootId = virtual?.linkedFolderId ?? folderId;
+      return linkedFolders.some(
+        (folder) => folder.folderId === rootId && folder.status === "available",
+      );
+    },
+    openFolderInFileManager: (folderId) => {
+      void handleOpenFolderInFileManager(folderId);
+    },
     createSubfolder: (parentFolderId) => {
       cancelInlineSmartCollectionEdit();
       openInlineFolderCreate(parentFolderId);
@@ -8379,6 +8454,12 @@ function AppInner() {
       return;
     const timer = window.setTimeout(() => {
       if (previewAssetRef.current || previewRestoringRef.current) return;
+      const query = searchValue.trim();
+      if (query) {
+        publishSearchHistory(
+          rememberSearchQuery(window.localStorage, library.libraryId, query),
+        );
+      }
       void runSearch(undefined, { silent: true });
     }, 200);
     return () => window.clearTimeout(timer);
@@ -9797,7 +9878,6 @@ function AppInner() {
         ignored: input.ignored,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      await refreshIgnoredPaths(library.libraryId);
       await reloadCurrentContent();
       if (input.ignored && input.pathKind === "extension") {
         setNotice(t("toast.ignoreExtensionUpdated", { extension: input.relativePath }));
@@ -11615,23 +11695,11 @@ function AppInner() {
   useEffect(() => {
     if (!librarySettingsOpen || !api || !library) return;
     const libraryId = library.libraryId;
-    void Promise.all([
-      api.getGitignore({ libraryId }),
-      api.listIgnoredPaths({ libraryId }),
-    ]).then(([gitignoreResult, ignoredResult]) => {
+    void api.getGitignore({ libraryId }).then((gitignoreResult) => {
       if (libraryRef.current?.libraryId !== libraryId) return;
       if (gitignoreResult.ok) setGitignoreContent(gitignoreResult.value.content);
-      if (ignoredResult.ok) setIgnoredPaths(ignoredResult.value);
     });
   }, [librarySettingsOpen, api, library]);
-
-  const refreshIgnoredPaths = useCallback(async (libraryId: string) => {
-    if (!api) return;
-    const result = await api.listIgnoredPaths({ libraryId });
-    if (result.ok && libraryRef.current?.libraryId === libraryId) {
-      setIgnoredPaths(result.value);
-    }
-  }, [api]);
 
   const probeStoredAiConnection = useCallback(async () => {
     if (!api) return;
@@ -11753,10 +11821,18 @@ function AppInner() {
       void loadAiConfig();
       return;
     }
+    let counterBaseline = {
+      succeeded: aiJobs?.succeeded ?? 0,
+      failed: aiJobs?.failed ?? 0,
+    };
     try {
       const status = await api.getAiJobStatus({ libraryId: library.libraryId });
       if (status.ok) {
         setAiJobs(status.value);
+        counterBaseline = {
+          succeeded: status.value.succeeded,
+          failed: status.value.failed,
+        };
         notifyAiConnectionBatchStarted(status.value.jobs);
       } else {
         notifyAiConnectionBatchStarted(aiJobs?.jobs ?? []);
@@ -11791,6 +11867,8 @@ function AppInner() {
       analyzingAssetIdRef.current = targetIds[0] ?? null;
       lastAiBatchAssetIdRef.current = analyzingAssetIdRef.current;
       analyzingBatchSizeRef.current = jobIds.length + skippedCount;
+      aiBatchKnownJobsRef.current = [];
+      aiBatchCounterBaselineRef.current = counterBaseline;
       setAiBatchProgress(
         computeAiBatchProgressForJobs(jobIds, [], { skipped: skippedCount }),
       );
@@ -11799,10 +11877,8 @@ function AppInner() {
         setAiAnalyzing(true);
         setAiProgressBannerVisible(true);
       });
-      // The fixed workspace progress banner is the only in-progress signal.
-      // A transient notice duplicates it and can hide more important feedback.
-      void loadAiJobs(true);
-      void refreshAiBatchStatus();
+      // Live progress comes from ai.progress events. A status RPC here would
+      // sit behind ai.process-queue and freeze the banner at 0/total.
     } catch (caught) {
       setError(toMessage(caught, t("toast.aiAnalyzeFailed"), locale));
     }
@@ -11900,6 +11976,104 @@ function AppInner() {
     }
   }
 
+  function finishTrackedAiBatch(
+    progress: AiBatchProgressSnapshot,
+    jobs: ReadonlyArray<{ status: string; errorCode?: string | null }>,
+  ): void {
+    if (aiBatchJobIdsRef.current.length === 0) return;
+    aiBatchJobIdsRef.current = [];
+    aiBatchKnownJobsRef.current = [];
+    aiBatchStatusRequestRef.current++;
+    const pendingAssetId = analyzingAssetIdRef.current;
+    const batchSize = analyzingBatchSizeRef.current;
+    aiAnalyzingRef.current = false;
+    analyzingAssetIdRef.current = null;
+    analyzingBatchSizeRef.current = 0;
+    setAiAnalyzing(false);
+    setAiBatchProgress(null);
+
+    const detail = summarizeAiFailureCodes(
+      collectRecentAiFailureCodes(
+        jobs.map((job) => ({ status: job.status, errorCode: job.errorCode ?? null })),
+      ),
+      locale,
+    );
+    const showTotalFailure = () => {
+      showBlockingError(
+        t("dialog.aiAnalyzeFailure.title"),
+        detail
+          ? t("toast.aiAnalyzeFailedDetail", { detail })
+          : t("toast.aiAnalyzeFailed"),
+      );
+    };
+    const showSingleFailure = () => {
+      setError(
+        detail
+          ? t("toast.aiAnalyzeFailedDetail", { detail })
+          : t("toast.aiAnalyzeFailed"),
+      );
+    };
+
+    const failedOutcomes = progress.failed;
+    if (failedOutcomes > 0) {
+      if (progress.succeeded === 0 && progress.cancelled === 0) {
+        if (pendingAssetId && batchSize <= 1) showSingleFailure();
+        else showTotalFailure();
+      } else {
+        setNotice(
+          t("toast.aiAnalyzeDoneBatch", {
+            succeeded: progress.succeeded,
+            failed: failedOutcomes,
+          }) +
+            (progress.skipped > 0
+              ? t("toast.aiAnalyzeSkippedSuffix", { count: progress.skipped })
+              : "") +
+            (detail ? ` ${detail}` : ""),
+        );
+      }
+    } else if (progress.cancelled > 0) {
+      setNotice(t("toast.aiAnalyzeStopped"));
+    } else if (batchSize > 1) {
+      setNotice(
+        t("toast.aiAnalyzeDoneBatch", {
+          succeeded: progress.succeeded,
+          failed: 0,
+        }) +
+          (progress.skipped > 0
+            ? t("toast.aiAnalyzeSkippedSuffix", { count: progress.skipped })
+            : ""),
+      );
+    } else if (batchSize > 0) {
+      setNotice(t("toast.aiAnalyzeDone"));
+    }
+    void reloadCurrentContentRef.current();
+  }
+
+  function applyLiveAiProgress(event: {
+    queued: number;
+    running: number;
+    succeeded: number;
+    failed: number;
+    changedJobs?: AiProgressJobUpdate[];
+  }): void {
+    if (!aiAnalyzingRef.current) return;
+    const jobIds = aiBatchJobIdsRef.current;
+    if (jobIds.length === 0) return;
+    const applied = progressFromAiProgressEvent({
+      jobIds,
+      knownJobs: aiBatchKnownJobsRef.current,
+      changedJobs: event.changedJobs,
+      skipped: aiBatchSkippedCountRef.current,
+      baseline: aiBatchCounterBaselineRef.current,
+      counters: event,
+    });
+    aiBatchKnownJobsRef.current = applied.knownJobs;
+    setAiBatchProgress(applied.progress);
+    if (applied.progress.done >= applied.progress.batchTotal) {
+      finishTrackedAiBatch(applied.progress, applied.knownJobs);
+    }
+  }
+
   async function refreshAiBatchStatus() {
     if (!api || !library) return;
     const jobIds = aiBatchJobIdsRef.current;
@@ -11920,82 +12094,25 @@ function AppInner() {
       const progress = computeAiBatchProgressForJobs(jobIds, result.value.jobs, {
         skipped: aiBatchSkippedCountRef.current,
       });
+      aiBatchKnownJobsRef.current = result.value.jobs
+        .filter((job) => jobIds.includes(job.jobId))
+        .map((job) => ({
+          jobId: job.jobId,
+          status: job.status,
+          errorCode: job.errorCode,
+        }));
       setAiBatchProgress(progress);
       if (progress.done < progress.batchTotal) return;
-
-      // Completion is defined by this batch's durable job IDs, not by the
-      // whole library becoming idle. Other manual or automatic jobs may run.
-      aiBatchJobIdsRef.current = [];
-      aiBatchStatusRequestRef.current++;
-      const pendingAssetId = analyzingAssetIdRef.current;
-      const batchSize = analyzingBatchSizeRef.current;
-      aiAnalyzingRef.current = false;
-      analyzingAssetIdRef.current = null;
-      analyzingBatchSizeRef.current = 0;
-      setAiAnalyzing(false);
-      setAiBatchProgress(null);
-
-      const detail = summarizeAiFailureCodes(
-        collectRecentAiFailureCodes(result.value.jobs),
-        locale,
-      );
-      const showTotalFailure = () => {
-        showBlockingError(
-          t("dialog.aiAnalyzeFailure.title"),
-          detail
-            ? t("toast.aiAnalyzeFailedDetail", { detail })
-            : t("toast.aiAnalyzeFailed"),
-        );
-      };
-      const showSingleFailure = () => {
-        setError(
-          detail
-            ? t("toast.aiAnalyzeFailedDetail", { detail })
-            : t("toast.aiAnalyzeFailed"),
-        );
-      };
-
-      const failedOutcomes = progress.failed;
-      if (failedOutcomes > 0) {
-        if (progress.succeeded === 0 && progress.cancelled === 0) {
-          if (pendingAssetId && batchSize <= 1) showSingleFailure();
-          else showTotalFailure();
-        } else {
-          setNotice(
-            t("toast.aiAnalyzeDoneBatch", {
-              succeeded: progress.succeeded,
-              failed: failedOutcomes,
-            }) +
-              (progress.skipped > 0
-                ? t("toast.aiAnalyzeSkippedSuffix", { count: progress.skipped })
-                : "") +
-              (detail ? ` ${detail}` : ""),
-          );
-        }
-      } else if (progress.cancelled > 0) {
-        setNotice(t("toast.aiAnalyzeStopped"));
-      } else if (batchSize > 1) {
-        setNotice(
-          t("toast.aiAnalyzeDoneBatch", {
-            succeeded: progress.succeeded,
-            failed: 0,
-          }) +
-            (progress.skipped > 0
-              ? t("toast.aiAnalyzeSkippedSuffix", { count: progress.skipped })
-              : ""),
-        );
-      } else if (batchSize > 0) {
-        setNotice(t("toast.aiAnalyzeDone"));
-      }
-      void reloadCurrentContentRef.current();
+      finishTrackedAiBatch(progress, result.value.jobs);
     } catch {
       // A transient status query must not finish or miscount an active batch;
-      // the next throttled progress event will retry this refresh.
+      // the next progress event will retry this refresh.
     }
   }
   refreshAiBatchStatusRef.current = () => {
     void refreshAiBatchStatus();
   };
+  applyLiveAiProgressRef.current = applyLiveAiProgress;
 
   useEffect(() => {
     // Serpent-e97c00: one bounded, coalesced fallback stream per open library.
@@ -12143,6 +12260,7 @@ function AppInner() {
           // unrelated or partially cancelled batch tracking.
           aiBatchJobIdsRef.current = [];
           aiBatchSkippedCountRef.current = 0;
+          aiBatchKnownJobsRef.current = [];
           lastAiBatchJobIdsRef.current = [];
           lastAiBatchAssetIdRef.current = null;
           aiBatchStatusRequestRef.current++;
@@ -12726,15 +12844,99 @@ function AppInner() {
             >
               <Icon name="search" size={15} />
               <input
+                aria-activedescendant={
+                  searchHistoryOpen && searchHistoryActiveIndex >= 0
+                    ? `search-history-${searchHistoryActiveIndex}`
+                    : undefined
+                }
+                aria-autocomplete="list"
+                aria-controls={searchHistoryOpen ? "search-history-list" : undefined}
+                aria-expanded={
+                  searchHistoryOpen &&
+                  filterSearchHistory(searchHistory, searchValue).length > 0
+                }
                 aria-label={t("toolbar.searchLibrary")}
                 className="search-control"
                 disabled={!library}
-                onChange={(event) => setSearchValue(event.target.value)}
+                onBlur={() => {
+                  setSearchHistoryOpen(false);
+                  setSearchHistoryActiveIndex(-1);
+                }}
+                onChange={(event) => {
+                  setSearchValue(event.target.value);
+                  setSearchHistoryActiveIndex(-1);
+                  setSearchHistoryOpen(true);
+                }}
+                onFocus={() => {
+                  setSearchHistoryActiveIndex(-1);
+                  setSearchHistoryOpen(true);
+                }}
+                onKeyDown={(event) => {
+                  const matches = filterSearchHistory(searchHistory, searchValue);
+                  const visibleCount = Math.min(
+                    matches.length,
+                    readVisibleSearchHistoryCount() ?? matches.length,
+                  );
+                  if (!searchHistoryOpen || visibleCount === 0) return;
+                  if (
+                    event.key === "ArrowDown" ||
+                    event.key === "ArrowUp" ||
+                    event.key === "ArrowRight" ||
+                    event.key === "ArrowLeft"
+                  ) {
+                    event.preventDefault();
+                    const direction =
+                      event.key === "ArrowDown" || event.key === "ArrowRight"
+                        ? "next"
+                        : "previous";
+                    setSearchHistoryActiveIndex((current) =>
+                      moveSearchHistoryIndex(current, visibleCount, direction),
+                    );
+                    return;
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setSearchHistoryOpen(false);
+                    setSearchHistoryActiveIndex(-1);
+                    return;
+                  }
+                  if (event.key === "Enter" && searchHistoryActiveIndex >= 0) {
+                    const query = matches[searchHistoryActiveIndex];
+                    if (!query) return;
+                    event.preventDefault();
+                    setSearchValue(query);
+                    setSearchHistoryOpen(false);
+                    setSearchHistoryActiveIndex(-1);
+                  }
+                }}
                 placeholder={t("toolbar.searchPlaceholder")}
                 ref={searchInputRef}
+                role="combobox"
                 type="search"
                 value={searchValue}
               />
+              {searchHistoryOpen && library && (
+                <SearchHistoryPopover
+                  activeIndex={searchHistoryActiveIndex}
+                  items={filterSearchHistory(searchHistory, searchValue)}
+                  onClear={() => {
+                    clearSearchHistory(window.localStorage, library.libraryId);
+                    publishSearchHistory([]);
+                    setSearchHistoryActiveIndex(-1);
+                    setSearchHistoryOpen(false);
+                  }}
+                  onHighlight={setSearchHistoryActiveIndex}
+                  onPick={(query) => {
+                    setSearchValue(query);
+                    setSearchHistoryOpen(false);
+                    setSearchHistoryActiveIndex(-1);
+                    publishSearchHistory(
+                      rememberSearchQuery(window.localStorage, library.libraryId, query),
+                    );
+                  }}
+                />
+              )}
               <button
                 aria-label={t("toolbar.searchSyntax")}
                 className="search-syntax-help"
@@ -14035,7 +14237,7 @@ function AppInner() {
                                         event.currentTarget.value,
                                       );
                                       event.currentTarget.setSelectionRange(
-                                        baseName.length,
+                                        0,
                                         baseName.length,
                                       );
                                     }}
@@ -14103,7 +14305,7 @@ function AppInner() {
                           <MasonryColumns
                             assets={section.assets}
                             layout={visibleBrowseLayout}
-                            virtualLayout={virtualBrowseLayout}
+                            virtualLayout={visibleVirtualBrowseLayout}
                             cardSize={assetCardSize}
                             renderCard={renderAssetCard}
                             renderLayoutPreview={(entry, renderOptions) =>
@@ -14138,7 +14340,7 @@ function AppInner() {
                           <JustifiedAssetRows
                             assets={section.assets}
                             layout={visibleBrowseLayout}
-                            virtualLayout={virtualBrowseLayout}
+                            virtualLayout={visibleVirtualBrowseLayout}
                             cardSize={assetCardSize}
                             captionFields={canvasPrefs.fields}
                             snippetLine={searchSnippets.size > 0}
@@ -14628,11 +14830,10 @@ function AppInner() {
         }}
       />
       <LibrarySettingsDialog
-        key={`${library?.libraryId ?? "none"}:${librarySettingsOpen ? "open" : "closed"}:${gitignoreContent}`}
+        key={`${library?.libraryId ?? "none"}:${librarySettingsOpen ? "open" : "closed"}`}
         library={library}
         open={librarySettingsOpen}
         gitignoreContent={gitignoreContent}
-        ignoredPaths={ignoredPaths}
         onClose={() => {
           setLibrarySettingsOpen(false);
         }}
@@ -14655,18 +14856,13 @@ function AppInner() {
           }
           setGitignoreContent(result.value.content);
           setNotice(t("toast.librarySettingsSaved"));
-          await refreshIgnoredPaths(library.libraryId);
           await reloadCurrentContent();
         }}
-        onUnignorePath={(path) => {
-          void setIgnoreState({
-            locationKind: path.locationKind,
-            linkedFolderId: path.linkedFolderId,
-            relativePath: path.relativePath,
-            pathKind: path.pathKind,
-            ignored: false,
-            name: path.displayName,
-          });
+        onPreviewGitignore={async (content) => {
+          if (!api || !library) return null;
+          const result = await api.previewGitignore({ libraryId: library.libraryId, content });
+          if (!result.ok) return null;
+          return result.value;
         }}
         syncCallbacks={{
           async syncListServers() {
@@ -14992,6 +15188,7 @@ function AppInner() {
       />
       <AiConnectionFailureDialog
         failedCount={aiConnectionFailureGate.failedJobIds.length}
+        failureCode={aiConnectionFailureGate.failureCode}
         onAbort={onAiConnectionFailureAbort}
         onRetry={handleAiConnectionFailureRetry}
         open={aiConnectionFailureGate.open}

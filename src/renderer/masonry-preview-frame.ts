@@ -11,6 +11,7 @@ export function estimateMasonryPreviewHeightPx(
   width: number | null | undefined,
   height: number | null | undefined,
   columnWidthPx: number,
+  mediaType?: string | null,
 ): number {
   // `.asset-card` is a border-box with a transparent 1px border on both
   // sides. The masonry column owns the outer card width, while the preview
@@ -23,9 +24,11 @@ export function estimateMasonryPreviewHeightPx(
   if (outerColumn <= 0) return 1;
   const col = Math.max(1, outerColumn - 2);
   if (!width || !height || width <= 0 || height <= 0) {
-    // Match `.asset-preview { aspect-ratio: 1.3 }` so placeholder cards
-    // cannot drift away from the windowed slot height (Serpent-1s3d).
-    return col / 1.3;
+    // Font cards render a 16:9 specimen sheet even though the source has no
+    // pixel resolution. The generic 1.3 frame made their virtual slot taller
+    // than the rendered card.
+    const fallbackAspect = mediaType === "font" ? 16 / 9 : 1.3;
+    return col / fallbackAspect;
   }
   return col * (height / width);
 }

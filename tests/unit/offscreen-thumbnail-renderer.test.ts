@@ -317,6 +317,93 @@ describe('offscreen thumbnail renderer (slice E, main side)', () => {
     renderer.dispose();
   });
 
+  it('cancels an active job, recycles the window, and runs the next job', async () => {
+    const harness = makeHarness();
+    const renderer = createOffscreenThumbnailRenderer(harness.deps);
+
+    const active = renderer.renderModelThumbnail(makeJob({ requestId: 'job-1' }));
+    await vi.waitFor(() => expect(harness.windows[0]?.webContents.sent).toHaveLength(1));
+    renderer.cancelModelThumbnail('job-1');
+    await expect(active).resolves.toMatchObject({
+      status: 'failed',
+      errorCode: 'MODEL_RENDER_ABORTED',
+    });
+    expect(harness.windows[0]!.destroy).toHaveBeenCalled();
+
+    const next = renderer.renderModelThumbnail(makeJob({ requestId: 'job-2' }));
+    await vi.waitFor(() => expect(harness.windows).toHaveLength(2));
+    await vi.waitFor(() => expect(harness.windows[1]!.webContents.sent).toHaveLength(1));
+    harness.emitFrame({ requestId: 'job-2', status: 'ok', pngBase64: TINY_PNG_BASE64 });
+    await expect(next).resolves.toMatchObject({ status: 'ok' });
+    renderer.dispose();
+  });
+
+  it('unblocks the queue when cancellation races a pending window load', async () => {
+    const harness = makeHarness();
+    let firstLoad = true;
+    let resolveFirstLoad!: () => void;
+    const pendingLoad = new Promise<void>((resolve) => { resolveFirstLoad = resolve; });
+    harness.deps.createWindow = vi.fn(() => {
+      const created = new FakeWindow();
+      harness.windows.push(created);
+      if (firstLoad) {
+        firstLoad = false;
+        created.loadFile.mockReturnValueOnce(pendingLoad);
+      }
+      return created;
+    });
+    const renderer = createOffscreenThumbnailRenderer(harness.deps);
+
+    const active = renderer.renderModelThumbnail(makeJob({ requestId: 'pending-load' }));
+    await vi.waitFor(() => expect(harness.windows).toHaveLength(1));
+    renderer.cancelModelThumbnail('pending-load');
+    await expect(active).resolves.toMatchObject({
+      status: 'failed',
+      errorCode: 'MODEL_RENDER_ABORTED',
+    });
+
+    const next = renderer.renderModelThumbnail(makeJob({ requestId: 'after-pending-load' }));
+    await vi.waitFor(() => expect(harness.windows).toHaveLength(2));
+    await vi.waitFor(() => expect(harness.windows[1]!.webContents.sent).toHaveLength(1));
+    harness.emitFrame({ requestId: 'after-pending-load', status: 'ok', pngBase64: TINY_PNG_BASE64 });
+    await expect(next).resolves.toMatchObject({ status: 'ok' });
+    resolveFirstLoad();
+    renderer.dispose();
+  });
+
+  it('recreates after a renderer crash while the window load is pending', async () => {
+    const harness = makeHarness();
+    let resolveLoad!: () => void;
+    const pendingLoad = new Promise<void>((resolve) => { resolveLoad = resolve; });
+    let first = true;
+    harness.deps.createWindow = vi.fn(() => {
+      const created = new FakeWindow();
+      harness.windows.push(created);
+      if (first) {
+        first = false;
+        created.loadFile.mockReturnValueOnce(pendingLoad);
+      }
+      return created;
+    });
+    const renderer = createOffscreenThumbnailRenderer(harness.deps);
+
+    const active = renderer.renderModelThumbnail(makeJob({ requestId: 'crashed-load' }));
+    await vi.waitFor(() => expect(harness.windows).toHaveLength(1));
+    harness.windows[0]!.webContents.emitGone();
+    await expect(active).resolves.toMatchObject({
+      status: 'failed',
+      errorCode: 'MODEL_WINDOW_FAILED',
+    });
+
+    const next = renderer.renderModelThumbnail(makeJob({ requestId: 'after-crashed-load' }));
+    await vi.waitFor(() => expect(harness.windows).toHaveLength(2));
+    await vi.waitFor(() => expect(harness.windows[1]!.webContents.sent).toHaveLength(1));
+    harness.emitFrame({ requestId: 'after-crashed-load', status: 'ok', pngBase64: TINY_PNG_BASE64 });
+    await expect(next).resolves.toMatchObject({ status: 'ok' });
+    resolveLoad();
+    renderer.dispose();
+  });
+
   it('recreates the window after a renderer crash', async () => {
     const harness = makeHarness();
     const renderer = createOffscreenThumbnailRenderer(harness.deps);

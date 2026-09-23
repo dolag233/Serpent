@@ -24,13 +24,13 @@ describe("filterClauseSchema format values", () => {
       (_, index) => `ext${index}`,
     );
     expect(values.length).toBeGreaterThan(CATEGORICAL_FILTER_VALUES_MAX);
-    expect(
-      filterClauseSchema.parse({
-        field: "format",
-        values,
-        exclude: false,
-      }).values,
-    ).toHaveLength(values.length);
+    const parsed = filterClauseSchema.parse({
+      field: "format",
+      values,
+      exclude: false,
+    });
+    expect("values" in parsed).toBe(true);
+    expect("values" in parsed ? parsed.values : []).toHaveLength(values.length);
   });
 
   it("still rejects more than 32 tag values", () => {

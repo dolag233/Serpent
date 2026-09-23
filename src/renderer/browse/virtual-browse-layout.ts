@@ -46,6 +46,67 @@ export function virtualLayoutPublishedId(
   return layout.assetIdsByIndex.get(index) ?? geometryPlaceholderId(index);
 }
 
+/**
+ * Reorder virtual slots for client shuffle without changing Worker rank.
+ * Unloaded slots keep the source rank in their placeholder id so pagination
+ * can fetch the pages that actually occupy the viewport.
+ */
+export function permuteVirtualBrowseLayout(
+  layout: VirtualBrowseLayout,
+  displayToSource: readonly number[],
+): VirtualBrowseLayout {
+  if (displayToSource.length !== layout.total) return layout;
+  let identity = true;
+  for (let display = 0; display < displayToSource.length; display += 1) {
+    if (displayToSource[display] !== display) {
+      identity = false;
+      break;
+    }
+  }
+  if (identity) return layout;
+
+  const sourceToDisplay = new Array<number>(displayToSource.length);
+  for (let display = 0; display < displayToSource.length; display += 1) {
+    const source = displayToSource[display];
+    if (source === undefined) continue;
+    sourceToDisplay[source] = display;
+  }
+
+  const geometryEntries = new Map<number, BrowseLayoutEntry>();
+  for (const [source, entry] of layout.geometryEntries) {
+    const display = sourceToDisplay[source];
+    if (display === undefined) continue;
+    geometryEntries.set(display, entry);
+  }
+
+  const entries = new Map<number, BrowseLayoutEntry>();
+  const indexByAssetId = new Map<string, number>();
+  for (const [source, entry] of layout.entries) {
+    const display = sourceToDisplay[source];
+    if (display === undefined) continue;
+    entries.set(display, entry);
+    indexByAssetId.set(entry.assetId, display);
+  }
+
+  const assetIdsByIndex = new Map<number, string>();
+  for (let display = 0; display < displayToSource.length; display += 1) {
+    const source = displayToSource[display]!;
+    assetIdsByIndex.set(
+      display,
+      layout.assetIdsByIndex.get(source) ?? geometryPlaceholderId(source),
+    );
+  }
+
+  return {
+    total: layout.total,
+    geometryRevision: layout.geometryRevision,
+    geometryEntries,
+    assetIdsByIndex,
+    entries,
+    indexByAssetId,
+  };
+}
+
 function layoutEntryFromAsset(asset: AssetSummary): BrowseLayoutEntry {
   return {
     assetId: asset.assetId,
@@ -253,10 +314,14 @@ export function virtualLayoutEntryAt(
   layout: VirtualBrowseLayout,
   index: number,
 ): BrowseLayoutEntry {
-  return layout.entries.get(index) ?? {
-    assetId: geometryPlaceholderId(index),
-    width: null,
-    height: null,
+  const stored = layout.entries.get(index);
+  if (stored) return stored;
+  const geo = layout.geometryEntries.get(index);
+  return {
+    assetId: virtualLayoutPublishedId(layout, index),
+    width: geo?.width ?? null,
+    height: geo?.height ?? null,
+    ...(geo?.mediaType === undefined ? {} : { mediaType: geo.mediaType }),
   };
 }
 

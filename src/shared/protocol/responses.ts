@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { aiSearchPlanSchema, assetMetadataResultSchema, extractedMetadataResultSchema, assetSummarySchema, browseLayoutEntrySchema, collectionSummarySchema, folderBrowseEntrySchema, ignoredPathSchema, linkedFolderDirectoryMutationSchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagCooccurrenceGraphSchema, tagSummarySchema, trashedFolderSummarySchema } from '../asset-types';
+import { aiSearchPlanSchema, assetMetadataResultSchema, extractedMetadataResultSchema, assetSummarySchema, browseLayoutEntrySchema, collectionSummarySchema, folderBrowseEntrySchema, gitignorePreviewSchema, ignoredPathSchema, linkedFolderDirectoryMutationSchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagCooccurrenceGraphSchema, tagSummarySchema, trashedFolderSummarySchema } from '../asset-types';
 import { entityAppearanceSchema, entityAppearanceTargetSchema } from '../entity-appearance';
 import { libraryNavigationSummarySchema } from '../library-navigation';
 import { pluginJobRecordSchema } from '../../plugins/plugin-jobs';
@@ -527,6 +527,12 @@ export function parseAiInputReadyEvent(input: unknown): AiInputReadyEvent {
   return aiInputReadyEventSchema.parse(input);
 }
 
+export const aiProgressJobUpdateSchema = z.strictObject({
+  jobId: nonBlankString,
+  status: z.enum(['queued', 'running', 'paused', 'succeeded', 'failed', 'cancelled']),
+  errorCode: z.string().nullable().optional(),
+});
+
 export const aiProgressEventSchema = z.strictObject({
   type: z.literal('ai.progress'),
   libraryId: nonBlankString,
@@ -534,6 +540,8 @@ export const aiProgressEventSchema = z.strictObject({
   running: z.number().int().nonnegative(),
   succeeded: z.number().int().nonnegative(),
   failed: z.number().int().nonnegative(),
+  /** Jobs that changed since the previous emit; used by the live analysis banner. */
+  changedJobs: z.array(aiProgressJobUpdateSchema).max(512).optional(),
 });
 
 export type AiProgressEvent = z.infer<typeof aiProgressEventSchema>;
@@ -951,6 +959,11 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('ignore.gitignore.updated'),
     content: z.string(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('ignore.gitignore.preview'),
+    preview: gitignorePreviewSchema,
   }),
   z.strictObject({
     ok: z.literal(true),

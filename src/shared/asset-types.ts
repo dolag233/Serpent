@@ -155,6 +155,31 @@ export const ignoredPathSchema = z.strictObject({
 
 export type IgnoredPath = z.infer<typeof ignoredPathSchema>;
 
+/** Same visible-row cap as the official batch-renamer Host list. */
+export const GITIGNORE_PREVIEW_ROW_LIMIT = 500;
+
+export const gitignorePreviewChangeSchema = z.enum(['kept', 'added', 'removed']);
+export type GitignorePreviewChange = z.infer<typeof gitignorePreviewChangeSchema>;
+
+export const gitignorePreviewRowSchema = z.strictObject({
+  locationKind: z.enum(['managed', 'linked']),
+  linkedFolderId: nonBlankString.nullable(),
+  relativePath: z.string().max(4096),
+  pathKind: z.enum(['asset', 'folder']),
+  displayName: nonBlankString,
+  change: gitignorePreviewChangeSchema,
+});
+export type GitignorePreviewRow = z.infer<typeof gitignorePreviewRowSchema>;
+
+export const gitignorePreviewSchema = z.strictObject({
+  rows: z.array(gitignorePreviewRowSchema).max(GITIGNORE_PREVIEW_ROW_LIMIT),
+  currentCount: z.number().int().nonnegative(),
+  addedCount: z.number().int().nonnegative(),
+  removedCount: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+});
+export type GitignorePreview = z.infer<typeof gitignorePreviewSchema>;
+
 export const imageSequenceFrameSummarySchema = z.strictObject({
   assetId: nonBlankString,
   displayName: nonBlankString,
@@ -338,6 +363,8 @@ export const extractedVideoMetadataSchema = z.strictObject({
   videoBitrate: probeNumericSchema.optional().default(null),
   pixelFormat: z.string().nullable().optional().default(null),
   hasAudio: z.boolean().optional().default(false),
+  /** Embedded album art / attached picture stream detected by ffprobe. */
+  hasCoverArt: z.boolean().optional(),
   audioCodec: z.string().nullable().optional().default(null),
   /** Audio-stream bit_rate when present (audio assets / video A/V). */
   audioBitrate: probeNumericSchema.optional().default(null),
@@ -361,6 +388,26 @@ export const extractedVideoMetadataSchema = z.strictObject({
   meteringMode: probeNumericSchema.optional().default(null),
   flash: probeNumericSchema.optional().default(null),
   focalLength: probeNumericSchema.optional().default(null),
+  /** Standard embedded image/audio/video tags, projected from the source file. */
+  title: z.string().nullable().optional(),
+  artist: z.string().nullable().optional(),
+  album: z.string().nullable().optional(),
+  albumArtist: z.string().nullable().optional(),
+  trackNumber: z.string().nullable().optional(),
+  discNumber: z.string().nullable().optional(),
+  genre: z.string().nullable().optional(),
+  composer: z.string().nullable().optional(),
+  comment: z.string().nullable().optional(),
+  copyright: z.string().nullable().optional(),
+  date: z.string().nullable().optional(),
+  description: z.string().nullable().optional(),
+  gpsLatitude: z.number().finite().nullable().optional(),
+  gpsLongitude: z.number().finite().nullable().optional(),
+  orientation: probeNumericSchema.optional(),
+  customTags: z.array(z.strictObject({
+    key: z.string().min(1).max(128),
+    value: z.string().min(1).max(255),
+  })).max(32).optional(),
   /**
    * Serpent-485aeb: font facts read from the font file itself (`name`, `head`,
    * `OS/2`, `maxp`). Only present for `font` assets; the Worker derives them on

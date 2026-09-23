@@ -31,6 +31,7 @@ import type { RendererLibrarySummary } from "../shared/protocol/responses";
 import {
   parseManagedAssetDrag,
   resolveDragDropMode,
+  resolveInternalAssetDropIds,
   resolveManagedDropEffect,
   supportsManagedAssetDrag,
   type DragDropMode,
@@ -246,17 +247,13 @@ function InlineFolderEditRow({
     }, 0);
   }, [onCommit]);
 
-  // Keep inline creation ready for replacement; folder rename starts at the
-  // end so typing appends unless the user moves the caret.
+  // Both create and rename start replacement-ready, matching native file
+  // manager behavior for directory names.
   useEffect(() => {
     const input = inputRef.current;
     if (!input) return;
     input.focus();
-    if (state.kind === "create") {
-      input.select();
-    } else {
-      input.setSelectionRange(input.value.length, input.value.length);
-    }
+    input.select();
   }, [state.kind]);
 
   // A blank area is not focusable, so Chromium does not always blur the input
@@ -320,7 +317,6 @@ function InlineFolderEditRow({
 function InlineCollectionEditRow({
   depth,
   value,
-  selectAllOnOpen,
   ariaLabel,
   placeholder,
   onChange,
@@ -329,7 +325,6 @@ function InlineCollectionEditRow({
 }: {
   depth: number;
   value: string;
-  selectAllOnOpen: boolean;
   ariaLabel?: string;
   placeholder?: string;
   onChange: (value: string) => void;
@@ -357,25 +352,21 @@ function InlineCollectionEditRow({
   }, [cancelScheduledBlurCommit, onCommit]);
 
   // Layout focus handles the initial mount before paint; the frame retry
-  // covers a menu teardown that briefly reclaims focus. Creation keeps its
-  // replacement-ready selection, while rename starts at the current name's end.
+  // covers a menu teardown that briefly reclaims focus. Both creation and
+  // rename are replacement-ready, matching the folder editor.
   useLayoutEffect(() => {
     const focusInput = () => {
       const input = inputRef.current;
       if (!input) return;
       input.focus({ preventScroll: true });
-      if (selectAllOnOpen) {
-        input.select();
-      } else {
-        input.setSelectionRange(input.value.length, input.value.length);
-      }
+      input.select();
     };
     focusInput();
     const frame = window.requestAnimationFrame(() => {
       if (document.activeElement !== inputRef.current) focusInput();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [selectAllOnOpen]);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -1918,35 +1909,24 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             }
           }}
           onDrop={(event) => {
-            const serialized = event.dataTransfer.getData(
-              "application/x-serpent-managed-assets",
+            const ids = resolveInternalAssetDropIds(
+              event.dataTransfer,
+              getManagedAssetDragIds ? getManagedAssetDragIds() : null,
             );
-            const fallbackIds = getManagedAssetDragIds
-              ? [...(getManagedAssetDragIds() ?? [])]
-              : null;
-            if (serialized || fallbackIds) {
+            const mode = resolveDragDropMode({ altKey: event.altKey });
+            if (ids) {
               event.preventDefault();
               setAssetDropTarget(null);
-              try {
-                const ids = serialized
-                  ? (JSON.parse(serialized) as string[])
-                  : fallbackIds!;
-                const mode = resolveDragDropMode({
-                  altKey: event.altKey,
-                });
-                if (mode === "copy") {
-                  // Option 拖：复制语义，managed 源保留原位。
-                  // `lf` retains the virtual child relativePath.  Passing the
-                  // root summary here silently copied into the linked root and
-                  // made child folders appear to accept drops without effect.
-                  void onCopyManagedToLinked(lf, ids);
-                } else {
-                  // 普通拖：与 managed 文件夹一致，走 moveAssets 的链接目标
-                  // 分支（复制进链接目录 + 删除 managed 源），Serpent-f6f779。
-                  void onAssetsDroppedOnFolder(entry.folderId, ids, "move");
-                }
-              } catch {
-                // drag data invalid — silently ignore
+              if (mode === "copy") {
+                // Option 拖：复制语义，managed 源保留原位。
+                // `lf` retains the virtual child relativePath.  Passing the
+                // root summary here silently copied into the linked root and
+                // made child folders appear to accept drops without effect.
+                void onCopyManagedToLinked(lf, ids);
+              } else {
+                // 普通拖：与 managed 文件夹一致，走 moveAssets 的链接目标
+                // 分支（复制进链接目录 + 删除 managed 源），Serpent-f6f779。
+                void onAssetsDroppedOnFolder(entry.folderId, ids, "move");
               }
               return;
             }
@@ -1955,9 +1935,17 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
               event.preventDefault();
               setAssetDropTarget(null);
               const payload = externalImportPayload(event.dataTransfer);
-              void onResolveManagedAssetDrop(files).then((ids) => {
-                if (ids.length > 0) {
-                  void onCopyManagedToLinked(lf, ids);
+              void onResolveManagedAssetDrop(files).then((resolvedIds) => {
+                if (resolvedIds.length > 0) {
+                  if (mode === "copy") {
+                    void onCopyManagedToLinked(lf, resolvedIds);
+                  } else {
+                    void onAssetsDroppedOnFolder(
+                      entry.folderId,
+                      resolvedIds,
+                      "move",
+                    );
+                  }
                   return;
                 }
                 // A native file that is not indexed yet must be imported
@@ -2017,7 +2005,6 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           }}
           onChange={onSetCollectionInputValue}
           onCommit={onCollectionInputCommit}
-          selectAllOnOpen
           value={collectionInputValue}
         />,
       );
@@ -2137,7 +2124,6 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             onChange={onInlineCollectionRenameChange}
             onCommit={onInlineCollectionRenameCommit}
             placeholder={c.name}
-            selectAllOnOpen={false}
             value={inlineCollectionRename.value}
           />
         ) : (

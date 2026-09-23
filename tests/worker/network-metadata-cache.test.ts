@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { performance } from 'node:perf_hooks';
 import path from 'node:path';
@@ -383,5 +383,52 @@ describe('remote library metadata cache', () => {
     const before = readCursor();
     service.setGitignore({ libraryId: library.libraryId, content: 'Assets/ignored.txt\n' });
     expect(readCursor()).toBeGreaterThan(before);
+  });
+
+  it('evicts a closed primary instead of serving TypeError from browse and AI enqueue', () => {
+    const root = temporaryRoot('serpent-zombie-sqlite-handle-');
+    const service = newNetworkService(path.join(root, 'cache'), []);
+    const library = service.createLibrary({
+      displayName: 'Zombie handle',
+      selectedParentPath: root,
+    });
+    const internals = service as unknown as {
+      openById: Map<string, {
+        networkMetadataCache?: { readThrough: { primaryConnection: { close(): void } } };
+      }>;
+    };
+    internals.openById.get(library.libraryId)?.networkMetadataCache?.readThrough.primaryConnection.close();
+
+    expect(() => service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    })).toThrow('LIBRARY_NOT_OPEN');
+    expect(service.listLibraries()).toHaveLength(0);
+    expect(() => service.enqueueAiAnalysisJobs({
+      libraryId: library.libraryId,
+      assetIds: ['missing-asset'],
+    })).toThrow('LIBRARY_NOT_OPEN');
+  });
+
+  it('keeps the live network handle usable after a same-catalog open is rejected', () => {
+    const root = temporaryRoot('serpent-already-open-network-');
+    const service = newNetworkService(path.join(root, 'cache'), []);
+    const created = service.createLibrary({
+      displayName: 'Already open catalog',
+      selectedParentPath: root,
+    });
+    writeFileSync(path.join(created.libraryPath, 'Assets', 'keep.txt'), 'keep');
+    service.refreshManagedAssets(created.libraryId);
+    service.closeLibrary(created.libraryId);
+
+    const aliasPath = path.join(root, 'alias-library');
+    cpSync(created.libraryPath, aliasPath, { recursive: true });
+    const opened = service.openLibrary(created.libraryPath);
+    expect(() => service.openLibrary(aliasPath)).toThrow('LIBRARY_ALREADY_OPEN');
+    expect(service.listLibraries()).toHaveLength(1);
+    expect(service.listAssets({
+      libraryId: opened.libraryId,
+      recursive: true,
+    }).length).toBeGreaterThan(0);
   });
 });
