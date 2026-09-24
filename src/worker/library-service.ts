@@ -15817,6 +15817,116 @@ export class LibraryService {
   }
 
   /**
+   * Indexed byte total for folder inspector details. Sums stored revision
+   * sizes for the folder and its descendants. Linked folders use the catalog
+   * only — this never walks the source disk.
+   */
+  folderIndexedByteSizes(input: {
+    libraryId: string;
+    refs: Array<{ locationKind: 'managed' | 'linked'; folderId: string }>;
+  }): Array<{ folderId: string; byteSize: number }> {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const refs = input.refs.slice(0, 32);
+    const sizes = new Map<string, number>();
+
+    const managedIds = refs
+      .filter((ref) => ref.locationKind === 'managed')
+      .map((ref) => ref.folderId);
+    if (managedIds.length > 0) {
+      const rolled = this.managedFolderIndexedByteTotals(openLibrary);
+      for (const folderId of managedIds) {
+        sizes.set(folderId, rolled.get(folderId) ?? 0);
+      }
+    }
+
+    const linkedIds = [...new Set(refs
+      .filter((ref) => ref.locationKind === 'linked')
+      .map((ref) => ref.folderId))];
+    if (linkedIds.length > 0) {
+      const filesByRoot = new Map<string, Array<{ path: string; byteSize: number }>>();
+      for (const folderId of linkedIds) {
+        const resolved = this.resolveLinkedFolderScope(openLibrary, folderId);
+        if (!resolved) {
+          sizes.set(folderId, 0);
+          continue;
+        }
+        let files = filesByRoot.get(resolved.linkedFolderId);
+        if (!files) {
+          const rows = openLibrary.connection
+            .prepare(
+              `SELECT a.relative_file_path AS path, COALESCE(r.byte_size, 0) AS byte_size
+                 FROM assets a
+                 LEFT JOIN revisions r ON r.revision_id = a.current_revision_id
+                WHERE a.deleted_at IS NULL
+                  AND a.location_kind = 'linked'
+                  AND a.linked_folder_id = ?
+                  AND ${this.explicitIgnoreSql(openLibrary.connection, 'a', false)}`,
+            )
+            .all(resolved.linkedFolderId) as Array<{ path: string; byte_size: number }>;
+          files = rows.map((file) => ({ path: file.path, byteSize: Number(file.byte_size) || 0 }));
+          filesByRoot.set(resolved.linkedFolderId, files);
+        }
+        const prefix = resolved.relativePath;
+        const total = files.reduce((sum, file) => {
+          if (prefix === '' || file.path === prefix || file.path.startsWith(`${prefix}/`)) {
+            return sum + file.byteSize;
+          }
+          return sum;
+        }, 0);
+        sizes.set(folderId, total);
+      }
+    }
+
+    return refs.map((ref) => ({
+      folderId: ref.folderId,
+      byteSize: sizes.get(ref.folderId) ?? 0,
+    }));
+  }
+
+  private managedFolderIndexedByteTotals(openLibrary: OpenLibrary): Map<string, number> {
+    const folders = openLibrary.connection
+      .prepare('SELECT folder_id, parent_folder_id FROM managed_folders')
+      .all() as Array<{ folder_id: string; parent_folder_id: string | null }>;
+    const totals = new Map(folders.map((folder) => [folder.folder_id, 0]));
+    const direct = openLibrary.connection
+      .prepare(
+        `SELECT a.managed_folder_id AS folder_id, COALESCE(SUM(r.byte_size), 0) AS bytes
+           FROM assets a
+           LEFT JOIN revisions r ON r.revision_id = a.current_revision_id
+          WHERE a.deleted_at IS NULL
+            AND a.location_kind = 'managed'
+            AND a.managed_folder_id IS NOT NULL
+            AND ${this.explicitIgnoreSql(openLibrary.connection, 'a', false)}
+          GROUP BY a.managed_folder_id`,
+      )
+      .all() as Array<{ folder_id: string; bytes: number }>;
+    for (const row of direct) {
+      if (totals.has(row.folder_id)) totals.set(row.folder_id, Number(row.bytes) || 0);
+    }
+    const depth = new Map<string, number>();
+    const byId = new Map(folders.map((folder) => [folder.folder_id, folder]));
+    const depthOf = (folderId: string): number => {
+      const cached = depth.get(folderId);
+      if (cached !== undefined) return cached;
+      const parentId = byId.get(folderId)?.parent_folder_id;
+      const value = parentId ? depthOf(parentId) + 1 : 0;
+      depth.set(folderId, value);
+      return value;
+    };
+    const deepestFirst = [...folders].sort(
+      (left, right) => depthOf(right.folder_id) - depthOf(left.folder_id),
+    );
+    for (const folder of deepestFirst) {
+      if (!folder.parent_folder_id) continue;
+      totals.set(
+        folder.parent_folder_id,
+        (totals.get(folder.parent_folder_id) ?? 0) + (totals.get(folder.folder_id) ?? 0),
+      );
+    }
+    return totals;
+  }
+
+  /**
    * Direct child folder cards for the browse canvas (REQ-FOLDER-001/002/003).
    * Counts and covers are batched — never N+1 per card.
    */

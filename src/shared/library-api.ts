@@ -322,6 +322,10 @@ export interface SerpentLibraryApi {
     libraryId: string;
     refs: Array<{ locationKind: 'managed' | 'linked'; folderId: string }>;
   }): Promise<LibraryApiResult<FolderBrowseEntry[]>>;
+  folderIndexedByteSizes(input: {
+    libraryId: string;
+    refs: Array<{ locationKind: 'managed' | 'linked'; folderId: string }>;
+  }): Promise<LibraryApiResult<Array<{ folderId: string; byteSize: number }>>>;
   trashFolder(input: {
     libraryId: string;
     folderId: string;

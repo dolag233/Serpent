@@ -93,6 +93,17 @@ describe('folder browse entries', () => {
       libraryId: library.libraryId,
       parentFolderId: null,
     });
+    const parentBytes = service.folderIndexedByteSizes({
+      libraryId: library.libraryId,
+      refs: [{ locationKind: 'managed', folderId: parent.folderId }],
+    });
+    const childBytes = service.folderIndexedByteSizes({
+      libraryId: library.libraryId,
+      refs: [{ locationKind: 'managed', folderId: childA.folderId }],
+    });
+    expect(childBytes).toEqual([{ folderId: childA.folderId, byteSize: VALID_1X1_PNG.length }]);
+    expect(parentBytes).toEqual([{ folderId: parent.folderId, byteSize: VALID_1X1_PNG.length }]);
+
     expect(atRoot.map((entry) => entry.folderId)).toEqual([parent.folderId]);
     expect(atRoot[0]).toMatchObject({
       locationKind: 'managed',

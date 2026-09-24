@@ -831,6 +831,10 @@ export const en = {
     statusOpen: "Open",
     assets: "Assets",
     folders: "Folders",
+    folderSelection: "{count} folders",
+    path: "Path",
+    childFolders: "Subfolders",
+    size: "Size",
     location: "Location",
     noActiveLibrary: "No active library",
     openLibraryHint: "Open a library to see the current scope and asset details."

@@ -134,6 +134,7 @@ import {
   resolveFolderBrowseParentId,
   shouldShowFolderBrowseCards,
 } from "./folder-browse-canvas";
+import { useFolderInspector } from "./folder-inspector";
 import { collectFolderCoverCandidateAssetIds } from "./folder-cover-refresh";
 import {
   decrementScopeCount,
@@ -3330,6 +3331,55 @@ function AppInner() {
     () => new Set(selectedFolderIds),
     [selectedFolderIds],
   );
+  const folderInspectorCards = useMemo(
+    () => selectedAssetIds.length > 0
+      ? []
+      : folderBrowseEntries.filter((entry) => selectedFolderIdSet.has(entry.folderId)),
+    [selectedAssetIds.length, folderBrowseEntries, selectedFolderIdSet],
+  );
+  const currentFolderInspectorRef = useMemo(() => {
+    if (selectedAssetIds.length > 0 || folderInspectorCards.length > 0 || !library) return null;
+    const parentId = resolveFolderBrowseParentId({
+      assetScope,
+      showTrash,
+      activeTagId,
+      activeCollectionId,
+      activeSmartCollectionId,
+      folders,
+      linkedFolders,
+      searchActive: searchValue.trim() !== "",
+    });
+    if (typeof parentId !== "string") return null;
+    const managed = folders.some((folder) => folder.folderId === parentId);
+    return {
+      locationKind: managed ? "managed" as const : "linked" as const,
+      folderId: parentId,
+    };
+  }, [
+    selectedAssetIds.length,
+    folderInspectorCards.length,
+    library,
+    assetScope,
+    showTrash,
+    activeTagId,
+    activeCollectionId,
+    activeSmartCollectionId,
+    folders,
+    linkedFolders,
+    searchValue,
+  ]);
+  const folderInspector = useFolderInspector({
+    api,
+    libraryId: library?.libraryId ?? null,
+    enabled: folderInspectorCards.length > 0 || currentFolderInspectorRef !== null,
+    cardEntries: folderInspectorCards,
+    currentRef: currentFolderInspectorRef,
+  });
+  const folderInspectorAppearance = folderInspector?.entries.length === 1
+    ? folders.find((folder) => folder.folderId === folderInspector.entries[0]?.folderId)?.appearance
+      ?? linkedFolders.find((folder) => folder.folderId === folderInspector.entries[0]?.folderId)?.appearance
+      ?? null
+    : null;
 
   const browseScopeAssetIds = useMemo(() => {
     const rows = showTrash ? trashedAssets : assets;
@@ -14495,6 +14545,11 @@ function AppInner() {
         editSourceUrl={editSourceUrl}
         editAuthor={editAuthor}
         folderCount={folders.length}
+        folderInspector={folderInspector ? {
+          entries: folderInspector.entries,
+          appearance: folderInspectorAppearance,
+          byteSize: folderInspector.byteSize,
+        } : null}
         handleFavoriteToggle={handleFavoriteToggle}
         handleMetadataDescriptionInput={handleMetadataDescriptionInput}
         handleMetadataDescriptionSave={handleMetadataDescriptionSave}

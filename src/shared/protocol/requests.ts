@@ -351,6 +351,19 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
       .min(1)
       .max(16),
   }),
+  z.strictObject({
+    type: z.literal('folder.indexed-bytes.request'),
+    libraryId: identifierSchema,
+    refs: z
+      .array(
+        z.strictObject({
+          locationKind: z.enum(['managed', 'linked']),
+          folderId: z.string().min(1).max(4096),
+        }),
+      )
+      .min(1)
+      .max(32),
+  }),
   // Clarification #7 / Serpent-ekj: managed folder trash / permanent disk delete.
   z.strictObject({
     type: z.literal('folder.trash.request'),
@@ -1545,6 +1558,19 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
       )
       .min(1)
       .max(16),
+  }),
+  z.strictObject({
+    type: z.literal('folder.indexed-bytes'),
+    libraryId: identifierSchema,
+    refs: z
+      .array(
+        z.strictObject({
+          locationKind: z.enum(['managed', 'linked']),
+          folderId: z.string().min(1).max(4096),
+        }),
+      )
+      .min(1)
+      .max(32),
   }),
   z.strictObject({
     type: z.literal('folder.list-trashed'),

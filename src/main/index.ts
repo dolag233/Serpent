@@ -2325,6 +2325,7 @@ async function commandFor(
     case "folder.list.request":
     case "folder.browse-entries.request":
     case "folder.entries-request":
+    case "folder.indexed-bytes.request":
     case "folder.trash.request":
     case "selection.trash.request":
     case "folder.delete-from-disk.request":

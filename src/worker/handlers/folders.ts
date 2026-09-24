@@ -181,6 +181,15 @@ export async function executeFolderWorkerCommand(
         entries,
       };
     }
+    case 'folder.indexed-bytes':
+      return {
+        ok: true,
+        type: 'folder.indexed-bytes',
+        sizes: libraryService.folderIndexedByteSizes({
+          libraryId: request.command.libraryId,
+          refs: request.command.refs,
+        }),
+      };
     case 'folder.entries': {
       const entries = libraryService.folderEntriesByRefs({
         libraryId: request.command.libraryId,

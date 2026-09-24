@@ -545,6 +545,21 @@ export const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: result.entries };
   },
 
+  async folderIndexedByteSizes(input: {
+    libraryId: string;
+    refs: Array<{ locationKind: 'managed' | 'linked'; folderId: string }>;
+  }): Promise<LibraryApiResult<Array<{ folderId: string; byteSize: number }>>> {
+    const result = await request({
+      type: 'folder.indexed-bytes.request',
+      ...input,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.indexed-bytes') {
+      throw new Error('Unexpected folder-indexed-bytes response.');
+    }
+    return { ok: true, value: result.sizes };
+  },
+
   async trashFolder(input: {
     libraryId: string;
     folderId: string;
