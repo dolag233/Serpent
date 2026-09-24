@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractRawImageMetadata,
   normalizeRawImageMetadata,
+  resolvedExtractedPixelSize,
 } from "../../src/worker/raw-image-metadata";
 import { buildRawImageMetadataRows } from "../../src/renderer/raw-image-metadata-format";
 import { extractedVideoMetadataSchema } from "../../src/shared/asset-types";
@@ -92,6 +93,43 @@ describe("RAW image metadata", () => {
       { field: "flash", value: "已闪光（检测到回光）" },
       { field: "focalLength", value: "56 毫米" },
     ]));
+  });
+
+  it("treats a zero-size EXIF stub as missing dimensions", async () => {
+    const metadata = await extractRawImageMetadata("photo.jpg", {
+      parse: async () => ({
+        ImageWidth: 0,
+        ImageHeight: 0,
+        Orientation: 0,
+      }),
+    });
+
+    expect(metadata).toBeNull();
+  });
+
+  it("keeps camera fields when the EXIF size is a zero stub", () => {
+    expect(normalizeRawImageMetadata({
+      ImageWidth: 0,
+      ImageHeight: 0,
+      Orientation: 0,
+      Make: "Test",
+      ExposureCompensation: 0,
+      Flash: 0,
+    })).toMatchObject({
+      width: null,
+      height: null,
+      orientation: null,
+      cameraMake: "Test",
+      exposureCompensation: 0,
+      flash: 0,
+    });
+  });
+
+  it("uses the container header when EXIF dimensions are not positive", () => {
+    expect(resolvedExtractedPixelSize(
+      { width: 0, height: 0 },
+      { width: 1920, height: 1080 },
+    )).toEqual({ width: 1920, height: 1080 });
   });
 
   it("normalizes GPS degree-minute-second coordinates", () => {

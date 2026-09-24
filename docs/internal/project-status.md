@@ -1,5 +1,7 @@
 # Serpent 项目状态
 
+- **2026-09-25 EXIF 宽高 0 被当成尺寸**：部分 JPEG 的 EXIF 是 0×0 占位，帧头才是真实尺寸。提取把 0 写成就绪元数据并盖掉帧头，浏览布局把 0 送进协议后主进程关掉 Worker。现已忽略非正尺寸、改用帧头，并让已写成 0 的记录重新提取。清单 `BROWSE-LAYOUT-001` 待人点验。
+
 - **2026-09-17 导入遮罩卡住（GitHub #45 / `Serpent-d8ac96`）**：全屏「正在导入」改为跟 Renderer 的导入 RPC 走，不再由滞后进度事件重新打开。链接导入在目录提交后立即返回，源文件头探测改走浏览可见窗口。不可取消遮罩可用 Esc/隐藏收起。清单 `IMPORT-UI-008` 待人点验。见[开发日志](development/2026-09-17-import-overlay-stuck-after-complete-development-log.md)。
 
 - **2026-09-18 撤回 `.blend` 支持（`Serpent-60ff4e`）**：无可靠公开网格解析器覆盖 Blender 3–4.x；不捆绑 Blender（体积与 GPL 相对 MIT）。`.blend` 从 `MODEL_EXTENSIONS` 移除，按 `other` 入库。清单 `FMT-BLEND-001` / `FMT-BLEND-002` 已撤回。见[调研](research/2026-09-18-blend-preview-without-blender.md)与[撤回日志](development/2026-09-18-blend-support-withdrawn-development-log.md)。

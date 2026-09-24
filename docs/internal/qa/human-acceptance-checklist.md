@@ -44,6 +44,12 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-09-25 元数据不再把 EXIF 占位 0 当成尺寸
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| BROWSE-LAYOUT-001 | EXIF 宽高为 0 的图片不再让浏览失败，尺寸改用画面本身 | 待人类验收 | ① 完全退出后再打开含这次改动的构建。② 打开刚才弹出「未能分类的内部错误」的那个资源库，进入当时正在看的文件夹。③ 看那张图的卡片和检查器里的分辨率。 | 文件夹能打开，不再弹出未能分类的错误。那张图显示真实分辨率，而不是 0×0。 | `raw-image-metadata.ts`；`library-service.ts` 提取写入 | 2026-09-25：EXIF 占位写成 0×0 并盖掉帧头。`node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/unit/raw-image-metadata.test.ts tests/worker/video-exr.test.ts -t "zero-size EXIF|zero stub|container header"`：2 files，相关 5 passed。`npm run test:library-availability`：9 files / 229 passed。真实库复现未再跑。 |
+
 ### 2026-09-22 链接文件夹拖放、卡片留白、文件夹快捷键与搜索历史
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

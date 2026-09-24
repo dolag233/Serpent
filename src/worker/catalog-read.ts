@@ -714,6 +714,16 @@ export interface CatalogAssetSummaryRow {
   artifact_duration_ms?: number | null;
 }
 
+/**
+ * Pixel size for protocol fields that only accept a positive integer or null.
+ * Zero, negative, and non-integer readings are unknown dimensions. Emitting
+ * them makes the browse layout fail validation and the main process shut the
+ * Library Worker down.
+ */
+function knownPixelDimension(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null;
+}
+
 export function catalogAssetSummaryFromRow(
   row: CatalogAssetSummaryRow,
   nowMs = Date.now(),
@@ -725,8 +735,8 @@ export function catalogAssetSummaryFromRow(
     remainingDays = Math.max(0, Math.ceil((expiryMs - nowMs) / (24 * 60 * 60 * 1000)));
   }
   const mediaType = row.media_type ?? 'other';
-  const width = row.artifact_width != null && row.artifact_width > 0 ? row.artifact_width : null;
-  const height = row.artifact_height != null && row.artifact_height > 0 ? row.artifact_height : null;
+  const width = knownPixelDimension(row.artifact_width);
+  const height = knownPixelDimension(row.artifact_height);
   const sourceDirect = row.availability === 'available'
     && !row.deleted_at
     && isSourceDirectPreview({
@@ -782,8 +792,8 @@ export function catalogBrowseLayoutEntryFromRow(
   row: CatalogLayoutRow,
   mediaType: 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'font' | 'other',
 ): BrowseLayoutEntry {
-  const width = row.layout_width ?? null;
-  const height = row.layout_height ?? null;
+  const width = knownPixelDimension(row.layout_width);
+  const height = knownPixelDimension(row.layout_height);
   const sourceDirect = row.layout_availability === 'available'
     && !row.layout_deleted_at
     && isSourceDirectPreview({

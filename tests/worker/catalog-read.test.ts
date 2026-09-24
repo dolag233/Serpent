@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AssetSummary } from '../../src/shared/asset-types';
+import { browseLayoutEntrySchema, type AssetSummary } from '../../src/shared/asset-types';
 import { encodeLinkedVirtualFolderId } from '../../src/shared/linked-folder-tree';
 import { TEXT_EXTENSIONS, FORMAT_UNKNOWN_TOKEN } from '../../src/shared/text-media';
 import { knownProductFormatExtensionsDotless } from '../../src/shared/product-format-extensions';
@@ -432,6 +432,24 @@ describe('shared pure catalog reads', () => {
       previewArtifactId: null,
       displayName: 'still.png',
     });
+
+    const zeroSizeLayout = catalogBrowseLayoutEntryFromRow({
+      asset_id: 'zero-size',
+      relative_file_path: 'blank.png',
+      layout_width: 0,
+      layout_height: 0,
+      layout_availability: 'available',
+      layout_byte_size: 12,
+      layout_preview_artifact_id: null,
+    }, 'image');
+    expect(zeroSizeLayout).toMatchObject({ width: null, height: null });
+    expect(browseLayoutEntrySchema.parse(zeroSizeLayout).width).toBeNull();
+    expect(catalogBrowseLayoutEntryFromRow({
+      asset_id: 'fraction',
+      relative_file_path: 'odd.png',
+      layout_width: 1.5,
+      layout_height: -3,
+    }, 'image')).toMatchObject({ width: null, height: null });
   });
 
   it('reads artifact rows in bounded SELECT-only chunks without statement write methods', () => {

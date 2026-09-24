@@ -616,6 +616,7 @@ import {
   extractRawImageMetadataDetailed,
   extractRawImageMetadata,
   normalizeRawImageMetadata,
+  resolvedExtractedPixelSize,
   type RawImageMetadata,
   type RawImageMetadataParser,
 } from './raw-image-metadata';
@@ -25226,6 +25227,14 @@ export class LibraryService {
     revisionId: string,
     size: { width: number; height: number },
   ): void {
+    if (
+      !Number.isInteger(size.width)
+      || !Number.isInteger(size.height)
+      || size.width <= 0
+      || size.height <= 0
+    ) {
+      return;
+    }
     const existing = openLibrary.connection
       .prepare(
         `SELECT artifact_id
@@ -25871,6 +25880,71 @@ export class LibraryService {
     return this.requeueRawImageMetadataJobs(openLibrary, { limit: available }).admitted;
   }
 
+  /**
+   * A ready extracted_metadata row whose width or height is not a positive
+   * pixel size was a failed probe (commonly an EXIF stub of 0×0). It must not
+   * stay terminal: invalidate it and put the metadata job back on the queue
+   * so the container header can replace it.
+   */
+  private requeueNonPositiveExtractedImageDimensions(
+    openLibrary: OpenLibrary,
+    options: {
+      assetIds: readonly string[];
+      extension: { sql: string; params: readonly string[] };
+      limit: number;
+    },
+  ): void {
+    const selectedSql = options.assetIds.length > 0
+      ? `AND a.asset_id IN (${options.assetIds.map(() => '?').join(',')})`
+      : '';
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT ra.artifact_id, a.current_revision_id AS revision_id
+           FROM assets a
+           JOIN revision_artifacts ra ON ra.revision_id = a.current_revision_id
+          WHERE a.deleted_at IS NULL
+            AND a.current_revision_id IS NOT NULL
+            AND a.availability = 'available'
+            ${selectedSql}
+            AND ${options.extension.sql}
+            AND ra.kind = 'extracted_metadata'
+            AND ra.status = 'ready'
+            AND ra.invalidated_at IS NULL
+            AND (
+              (ra.width IS NOT NULL AND ra.width <= 0)
+              OR (ra.height IS NOT NULL AND ra.height <= 0)
+            )
+          LIMIT ?`,
+      )
+      .all(
+        ...options.assetIds,
+        ...options.extension.params,
+        options.limit,
+      ) as Array<{ artifact_id: string; revision_id: string }>;
+    if (rows.length === 0) return;
+    const now = new Date().toISOString();
+    const invalidate = openLibrary.connection.prepare(
+      `UPDATE revision_artifacts
+          SET invalidated_at = ?
+        WHERE artifact_id = ?
+          AND invalidated_at IS NULL`,
+    );
+    const requeue = openLibrary.connection.prepare(
+      `UPDATE jobs
+          SET status = 'queued', progress = 0.0,
+              error_code = NULL, error_detail = NULL, updated_at = ?
+        WHERE revision_id = ?
+          AND kind = 'extract_metadata'
+          AND status IN ('succeeded', 'failed', 'cancelled')`,
+    );
+    openLibrary.connection.transaction(() => {
+      for (const row of rows) {
+        invalidate.run(now, row.artifact_id);
+        requeue.run(now, row.revision_id);
+      }
+    })();
+  }
+
   private enqueueRawImageMetadataJobs(
     openLibrary: OpenLibrary,
     options: {
@@ -25892,6 +25966,13 @@ export class LibraryService {
     const extensionMatch = options.extensions === 'embedded'
       ? embeddedImageMetadataExtensionMatchSql(openLibrary.connection, 'a')
       : rawImageExtensionMatchSql(openLibrary.connection, 'a');
+    this.requeueNonPositiveExtractedImageDimensions(openLibrary, {
+      assetIds: selectedIds,
+      extension: extensionMatch,
+      limit: options.limit === undefined
+        ? 64
+        : Math.max(1, Math.min(64, Math.trunc(options.limit))),
+    });
     // Metadata is a secondary Inspector aid. Keep each enqueue call bounded;
     // the regular background scheduler will admit the next batch after the
     // primary thumbnail wave yields.
@@ -27671,8 +27752,6 @@ export class LibraryService {
     const artifactRelPath = `${artifactId}.json`;
     const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
     try {
-      writeFileSync(artifactAbsPath, JSON.stringify(metadata, null, 2), 'utf-8');
-      const outputStat = statSync(artifactAbsPath);
       const hasKnownDimensions = Number.isSafeInteger(knownDimensions?.width)
         && Number.isSafeInteger(knownDimensions?.height)
         && knownDimensions!.width! > 0
@@ -27680,6 +27759,10 @@ export class LibraryService {
       const headerSize = hasKnownDimensions
         ? { width: knownDimensions!.width!, height: knownDimensions!.height! }
         : await readImageDimensions(assetPath);
+      const pixelSize = resolvedExtractedPixelSize(metadata, headerSize);
+      const stored = { ...metadata, width: pixelSize.width, height: pixelSize.height };
+      writeFileSync(artifactAbsPath, JSON.stringify(stored, null, 2), 'utf-8');
+      const outputStat = statSync(artifactAbsPath);
       const now = new Date().toISOString();
       openLibrary.connection.transaction(() => {
         openLibrary.connection
@@ -27703,8 +27786,8 @@ export class LibraryService {
             revisionId,
             outputStat.size,
             artifactRelPath,
-            metadata.width ?? headerSize?.width ?? null,
-            metadata.height ?? headerSize?.height ?? null,
+            pixelSize.width,
+            pixelSize.height,
             EMBEDDED_IMAGE_METADATA_GENERATOR,
             now,
         );
@@ -33494,8 +33577,14 @@ export class LibraryService {
          r.byte_size AS layout_byte_size,
          r.modified_at AS layout_modified_at,
          m.rating AS layout_rating,
-         COALESCE(layout_metadata.width, layout_preview.width) AS layout_width,
-         COALESCE(layout_metadata.height, layout_preview.height) AS layout_height,
+         CASE
+           WHEN layout_metadata.width > 0 AND layout_metadata.height > 0 THEN layout_metadata.width
+           ELSE layout_preview.width
+         END AS layout_width,
+         CASE
+           WHEN layout_metadata.width > 0 AND layout_metadata.height > 0 THEN layout_metadata.height
+           ELSE layout_preview.height
+         END AS layout_height,
          layout_preview.artifact_id AS layout_preview_artifact_id`
       : `a.asset_id, a.current_revision_id AS layout_revision_id, a.availability AS layout_availability, a.deleted_at AS layout_deleted_at, a.relative_file_path, r.byte_size AS layout_byte_size, r.modified_at AS layout_modified_at, m.rating AS layout_rating, NULL AS layout_width, NULL AS layout_height, NULL AS layout_preview_artifact_id`;
     const dataColumnsForFetch = idsOnly

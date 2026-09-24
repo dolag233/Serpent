@@ -87,6 +87,41 @@ function numeric(value: unknown): number | null {
   return null;
 }
 
+/**
+ * A pixel size is a positive integer. EXIF writers sometimes emit a stub IFD
+ * whose ImageWidth/ImageHeight are 0; that is not a dimension and must not
+ * hide the container frame header.
+ */
+export function usablePixelDimension(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+export function resolvedExtractedPixelSize(
+  metadata: { width?: number | null; height?: number | null },
+  header: { width?: number | null; height?: number | null } | null | undefined,
+): { width: number | null; height: number | null } {
+  const metadataWidth = usablePixelDimension(metadata.width);
+  const metadataHeight = usablePixelDimension(metadata.height);
+  if (metadataWidth !== null && metadataHeight !== null) {
+    return { width: metadataWidth, height: metadataHeight };
+  }
+  const headerWidth = usablePixelDimension(header?.width);
+  const headerHeight = usablePixelDimension(header?.height);
+  if (headerWidth !== null && headerHeight !== null) {
+    return { width: headerWidth, height: headerHeight };
+  }
+  return { width: null, height: null };
+}
+
+/** EXIF orientation is 1–8. 0 is a stub, not "unspecified". */
+function orientationValue(value: unknown): number | string | null {
+  const parsed = scalar(value);
+  if (typeof parsed === 'number') {
+    return Number.isInteger(parsed) && parsed >= 1 && parsed <= 8 ? parsed : null;
+  }
+  return parsed === '0' ? null : parsed;
+}
+
 function firstRawValue(record: Record<string, unknown>, keys: string[]): unknown {
   for (const key of keys) {
     const value = record[key];
@@ -137,16 +172,16 @@ export function normalizeRawImageMetadata(output: unknown): RawImageMetadata {
     ? output as Record<string, unknown>
     : {};
   return {
-    width: numeric(firstValue(record, [
+    width: usablePixelDimension(numeric(firstValue(record, [
       'ExifImageWidth',
       'ImageWidth',
       'PixelXDimension',
-    ])),
-    height: numeric(firstValue(record, [
+    ]))),
+    height: usablePixelDimension(numeric(firstValue(record, [
       'ExifImageHeight',
       'ImageHeight',
       'PixelYDimension',
-    ])),
+    ]))),
     captureDate: metadataDate(firstValue(record, [
       'DateTimeOriginal',
       'CreateDate',
@@ -204,7 +239,7 @@ export function normalizeRawImageMetadata(output: unknown): RawImageMetadata {
       'GPSLongitude',
       'gpsLongitude',
     ]), firstRawValue(record, ['GPSLongitudeRef', 'longitudeRef'])),
-    orientation: scalar(firstValue(record, ['Orientation'])),
+    orientation: orientationValue(firstValue(record, ['Orientation'])),
   };
 }
 

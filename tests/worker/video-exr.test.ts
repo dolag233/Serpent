@@ -2078,6 +2078,79 @@ describe('EXR/TGA (oiiotool)', () => {
     service.closeAll();
   });
 
+  it('stores the image header when EXIF dimensions are a zero stub', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService({
+      rawImageMetadataParser: {
+        parse: async () => ({
+          ImageWidth: 0,
+          ImageHeight: 0,
+          Orientation: 0,
+          Make: 'Stub',
+        }),
+      },
+    });
+    const created = service.createLibrary({ displayName: 'ZeroExif', selectedParentPath: root });
+    const sourcePath = path.join(root, 'reference.png');
+    writeFileSync(sourcePath, VALID_1X1_PNG);
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    service.enqueueThumbnailJobs(created.libraryId, { assetIds: [asset.assetId] });
+    await service.processThumbnailQueue(created.libraryId);
+
+    const db = assertDb(created.libraryPath);
+    const metadataRow = db.prepare(
+      `SELECT file_path, width, height
+         FROM revision_artifacts
+        WHERE kind = 'extracted_metadata'
+          AND status = 'ready'
+          AND invalidated_at IS NULL`,
+    ).get() as { file_path: string; width: number; height: number };
+    expect(metadataRow).toMatchObject({ width: 1, height: 1 });
+    expect(JSON.parse(require('node:fs').readFileSync(
+      path.join(created.libraryPath, '.serpent', 'artifacts', metadataRow.file_path),
+      'utf-8',
+    ))).toMatchObject({
+      width: 1,
+      height: 1,
+      orientation: null,
+      cameraMake: 'Stub',
+    });
+
+    db.prepare(
+      `UPDATE revision_artifacts
+          SET width = 0, height = 0
+        WHERE kind = 'extracted_metadata'
+          AND invalidated_at IS NULL`,
+    ).run();
+    db.prepare(
+      `UPDATE jobs
+          SET status = 'succeeded'
+        WHERE kind = 'extract_metadata'`,
+    ).run();
+    db.close();
+
+    const brokenLayout = service.searchAssets({
+      libraryId: created.libraryId,
+      layoutOnly: true,
+    });
+    expect(brokenLayout.layout?.every((entry) => entry.width !== 0 && entry.height !== 0)).toBe(true);
+
+    service.enqueueThumbnailJobs(created.libraryId, { assetIds: [asset.assetId] });
+    await service.processThumbnailQueue(created.libraryId);
+    const repaired = assertDb(created.libraryPath);
+    expect(repaired.prepare(
+      `SELECT width, height
+         FROM revision_artifacts
+        WHERE kind = 'extracted_metadata'
+          AND status = 'ready'
+          AND invalidated_at IS NULL`,
+    ).get()).toMatchObject({ width: 1, height: 1 });
+    repaired.close();
+    service.closeAll();
+  });
+
   it('uses a bounded embedded RAW JPEG for the card and reserves OIIO for the viewer', async () => {
     process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
     const root = temporaryRoot();
