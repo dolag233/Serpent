@@ -1506,6 +1506,8 @@ export const en = {
     folderCardsWhenRecursiveHint:
       "When a folder includes its subfolders, those folders still appear at the top of the canvas. Turn this off to show only files.",
     languageHint: "Controls the interface language. Changes apply immediately.",
+    bakeImageRotation: "Save left and right rotation into the image",
+    bakeImageRotationHint: "When on, rotating a normal image such as JPEG or PNG in the viewer is saved into the file. When off, only the view turns. Video, image sequences, GIF, and RAW stay unchanged.",
     imageSequenceDetection: "Detect image sequences",
     imageSequenceDetectionHint:
       "Recognize consecutively numbered images during import. Turn this off to keep them as separate files and skip the confirmation window.",

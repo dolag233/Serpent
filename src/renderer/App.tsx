@@ -536,6 +536,10 @@ import {
   saveAudioPreviewPreferences,
 } from "./audio-preview-preferences";
 import {
+  loadImageRotationPreferences,
+  saveImageRotationPreferences,
+} from "./image-rotation-preferences";
+import {
   loadBrowseSortPreferences,
   saveBrowseSortPreferences,
 } from "./browse-sort-preferences";
@@ -930,6 +934,13 @@ function AppInner() {
   const applyAudioPreviewPreference = useCallback((preferCover: boolean) => {
     saveAudioPreviewPreferences({ version: 1, preferCover });
     setAudioPreviewPrefersCover(preferCover);
+  }, []);
+  const [bakeImageRotation, setBakeImageRotation] = useState(
+    () => loadImageRotationPreferences().bakeIntoFile,
+  );
+  const applyBakeImageRotation = useCallback((bakeIntoFile: boolean) => {
+    saveImageRotationPreferences({ version: 1, bakeIntoFile });
+    setBakeImageRotation(bakeIntoFile);
   }, []);
   const libraryIdForAudioPreview = library?.libraryId;
   useEffect(() => {
@@ -14580,6 +14591,7 @@ function AppInner() {
             ref={previewModalRef}
             api={api}
             asset={previewAsset}
+            bakeImageRotation={bakeImageRotation}
             chromeIdle={viewerChromeIdle}
             libraryId={library.libraryId}
             onChromeActivity={onViewerChromeActivity}
@@ -14905,6 +14917,8 @@ function AppInner() {
         }}
         audioPreviewPrefersCover={audioPreviewPrefersCover}
         onAudioPreviewPrefersCoverChange={applyAudioPreviewPreference}
+        bakeImageRotation={bakeImageRotation}
+        onBakeImageRotationChange={applyBakeImageRotation}
         onToggleShowAiBadges={() => {
           setAiUiPrefs((p) => ({ ...p, showAiBadges: !p.showAiBadges }));
         }}

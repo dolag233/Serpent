@@ -19,6 +19,24 @@ export async function executeMediaJobWorkerCommand(
       const enqueued = hooks.scheduleThumbnailQueue(request.command.libraryId, { limit: 50 });
       return { ok: true, type: 'media.jobs.enqueued', libraryId: request.command.libraryId, enqueued };
     }
+    case 'asset.rotate-image-content': {
+      const rotated = await libraryService.rotateImageContent(
+        request.command.libraryId,
+        request.command.assetId,
+        request.command.direction,
+      );
+      if (rotated.baked) {
+        hooks.scheduleThumbnailQueue(request.command.libraryId, { skipInitialEnqueue: true });
+      }
+      return {
+        ok: true,
+        type: 'asset.image-rotation.applied',
+        libraryId: request.command.libraryId,
+        assetId: request.command.assetId,
+        baked: rotated.baked,
+        revisionId: rotated.baked ? rotated.revisionId : null,
+      };
+    }
     case 'media.set-audio-preview-preference': {
       const rebuilt = libraryService.setAudioPreviewPrefersCover(
         request.command.libraryId,

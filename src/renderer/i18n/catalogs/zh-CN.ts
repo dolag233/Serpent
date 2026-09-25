@@ -1487,6 +1487,8 @@ export const zhCN = {
     folderCardsWhenRecursiveHint:
       "打开「递归显示子文件夹内容」时，画布开头仍显示当前文件夹下的子文件夹。关闭后只显示文件。",
     languageHint: "控制界面文案语言，立即生效。",
+    bakeImageRotation: "左右旋转时修改图片文件",
+    bakeImageRotationHint: "打开后，查看器里左右旋转 jpg、png 这类普通图片时会保存到文件。关闭时只转动画面。视频、序列帧、GIF 和 RAW 不会改文件。",
     imageSequenceDetection: "启用序列帧检测",
     imageSequenceDetectionHint:
       "导入连续编号的图片时识别它们。关闭后不会当成序列帧，也不会弹出确认窗口。",

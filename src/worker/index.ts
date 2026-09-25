@@ -2715,6 +2715,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     }
     case 'media.enqueue-thumbnail-jobs':
     case 'media.set-audio-preview-preference':
+    case 'asset.rotate-image-content':
     case 'media.process-thumbnail-queue':
     case 'media.job-summary':
     case 'media.list-jobs':

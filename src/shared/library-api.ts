@@ -762,6 +762,15 @@ export interface SerpentLibraryApi {
   openFolderWith(input: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>>;
   copyFolderPath(input: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>>;
   retryArtifact(input: { libraryId: string; assetId: string; kind: 'thumbnail' | 'webm_proxy' | 'audio_proxy' }): Promise<LibraryApiResult<{ assetId: string; kind: string }>>;
+  /**
+   * Write a quarter-turn into a still image file. `baked: false` means the
+   * file was left unchanged (video, sequence, or a format that stays view-only).
+   */
+  rotateImageContent(input: {
+    libraryId: string;
+    assetId: string;
+    direction: 'clockwise' | 'counter-clockwise';
+  }): Promise<LibraryApiResult<{ baked: boolean; revisionId: string | null }>>;
   listMediaJobs(input: {
     libraryId: string;
     summaryOnly?: boolean;

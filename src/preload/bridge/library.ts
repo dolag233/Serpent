@@ -2273,6 +2273,31 @@ export const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { preferCover: result.preferCover, rebuilt: result.rebuilt } };
   },
 
+  async rotateImageContent({
+    libraryId,
+    assetId,
+    direction,
+  }: {
+    libraryId: string;
+    assetId: string;
+    direction: 'clockwise' | 'counter-clockwise';
+  }): Promise<LibraryApiResult<{ baked: boolean; revisionId: string | null }>> {
+    const result = await request({
+      type: 'asset.rotate-image-content.request',
+      libraryId,
+      assetId,
+      direction,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.image-rotation.applied') {
+      throw new Error('Unexpected image rotation response.');
+    }
+    return {
+      ok: true,
+      value: { baked: result.baked, revisionId: result.revisionId },
+    };
+  },
+
   async listMediaJobs({
     libraryId,
     summaryOnly,

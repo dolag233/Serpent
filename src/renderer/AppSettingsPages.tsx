@@ -262,11 +262,15 @@ export function AssetsSettingsPage({
   imageSequenceDetectionEnabled = true,
   onToggleAutoDetectImageSequences,
   onToggleImageSequenceDetection,
+  bakeImageRotation = false,
+  onBakeImageRotationChange,
 }: {
   autoDetectImageSequences?: boolean;
   imageSequenceDetectionEnabled?: boolean;
   onToggleAutoDetectImageSequences?: () => void;
   onToggleImageSequenceDetection?: () => void;
+  bakeImageRotation?: boolean;
+  onBakeImageRotationChange?: (bakeIntoFile: boolean) => void;
 } = {}): ReactNode {
   const t = useT();
   const [importConflictPreferences, setImportConflictPreferences] = useState(() =>
@@ -290,6 +294,16 @@ export function AssetsSettingsPage({
 
   return (
     <>
+      {onBakeImageRotationChange ? (
+        <SettingsCard>
+          <SettingsToggleRow
+            checked={bakeImageRotation}
+            hint={t("settings.bakeImageRotationHint")}
+            label={t("settings.bakeImageRotation")}
+            onChange={() => onBakeImageRotationChange(!bakeImageRotation)}
+          />
+        </SettingsCard>
+      ) : null}
       {onToggleImageSequenceDetection ? (
         <SettingsCard>
           <SettingsToggleRow

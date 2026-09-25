@@ -15,6 +15,13 @@ export function executeMediaJobMainCommand(
         libraryId: request.libraryId,
         preferCover: request.preferCover,
       };
+    case "asset.rotate-image-content.request":
+      return {
+        type: "asset.rotate-image-content",
+        libraryId: request.libraryId,
+        assetId: request.assetId,
+        direction: request.direction,
+      };
     case "media.list-jobs.request":
       return {
         type: "media.list-jobs",

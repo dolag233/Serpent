@@ -149,6 +149,8 @@ import {
 } from './network-metadata-cache';
 
 import { columnsFor, degradedDefaults, hasTable, invalidateColumnProbe, missingColumns, qualify, selectColumns } from './lenient-columns';
+import { isBakeableStillImageFile } from '../shared/bakeable-still-image';
+import { ImageRotationWriteError, rotateStillImageFile } from './rotate-still-image-file';
 import {
   asMediaResourceExhaustedError,
   MEDIA_RESOURCE_EXHAUSTED_ERROR_CODE,
@@ -22712,6 +22714,142 @@ export class LibraryService {
   /**
    * Resolve the absolute filesystem path for an asset (no MIME lookup).
    */
+  /**
+   * Quarter-turn a bakeable still image's pixels and record a new revision.
+   * Sequences, video, and formats we cannot rewrite return `{ baked: false }`.
+   */
+  async rotateImageContent(
+    libraryId: string,
+    assetId: string,
+    direction: 'clockwise' | 'counter-clockwise',
+  ): Promise<{ baked: true; revisionId: string } | { baked: false }> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    this.assertLibraryWritable(openLibrary);
+    const asset = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, location_kind, linked_folder_id, relative_file_path,
+                current_revision_id, deleted_at, availability
+           FROM assets
+          WHERE asset_id = ?`,
+      )
+      .get(assetId) as {
+        asset_id: string;
+        location_kind: 'managed' | 'linked';
+        linked_folder_id: string | null;
+        relative_file_path: string;
+        current_revision_id: string | null;
+        deleted_at: string | null;
+        availability: 'available' | 'missing';
+      } | undefined;
+    if (!asset || asset.deleted_at || asset.availability !== 'available' || !asset.current_revision_id) {
+      throw new LibraryServiceError('ASSET_NOT_FOUND');
+    }
+    if (
+      LibraryService.detectMediaType(asset.relative_file_path) !== 'image'
+      || !isBakeableStillImageFile(asset.relative_file_path)
+      || this.assetBelongsToImageSequence(openLibrary, assetId)
+    ) {
+      return { baked: false };
+    }
+    const absolutePath = this.resolveAssetPath(libraryId, assetId);
+    const now = new Date().toISOString();
+    const revisionId = randomUUID();
+    const previousRevisionId = asset.current_revision_id;
+    const revisionColumns = columnsFor(openLibrary.connection, 'revisions');
+    const record = openLibrary.connection.transaction(() => {
+      const stat = statSync(absolutePath);
+      const fingerprint = revisionColumns.has('content_fingerprint')
+        ? sha256FileAtPath(absolutePath)
+        : null;
+      if (fingerprint === null) {
+        openLibrary.connection
+          .prepare(
+            `INSERT INTO revisions
+               (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
+                original_filename, origin, accepted_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'replace', ?)`,
+          )
+          .run(
+            revisionId,
+            asset.asset_id,
+            previousRevisionId,
+            stat.size,
+            stat.mtime.toISOString(),
+            path.posix.basename(asset.relative_file_path),
+            now,
+          );
+      } else {
+        openLibrary.connection
+          .prepare(
+            `INSERT INTO revisions
+               (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
+                original_filename, origin, accepted_at, content_fingerprint)
+             VALUES (?, ?, ?, ?, ?, ?, 'replace', ?, ?)`,
+          )
+          .run(
+            revisionId,
+            asset.asset_id,
+            previousRevisionId,
+            stat.size,
+            stat.mtime.toISOString(),
+            path.posix.basename(asset.relative_file_path),
+            now,
+            fingerprint,
+          );
+      }
+      openLibrary.connection
+        .prepare(
+          `UPDATE assets
+              SET current_revision_id = ?, availability = 'available', updated_at = ?
+            WHERE asset_id = ?`,
+        )
+        .run(revisionId, now, asset.asset_id);
+      openLibrary.connection
+        .prepare(
+          `UPDATE revision_artifacts
+              SET invalidated_at = ?
+            WHERE revision_id = ? AND invalidated_at IS NULL`,
+        )
+        .run(now, previousRevisionId);
+      const insertJob = openLibrary.connection.prepare(
+        `INSERT INTO jobs
+           (job_id, library_id, asset_id, revision_id, kind, status, priority,
+            progress, attempt_count, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'queued', 300, 0.0, 0, ?, ?)`,
+      );
+      for (const kind of ['generate_thumbnail', 'extract_metadata'] as const) {
+        insertJob.run(randomUUID(), libraryId, asset.asset_id, revisionId, kind, now, now);
+      }
+    });
+    try {
+      await rotateStillImageFile(absolutePath, direction, () => {
+        record();
+      });
+    } catch (error) {
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+    }
+    this.emitClientAssetsChanged(libraryId, 1);
+    return { baked: true, revisionId };
+  }
+
+  private assetBelongsToImageSequence(openLibrary: OpenLibrary, assetId: string): boolean {
+    if (
+      !hasTable(openLibrary.connection, 'asset_sequence_frames')
+      || !hasTable(openLibrary.connection, 'asset_sequences')
+    ) {
+      return false;
+    }
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT 1 AS hit FROM asset_sequence_frames WHERE asset_id = ?
+         UNION ALL
+         SELECT 1 FROM asset_sequences WHERE primary_asset_id = ?
+         LIMIT 1`,
+      )
+      .get(assetId, assetId) as { hit: number } | undefined;
+    return row !== undefined;
+  }
+
   resolveAssetPath(libraryId: string, assetId: string): string {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const asset = openLibrary.connection

@@ -2501,6 +2501,7 @@ async function commandFor(
     }
     case "media.job-summary.request":
     case "media.set-audio-preview-preference.request":
+    case "asset.rotate-image-content.request":
     case "media.list-jobs.request":
     case "plugin.list-jobs.request":
     case "media.pause-jobs.request":

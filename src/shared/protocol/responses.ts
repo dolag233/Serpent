@@ -1995,6 +1995,14 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('asset.image-rotation.applied'),
+    libraryId: nonBlankString,
+    assetId: nonBlankString,
+    baked: z.boolean(),
+    revisionId: nonBlankString.nullable(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('asset.thumbnail.visible-window.acknowledged'),
   }),
   z.strictObject({
@@ -2291,6 +2299,14 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     libraryId: nonBlankString,
     preferCover: z.boolean(),
     rebuilt: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.image-rotation.applied'),
+    libraryId: nonBlankString,
+    assetId: nonBlankString,
+    baked: z.boolean(),
+    revisionId: nonBlankString.nullable(),
   }),
   z.strictObject({
     ok: z.literal(true),

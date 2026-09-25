@@ -70,6 +70,7 @@
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
 | --- | --- | --- | --- | --- | --- | --- |
 | VIEWER-ROTATE-CCW-001 | 图片、视频和序列查看器可逆时针旋转 90° | 人类验收通过 | ① 完全退出后再打开含这次改动的构建。② 打开一张图片，点工具栏或右键菜单里的逆时针旋转。③ 打开一个视频，同样操作。④ 打开一组正在播放的序列帧，点左旋和右旋。 | ②③④ 画面按所点方向转 90°，序列播放过程中也会跟着转。顺时针和逆时针都可多次点击。 | `viewer-display-transform.ts` / `ViewerContextMenu.tsx` / `zoomable-preview-image.tsx` / `VideoPlayerControls.tsx` / `tests/unit/viewer-display-transform-actions.test.ts` | 2026-09-25：`npx vitest run tests/unit/viewer-display-transform-actions.test.ts tests/unit/viewer-context-menu.test.ts` 5 passed。2026-09-25 用户本人验收通过（用户原话「可以」）。 |
+| VIEWER-ROTATE-BAKE-001 | 设置打开后，左右旋转会改图片文件 | 人类验收通过 | ① 完全退出后再打开含这次改动的构建。② 打开设置的「资产」，确认「左右旋转时修改图片文件」默认是关的。③ 关着的时候打开一张 jpg 或 png，左右旋转，再用别的软件打开原文件。④ 打开这项设置，再对另一张 jpg 或 png 左右旋转，然后用别的软件打开原文件。⑤ 对一个视频、一组序列帧，以及一张 GIF 或 RAW 同样旋转。 | ③ 原文件方向不变，只有查看画面转了。④ 原文件本身转了 90°，关掉查看器再打开也是转过的方向。⑤ 这些仍然只转动画面，文件不变。 | `image-rotation-preferences.ts` / `rotate-still-image-file.ts` / `library-service.ts` `rotateImageContent` | 2026-09-25：`npx vitest run tests/unit/image-rotation-preferences.test.ts` 3 passed。`npm run test:library-availability` 9 files / 228 passed，1 skipped。2026-09-25 用户本人验收通过（用户原话「可以」）。 |
 
 ### 2026-09-25 检查器一次输入多个标签
 

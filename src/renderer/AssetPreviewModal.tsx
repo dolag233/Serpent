@@ -71,10 +71,13 @@ import {
 import { ShellSurface, ViewerSurface } from "./ui/surfaces";
 import { ModelViewerSurface } from "./3d-viewer/viewer-surface";
 import { isMacPlatform } from "./commands/command-types";
+import { isBakeableStillImageFile } from "../shared/bakeable-still-image";
 
 interface AssetPreviewModalProps {
   api: SerpentLibraryApi;
   asset: AssetSummary;
+  /** When on, quarter-turns of bakeable stills are written into the file. */
+  bakeImageRotation?: boolean;
   /** Owned by a parent that survives per-asset remounts (Serpent-ayf). */
   chromeIdle: boolean;
   libraryId: string;
@@ -168,6 +171,7 @@ const AssetPreviewModalContent = forwardRef<
   {
     api,
     asset,
+    bakeImageRotation = false,
     chromeIdle,
     libraryId,
     onChromeActivity,
@@ -902,16 +906,65 @@ const AssetPreviewModalContent = forwardRef<
     viewerError,
   ]);
 
+  const bakingRotationRef = useRef(false);
+  const rotateViewerBy = useCallback((
+    direction: "clockwise" | "counter-clockwise",
+  ) => {
+    const canBake = bakeImageRotation
+      && !asset.sequence
+      && asset.mediaType === "image"
+      && isBakeableStillImageFile(asset.relativeFilePath);
+    if (!canBake) {
+      setDisplayTransform((current) =>
+        applyViewerDisplayTransformAction(
+          current,
+          direction === "clockwise" ? "rotate-clockwise" : "rotate-counter-clockwise",
+        ),
+      );
+      return;
+    }
+    if (bakingRotationRef.current) return;
+    bakingRotationRef.current = true;
+    void api.rotateImageContent({
+      libraryId,
+      assetId: asset.assetId,
+      direction,
+    }).then(async (result) => {
+      if (!result.ok) {
+        setError(requestFailureMessage(t("preview.cannotOpen"), result.error, t));
+        return;
+      }
+      if (!result.value.baked) {
+        setDisplayTransform((current) =>
+          applyViewerDisplayTransformAction(
+            current,
+            direction === "clockwise" ? "rotate-clockwise" : "rotate-counter-clockwise",
+          ),
+        );
+        return;
+      }
+      setDisplayTransform(IDENTITY_VIEWER_DISPLAY_TRANSFORM);
+      await resolvePreview(true);
+    }).finally(() => {
+      bakingRotationRef.current = false;
+    });
+  }, [
+    api,
+    asset.assetId,
+    asset.mediaType,
+    asset.relativeFilePath,
+    asset.sequence,
+    bakeImageRotation,
+    libraryId,
+    resolvePreview,
+    t,
+  ]);
   const rotateViewerClockwise = useCallback(() => {
-    setDisplayTransform((current) =>
-      applyViewerDisplayTransformAction(current, "rotate-clockwise"),
-    );
-  }, []);
+    rotateViewerBy("clockwise");
+  }, [rotateViewerBy]);
   const rotateViewerCounterClockwise = useCallback(() => {
-    setDisplayTransform((current) =>
-      applyViewerDisplayTransformAction(current, "rotate-counter-clockwise"),
-    );
-  }, []);
+    rotateViewerBy("counter-clockwise");
+  }, [rotateViewerBy]);
   const flipViewerHorizontal = useCallback(() => {
     setDisplayTransform((current) =>
       applyViewerDisplayTransformAction(current, "flip-horizontal"),
