@@ -817,6 +817,10 @@ export const zhCN = {
     statusOpen: "已打开",
     assets: "资产",
     folders: "文件夹",
+    folderSelection: "{count} 个文件夹",
+    path: "路径",
+    childFolders: "子文件夹",
+    size: "大小",
     location: "位置",
     noActiveLibrary: "没有活动资源库",
     openLibraryHint: "打开资源库后查看当前范围与资产详情。"

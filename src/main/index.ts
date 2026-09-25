@@ -150,6 +150,7 @@ import {
 import {
   ASSET_CHANGE_CHANNEL,
   ASSET_NATIVE_DRAG_CHANNEL,
+  ASSET_NATIVE_DRAG_PRIME_CHANNEL,
   EXTENSION_SAVE_COMPLETED_CHANNEL,
   THUMBNAIL_CHANNEL,
   ACTIVE_CONTEXT_CHANNEL,
@@ -2325,6 +2326,7 @@ async function commandFor(
     case "folder.list.request":
     case "folder.browse-entries.request":
     case "folder.entries-request":
+    case "folder.indexed-bytes.request":
     case "folder.trash.request":
     case "selection.trash.request":
     case "folder.delete-from-disk.request":
@@ -5414,6 +5416,30 @@ async function startApplication(): Promise<void> {
       logger?.info(
         "main.native-asset-drag",
         "Native asset drag was not started.",
+        { error: error instanceof Error ? error.message : String(error) },
+      );
+    }
+  });
+
+  ipcMain.on(ASSET_NATIVE_DRAG_PRIME_CHANNEL, (event, input: unknown) => {
+    if (
+      !mainWindow ||
+      mainWindow.isDestroyed() ||
+      event.sender !== mainWindow.webContents
+    ) {
+      return;
+    }
+    try {
+      const request = parseNativeAssetDragRequest(input);
+      void nativeAssetDragPrimer.primeImmediately(
+        request.libraryId,
+        request.assetIds,
+        "upsert",
+      );
+    } catch (error) {
+      logger?.info(
+        "main.native-asset-drag",
+        "Native asset drag was not primed.",
         { error: error instanceof Error ? error.message : String(error) },
       );
     }

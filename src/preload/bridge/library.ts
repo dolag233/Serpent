@@ -32,7 +32,7 @@ import {
   AI_COMPLETED_CHANNEL,
   AI_CLEARED_CHANNEL,
 } from '../../shared/protocol/channels';
-import { sendNativeAssetDrag } from '../native-asset-drag';
+import { sendNativeAssetDrag, sendNativeAssetDragPrime } from '../native-asset-drag';
 import type { PublicErrorReason } from '../../shared/protocol/errors';
 import {
   parseRendererLifecycleEvent,
@@ -543,6 +543,21 @@ export const library: SerpentLibraryApi = Object.freeze({
       throw new Error('Unexpected folder-entries response.');
     }
     return { ok: true, value: result.entries };
+  },
+
+  async folderIndexedByteSizes(input: {
+    libraryId: string;
+    refs: Array<{ locationKind: 'managed' | 'linked'; folderId: string }>;
+  }): Promise<LibraryApiResult<Array<{ folderId: string; byteSize: number }>>> {
+    const result = await request({
+      type: 'folder.indexed-bytes.request',
+      ...input,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.indexed-bytes') {
+      throw new Error('Unexpected folder-indexed-bytes response.');
+    }
+    return { ok: true, value: result.sizes };
   },
 
   async trashFolder(input: {
@@ -2178,6 +2193,19 @@ export const library: SerpentLibraryApi = Object.freeze({
     // Do not make this synchronous: dropping back onto Serpent would otherwise
     // deadlock the Renderer waiting for Main while Main waits for the drop.
     sendNativeAssetDrag(ipcRenderer, {
+      libraryId,
+      assetIds,
+    });
+  },
+
+  primeAssetDrag({
+    libraryId,
+    assetIds,
+  }: {
+    libraryId: string;
+    assetIds: string[];
+  }): void {
+    sendNativeAssetDragPrime(ipcRenderer, {
       libraryId,
       assetIds,
     });

@@ -322,6 +322,10 @@ export interface SerpentLibraryApi {
     libraryId: string;
     refs: Array<{ locationKind: 'managed' | 'linked'; folderId: string }>;
   }): Promise<LibraryApiResult<FolderBrowseEntry[]>>;
+  folderIndexedByteSizes(input: {
+    libraryId: string;
+    refs: Array<{ locationKind: 'managed' | 'linked'; folderId: string }>;
+  }): Promise<LibraryApiResult<Array<{ folderId: string; byteSize: number }>>>;
   trashFolder(input: {
     libraryId: string;
     folderId: string;
@@ -744,6 +748,11 @@ export interface SerpentLibraryApi {
   }): Promise<LibraryApiResult<void>>;
   /** Start an OS-native file drag from the current dragstart event. */
   startAssetDrag(input: {
+    libraryId: string;
+    assetIds: string[];
+  }): void;
+  /** Warm OS drag paths for these assets before the pointer becomes a drag. */
+  primeAssetDrag(input: {
     libraryId: string;
     assetIds: string[];
   }): void;

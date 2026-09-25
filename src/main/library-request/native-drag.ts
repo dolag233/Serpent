@@ -2,14 +2,13 @@ import type { RendererRequest } from "../../shared/protocol/requests";
 import { nativeDragAssetsForResult } from "../native-asset-drag-prime";
 
 /**
- * Serpent-v4jf/Serpent-29125f: how many sorted-list-head assets to prime
- * synchronously before a card-bearing response reaches the renderer. Native
- * drag can only use entries that are ready when dragstart enters Electron's
- * nested OS loop, but priming hundreds of cards here serializes every browse
- * response behind Worker work. The renderer's overscan window is normally a
- * few dozen cards, so keep this bounded to a small first-screen cushion.
+ * One browse page (100). Native drag can only use entries already in the
+ * cache when dragstart runs. A shorter prefix left the rest of that page
+ * undraggable. Priming stays fire-and-forget so the browse response is not
+ * held for the cache fill. Cards pressed before that fill finishes are
+ * primed again from pointer-down.
  */
-export const NATIVE_DRAG_PRIME_VISIBLE_COUNT = 64;
+export const NATIVE_DRAG_PRIME_VISIBLE_COUNT = 100;
 
 export type NativeDragPrimeRuntime = {
   pendingImportLibraries: Map<string, string>;

@@ -6,6 +6,9 @@ import {
   useLayoutEffect,
 } from "react";
 
+import type { EntityAppearance } from "../shared/entity-appearance";
+import type { FolderBrowseEntry } from "../shared/asset-types";
+import { FolderInspectorBody } from "./folder-inspector";
 import { Icon } from "./Icons";
 import { InspectorCardFeelMotion } from "./inspector-card-feel-motion";
 import { useInspectorCardFeel } from "./InspectorCardFeelProvider";
@@ -205,6 +208,12 @@ export interface InspectorPanelProps {
   pluginContributionRefreshKey?: string | null;
   /** Re-read progressive extracted metadata after a secondary job commits. */
   extractedMetadataRefreshKey?: number;
+  /** Canvas folder selection, or the folder currently open when nothing is selected. */
+  folderInspector?: {
+    entries: FolderBrowseEntry[];
+    appearance?: EntityAppearance | null;
+    byteSize: number | null;
+  } | null;
 }
 
 function InspectorHeroSinglePreview({
@@ -648,6 +657,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
     pluginApi,
     libraryId,
     pluginContributionRefreshKey = null,
+    folderInspector = null,
     extractedMetadataRefreshKey = 0,
   } = props;
 
@@ -1700,6 +1710,13 @@ export function InspectorPanel(props: InspectorPanelProps) {
           )}
 
         </div>
+      ) : folderInspector && library && libraryId ? (
+        <FolderInspectorBody
+          appearance={folderInspector.appearance}
+          byteSize={folderInspector.byteSize}
+          entries={folderInspector.entries}
+          libraryId={libraryId}
+        />
       ) : library ? (
         <div className="inspector-content">
           <div className="inspector-identity">

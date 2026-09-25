@@ -1,6 +1,8 @@
 export const LIBRARY_REQUEST_CHANNEL = 'serpent:library:request' as const;
 /** Renderer → Main: start an OS file drag during dragstart. */
 export const ASSET_NATIVE_DRAG_CHANNEL = 'serpent:asset:native-drag' as const;
+/** Renderer → Main: warm drag paths before dragstart, without waiting. */
+export const ASSET_NATIVE_DRAG_PRIME_CHANNEL = 'serpent:asset:native-drag-prime' as const;
 export const LIBRARY_LIFECYCLE_CHANNEL = 'serpent:library:lifecycle' as const;
 export const ASSET_CHANGE_CHANNEL = 'serpent:asset:changed' as const;
 export const LIBRARY_CHANGED_CHANNEL = 'serpent:library:changed' as const;

@@ -40,6 +40,12 @@ export async function executeFolderMainCommand(
         libraryId: request.libraryId,
         refs: request.refs,
       };
+    case "folder.indexed-bytes.request":
+      return {
+        type: "folder.indexed-bytes",
+        libraryId: request.libraryId,
+        refs: request.refs,
+      };
     case "folder.trash.request":
       return {
         type: "folder.trash",

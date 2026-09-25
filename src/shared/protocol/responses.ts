@@ -813,6 +813,14 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('folder.indexed-bytes'),
+    sizes: z.array(z.strictObject({
+      folderId: z.string().min(1).max(4096),
+      byteSize: z.number().int().nonnegative(),
+    })).max(32),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('folder.list-trashed'),
     folders: z.array(trashedFolderSummarySchema),
   }),
