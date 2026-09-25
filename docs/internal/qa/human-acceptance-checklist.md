@@ -50,6 +50,14 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | AUDIO-PREVIEW-001 | 设置里可让音频卡片优先用封面，或改为波形 | 人类验收通过 | ① 完全退出后再打开含这次改动的构建。② 打开设置 → 浏览，确认「音频预览图优先显示封面图」默认勾选。③ 导入一首带封面的音频和一首没有封面的音频，看卡片。④ 取消勾选，等卡片更新。⑤ 再勾上。⑥ 双击带封面的那首，看播放条。 | ③ 有封面的卡片是封面，没有封面的是波形。④ 有封面的卡片变成波形，没有封面的仍是波形。⑤ 有封面的卡片回到封面。⑥ 播放条始终是波形，不变成封面。 | `audio-preview-preferences.ts` / `AppSettingsPages.tsx` / `library-service.ts` `setAudioPreviewPrefersCover` / `tests/unit/audio-preview-preferences.test.ts` / `tests/worker/video-exr.test.ts` | 2026-09-25：`npx vitest run tests/unit/audio-preview-preferences.test.ts` 3 passed。`node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/video-exr.test.ts -t "rebuilds a cover thumbnail"` 1 passed。2026-09-25 用户本人验收通过。 |
 
+### 2026-09-25 卡片空白与后台任务数
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| PREVIEW-BLANK-001 | 导入进行时，已经有缩略图的卡片不再变成空白 | 人类验收通过 | ① 完全退出后再打开含这次改动的构建。② 打开一个已有缩略图的资源库，确认 TGA、视频、ARW 卡片都有画面。③ 再导入几张图，导入过程中看原来那些卡片。 | ② 每张资产只有一张卡片，画面能看见。③ 导入过程中已有画面的卡片不会突然变空。 | `src/main/index.ts` `evictArtifactPathCache` / `src/renderer/AssetCardMedia.tsx` / `tests/unit/artifact-path-cache.test.ts` | 2026-09-25：`npx vitest run tests/unit/artifact-path-cache.test.ts` 5 passed。2026-09-25 用户本人验收通过（用户原话「我感觉没问题」）。 |
+| PREVIEW-BITDEPTH-001 | 16 位 PNG 缩略图会改成浏览器能画的 8 位 | 人类验收通过 | ① 打开含一张曾显示空白的 RAW 或 TGA 的资源库，等后台跑一会儿。② 看这张卡片。 | 卡片出现画面，而不是深色空框。同一文件不再出现两张卡片。 | `library-service.ts` `repairUndisplayablePngThumbnails` / `generateOiiOThumbnail` | 新生成的 OIIO 图强制 8 位；已有 16 位图在后台队列里分批换掉。定向测试未单独覆盖换图。2026-09-25 用户本人验收通过（用户原话「我感觉没问题」）。 |
+| JOBS-SEQUENCE-001 | 序列隐藏帧不再让后台任务数停住 | 人类验收通过 | ① 打开含图片序列的资源库。② 看后台任务数字。 | 数字会下降到没有可做的任务，而不是停在几百不变。 | `library-service.ts` `cancelQueuedHiddenSequenceMemberJobs` / `tests/worker/thumbnails.test.ts` | 2026-09-25：`node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/thumbnails.test.ts -t "cancels queued metadata jobs for hidden sequence frames"` 1 passed。2026-09-25 用户本人验收通过（用户原话「我感觉没问题」）。 |
+
 ### 2026-09-25 拖拽时的导入提示
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

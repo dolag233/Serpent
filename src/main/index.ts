@@ -504,6 +504,10 @@ function clearArtifactPathCache(libraryId?: string): void {
   artifactPathCache.clearLibrary(libraryId);
 }
 
+function evictArtifactPathCache(libraryId: string): void {
+  artifactPathCache.evictLibrary(libraryId);
+}
+
 function cancelArtifactPathBatches(libraryId: string): void {
   const prefix = `${libraryId}\u0000`;
   const error = new Error('Library closed before artifact path resolution completed.');
@@ -2004,7 +2008,7 @@ function publishAssetChange(event: AssetChangeEvent): void {
   // or replacement). Artifact-only library changes use the separate
   // library.changed channel and do not evict the viewer's hot path.
   sourcePathCache.clearLibrary(parsed.libraryId);
-  clearArtifactPathCache(parsed.libraryId);
+  evictArtifactPathCache(parsed.libraryId);
   pluginActivationCoordinator?.fanOutDomainEvent(createPluginDomainEvent({
     kind: 'asset.changed',
     libraryId: parsed.libraryId,

@@ -109,6 +109,23 @@ export function AssetCardMedia({
   // Serpent-2ajm: a failed image load must never paint the browser's broken
   // image glyph — fall back to the themed file/cracked icon instead.
   const [errored, setErrored] = useState(false);
+  const [coverAttempt, setCoverAttempt] = useState(0);
+  useEffect(() => {
+    setErrored(false);
+    setCoverAttempt(0);
+  }, [coverUrl]);
+  const retryCover = () => {
+    if (coverAttempt < 2) {
+      setCoverAttempt((current) => current + 1);
+      return;
+    }
+    setErrored(true);
+  };
+  const withCoverAttempt = (url: string | null): string | null => {
+    if (!url || coverAttempt === 0) return url;
+    const join = url.includes("?") ? "&" : "?";
+    return `${url}${join}retry=${coverAttempt}`;
+  };
   // A card without a cover yet (still decoding, deferred off-screen, or waiting
   // for its first page) stays blank rather than showing a file glyph: the empty
   // frame already reads as "not there yet", and the glyph made a momentarily
@@ -132,7 +149,7 @@ export function AssetCardMedia({
     const sequenceUrl = sequence.frames[0]
       ? (resolveSequenceFrameUrl(libraryId, sequence.frames[0]) ?? coverUrl)
       : coverUrl;
-    const visibleSequenceUrl = shouldLoadCover ? sequenceUrl : null;
+    const visibleSequenceUrl = withCoverAttempt(shouldLoadCover ? sequenceUrl : null);
     if (!isActive) {
       return (
         <div className="asset-card-media" ref={mediaHostRef}>
@@ -143,7 +160,7 @@ export function AssetCardMedia({
               decoding="async"
               fetchPriority={loadImmediately ? "high" : "auto"}
               loading={loadImmediately ? "eager" : "lazy"}
-              onError={() => setErrored(true)}
+              onError={retryCover}
               src={visibleSequenceUrl}
             />
           ) : (
@@ -158,7 +175,7 @@ export function AssetCardMedia({
           <img
             alt={alt}
             className="asset-thumbnail sequence-card-cover-hidden"
-            onError={() => setErrored(true)}
+            onError={retryCover}
             src={visibleSequenceUrl}
           />
         ) : (
@@ -175,7 +192,7 @@ export function AssetCardMedia({
     );
   }
 
-  const visibleCoverUrl = shouldLoadCover ? coverUrl : null;
+  const visibleCoverUrl = withCoverAttempt(shouldLoadCover ? coverUrl : null);
   return (
     <div className="asset-card-media" ref={mediaHostRef}>
       {visibleCoverUrl && !errored ? (
@@ -185,7 +202,7 @@ export function AssetCardMedia({
           decoding="async"
           fetchPriority={loadImmediately ? "high" : "auto"}
           loading={loadImmediately ? "eager" : "lazy"}
-          onError={() => setErrored(true)}
+          onError={retryCover}
           src={visibleCoverUrl}
         />
       ) : (

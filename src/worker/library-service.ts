@@ -462,6 +462,55 @@ const SERPENT_OCIO_CONFIG = 'ocio://studio-config-v4.0.0_aces-v2.0_ocio-v2.5';
  * remaining filter metacharacters keeps bundled font paths valid on both
  * Windows and POSIX.
  */
+const DISPLAY_PREVIEW_KIND_SQL = `CASE
+            WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
+              OR LOWER(a.relative_file_path) LIKE '%.webm'
+              OR LOWER(a.relative_file_path) LIKE '%.mov'
+              OR LOWER(a.relative_file_path) LIKE '%.avi'
+              OR LOWER(a.relative_file_path) LIKE '%.wmv'
+              OR LOWER(a.relative_file_path) LIKE '%.mkv'
+              OR LOWER(a.relative_file_path) LIKE '%.m4v'
+            THEN 'video_poster'
+            ELSE 'thumbnail'
+          END`;
+
+/** One browser-paintable preview per asset. JPEG wins over a 16-bit PNG sibling. */
+function pngBitDepth(filePath: string): number | null {
+  let fd: number | undefined;
+  try {
+    fd = openSync(filePath, 'r');
+    const header = Buffer.alloc(26);
+    if (readSync(fd, header, 0, header.length, 0) < header.length) return null;
+    if (header.subarray(0, 8).toString('latin1') !== '\x89PNG\r\n\x1a\n') return null;
+    if (header.subarray(12, 16).toString('latin1') !== 'IHDR') return null;
+    return header[24] ?? null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+function singleDisplayArtifactJoin(alias: string, statusSql: string): string {
+  return `LEFT JOIN revision_artifacts ${alias}
+           ON ${alias}.artifact_id = (
+             SELECT chosen.artifact_id
+               FROM revision_artifacts chosen
+              WHERE chosen.revision_id = a.current_revision_id
+                AND chosen.kind = ${DISPLAY_PREVIEW_KIND_SQL}
+                ${statusSql}
+                AND chosen.invalidated_at IS NULL
+              ORDER BY CASE chosen.mime_type
+                WHEN 'image/jpeg' THEN 0
+                WHEN 'image/webp' THEN 1
+                WHEN 'image/png' THEN 2
+                ELSE 3
+              END,
+              chosen.rowid DESC
+              LIMIT 1
+           )`;
+}
+
 export function escapeFfmpegFilterPath(filePath: string): string {
   return filePath
     .replaceAll('\\', '/')
@@ -17735,6 +17784,67 @@ export class LibraryService {
     this.mediaJobSummaryCache.invalidate(openLibrary.summary.libraryId);
   }
 
+  /**
+   * Chromium cannot paint a 16-bit PNG card. Stamp 8-bit OIIO thumbnails so
+   * they are not scanned again, and replace 16-bit ones with a new 8-bit job.
+   */
+  private repairUndisplayablePngThumbnails(openLibrary: OpenLibrary): void {
+    const artifactColumns = columnsFor(openLibrary.connection, 'revision_artifacts');
+    if (!artifactColumns.has('status') || !artifactColumns.has('generator_version')) return;
+    const rows = openLibrary.connection.prepare(
+      `SELECT ra.artifact_id, ra.file_path, a.asset_id
+         FROM revision_artifacts ra
+         JOIN assets a ON a.current_revision_id = ra.revision_id
+        WHERE ra.kind = 'thumbnail'
+          AND ra.status = 'ready'
+          AND ra.mime_type = 'image/png'
+          AND ra.invalidated_at IS NULL
+          AND ra.generator_version LIKE 'oiio@%'
+          AND ra.generator_version NOT LIKE '%display-uint8%'
+        LIMIT 24`,
+    ).all() as Array<{ artifact_id: string; file_path: string; asset_id: string }>;
+    if (rows.length === 0) return;
+    const artifactsDir = this.artifactsDir(openLibrary);
+    const eightBitIds: string[] = [];
+    const rebuildArtifactIds: string[] = [];
+    const rebuildAssetIds: string[] = [];
+    for (const row of rows) {
+      const depth = pngBitDepth(path.join(artifactsDir, row.file_path));
+      if (depth === 8) eightBitIds.push(row.artifact_id);
+      else if (depth === 16) {
+        rebuildArtifactIds.push(row.artifact_id);
+        rebuildAssetIds.push(row.asset_id);
+      }
+    }
+    if (eightBitIds.length > 0) {
+      sqliteRunInChunks({
+        connection: openLibrary.connection,
+        values: eightBitIds,
+        buildSql: (placeholders) =>
+          `UPDATE revision_artifacts
+              SET generator_version = generator_version || ';display-uint8'
+            WHERE artifact_id IN (${placeholders})
+              AND generator_version NOT LIKE '%display-uint8%'`,
+      });
+    }
+    if (rebuildArtifactIds.length === 0) return;
+    const now = new Date().toISOString();
+    sqliteRunInChunks({
+      connection: openLibrary.connection,
+      values: rebuildArtifactIds,
+      buildSql: (placeholders) =>
+        `UPDATE revision_artifacts
+            SET invalidated_at = ?
+          WHERE artifact_id IN (${placeholders})
+            AND invalidated_at IS NULL`,
+      bind: (chunk) => [now, ...chunk],
+    });
+    this.enqueueThumbnailJobs(openLibrary.summary.libraryId, {
+      assetIds: [...new Set(rebuildAssetIds)],
+      priority: 200,
+    });
+  }
+
   private cancelQueuedHiddenSequenceMemberJobs(openLibrary: OpenLibrary): void {
     if (!hasTable(openLibrary.connection, 'asset_sequence_frames')) return;
     const now = new Date().toISOString();
@@ -17743,7 +17853,7 @@ export class LibraryService {
         `UPDATE jobs
             SET status = 'cancelled', error_code = 'SEQUENCE_MEMBER', updated_at = ?
           WHERE library_id = ?
-            AND kind IN ('generate_thumbnail', 'extract_palette')
+            AND kind IN ('generate_thumbnail', 'extract_palette', 'extract_metadata')
             AND status IN ('queued', 'paused')
             AND EXISTS (
               SELECT 1
@@ -18189,20 +18299,10 @@ export class LibraryService {
          FROM assets a
          LEFT JOIN revisions r ON r.revision_id = a.current_revision_id
          LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
-         LEFT JOIN revision_artifacts ra
-           ON ra.revision_id = a.current_revision_id
-          AND ra.kind = CASE
-            WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
-              OR LOWER(a.relative_file_path) LIKE '%.webm'
-              OR LOWER(a.relative_file_path) LIKE '%.mov'
-              OR LOWER(a.relative_file_path) LIKE '%.avi'
-              OR LOWER(a.relative_file_path) LIKE '%.wmv'
-              OR LOWER(a.relative_file_path) LIKE '%.mkv'
-              OR LOWER(a.relative_file_path) LIKE '%.m4v'
-            THEN 'video_poster'
-            ELSE 'thumbnail'
-          END
-          AND ra.invalidated_at IS NULL
+         ${singleDisplayArtifactJoin(
+            'ra',
+            artifactColumns.has('status') ? "AND chosen.status = 'ready'" : '',
+          )}
          LEFT JOIN revision_artifacts video_meta
            ON video_meta.revision_id = a.current_revision_id
           AND video_meta.kind = 'extracted_metadata'
@@ -27809,6 +27909,9 @@ export class LibraryService {
       // the real TIFF E2E to expose the wrong raster size. This is an output
       // presentation size, not a source acceptance or processing limit.
       const resizeArgs = isViewerImage ? [] : ['--fit', '512x512'];
+      // Chromium <img> does not paint 16-bit PNG. Card and viewer outputs are
+      // display files, so force 8-bit before writing the PNG.
+      const displayDepthArgs = ['-d', 'uint8'];
 
       if (isRawAsset && !isViewerImage) {
         const embeddedThumbnail = await this.tryGenerateRawEmbeddedThumbnail(
@@ -27833,6 +27936,7 @@ export class LibraryService {
             '--subimage', String(subimage),
             assetPath,
             ...resizeArgs,
+            ...displayDepthArgs,
             '-o', artifactAbsPath,
           ]
         : [
@@ -27849,6 +27953,7 @@ export class LibraryService {
               : '--ociodisplay:unpremult=1',
             '', '',
             ...resizeArgs,
+            ...displayDepthArgs,
             '-o', artifactAbsPath,
           ];
 
@@ -27880,10 +27985,10 @@ export class LibraryService {
         )
         .run(artifactId, revisionId, artifactKind, outputStat.size, artifactRelPath,
           isRawAsset
-            ? `oiio@${OIIO_VERSION};raw-${isViewerImage ? 'viewer-full' : 'default'}-srgb;subimage=${subimage}`
+            ? `oiio@${OIIO_VERSION};raw-${isViewerImage ? 'viewer-full' : 'default'}-srgb;subimage=${subimage};display-uint8`
             : isIcoAsset
-              ? `oiio@${OIIO_VERSION};ico-largest-v1;subimage=${subimage}`
-              : `oiio@${OIIO_VERSION};${isViewerImage ? 'viewer-full;' : ''}ocio=studio-v4-aces2;colorspace=${inputColorSpace ?? 'auto'};exposure=${exposureStops};subimage=${subimage}`,
+              ? `oiio@${OIIO_VERSION};ico-largest-v1;subimage=${subimage};display-uint8`
+              : `oiio@${OIIO_VERSION};${isViewerImage ? 'viewer-full;' : ''}ocio=studio-v4-aces2;colorspace=${inputColorSpace ?? 'auto'};exposure=${exposureStops};subimage=${subimage};display-uint8`,
           new Date().toISOString());
       if (rawMetadata) {
         await this.persistRawImageMetadata(openLibrary, input.assetId, revisionId, assetPath, rawMetadata, {
@@ -31929,6 +32034,8 @@ export class LibraryService {
       this.modelAiViewsRenderer = options.modelAiViewsRenderer;
     }
     const openLibrary = this.requireOpenLibrary(libraryId);
+    this.cancelQueuedHiddenSequenceMemberJobs(openLibrary);
+    this.repairUndisplayablePngThumbnails(openLibrary);
     const jobKinds = options.jobKinds ?? MEDIA_JOB_KINDS;
     if (jobKinds.length === 0) return 0;
     if (options.signal?.aborted) return 0;
@@ -33606,21 +33713,10 @@ export class LibraryService {
           AND palette_meta.invalidated_at IS NULL`
       : '';
     const technicalThumbnailJoin = needsTechnicalThumbnail
-      ? `LEFT JOIN revision_artifacts technical_thumbnail
-           ON technical_thumbnail.revision_id = a.current_revision_id
-          AND technical_thumbnail.kind = CASE
-            WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
-              OR LOWER(a.relative_file_path) LIKE '%.webm'
-              OR LOWER(a.relative_file_path) LIKE '%.mov'
-              OR LOWER(a.relative_file_path) LIKE '%.avi'
-              OR LOWER(a.relative_file_path) LIKE '%.wmv'
-              OR LOWER(a.relative_file_path) LIKE '%.mkv'
-              OR LOWER(a.relative_file_path) LIKE '%.m4v'
-            THEN 'video_poster'
-            ELSE 'thumbnail'
-          END
-          ${artifactColumns.has('status') ? "AND technical_thumbnail.status = 'ready'" : ''}
-          AND technical_thumbnail.invalidated_at IS NULL`
+      ? singleDisplayArtifactJoin(
+          'technical_thumbnail',
+          artifactColumns.has('status') ? "AND chosen.status = 'ready'" : '',
+        )
       : '';
     const searchJoins = hasQuery && hasSearchIndex
       ? `JOIN asset_search_index sc ON a.asset_id = sc.asset_id
@@ -33634,21 +33730,10 @@ export class LibraryService {
           AND layout_metadata.kind = 'extracted_metadata'
           ${artifactColumns.has('status') ? "AND layout_metadata.status = 'ready'" : ''}
           AND layout_metadata.invalidated_at IS NULL
-         LEFT JOIN revision_artifacts layout_preview
-           ON layout_preview.revision_id = a.current_revision_id
-          AND layout_preview.kind = CASE
-            WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
-              OR LOWER(a.relative_file_path) LIKE '%.webm'
-              OR LOWER(a.relative_file_path) LIKE '%.mov'
-              OR LOWER(a.relative_file_path) LIKE '%.avi'
-              OR LOWER(a.relative_file_path) LIKE '%.wmv'
-              OR LOWER(a.relative_file_path) LIKE '%.mkv'
-              OR LOWER(a.relative_file_path) LIKE '%.m4v'
-            THEN 'video_poster'
-            ELSE 'thumbnail'
-          END
-          ${artifactColumns.has('status') ? "AND layout_preview.status = 'ready'" : ''}
-          AND layout_preview.invalidated_at IS NULL`
+         ${singleDisplayArtifactJoin(
+            'layout_preview',
+            artifactColumns.has('status') ? "AND chosen.status = 'ready'" : '',
+          )}`
       : '';
     const collectionScopeJoin = collectionScope?.join ?? '';
     const dataFrom = `FROM assets a

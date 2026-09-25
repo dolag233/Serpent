@@ -1211,6 +1211,55 @@ describe('enqueueThumbnailJobs', () => {
 });
 
 describe('processThumbnailQueue', () => {
+  it('cancels queued metadata jobs for hidden sequence frames', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({
+      displayName: 'HiddenSequenceMetadata',
+      selectedParentPath: root,
+    });
+    const firstPath = path.join(root, 'frame-0001.png');
+    const secondPath = path.join(root, 'frame-0002.png');
+    createTestImage(firstPath);
+    createTestImage(secondPath);
+    importNoConflict(service, created.libraryId, firstPath);
+    importNoConflict(service, created.libraryId, secondPath);
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    const first = assets.find((asset) => asset.displayName === 'frame-0001.png')!;
+    const second = assets.find((asset) => asset.displayName === 'frame-0002.png')!;
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO asset_sequences
+         (sequence_id, primary_asset_id, fps, created_at, updated_at)
+       VALUES ('seq-hidden', ?, 24, ?, ?)`,
+    ).run(first.assetId, now, now);
+    const insertFrame = db.prepare(
+      `INSERT INTO asset_sequence_frames
+         (sequence_id, asset_id, frame_number, position)
+       VALUES ('seq-hidden', ?, ?, ?)`,
+    );
+    insertFrame.run(first.assetId, 1, 0);
+    insertFrame.run(second.assetId, 2, 1);
+    db.prepare(
+      `INSERT INTO jobs
+         (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+          attempt_count, created_at, updated_at)
+       VALUES ('hidden-metadata', ?, ?, ?, 'extract_metadata', 'queued', 100, 0.0, 0, ?, ?)`,
+    ).run(created.libraryId, second.assetId, second.currentRevisionId, now, now);
+    db.close();
+
+    await service.processThumbnailQueue(created.libraryId, { maxJobs: 1 });
+
+    const verify = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const job = verify.prepare(
+      `SELECT status, error_code FROM jobs WHERE job_id = 'hidden-metadata'`,
+    ).get() as { status: string; error_code: string | null };
+    expect(job).toMatchObject({ status: 'cancelled', error_code: 'SEQUENCE_MEMBER' });
+    verify.close();
+    service.closeAll();
+  });
+
   it('prunes legacy source-direct and current thumbnail rows', async () => {
     const root = temporaryRoot();
     const service = new LibraryService();

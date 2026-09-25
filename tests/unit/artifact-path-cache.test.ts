@@ -41,6 +41,20 @@ describe("ArtifactPathCache", () => {
     expect(cache.get("library-2", "artifact-a", "preview")).toBe("/other-library");
   });
 
+  it("drops one library's paths without fencing in-flight lookups", () => {
+    const cache = new ArtifactPathCache();
+    cache.set("library-1", "artifact-a", "preview", "/a");
+    cache.set("library-2", "artifact-b", "preview", "/b");
+    const generation = cache.generation("library-1");
+
+    cache.evictLibrary("library-1");
+
+    expect(cache.generation("library-1")).toBe(generation);
+    expect(cache.get("library-1", "artifact-a", "preview")).toBeUndefined();
+    expect(cache.set("library-1", "artifact-c", "preview", "/c", generation)).toBe(true);
+    expect(cache.get("library-2", "artifact-b", "preview")).toBe("/b");
+  });
+
   it("can invalidate every use of one artifact without advancing generation", () => {
     const cache = new ArtifactPathCache();
     cache.set("library-1", "artifact-a", "preview", "/preview");

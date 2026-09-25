@@ -37,11 +37,20 @@ export class ArtifactPathCache {
   clearLibrary(libraryId: string): number {
     const nextGeneration = this.generation(libraryId) + 1;
     this.#generationByLibrary.set(libraryId, nextGeneration);
+    this.evictLibrary(libraryId);
+    return nextGeneration;
+  }
+
+  /**
+   * Drop cached paths for one library without fencing in-flight lookups.
+   * Asset edits do not change other artifacts' ids or files. Bumping the
+   * handle generation here rejects a viewport batch that already resolved.
+   */
+  evictLibrary(libraryId: string): void {
     const prefix = `${libraryId}\u0000`;
     for (const key of this.#entries.keys()) {
       if (key.startsWith(prefix)) this.#entries.delete(key);
     }
-    return nextGeneration;
   }
 
   clear(): void {
