@@ -1,4 +1,4 @@
-import { ASSET_NATIVE_DRAG_CHANNEL } from "../shared/protocol/channels";
+import { ASSET_NATIVE_DRAG_CHANNEL, ASSET_NATIVE_DRAG_PRIME_CHANNEL } from "../shared/protocol/channels";
 
 type NativeAssetDragRequest = {
   readonly libraryId: string;
@@ -19,4 +19,11 @@ export function sendNativeAssetDrag(
   input: NativeAssetDragRequest,
 ): void {
   sender.send(ASSET_NATIVE_DRAG_CHANNEL, input);
+}
+
+export function sendNativeAssetDragPrime(
+  sender: NativeAssetDragSender,
+  input: NativeAssetDragRequest,
+): void {
+  sender.send(ASSET_NATIVE_DRAG_PRIME_CHANNEL, input);
 }

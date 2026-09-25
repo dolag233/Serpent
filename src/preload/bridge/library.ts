@@ -32,7 +32,7 @@ import {
   AI_COMPLETED_CHANNEL,
   AI_CLEARED_CHANNEL,
 } from '../../shared/protocol/channels';
-import { sendNativeAssetDrag } from '../native-asset-drag';
+import { sendNativeAssetDrag, sendNativeAssetDragPrime } from '../native-asset-drag';
 import type { PublicErrorReason } from '../../shared/protocol/errors';
 import {
   parseRendererLifecycleEvent,
@@ -2193,6 +2193,19 @@ export const library: SerpentLibraryApi = Object.freeze({
     // Do not make this synchronous: dropping back onto Serpent would otherwise
     // deadlock the Renderer waiting for Main while Main waits for the drop.
     sendNativeAssetDrag(ipcRenderer, {
+      libraryId,
+      assetIds,
+    });
+  },
+
+  primeAssetDrag({
+    libraryId,
+    assetIds,
+  }: {
+    libraryId: string;
+    assetIds: string[];
+  }): void {
+    sendNativeAssetDragPrime(ipcRenderer, {
       libraryId,
       assetIds,
     });

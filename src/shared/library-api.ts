@@ -751,6 +751,11 @@ export interface SerpentLibraryApi {
     libraryId: string;
     assetIds: string[];
   }): void;
+  /** Warm OS drag paths for these assets before the pointer becomes a drag. */
+  primeAssetDrag(input: {
+    libraryId: string;
+    assetIds: string[];
+  }): void;
   // Folder shell actions (REQ-MENU-006): folder id only crosses the bridge;
   // the absolute path is resolved by the Worker and consumed by Main.
   openFolderInFileManager(input: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>>;

@@ -8015,6 +8015,7 @@ function AppInner() {
     externalDropActive,
     pasteClipboardImage,
     importDroppedFiles,
+    beginInternalAssetDrag,
     handleExternalDragEnter,
     handleExternalDragLeave,
     handleExternalDragOver,
@@ -13844,6 +13845,14 @@ function AppInner() {
                         : { type: "button" as const })}
                       onMouseDown={(e) => {
                         cardMouseDownRef.current = e.button;
+                        if (e.button !== 0 || showTrash || renamingThisAsset || !api || !library) {
+                          return;
+                        }
+                        const ids = resolveDraggedAssetIds(asset.assetId, selectedAssetIds);
+                        api.primeAssetDrag({
+                          libraryId: library.libraryId,
+                          assetIds: ids,
+                        });
                       }}
                       onMouseEnter={() => {
                         setHoveredAssetId(asset.assetId);
@@ -13918,7 +13927,9 @@ function AppInner() {
                           // Electron's supported path is an asynchronous
                           // one-way IPC from dragstart. A synchronous round
                           // trip deadlocks when this native file drag returns
-                          // to Serpent as a drop.
+                          // to Serpent as a drop. The OS drag carries Files,
+                          // so the canvas must not treat it as an import.
+                          beginInternalAssetDrag();
                           event.preventDefault();
                           api.startAssetDrag({
                             libraryId: library.libraryId,

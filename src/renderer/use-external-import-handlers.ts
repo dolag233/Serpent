@@ -23,7 +23,10 @@ import {
 import { LibraryOperationError, toMessage, shouldSuppressClipboardPasteFeedback } from "./error-utils";
 import {
   externalImportPayload,
+  reduceInternalDragPhase,
+  shouldActivateExternalImportOverlay,
   supportsExternalImportTransfer,
+  type InternalDragPhase,
 } from "./external-import-transfer";
 import {
   parseManagedFolderDrag,
@@ -112,6 +115,60 @@ export function useExternalImportHandlers({
   const [folderCardDropTarget, setFolderCardDropTarget] = useState<string | null>(
     null,
   );
+  const externalDragDepth = useRef(0);
+  const internalDragPhase = useRef<InternalDragPhase>("idle");
+  const internalDragArmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const dismissExternalDrop = useCallback(() => {
+    externalDragDepth.current = 0;
+    setExternalDropActive(false);
+    setFolderCardDropTarget(null);
+  }, []);
+
+  const beginInternalAssetDrag = useCallback(() => {
+    internalDragPhase.current = reduceInternalDragPhase(
+      internalDragPhase.current,
+      "begin",
+    );
+    if (internalDragArmTimer.current !== null) {
+      clearTimeout(internalDragArmTimer.current);
+    }
+    internalDragArmTimer.current = setTimeout(() => {
+      internalDragArmTimer.current = null;
+      internalDragPhase.current = reduceInternalDragPhase(
+        internalDragPhase.current,
+        "arm",
+      );
+    }, 50);
+  }, []);
+
+  const finishInternalAssetDrag = useCallback(
+    (event: "drop" | "dragend") => {
+      const next = reduceInternalDragPhase(internalDragPhase.current, event);
+      if (next === internalDragPhase.current) return;
+      internalDragPhase.current = next;
+      if (internalDragArmTimer.current !== null) {
+        clearTimeout(internalDragArmTimer.current);
+        internalDragArmTimer.current = null;
+      }
+      dismissExternalDrop();
+    },
+    [dismissExternalDrop],
+  );
+
+  useEffect(() => {
+    const onDrop = () => finishInternalAssetDrag("drop");
+    const onDragEnd = () => finishInternalAssetDrag("dragend");
+    window.addEventListener("drop", onDrop, true);
+    window.addEventListener("dragend", onDragEnd, true);
+    return () => {
+      window.removeEventListener("drop", onDrop, true);
+      window.removeEventListener("dragend", onDragEnd, true);
+      if (internalDragArmTimer.current !== null) {
+        clearTimeout(internalDragArmTimer.current);
+      }
+    };
+  }, [finishInternalAssetDrag]);
 
   useEffect(() => {
     if (!folderCardDropTarget) return;
@@ -123,7 +180,6 @@ export function useExternalImportHandlers({
       window.removeEventListener("drop", clear);
     };
   }, [folderCardDropTarget]);
-  const externalDragDepth = useRef(0);
 
   const applyDesktopImportResult = useCallback(
     async (
@@ -293,7 +349,15 @@ export function useExternalImportHandlers({
         setExternalDropActive(false);
         return;
       }
-      if (!library || !supportsExternalImportTransfer(event.dataTransfer)) return;
+      if (
+        !library ||
+        !shouldActivateExternalImportOverlay(
+          Array.from(event.dataTransfer.types),
+          internalDragPhase.current !== "idle",
+        )
+      ) {
+        return;
+      }
       event.preventDefault();
       externalDragDepth.current += 1;
       setExternalDropActive(true);
@@ -303,6 +367,7 @@ export function useExternalImportHandlers({
 
   const handleExternalDragLeave = useCallback(
     (event: DragEvent<HTMLElement>) => {
+      if (internalDragPhase.current !== "idle") return;
       if (!supportsExternalImportTransfer(event.dataTransfer)) return;
       externalDragDepth.current = Math.max(0, externalDragDepth.current - 1);
       if (externalDragDepth.current === 0) setExternalDropActive(false);
@@ -536,6 +601,7 @@ export function useExternalImportHandlers({
     createFolderCardDropHandlers,
     pasteClipboardImage,
     importDroppedFiles,
+    beginInternalAssetDrag,
     handleExternalDragEnter,
     handleExternalDragLeave,
     handleExternalDragOver,
