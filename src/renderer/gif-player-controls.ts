@@ -1,8 +1,9 @@
 /**
  * GIF display-name helper for viewer / inspector routing.
  *
- * Viewer GIFs autoplay via native animated `<img>` (ZoomableImage).
- * Pause / frame-step chrome was removed (Serpent-1zj / VIEW-010 withdrawn).
+ * Animated GIFs in the viewer use GifViewerPlayer (video transport).
+ * Cards, hover, and Inspector keep native `<img>` autoplay.
+ * Preloaded viewer surfaces stay on ZoomableImage until promoted.
  */
 
 import { fileExtensionLabel } from "./asset-card-badges";

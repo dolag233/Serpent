@@ -47,6 +47,7 @@ import { ZoomableImage } from "./zoomable-preview-image";
 import { useViewerChromeContrast } from "./use-viewer-chrome-contrast";
 import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
 import { ImageSequencePlayer } from "./ImageSequencePlayer";
+import { GifViewerPlayer } from "./GifViewerPlayer";
 import { isGifDisplayName } from "./gif-player-controls";
 import {
   ViewerContextMenu,
@@ -1262,6 +1263,30 @@ const AssetPreviewModalContent = forwardRef<
               onClose={onClose}
               onPresentationReady={notifyPresentationReady}
               onSaved={() => setDirectApproved(true)}
+            />
+          ) : showImage && imageSrc && isGifDisplayName(asset.displayName) && !preloadOnly ? (
+            <GifViewerPlayer
+              alt={asset.displayName}
+              autoPlay
+              colorSpaceOptions={resolution?.colorSpace?.options}
+              colorSpaceValue={
+                selectedColorSpace ?? resolution?.colorSpace?.id
+              }
+              displayTransform={displayTransform}
+              fitRequestToken={fitRequestToken}
+              isFullscreen={isFullscreen}
+              key={asset.assetId}
+              keyboardShortcutsDisabled={preloadOnly}
+              onColorSpaceChange={selectColorSpace}
+              onFullscreen={() => void toggleFullscreen()}
+              onPresentationReady={notifyPresentationReady}
+              onRotate={rotateViewerClockwise}
+              onRotateCounterClockwise={rotateViewerCounterClockwise}
+              onSwipeNext={onNext}
+              onSwipePrevious={onPrevious}
+              onUserActivity={() => onChromeActivity("pointerdownOrClick")}
+              placeholderSrc={placeholderUrl ?? undefined}
+              src={imageSrc}
             />
           ) : showImage && imageSrc ? (
             <ZoomableImage
