@@ -1988,6 +1988,13 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('media.audio-preview-preference.applied'),
+    libraryId: nonBlankString,
+    preferCover: z.boolean(),
+    rebuilt: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('asset.thumbnail.visible-window.acknowledged'),
   }),
   z.strictObject({
@@ -2277,6 +2284,13 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('asset.thumbnail.visible-window.acknowledged'),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('media.audio-preview-preference.applied'),
+    libraryId: nonBlankString,
+    preferCover: z.boolean(),
+    rebuilt: z.number().int().nonnegative(),
   }),
   z.strictObject({
     ok: z.literal(true),

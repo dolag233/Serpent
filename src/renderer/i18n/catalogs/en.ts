@@ -1494,6 +1494,8 @@ export const en = {
       "Pointer tilt, glare, and press depth on the Inspector preview card. Browse grid cards are unchanged. Respects system reduced-motion when on.",
     hoverAudioPlay: "Play audio on hover",
     hoverAudioPlayHint: "Hovering an audio card plays it in place; leaving stops it.",
+    audioPreviewPrefersCover: "Prefer cover art for audio previews",
+    audioPreviewPrefersCoverHint: "When off, cards show the waveform.",
     hoverVideoSound: "Video hover preview with sound",
     hoverVideoSoundHint: "Play sound during video hover preview (off by default to avoid noise).",
     taskCompletionSound: "Task result sound",

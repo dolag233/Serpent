@@ -41,6 +41,13 @@ export const AUDIO_WAVEFORM_VIEWER_HEIGHT = 220;
 export const AUDIO_WAVEFORM_COVER_GENERATOR_TAG = "audio-cover7";
 
 /**
+ * Grid thumbnail was a waveform even though the file has cover art, because
+ * the preview preference asked for waveforms. Turning the preference back on
+ * rebuilds only rows that carry this mark.
+ */
+export const AUDIO_FORCED_WAVEFORM_GENERATOR_MARK = "forced-wave";
+
+/**
  * Light browse canvas (`--canvas` in light theme). Covers must not match this
  * or the 4:3 stage blends into the grid.
  */
@@ -191,6 +198,40 @@ export function ffprobeHasAttachedPicture(probeJson: unknown): boolean {
     const flag = typed.disposition?.attached_pic;
     return flag === 1 || flag === '1' || flag === true;
   });
+}
+
+export function audioThumbnailIsForcedWaveform(generatorVersion: string): boolean {
+  return generatorVersion.includes(AUDIO_FORCED_WAVEFORM_GENERATOR_MARK);
+}
+
+/** True when a ready grid thumbnail is the 4:3 waveform PNG, not album art. */
+export function audioGridThumbnailIsWaveform(input: {
+  mimeType: string;
+  width: number | null;
+  height: number | null;
+}): boolean {
+  return input.mimeType === "image/png"
+    && input.width === AUDIO_WAVEFORM_COVER_WIDTH
+    && input.height === AUDIO_WAVEFORM_COVER_HEIGHT;
+}
+
+/**
+ * Whether the current grid thumbnail must be regenerated for the preference.
+ * Files that already show a waveform stay put when covers are turned off.
+ * Files without a skipped cover stay put when covers are turned back on.
+ */
+export function audioGridThumbnailNeedsRebuild(input: {
+  preferCover: boolean;
+  mimeType: string;
+  width: number | null;
+  height: number | null;
+  generatorVersion: string;
+}): boolean {
+  if (input.preferCover) {
+    return audioThumbnailIsForcedWaveform(input.generatorVersion);
+  }
+  return !audioGridThumbnailIsWaveform(input)
+    && !audioThumbnailIsForcedWaveform(input.generatorVersion);
 }
 
 export function audioMimeForExtension(extension: string): string | null {

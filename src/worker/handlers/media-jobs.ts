@@ -19,6 +19,22 @@ export async function executeMediaJobWorkerCommand(
       const enqueued = hooks.scheduleThumbnailQueue(request.command.libraryId, { limit: 50 });
       return { ok: true, type: 'media.jobs.enqueued', libraryId: request.command.libraryId, enqueued };
     }
+    case 'media.set-audio-preview-preference': {
+      const rebuilt = libraryService.setAudioPreviewPrefersCover(
+        request.command.libraryId,
+        request.command.preferCover,
+      );
+      if (rebuilt > 0) {
+        hooks.scheduleThumbnailQueue(request.command.libraryId, { skipInitialEnqueue: true });
+      }
+      return {
+        ok: true,
+        type: 'media.audio-preview-preference.applied',
+        libraryId: request.command.libraryId,
+        preferCover: request.command.preferCover,
+        rebuilt,
+      };
+    }
     case 'media.process-thumbnail-queue': {
       const processed = await libraryService.processThumbnailQueue(request.command.libraryId);
       return { ok: true, type: 'media.jobs.processed', libraryId: request.command.libraryId, processed };

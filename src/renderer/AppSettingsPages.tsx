@@ -528,6 +528,8 @@ export type BrowseSettingsPageProps = {
   onToggleField: (field: keyof CanvasPreferences["fields"]) => void;
   onToggleHoverAudioPlay: () => void;
   onToggleHoverVideoSound: () => void;
+  audioPreviewPrefersCover: boolean;
+  onAudioPreviewPrefersCoverChange: (preferCover: boolean) => void;
 };
 
 export function BrowseSettingsPage({
@@ -537,6 +539,8 @@ export function BrowseSettingsPage({
   onToggleField,
   onToggleHoverAudioPlay,
   onToggleHoverVideoSound,
+  audioPreviewPrefersCover,
+  onAudioPreviewPrefersCoverChange,
 }: BrowseSettingsPageProps): ReactNode {
   const t = useT();
   const [showFolderCardsWhenRecursive, setShowFolderCardsWhenRecursive] =
@@ -645,6 +649,12 @@ export function BrowseSettingsPage({
         hint={t("settings.hoverAudioPlayHint")}
         label={t("settings.hoverAudioPlay")}
         onChange={onToggleHoverAudioPlay}
+      />
+      <SettingsToggleRow
+        checked={audioPreviewPrefersCover}
+        hint={t("settings.audioPreviewPrefersCoverHint")}
+        label={t("settings.audioPreviewPrefersCover")}
+        onChange={() => onAudioPreviewPrefersCoverChange(!audioPreviewPrefersCover)}
       />
       <SettingsToggleRow
         checked={canvasPrefs.hoverVideoSound}

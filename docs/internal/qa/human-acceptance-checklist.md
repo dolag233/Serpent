@@ -44,6 +44,12 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-09-25 音频预览图封面或波形
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| AUDIO-PREVIEW-001 | 设置里可让音频卡片优先用封面，或改为波形 | 人类验收通过 | ① 完全退出后再打开含这次改动的构建。② 打开设置 → 浏览，确认「音频预览图优先显示封面图」默认勾选。③ 导入一首带封面的音频和一首没有封面的音频，看卡片。④ 取消勾选，等卡片更新。⑤ 再勾上。⑥ 双击带封面的那首，看播放条。 | ③ 有封面的卡片是封面，没有封面的是波形。④ 有封面的卡片变成波形，没有封面的仍是波形。⑤ 有封面的卡片回到封面。⑥ 播放条始终是波形，不变成封面。 | `audio-preview-preferences.ts` / `AppSettingsPages.tsx` / `library-service.ts` `setAudioPreviewPrefersCover` / `tests/unit/audio-preview-preferences.test.ts` / `tests/worker/video-exr.test.ts` | 2026-09-25：`npx vitest run tests/unit/audio-preview-preferences.test.ts` 3 passed。`node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/video-exr.test.ts -t "rebuilds a cover thumbnail"` 1 passed。2026-09-25 用户本人验收通过。 |
+
 ### 2026-09-25 拖拽时的导入提示
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

@@ -532,6 +532,10 @@ import {
   type CanvasPreferences,
 } from "./canvas-preferences";
 import {
+  loadAudioPreviewPreferences,
+  saveAudioPreviewPreferences,
+} from "./audio-preview-preferences";
+import {
   loadBrowseSortPreferences,
   saveBrowseSortPreferences,
 } from "./browse-sort-preferences";
@@ -920,6 +924,21 @@ function AppInner() {
         : undefined,
     [beginLibraryWrite, endLibraryWrite, libraryTransitionLock, rawLibraryApi],
   );
+  const [audioPreviewPrefersCover, setAudioPreviewPrefersCover] = useState(
+    () => loadAudioPreviewPreferences().preferCover,
+  );
+  const applyAudioPreviewPreference = useCallback((preferCover: boolean) => {
+    saveAudioPreviewPreferences({ version: 1, preferCover });
+    setAudioPreviewPrefersCover(preferCover);
+  }, []);
+  const libraryIdForAudioPreview = library?.libraryId;
+  useEffect(() => {
+    if (!api || !libraryIdForAudioPreview) return;
+    void api.setAudioPreviewPreference({
+      libraryId: libraryIdForAudioPreview,
+      preferCover: audioPreviewPrefersCover,
+    });
+  }, [api, audioPreviewPrefersCover, libraryIdForAudioPreview]);
   // Keep AI readiness (hasKey) in sync without requiring the settings dialog.
   useEffect(() => {
     if (!api) return;
@@ -14835,6 +14854,8 @@ function AppInner() {
         onToggleHoverVideoSound={() => {
           setCanvasPrefs((p) => ({ ...p, hoverVideoSound: !p.hoverVideoSound }));
         }}
+        audioPreviewPrefersCover={audioPreviewPrefersCover}
+        onAudioPreviewPrefersCoverChange={applyAudioPreviewPreference}
         onToggleShowAiBadges={() => {
           setAiUiPrefs((p) => ({ ...p, showAiBadges: !p.showAiBadges }));
         }}

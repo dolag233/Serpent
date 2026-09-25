@@ -40,6 +40,8 @@ export interface AppSettingsDialogProps {
   onToggleField: (field: keyof CanvasPreferences["fields"]) => void;
   onToggleHoverAudioPlay: () => void;
   onToggleHoverVideoSound: () => void;
+  audioPreviewPrefersCover: boolean;
+  onAudioPreviewPrefersCoverChange: (preferCover: boolean) => void;
   aiUiPrefs: AiUiPreferences;
   aiConfigPanel: ReactNode;
   onToggleShowAiBadges: () => void;
@@ -74,6 +76,8 @@ export function AppSettingsDialog({
   onToggleField,
   onToggleHoverAudioPlay,
   onToggleHoverVideoSound,
+  audioPreviewPrefersCover,
+  onAudioPreviewPrefersCoverChange,
   aiUiPrefs,
   aiConfigPanel,
   onToggleShowAiBadges,
@@ -251,6 +255,8 @@ export function AppSettingsDialog({
                 onToggleField={onToggleField}
                 onToggleHoverAudioPlay={onToggleHoverAudioPlay}
                 onToggleHoverVideoSound={onToggleHoverVideoSound}
+                audioPreviewPrefersCover={audioPreviewPrefersCover}
+                onAudioPreviewPrefersCoverChange={onAudioPreviewPrefersCoverChange}
               />
             ) : null}
             {!showingPluginSettings && activeCategory === "ai" ? (

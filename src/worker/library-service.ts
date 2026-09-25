@@ -715,6 +715,7 @@ import {
 } from './ico-page';
 import {
   AUDIO_EXTENSION_NAMES,
+  AUDIO_FORCED_WAVEFORM_GENERATOR_MARK,
   AUDIO_WAVEFORM_COVER_BACKGROUND,
   AUDIO_WAVEFORM_COVER_GENERATOR_TAG,
   AUDIO_WAVEFORM_COVER_HEIGHT,
@@ -722,6 +723,7 @@ import {
   AUDIO_WAVEFORM_COVER_WIDTH,
   AUDIO_WAVEFORM_VIEWER_HEIGHT,
   AUDIO_WAVEFORM_VIEWER_WIDTH,
+  audioGridThumbnailNeedsRebuild,
   audioMimeForExtension,
   ffprobeHasAttachedPicture,
   isAudioFileName,
@@ -6674,6 +6676,8 @@ function closeIgnoringFailure(connection: DatabaseConnection | undefined): void 
 export class LibraryService {
   /** Stable for this Worker process; a new app process gets a new session. */
   private readonly applicationSessionId = randomUUID();
+  /** App setting: audio grid thumbnails use cover art when the file has one. */
+  private audioPreviewPrefersCover = true;
   private readonly openById = new Map<string, OpenLibrary>();
   private readonly openIdByPath = new Map<string, string>();
   /**
@@ -25438,6 +25442,86 @@ export class LibraryService {
     }
   }
 
+  /**
+   * Remember whether audio cards should prefer cover art, and queue a rebuild
+   * for grid thumbnails that would show a different image.
+   */
+  setAudioPreviewPrefersCover(libraryId: string, preferCover: boolean): number {
+    this.audioPreviewPrefersCover = preferCover;
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const audioExtensionSql = AUDIO_EXTENSION_NAMES
+      .map(() => 'LOWER(a.relative_file_path) LIKE ?')
+      .join(' OR ');
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT a.asset_id, a.current_revision_id, ra.artifact_id,
+                ra.mime_type, ra.width, ra.height, ra.generator_version
+           FROM assets a
+           JOIN revision_artifacts ra ON ra.revision_id = a.current_revision_id
+          WHERE a.deleted_at IS NULL
+            AND a.availability = 'available'
+            AND a.current_revision_id IS NOT NULL
+            AND (${audioExtensionSql})
+            AND ra.kind = 'thumbnail'
+            AND ra.status = 'ready'
+            AND ra.invalidated_at IS NULL`,
+      )
+      .all(...AUDIO_EXTENSION_NAMES.map((extension) => `%.${extension}`)) as Array<{
+        asset_id: string;
+        current_revision_id: string;
+        artifact_id: string;
+        mime_type: string;
+        width: number | null;
+        height: number | null;
+        generator_version: string;
+      }>;
+    const stale = rows.filter((row) => audioGridThumbnailNeedsRebuild({
+      preferCover,
+      mimeType: row.mime_type,
+      width: row.width,
+      height: row.height,
+      generatorVersion: row.generator_version,
+    }));
+    if (stale.length === 0) return 0;
+    const now = new Date().toISOString();
+    const invalidate = openLibrary.connection.prepare(
+      `UPDATE revision_artifacts
+          SET invalidated_at = ?
+        WHERE artifact_id = ?
+          AND invalidated_at IS NULL`,
+    );
+    const activeJob = openLibrary.connection.prepare(
+      `SELECT 1 FROM jobs
+        WHERE asset_id = ?
+          AND kind = 'generate_thumbnail'
+          AND status IN ('queued', 'running', 'paused')
+        LIMIT 1`,
+    );
+    const insert = openLibrary.connection.prepare(
+      `INSERT INTO jobs
+         (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+          attempt_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', 200, 0.0, 0, ?, ?)`,
+    );
+    let enqueued = 0;
+    openLibrary.connection.transaction(() => {
+      for (const row of stale) {
+        invalidate.run(now, row.artifact_id);
+        if (activeJob.get(row.asset_id)) continue;
+        insert.run(
+          randomUUID(),
+          libraryId,
+          row.asset_id,
+          row.current_revision_id,
+          now,
+          now,
+        );
+        enqueued += 1;
+      }
+    })();
+    return enqueued;
+  }
+
   // ── Audio artifacts (ffprobe + waveform thumbnail) ─────────────────
 
   /**
@@ -25470,8 +25554,9 @@ export class LibraryService {
       this.diagnose('audio-probe', error, { libraryId: input.libraryId, assetId: input.assetId });
     }
 
+    const preferCover = this.audioPreviewPrefersCover;
     let thumbnailArtifactId: string | null = null;
-    if (hasAttachedPicture) {
+    if (preferCover && hasAttachedPicture) {
       try {
         thumbnailArtifactId = await this.generateAudioAlbumCoverThumbnail(
           input,
@@ -25507,6 +25592,7 @@ export class LibraryService {
             width: AUDIO_WAVEFORM_COVER_WIDTH,
             height: AUDIO_WAVEFORM_COVER_HEIGHT,
             flattenBackground: { ...AUDIO_WAVEFORM_COVER_BACKGROUND },
+            forcedWaveform: hasAttachedPicture && !preferCover,
           },
         );
       } catch (error) {
@@ -25566,7 +25652,7 @@ export class LibraryService {
     ffmpegPath: string,
     artifactsDir: string,
     execution: MediaExecutionContext,
-  ): Promise<string> {
+  ): Promise<string | null> {
     const artifactId = randomUUID();
     let artifactRelPath = `${artifactId}.jpg`;
     let artifactAbsPath = path.join(artifactsDir, artifactRelPath);
@@ -25647,6 +25733,10 @@ export class LibraryService {
       rmSync(tempAbsPath, { force: true });
 
       const outputStat = statSync(artifactAbsPath);
+      if (!this.audioPreviewPrefersCover) {
+        rmSync(artifactAbsPath, { force: true });
+        return null;
+      }
       openLibrary.connection
         .prepare(
           `INSERT INTO revision_artifacts
@@ -25691,6 +25781,7 @@ export class LibraryService {
       width: number;
       height: number;
       flattenBackground: { r: number; g: number; b: number };
+      forcedWaveform?: boolean;
     },
   ): Promise<string> {
     const artifactId = randomUUID();
@@ -25746,7 +25837,9 @@ export class LibraryService {
           artifactRelPath,
           options.width,
           options.height,
-          AUDIO_WAVEFORM_GENERATOR,
+          options.forcedWaveform
+            ? `${AUDIO_WAVEFORM_GENERATOR}+${AUDIO_FORCED_WAVEFORM_GENERATOR_MARK}`
+            : AUDIO_WAVEFORM_GENERATOR,
           new Date().toISOString(),
         );
 

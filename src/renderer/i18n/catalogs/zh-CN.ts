@@ -1475,6 +1475,8 @@ export const zhCN = {
       "侧边栏预览卡在指针悬停时的倾斜、高光与按下景深；浏览网格卡片不受影响。开启时仍遵循系统「减少动态效果」。",
     hoverAudioPlay: "音频卡片悬停播放",
     hoverAudioPlayHint: "鼠标悬停音频卡片时在画布内播放，移开即停止。",
+    audioPreviewPrefersCover: "音频预览图优先显示封面图",
+    audioPreviewPrefersCoverHint: "关闭后，卡片显示波形图。",
     hoverVideoSound: "视频悬停播放带声音",
     hoverVideoSoundHint: "悬停视频卡片播放时播放声音（默认关闭，避免噪音）。",
     taskCompletionSound: "任务结果提示音",

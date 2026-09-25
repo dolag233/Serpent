@@ -17,7 +17,7 @@ import {
 } from '../../src/worker/library-service';
 import { mediaResourceGuard } from '../../src/worker/media-resource-guard';
 import { extractRawEmbeddedJpegThumbnail } from '../../src/worker/raw-embedded-thumbnail';
-import { AUDIO_WAVEFORM_COVER_GENERATOR_TAG } from '../../src/shared/audio-media';
+import { AUDIO_FORCED_WAVEFORM_GENERATOR_MARK, AUDIO_WAVEFORM_COVER_GENERATOR_TAG } from '../../src/shared/audio-media';
 import { importNoConflict as sharedImportNoConflict } from './import-no-conflict';
 
 const temporaryRoots: string[] = [];
@@ -3585,6 +3585,107 @@ describe('audio waveform thumbnail (Serpent-13v)', () => {
       status: 'ready',
     });
     db.close();
+    service.closeAll();
+  });
+
+  it('rebuilds a cover thumbnail as a waveform when cover preference is off', async () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const sharp = require('sharp') as (input: unknown) => {
+      png(): { toBuffer(): Promise<Buffer> };
+    };
+    const coverPng = await sharp({
+      create: {
+        width: 32,
+        height: 24,
+        channels: 3,
+        background: { r: 200, g: 40, b: 80 },
+      },
+    }).png().toBuffer();
+    const probeJson = JSON.stringify({
+      streams: [
+        { codec_type: 'audio', codec_name: 'mp3', channels: 2, sample_rate: '44100' },
+        {
+          codec_type: 'video',
+          codec_name: 'mjpeg',
+          width: 32,
+          height: 24,
+          disposition: { attached_pic: 1 },
+        },
+      ],
+      format: { filename: '/fake/song.mp3', format_name: 'mp3', duration: '12.0', bit_rate: '128000' },
+    });
+    const root = temporaryRoot();
+    const service = new LibraryService({
+      spawnFn: async (command, args) => {
+        const outputPath = args.at(-1);
+        if (outputPath && ['.jpg', '.png', '.webp', '.json'].some((extension) => outputPath.endsWith(extension))) {
+          mkdirSync(path.dirname(outputPath), { recursive: true });
+          if (outputPath.endsWith('.png')) {
+            const isWaveform = args.some((argument) => argument.includes('showwavespic'));
+            writeFileSync(outputPath, isWaveform ? VALID_1X1_PNG : coverPng);
+          } else {
+            writeFileSync(outputPath, Buffer.from('mock-output-data'));
+          }
+        }
+        if (command.includes('ffprobe')) {
+          return { stdout: Buffer.from(probeJson), stderr: '', exitCode: 0 };
+        }
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    const created = service.createLibrary({
+      displayName: 'AudioPreviewPreference',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'song.mp3');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({
+      libraryId: created.libraryId,
+      recursive: true,
+    })[0]!;
+    await service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    });
+    expect(service.setAudioPreviewPrefersCover(created.libraryId, false)).toBe(1);
+    await service.processThumbnailQueue(created.libraryId, { maxJobs: 1 });
+    const db = assertDb(created.libraryPath);
+    const thumb = db.prepare(
+      `SELECT mime_type, width, height, generator_version
+         FROM revision_artifacts
+        WHERE revision_id = ?
+          AND kind = 'thumbnail'
+          AND status = 'ready'
+          AND invalidated_at IS NULL`,
+    ).get(asset.currentRevisionId) as {
+      mime_type: string;
+      width: number;
+      height: number;
+      generator_version: string;
+    };
+    expect(thumb).toMatchObject({ mime_type: 'image/png', width: 640, height: 480 });
+    expect(thumb.generator_version).toContain(AUDIO_FORCED_WAVEFORM_GENERATOR_MARK);
+    const poster = db.prepare(
+      `SELECT width, height FROM revision_artifacts
+        WHERE revision_id = ? AND kind = 'video_poster' AND status = 'ready' AND invalidated_at IS NULL`,
+    ).get(asset.currentRevisionId) as { width: number; height: number };
+    expect(poster).toMatchObject({ width: 1280, height: 220 });
+    db.close();
+    expect(service.setAudioPreviewPrefersCover(created.libraryId, true)).toBe(1);
+    await service.processThumbnailQueue(created.libraryId, { maxJobs: 1 });
+    const dbAfter = assertDb(created.libraryPath);
+    const restored = dbAfter.prepare(
+      `SELECT mime_type, generator_version
+         FROM revision_artifacts
+        WHERE revision_id = ?
+          AND kind = 'thumbnail'
+          AND status = 'ready'
+          AND invalidated_at IS NULL`,
+    ).get(asset.currentRevisionId) as { mime_type: string; generator_version: string };
+    expect(restored.mime_type).toBe('image/jpeg');
+    expect(restored.generator_version).not.toContain(AUDIO_FORCED_WAVEFORM_GENERATOR_MARK);
+    dbAfter.close();
     service.closeAll();
   });
 

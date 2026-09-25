@@ -2254,6 +2254,25 @@ export const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { queued, running, succeeded, failed, paused, cancelled } };
   },
 
+  async setAudioPreviewPreference({
+    libraryId,
+    preferCover,
+  }: {
+    libraryId: string;
+    preferCover: boolean;
+  }): Promise<LibraryApiResult<{ preferCover: boolean; rebuilt: number }>> {
+    const result = await request({
+      type: 'media.set-audio-preview-preference.request',
+      libraryId,
+      preferCover,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'media.audio-preview-preference.applied') {
+      throw new Error('Unexpected audio preview preference response.');
+    }
+    return { ok: true, value: { preferCover: result.preferCover, rebuilt: result.rebuilt } };
+  },
+
   async listMediaJobs({
     libraryId,
     summaryOnly,
