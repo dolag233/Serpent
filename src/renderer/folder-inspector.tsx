@@ -5,6 +5,8 @@ import type { FolderBrowseEntry } from "../shared/asset-types";
 import type { SerpentLibraryApi } from "../shared/library-api";
 import { coverSrc } from "./asset-card-hover-preview";
 import { AppearanceGlyph } from "./AppearanceGlyph";
+import { folderCoverImageSrc } from "./folder-cover";
+import { splitFilenameForDisplay } from "./filename-display";
 import { formatBytes } from "./format-file-meta";
 import { Icon } from "./Icons";
 import { useT } from "./i18n";
@@ -14,11 +16,19 @@ export interface FolderInspectorRef {
   folderId: string;
 }
 
+/** `/根目录/xxx/xxx`. An empty relative path is the library root itself. */
 export function folderInspectorPathLabel(
   entries: readonly Pick<FolderBrowseEntry, "relativePath">[],
+  rootLabel: string,
 ): string | null {
-  const paths = [...new Set(entries.map((entry) => entry.relativePath).filter((path) => path.length > 0))];
-  return paths.length === 1 ? paths[0]! : null;
+  const paths = [...new Set(entries.map((entry) => normalizeFolderRelativePath(entry.relativePath)))];
+  if (paths.length !== 1) return null;
+  const segments = paths[0]!.split("/").filter((segment) => segment.length > 0);
+  return `/${[rootLabel, ...segments].join("/")}`;
+}
+
+function normalizeFolderRelativePath(relativePath: string): string {
+  return relativePath.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
 }
 
 export function useFolderInspector(input: {
@@ -98,22 +108,37 @@ export function FolderInspectorBody({
 }) {
   const t = useT();
   const single = entries.length === 1 ? entries[0] : null;
-  const path = folderInspectorPathLabel(entries);
+  const path = folderInspectorPathLabel(entries, t("menu.libraryRoot"));
   const assetCount = entries.reduce((sum, entry) => sum + entry.recursiveAssetCount, 0);
   const childFolderCount = entries.reduce((sum, entry) => sum + entry.childFolderCount, 0);
   const covers = entries.flatMap((entry) => entry.coverArtifactIds).slice(0, 4);
+  const sequenceCover = covers.length === 0 && single
+    ? folderCoverImageSrc(libraryId, single)
+    : null;
   const title = single
     ? single.name
     : t("inspector.folderSelection", { count: entries.length });
+  const filenameParts = single ? splitFilenameForDisplay(single.name) : null;
+  const sizeLabel = byteSize === null ? "…" : formatBytes(byteSize);
+  const detailRows = [
+    ...(path ? [{ label: t("inspector.path"), value: path }] : []),
+    { label: t("inspector.assets"), value: String(assetCount) },
+    { label: t("inspector.childFolders"), value: String(childFolderCount) },
+    { label: t("inspector.size"), value: sizeLabel },
+  ];
 
   return (
     <div className="inspector-content">
-      <div className="inspector-hero-compact">
+      <div className={`inspector-hero-compact${single ? "" : " is-multi"}`}>
         <div className="inspector-hero-preview inspector-folder-hero">
           {covers.length === 0 ? (
-            <div className="inspector-hero-preview-fallback">
-              <Icon name="folder" size={28} />
-            </div>
+            sequenceCover ? (
+              <img alt="" className="inspector-hero-image" src={sequenceCover} />
+            ) : (
+              <div className="inspector-hero-preview-fallback">
+                <Icon name="folder" size={28} />
+              </div>
+            )
           ) : covers.length === 1 ? (
             <img alt="" className="inspector-hero-image" src={coverSrc(libraryId, covers[0]!)} />
           ) : (
@@ -131,40 +156,37 @@ export function FolderInspectorBody({
             </div>
           )}
         </div>
-      </div>
-      <div className="inspector-identity">
-        {single ? (
-          <AppearanceGlyph appearance={appearance} fallback="folder" size={18} />
-        ) : (
-          <Icon name="folder" size={18} />
-        )}
-        <div>
-          <span className="micro-label">{t("inspector.folders")}</span>
-          <strong>
-            <span className="inspector-identity-name">{title}</span>
+        <div className="inspector-folder-heading">
+          <AppearanceGlyph appearance={single ? appearance : null} fallback="folder" size={15} />
+          <strong className="inspector-hero-title" title={title}>
+            {filenameParts ? (
+              <>
+                <span className="asset-filename-prefix">{filenameParts.prefix}</span>
+                {filenameParts.tail ? (
+                  <span className="asset-filename-tail">{filenameParts.tail}</span>
+                ) : null}
+                {filenameParts.extension ? (
+                  <span className="asset-filename-extension">{filenameParts.extension}</span>
+                ) : null}
+              </>
+            ) : (
+              title
+            )}
           </strong>
         </div>
       </div>
-      <dl className="metadata-list">
-        {path ? (
-          <div>
-            <dt>{t("inspector.path")}</dt>
-            <dd>{path}</dd>
+      <div className="inspector-folder-details">
+        {detailRows.map((row) => (
+          <div
+            className="inspector-tech-part inspector-raw-tech-row"
+            data-hover-tip={`${row.label}: ${row.value}`}
+            key={row.label}
+          >
+            <span className="inspector-raw-tech-label">{row.label}</span>
+            <span className="inspector-raw-tech-value">{row.value}</span>
           </div>
-        ) : null}
-        <div>
-          <dt>{t("inspector.assets")}</dt>
-          <dd className="mono">{assetCount}</dd>
-        </div>
-        <div>
-          <dt>{t("inspector.childFolders")}</dt>
-          <dd className="mono">{childFolderCount}</dd>
-        </div>
-        <div>
-          <dt>{t("inspector.size")}</dt>
-          <dd className="mono">{byteSize === null ? "…" : formatBytes(byteSize)}</dd>
-        </div>
-      </dl>
+        ))}
+      </div>
     </div>
   );
 }

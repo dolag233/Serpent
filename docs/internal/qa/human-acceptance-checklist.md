@@ -58,6 +58,13 @@
 | PREVIEW-BITDEPTH-001 | 16 位 PNG 缩略图会改成浏览器能画的 8 位 | 人类验收通过 | ① 打开含一张曾显示空白的 RAW 或 TGA 的资源库，等后台跑一会儿。② 看这张卡片。 | 卡片出现画面，而不是深色空框。同一文件不再出现两张卡片。 | `library-service.ts` `repairUndisplayablePngThumbnails` / `generateOiiOThumbnail` | 新生成的 OIIO 图强制 8 位；已有 16 位图在后台队列里分批换掉。定向测试未单独覆盖换图。2026-09-25 用户本人验收通过（用户原话「我感觉没问题」）。 |
 | JOBS-SEQUENCE-001 | 序列隐藏帧不再让后台任务数停住 | 人类验收通过 | ① 打开含图片序列的资源库。② 看后台任务数字。 | 数字会下降到没有可做的任务，而不是停在几百不变。 | `library-service.ts` `cancelQueuedHiddenSequenceMemberJobs` / `tests/worker/thumbnails.test.ts` | 2026-09-25：`node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/thumbnails.test.ts -t "cancels queued metadata jobs for hidden sequence frames"` 1 passed。2026-09-25 用户本人验收通过（用户原话「我感觉没问题」）。 |
 
+### 2026-09-25 文件夹封面
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| FOLDER-COVER-001 | 没有可预览文件的文件夹，右侧显示普通文件夹图标 | 待人类验收 | ① 完全退出后再打开含这次改动的构建。② 打开一个里面没有图片、视频或序列的文件夹，看右侧检查器顶部。 | 方框里居中显示文件夹图标，而不是一条细长的深色条。 | `styles.css` `.inspector-folder-hero` | 样式调整，定向测试未覆盖这条布局。 |
+| FOLDER-COVER-002 | 只有序列帧的文件夹用序列画面当封面 | 待人类验收 | ① 打开一个里面只有一组序列帧的文件夹的上一级。② 看这张文件夹卡片，并选中它看右侧。 | 卡片和右侧都显示序列画面，而不是默认文件夹图标。 | `library-service.ts` `withSequenceFolderCovers` / `folder-cover.ts` / `tests/unit/folder-cover.test.ts` | 2026-09-25：`npx vitest run tests/unit/folder-cover.test.ts tests/unit/folder-card-collage.test.tsx` 7 passed。 |
+
 ### 2026-09-25 查看器左旋
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
@@ -82,6 +89,8 @@
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
 | --- | --- | --- | --- | --- | --- | --- |
 | FOLDER-INSPECT-001 | 右侧面板显示当前文件夹或选中的文件夹卡片 | 待人类验收 | ① 打开一个有子文件夹和图片的资源库，点进某个文件夹，不要选中任何卡片。② 再点选一张文件夹卡片。③ 按住多选两张文件夹卡片。④ 再点进合集、标签、搜索或回收站，且不选中任何项。 | ① 右侧是当前文件夹：正方形封面、名称、路径、资产数量、子文件夹数量，大小稍后出现。单张和四宫格都是正方形。② 换成这张卡片的信息。③ 标题为「N 个文件夹」，数量和大小相加；路径不同则不显示路径。④ 仍是资源库摘要。侧栏点文件夹只是进入，不会单独变成选中项。 | `folder-inspector.tsx`；`folderIndexedByteSizes` | 2026-09-25：`tests/unit/folder-inspector.test.ts` 与 `tests/worker/folder-browse-entries.test.ts` 中「lists direct child folders」通过（父文件夹大小含子文件夹已索引字节）。界面未用桌面操作验收。 |
+| FOLDER-INSPECT-002 | 文件夹检查器排版与资产检查器对齐 | 人类验收通过 | ① 完全退出后再打开含这次改动的构建。② 选中一个文件夹，看右侧。③ 再选中一张图片或音频，对照右侧。 | 封面下方是文件夹图标和名称，没有「文件夹」字样，封面和名称之间没有横线，名称下也没有「项数 · 大小」。再往下路径、资产、子文件夹、大小紧挨着排，左标签、右内容，和资产里 Title、Artist 那几行一样，不会被拉得很开。 | `folder-inspector.tsx`；`styles.css` `.inspector-folder-details` | 2026-09-25 用户本人验收通过（用户原话「可以」）。随后要求去掉名称下的「项数 · 大小」（用户原话「红圈里的这俩删了吧」）。 |
+| FOLDER-INSPECT-003 | 文件夹路径显示为 /根目录/xxx/xxx | 待人类验收 | ① 选中资源库根目录下的一个文件夹，看右侧「路径」。② 再进入更里层的子文件夹看路径。③ 停在资源库根目录、不选中卡片时看路径。 | ① `/根目录/` 后面接这个文件夹的名字。② `/根目录/上一级/当前文件夹`。③ `/根目录`。多选路径不同的文件夹时不显示路径。 | `folder-inspector.tsx` `folderInspectorPathLabel` | 2026-09-25：`npx vitest run tests/unit/folder-inspector.test.ts tests/unit/folder-inspector-body.test.tsx` 2 passed。 |
 
 ### 2026-09-25 元数据不再把 EXIF 占位 0 当成尺寸
 

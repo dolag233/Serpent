@@ -64,6 +64,14 @@ export const folderBrowseEntrySchema = z.strictObject({
   /** Up to 4 ready thumbnail/poster artifact ids for the folder cover deck / collage (Serpent-9021d1). */
   coverArtifactIds: z.array(nonBlankString).max(4),
   /**
+   * Sequence frames that are shown from the original file have no thumbnail
+   * artifact. One of these still paints the folder cover.
+   */
+  coverSourcePreviews: z.array(z.strictObject({
+    assetId: nonBlankString,
+    revisionId: nonBlankString,
+  })).max(4).optional(),
+  /**
    * Up to 4 cover candidate asset ids (Serpent-d0nv / Serpent-9021d1). The Worker
    * schedules these at the `cover` thumbnail scene so folder-card covers generate
    * before the rest of the library; the Renderer refreshes browse entries

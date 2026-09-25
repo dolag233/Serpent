@@ -16042,7 +16042,7 @@ export class LibraryService {
       input.showIgnored === true,
     );
 
-    return visibleChildren.map((row) => {
+    return this.withSequenceFolderCovers(openLibrary, visibleChildren.map((row) => {
       const directAssetCount = counts.directAssetCounts.get(row.folder_id) ?? 0;
       return {
         folderId: row.folder_id,
@@ -16063,7 +16063,7 @@ export class LibraryService {
         coverAssetIds: coverCandidateMap.get(row.folder_id) ?? [],
         linkedFolderId: null,
       };
-    });
+    }));
   }
 
   /**
@@ -16197,7 +16197,7 @@ export class LibraryService {
       });
     }
 
-    return results;
+    return this.withSequenceFolderCovers(openLibrary, results);
   }
 
   private linkedFolderDisplayName(
@@ -16251,7 +16251,7 @@ export class LibraryService {
     if (children.length === 0) return [];
     const directoryChildCounts = countLinkedDirectoryChildren(prefixes);
 
-    return children.map((relativePath) => {
+    return this.withSequenceFolderCovers(openLibrary, children.map((relativePath) => {
       const folderId = encodeLinkedVirtualFolderId(resolved.linkedFolderId, relativePath);
       const directoryAssetCounts = assetCounts.get(relativePath);
       const directAssetCount = directoryAssetCounts?.direct ?? 0;
@@ -16291,7 +16291,7 @@ export class LibraryService {
         ),
         linkedFolderId: resolved.linkedFolderId,
       };
-    });
+    }));
   }
 
   private resolveLinkedFolderScope(
@@ -16385,7 +16385,8 @@ export class LibraryService {
             AND a.deleted_at IS NULL
             AND ${this.explicitIgnoreSql(openLibrary.connection, 'a', showIgnored)}
             AND (
-              a.relative_file_path = ?
+              ? = ''
+              OR a.relative_file_path = ?
               OR (? != '' AND substr(a.relative_file_path, 1, ?) = ?)
             )
           ORDER BY a.relative_file_path`,
@@ -16393,13 +16394,18 @@ export class LibraryService {
       .all(
         linkedFolderId,
         relativePath,
+        relativePath,
         prefix,
         [...prefix].length,
         prefix,
       ) as Array<{ artifact_id: string; relative_file_path: string }>;
 
+    const scopedRows = relativePath === '' && childDirs.length === 0
+      ? rows.filter((row) => !row.relative_file_path.includes('/'))
+      : rows;
+
     if (childDirs.length === 0) {
-      return rows.slice(0, 3).map((row) => row.artifact_id);
+      return scopedRows.slice(0, 3).map((row) => row.artifact_id);
     }
 
     // Serpent-9021d1: Pure linked folder — round-robin across direct child directories
@@ -16454,7 +16460,8 @@ export class LibraryService {
             AND a.deleted_at IS NULL
             AND ${this.explicitIgnoreSql(openLibrary.connection, 'a', showIgnored)}
             AND (
-              a.relative_file_path = ?
+              ? = ''
+              OR a.relative_file_path = ?
               OR (? != '' AND substr(a.relative_file_path, 1, ?) = ?)
             )
           ORDER BY a.relative_file_path`,
@@ -16462,13 +16469,18 @@ export class LibraryService {
       .all(
         linkedFolderId,
         relativePath,
+        relativePath,
         prefix,
         [...prefix].length,
         prefix,
       ) as Array<{ asset_id: string; relative_file_path: string }>;
 
+    const scopedRows = relativePath === '' && childDirs.length === 0
+      ? rows.filter((row) => !row.relative_file_path.includes('/'))
+      : rows;
+
     if (childDirs.length === 0) {
-      return rows.slice(0, 3).map((row) => row.asset_id);
+      return scopedRows.slice(0, 3).map((row) => row.asset_id);
     }
 
     // Serpent-9021d1: Pure linked folder — round-robin across direct child directories
@@ -16734,6 +16746,107 @@ export class LibraryService {
       .all() as Array<{ folder_id: string; count: number }>;
     for (const row of childRows) childFolderCounts.set(row.folder_id, row.count);
     return { directAssetCounts, childFolderCounts };
+  }
+
+  /**
+   * Sequence frames shown from the original file have no thumbnail artifact,
+   * so a folder that only contains a sequence would otherwise stay on the
+   * default folder glyph. Point the cover at the sequence's first frame.
+   */
+  private withSequenceFolderCovers(
+    openLibrary: OpenLibrary,
+    entries: FolderBrowseEntry[],
+  ): FolderBrowseEntry[] {
+    if (!hasTable(openLibrary.connection, 'asset_sequence_frames')) return entries;
+    const pending = entries.filter((entry) => entry.coverArtifactIds.length === 0);
+    if (pending.length === 0) return entries;
+    const previews = new Map<string, { assetId: string; revisionId: string }>();
+    const managedIds = pending
+      .filter((entry) => entry.locationKind === 'managed')
+      .map((entry) => entry.folderId);
+    if (managedIds.length > 0) {
+      const rows = sqliteAllInChunks<string, {
+        folder_id: string;
+        asset_id: string;
+        revision_id: string;
+      }>({
+        connection: openLibrary.connection,
+        values: managedIds,
+        buildSql: (placeholders) =>
+          `SELECT a.managed_folder_id AS folder_id,
+                  a.asset_id,
+                  a.current_revision_id AS revision_id
+             FROM assets a
+             JOIN asset_sequence_frames frame
+               ON frame.asset_id = a.asset_id
+              AND frame.position = 0
+            WHERE a.managed_folder_id IN (${placeholders})
+              AND a.deleted_at IS NULL
+              AND a.current_revision_id IS NOT NULL
+            ORDER BY a.relative_file_path`,
+      });
+      for (const row of rows) {
+        if (!previews.has(row.folder_id)) {
+          previews.set(row.folder_id, {
+            assetId: row.asset_id,
+            revisionId: row.revision_id,
+          });
+        }
+      }
+    }
+    const linkedIds = [...new Set(
+      pending
+        .filter((entry) => entry.locationKind === 'linked' && entry.linkedFolderId)
+        .map((entry) => entry.linkedFolderId!),
+    )];
+    if (linkedIds.length > 0) {
+      const rows = sqliteAllInChunks<string, {
+        linked_folder_id: string;
+        relative_file_path: string;
+        asset_id: string;
+        revision_id: string;
+      }>({
+        connection: openLibrary.connection,
+        values: linkedIds,
+        buildSql: (placeholders) =>
+          `SELECT a.linked_folder_id,
+                  a.relative_file_path,
+                  a.asset_id,
+                  a.current_revision_id AS revision_id
+             FROM assets a
+             JOIN asset_sequence_frames frame
+               ON frame.asset_id = a.asset_id
+              AND frame.position = 0
+            WHERE a.linked_folder_id IN (${placeholders})
+              AND a.deleted_at IS NULL
+              AND a.current_revision_id IS NOT NULL
+            ORDER BY a.relative_file_path`,
+      });
+      for (const entry of pending) {
+        if (entry.locationKind !== 'linked' || !entry.linkedFolderId) continue;
+        const prefix = entry.relativePath === '' ? '' : `${entry.relativePath}/`;
+        const match = rows.find((row) => {
+          if (row.linked_folder_id !== entry.linkedFolderId) return false;
+          const parent = row.relative_file_path.includes('/')
+            ? row.relative_file_path.slice(0, row.relative_file_path.lastIndexOf('/'))
+            : '';
+          return parent === entry.relativePath
+            || (prefix !== '' && row.relative_file_path.startsWith(prefix) && parent === entry.relativePath);
+        });
+        if (match) {
+          previews.set(entry.folderId, {
+            assetId: match.asset_id,
+            revisionId: match.revision_id,
+          });
+        }
+      }
+    }
+    if (previews.size === 0) return entries;
+    return entries.map((entry) => {
+      const preview = previews.get(entry.folderId);
+      if (!preview || entry.coverArtifactIds.length > 0) return entry;
+      return { ...entry, coverSourcePreviews: [preview] };
+    });
   }
 
   private folderCoverArtifactMap(

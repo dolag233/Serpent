@@ -6,13 +6,13 @@ describe("folder inspector", () => {
   it("shows one path and hides paths that differ", () => {
     expect(folderInspectorPathLabel([
       { relativePath: "Art/Boards" },
-    ])).toBe("Art/Boards");
+    ], "根目录")).toBe("/根目录/Art/Boards");
+    expect(folderInspectorPathLabel([
+      { relativePath: "" },
+    ], "根目录")).toBe("/根目录");
     expect(folderInspectorPathLabel([
       { relativePath: "Art/Boards" },
       { relativePath: "Art/Refs" },
-    ])).toBeNull();
-    expect(folderInspectorPathLabel([
-      { relativePath: "" },
-    ])).toBeNull();
+    ], "根目录")).toBeNull();
   });
 });

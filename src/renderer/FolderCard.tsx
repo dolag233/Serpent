@@ -1,5 +1,6 @@
 import { Icon } from "./Icons";
 import { coverSrc } from "./asset-card-hover-preview";
+import { folderCoverImageSrc } from "./folder-cover";
 import { useT } from "./i18n";
 import type { FolderBrowseEntry } from "../shared/asset-types";
 import { CardSurface } from "./ui/surfaces";
@@ -51,6 +52,7 @@ export function FolderCard({
   const t = useT();
   const isCollage = entry.directAssetCount === 0 && entry.coverArtifactIds.length > 0;
   const coverArtifactId = entry.coverArtifactIds[0] ?? null;
+  const sequenceCover = coverArtifactId ? null : folderCoverImageSrc(libraryId, entry);
 
   return (
     <CardSurface
@@ -103,9 +105,20 @@ export function FolderCard({
           </svg>
           <div className="folder-card-pocket">
             {entry.coverArtifactIds.length === 0 ? (
-              <div className="folder-card-cover-empty">
-                <Icon name="folder" size={28} />
-              </div>
+              sequenceCover ? (
+                <div className="folder-card-cover-photo">
+                  <img
+                    alt=""
+                    className="folder-card-cover-image"
+                    loading="eager"
+                    src={sequenceCover}
+                  />
+                </div>
+              ) : (
+                <div className="folder-card-cover-empty">
+                  <Icon name="folder" size={28} />
+                </div>
+              )
             ) : isCollage ? (
               <div className="folder-card-collage" aria-hidden="true">
                 {Array.from({ length: 4 }).map((_, index) => {
