@@ -902,9 +902,14 @@ const AssetPreviewModalContent = forwardRef<
     viewerError,
   ]);
 
-  const rotateViewer = useCallback(() => {
+  const rotateViewerClockwise = useCallback(() => {
     setDisplayTransform((current) =>
       applyViewerDisplayTransformAction(current, "rotate-clockwise"),
+    );
+  }, []);
+  const rotateViewerCounterClockwise = useCallback(() => {
+    setDisplayTransform((current) =>
+      applyViewerDisplayTransformAction(current, "rotate-counter-clockwise"),
     );
   }, []);
   const flipViewerHorizontal = useCallback(() => {
@@ -1050,7 +1055,8 @@ const AssetPreviewModalContent = forwardRef<
               libraryId={libraryId}
               onFullscreen={() => void toggleFullscreen()}
               onPresentationReady={notifyPresentationReady}
-              onRotate={rotateViewer}
+              onRotate={rotateViewerClockwise}
+              onRotateCounterClockwise={rotateViewerCounterClockwise}
               onSwipeNext={onNext}
               onSwipePrevious={onPrevious}
               preloadOnly={preloadOnly}
@@ -1104,7 +1110,8 @@ const AssetPreviewModalContent = forwardRef<
                 setManualRetryError(null);
                 setError(null);
               }}
-              onRotate={rotateViewer}
+              onRotate={rotateViewerClockwise}
+              onRotateCounterClockwise={rotateViewerCounterClockwise}
               onSwipeNext={onNext}
               onSwipePrevious={onPrevious}
               onUserActivity={() => onChromeActivity("pointerdownOrClick")}
@@ -1217,7 +1224,8 @@ const AssetPreviewModalContent = forwardRef<
               key={asset.assetId}
               onColorSpaceChange={selectColorSpace}
               onFullscreen={() => void toggleFullscreen()}
-              onRotate={rotateViewer}
+              onRotate={rotateViewerClockwise}
+              onRotateCounterClockwise={rotateViewerCounterClockwise}
               onSwipeNext={onNext}
               onSwipePrevious={onPrevious}
               placeholderSrc={placeholderUrl ?? undefined}
@@ -1371,7 +1379,8 @@ const AssetPreviewModalContent = forwardRef<
             onFlipHorizontal={flipViewerHorizontal}
             onFlipVertical={flipViewerVertical}
             onFullscreen={() => void toggleFullscreen()}
-            onRotate={rotateViewer}
+            onRotate={rotateViewerClockwise}
+            onRotateCounterClockwise={rotateViewerCounterClockwise}
             position={viewerContextMenu}
             transformable={viewerTransformable}
           />

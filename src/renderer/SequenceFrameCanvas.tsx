@@ -9,9 +9,16 @@ import {
 
 import type { ImageSequenceSummary } from "../shared/asset-types";
 import { resolveSequenceFrameUrl } from "./sequence-frame-preview";
+import {
+  IDENTITY_VIEWER_DISPLAY_TRANSFORM,
+  normalizeQuarterTurns,
+  viewerDisplayTransformCss,
+  type ViewerDisplayTransform,
+} from "./viewer-display-transform";
 
 interface SequenceFrameCanvasProps {
   alt: string;
+  displayTransform?: ViewerDisplayTransform;
   fallbackUrl?: string | null;
   frameIndex: number;
   frames: ImageSequenceSummary["frames"];
@@ -30,6 +37,7 @@ interface SequenceFrameCanvasProps {
  */
 export function SequenceFrameCanvas({
   alt,
+  displayTransform = IDENTITY_VIEWER_DISPLAY_TRANSFORM,
   fallbackUrl,
   frameIndex,
   frames,
@@ -124,21 +132,32 @@ export function SequenceFrameCanvas({
 
     const context = canvas.getContext("2d");
     if (!context) return;
+    const turns = normalizeQuarterTurns(displayTransform.quarterTurns);
+    const swapped = turns % 2 === 1;
+    const fitWidth = swapped ? height : width;
+    const fitHeight = swapped ? width : height;
     const scale = Math.min(
-      width / image.naturalWidth,
-      height / image.naturalHeight,
+      fitWidth / image.naturalWidth,
+      fitHeight / image.naturalHeight,
     );
     const drawWidth = image.naturalWidth * scale;
     const drawHeight = image.naturalHeight * scale;
+    context.setTransform(1, 0, 0, 1, 0, 0);
     context.clearRect(0, 0, width, height);
+    context.translate(width / 2, height / 2);
+    context.rotate((turns * Math.PI) / 2);
+    context.scale(
+      displayTransform.flipHorizontal ? -1 : 1,
+      displayTransform.flipVertical ? -1 : 1,
+    );
     context.drawImage(
       image,
-      (width - drawWidth) / 2,
-      (height - drawHeight) / 2,
+      -drawWidth / 2,
+      -drawHeight / 2,
       drawWidth,
       drawHeight,
     );
-  }, [frameIndex, frameUrls]);
+  }, [displayTransform, frameIndex, frameUrls]);
 
   useEffect(() => {
     drawRef.current = draw;
@@ -170,6 +189,7 @@ export function SequenceFrameCanvas({
           decoding="async"
           draggable={false}
           src={fallbackUrl}
+          style={{ transform: viewerDisplayTransformCss(displayTransform) }}
         />
       ) : null}
       <canvas

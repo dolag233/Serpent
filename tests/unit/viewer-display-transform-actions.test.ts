@@ -6,6 +6,15 @@ import {
 } from "../../src/renderer/viewer-display-transform";
 
 describe("viewer display transform actions", () => {
+  it("rotates counter-clockwise without changing mirror state", () => {
+    expect(
+      applyViewerDisplayTransformAction(
+        { flipHorizontal: false, flipVertical: true, quarterTurns: 1 },
+        "rotate-counter-clockwise",
+      ),
+    ).toEqual({ flipHorizontal: false, flipVertical: true, quarterTurns: 0 });
+  });
+
   it("rotates without changing mirror state", () => {
     expect(
       applyViewerDisplayTransformAction(

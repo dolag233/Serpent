@@ -14,7 +14,8 @@ export type ViewerDisplayTransformAction =
   | "flip-horizontal"
   | "flip-vertical"
   | "reset"
-  | "rotate-clockwise";
+  | "rotate-clockwise"
+  | "rotate-counter-clockwise";
 
 export function applyViewerDisplayTransformAction(
   transform: ViewerDisplayTransform,
@@ -22,6 +23,9 @@ export function applyViewerDisplayTransformAction(
 ): ViewerDisplayTransform {
   if (action === "rotate-clockwise") {
     return { ...transform, quarterTurns: transform.quarterTurns + 1 };
+  }
+  if (action === "rotate-counter-clockwise") {
+    return { ...transform, quarterTurns: transform.quarterTurns - 1 };
   }
   if (action === "flip-horizontal") {
     return { ...transform, flipHorizontal: !transform.flipHorizontal };

@@ -58,6 +58,12 @@
 | PREVIEW-BITDEPTH-001 | 16 位 PNG 缩略图会改成浏览器能画的 8 位 | 人类验收通过 | ① 打开含一张曾显示空白的 RAW 或 TGA 的资源库，等后台跑一会儿。② 看这张卡片。 | 卡片出现画面，而不是深色空框。同一文件不再出现两张卡片。 | `library-service.ts` `repairUndisplayablePngThumbnails` / `generateOiiOThumbnail` | 新生成的 OIIO 图强制 8 位；已有 16 位图在后台队列里分批换掉。定向测试未单独覆盖换图。2026-09-25 用户本人验收通过（用户原话「我感觉没问题」）。 |
 | JOBS-SEQUENCE-001 | 序列隐藏帧不再让后台任务数停住 | 人类验收通过 | ① 打开含图片序列的资源库。② 看后台任务数字。 | 数字会下降到没有可做的任务，而不是停在几百不变。 | `library-service.ts` `cancelQueuedHiddenSequenceMemberJobs` / `tests/worker/thumbnails.test.ts` | 2026-09-25：`node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/thumbnails.test.ts -t "cancels queued metadata jobs for hidden sequence frames"` 1 passed。2026-09-25 用户本人验收通过（用户原话「我感觉没问题」）。 |
 
+### 2026-09-25 查看器左旋
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| VIEWER-ROTATE-CCW-001 | 图片、视频和序列查看器可逆时针旋转 90° | 人类验收通过 | ① 完全退出后再打开含这次改动的构建。② 打开一张图片，点工具栏或右键菜单里的逆时针旋转。③ 打开一个视频，同样操作。④ 打开一组正在播放的序列帧，点左旋和右旋。 | ②③④ 画面按所点方向转 90°，序列播放过程中也会跟着转。顺时针和逆时针都可多次点击。 | `viewer-display-transform.ts` / `ViewerContextMenu.tsx` / `zoomable-preview-image.tsx` / `VideoPlayerControls.tsx` / `tests/unit/viewer-display-transform-actions.test.ts` | 2026-09-25：`npx vitest run tests/unit/viewer-display-transform-actions.test.ts tests/unit/viewer-context-menu.test.ts` 5 passed。2026-09-25 用户本人验收通过（用户原话「可以」）。 |
+
 ### 2026-09-25 检查器一次输入多个标签
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

@@ -1755,6 +1755,7 @@ export const zhCN = {
     videoPause: "暂停",
     videoScrubAria: "拖动视频进度",
     rotateClockwise: "顺时针旋转 90°",
+    rotateCounterClockwise: "逆时针旋转 90°",
     flipHorizontal: "水平镜像",
     flipVertical: "垂直镜像",
     viewerMenu: "查看器操作",

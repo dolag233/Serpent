@@ -46,6 +46,7 @@ export type IconName =
   | "refresh"
   | "undo"
   | "rotate-cw"
+  | "rotate-ccw"
   | "save"
   | "flip-horizontal"
   | "flip-vertical"
@@ -345,6 +346,12 @@ const iconPaths: Record<IconName, ReactNode> = {
     <>
       <path d="M20 7v5h-5" />
       <path d="M18.4 16a8 8 0 1 1 1.3-8.5L20 12" />
+    </>
+  ),
+  "rotate-ccw": (
+    <>
+      <path d="M4 7v5h5" />
+      <path d="M5.6 16a8 8 0 1 0-1.3-8.5L4 12" />
     </>
   ),
   "flip-horizontal": (

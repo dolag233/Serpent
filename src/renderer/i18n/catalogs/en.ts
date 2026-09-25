@@ -1775,6 +1775,7 @@ export const en = {
     videoPause: "Pause",
     videoScrubAria: "Seek video",
     rotateClockwise: "Rotate 90° clockwise",
+    rotateCounterClockwise: "Rotate 90° counter-clockwise",
     flipHorizontal: "Mirror horizontally",
     flipVertical: "Mirror vertically",
     viewerMenu: "Viewer actions",

@@ -54,6 +54,7 @@ export interface VideoPlayerControlsProps {
   onError(event: SyntheticEvent<HTMLVideoElement>): void;
   onFullscreen(): void;
   onRotate?(): void;
+  onRotateCounterClockwise?(): void;
   onMutedChange(muted: boolean): void;
   onPresentationReady?(): void;
   onReady?(): void;
@@ -118,6 +119,7 @@ export function VideoPlayerControls({
   src,
   volume,
   onRotate,
+  onRotateCounterClockwise,
   fitRequestToken,
   displayTransform = IDENTITY_VIEWER_DISPLAY_TRANSFORM,
 }: VideoPlayerControlsProps) {
@@ -644,6 +646,17 @@ export function VideoPlayerControls({
           onVolumeChange={onVolumeChange}
           volume={volume}
         />
+        {onRotateCounterClockwise ? (
+          <button
+            className="preview-video-fit"
+            onClick={onRotateCounterClockwise}
+            tabIndex={VIEWER_CHROME_TAB_INDEX}
+            type="button"
+            {...iconActionAttrs(t("preview.rotateCounterClockwise"))}
+          >
+            <Icon name="rotate-ccw" size={14} />
+          </button>
+        ) : null}
         <button
           className="preview-video-fit"
           onClick={onRotate}

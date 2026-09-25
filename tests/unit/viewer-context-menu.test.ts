@@ -47,6 +47,7 @@ describe("ViewerContextMenu", () => {
               onFlipVertical: () => undefined,
               onFullscreen: () => undefined,
               onRotate: () => undefined,
+              onRotateCounterClockwise: () => undefined,
               position: { x: 20, y: 20 },
               transformable: true,
             }),

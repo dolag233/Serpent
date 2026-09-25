@@ -30,6 +30,7 @@ interface ViewerContextMenuProps {
   onFlipVertical: () => void;
   onFullscreen: () => void;
   onRotate: () => void;
+  onRotateCounterClockwise: () => void;
   position: ViewerContextMenuPosition;
   transformable: boolean;
 }
@@ -52,6 +53,7 @@ export function ViewerContextMenu({
   onFlipVertical,
   onFullscreen,
   onRotate,
+  onRotateCounterClockwise,
   position,
   transformable,
 }: ViewerContextMenuProps) {
@@ -154,6 +156,19 @@ export function ViewerContextMenu({
     >
       {transformable ? (
         <div className="context-menu-section" role="group">
+          <button
+            className="context-menu-item"
+            onClick={action(onRotateCounterClockwise)}
+            tabIndex={VIEWER_CHROME_TAB_INDEX}
+            type="button"
+          >
+            <span className="context-menu-item-icon">
+              <Icon name="rotate-ccw" size={14} />
+            </span>
+            <span className="context-menu-item-label">
+              {t("preview.rotateCounterClockwise")}
+            </span>
+          </button>
           <button
             className="context-menu-item"
             onClick={action(onRotate)}

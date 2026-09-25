@@ -24,6 +24,7 @@ export interface ImageSequencePlayerProps {
   onFullscreen(): void;
   onPresentationReady?: () => void;
   onRotate?(): void;
+  onRotateCounterClockwise?(): void;
   fitRequestToken?: number;
   onSwipeNext?: () => void;
   onSwipePrevious?: () => void;
@@ -44,6 +45,7 @@ export function ImageSequencePlayer({
   onFullscreen,
   onPresentationReady,
   onRotate,
+  onRotateCounterClockwise,
   fitRequestToken,
   onSwipeNext,
   onSwipePrevious,
@@ -181,6 +183,7 @@ export function ImageSequencePlayer({
           {thumbnailUrls.some(Boolean) ? (
             <SequenceFrameCanvas
               alt={currentFrame.displayName}
+              displayTransform={displayTransform}
               fallbackUrl={thumbnailUrls[0]}
               frameIndex={frameIndex}
               frames={sequence.frames}
@@ -207,6 +210,7 @@ export function ImageSequencePlayer({
           onPresentationReady={onPresentationReady}
           onFullscreen={onFullscreen}
           onRotate={onRotate}
+          onRotateCounterClockwise={onRotateCounterClockwise}
           onSwipeNext={onSwipeNext}
           onSwipePrevious={onSwipePrevious}
           placeholderSrc={thumbnailUrls[frameIndex] ?? undefined}
@@ -240,6 +244,15 @@ export function ImageSequencePlayer({
         <span>
           {frameIndex + 1} / {sequence.frames.length} · {sequence.fps} FPS
         </span>
+        {onRotateCounterClockwise ? (
+          <button
+            onClick={onRotateCounterClockwise}
+            type="button"
+            {...iconActionAttrs(t("preview.rotateCounterClockwise"))}
+          >
+            <Icon name="rotate-ccw" size={14} />
+          </button>
+        ) : null}
         {onRotate ? (
           <button
             onClick={onRotate}

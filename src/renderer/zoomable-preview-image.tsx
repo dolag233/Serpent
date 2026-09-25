@@ -77,6 +77,7 @@ export const ZoomableImage = forwardRef<
     colorSpaceValue?: string;
     onColorSpaceChange?: (colorSpace: string) => void;
     onRotate?: () => void;
+    onRotateCounterClockwise?: () => void;
     fitRequestToken?: number;
     displayTransform?: ViewerDisplayTransform;
     /** Keep animated formats on their static placeholder until promotion. */
@@ -104,6 +105,7 @@ export const ZoomableImage = forwardRef<
     colorSpaceValue,
     onColorSpaceChange,
     onRotate,
+    onRotateCounterClockwise,
     fitRequestToken,
     displayTransform = IDENTITY_VIEWER_DISPLAY_TRANSFORM,
     isAnimated = false,
@@ -450,6 +452,16 @@ export const ZoomableImage = forwardRef<
           type="range"
           value={Math.min(sliderMax, Math.max(sliderMin, view.scale))}
         />
+        {onRotateCounterClockwise && (
+          <button
+            onClick={onRotateCounterClockwise}
+            tabIndex={VIEWER_CHROME_TAB_INDEX}
+            type="button"
+            {...iconActionAttrs(t("preview.rotateCounterClockwise"))}
+          >
+            <Icon name="rotate-ccw" size={14} />
+          </button>
+        )}
         {onRotate && (
           <button
             onClick={onRotate}
