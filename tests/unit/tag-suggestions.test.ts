@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   buildTagSuggestions,
   moveTagSuggestionIndex,
+  namesFromTagInput,
+  peelTagInput,
+  splitTagNames,
 } from "../../src/renderer/tag-suggestions";
 
 const tags = [
@@ -30,6 +33,46 @@ describe("buildTagSuggestions", () => {
 
   it("does not surface an orphaned zero-use tag", () => {
     expect(buildTagSuggestions(tags, "unused", new Set())).toEqual([]);
+  });
+
+  it("matches suggestions against the fragment after the last comma", () => {
+    expect(buildTagSuggestions(tags, "建筑，wo", new Set())).toEqual([
+      { kind: "assign", tagId: "wood", name: "Wood", assetCount: 2 },
+      { kind: "create", name: "wo" },
+    ]);
+  });
+});
+
+describe("splitTagNames", () => {
+  it("splits on English and Chinese commas and drops blanks", () => {
+    expect(splitTagNames(" 建筑，水乡, 现代, ")).toEqual(["建筑", "水乡", "现代"]);
+    expect(splitTagNames("建筑")).toEqual(["建筑"]);
+    expect(splitTagNames("，，")).toEqual([]);
+  });
+
+  it("keeps the first spelling of a repeated name", () => {
+    expect(splitTagNames("Wood, wood，Warm")).toEqual(["Wood", "Warm"]);
+  });
+});
+
+describe("peelTagInput", () => {
+  it("keeps names before a comma and leaves the fragment being typed", () => {
+    expect(peelTagInput("测试，火焰，水面")).toEqual({
+      committed: ["测试", "火焰"],
+      draft: "水面",
+    });
+    expect(peelTagInput("测试，火焰，")).toEqual({
+      committed: ["测试", "火焰"],
+      draft: "",
+    });
+    expect(peelTagInput("水面")).toEqual({ committed: [], draft: "水面" });
+  });
+});
+
+describe("namesFromTagInput", () => {
+  it("keeps names before the comma when a suggestion completes the last fragment", () => {
+    expect(namesFromTagInput("建筑，wo", { name: "Wood" })).toEqual(["建筑", "Wood"]);
+    expect(namesFromTagInput("建筑，水乡，现代", null)).toEqual(["建筑", "水乡", "现代"]);
   });
 });
 

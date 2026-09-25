@@ -58,6 +58,12 @@
 | PREVIEW-BITDEPTH-001 | 16 位 PNG 缩略图会改成浏览器能画的 8 位 | 人类验收通过 | ① 打开含一张曾显示空白的 RAW 或 TGA 的资源库，等后台跑一会儿。② 看这张卡片。 | 卡片出现画面，而不是深色空框。同一文件不再出现两张卡片。 | `library-service.ts` `repairUndisplayablePngThumbnails` / `generateOiiOThumbnail` | 新生成的 OIIO 图强制 8 位；已有 16 位图在后台队列里分批换掉。定向测试未单独覆盖换图。2026-09-25 用户本人验收通过（用户原话「我感觉没问题」）。 |
 | JOBS-SEQUENCE-001 | 序列隐藏帧不再让后台任务数停住 | 人类验收通过 | ① 打开含图片序列的资源库。② 看后台任务数字。 | 数字会下降到没有可做的任务，而不是停在几百不变。 | `library-service.ts` `cancelQueuedHiddenSequenceMemberJobs` / `tests/worker/thumbnails.test.ts` | 2026-09-25：`node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/thumbnails.test.ts -t "cancels queued metadata jobs for hidden sequence frames"` 1 passed。2026-09-25 用户本人验收通过（用户原话「我感觉没问题」）。 |
 
+### 2026-09-25 检查器一次输入多个标签
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| TAG-MULTI-001 | 检查器里用逗号一次输入多个标签 | 人类验收通过 | ① 完全退出后再打开含这次改动的构建。② 选中一张图，在右侧检查器的标签处输入「建筑，水乡,现代」，先不要回车。③ 回车。④ 再输入一个已有标签和一个新标签，中间用逗号隔开，回车。 | ② 建筑、水乡先变成没有色点的标签胶囊，输入框里只剩「现代」，且不再出现「搜索或创建标签」提示。③ 三个标签都加到资产上。④ 已有的那个被直接加上，新的被创建并加上。 | `src/renderer/tag-suggestions.ts` / `InspectorPanel.tsx` / `tests/unit/tag-suggestions.test.ts` | 2026-09-25：`npx vitest run tests/unit/tag-suggestions.test.ts` 10 passed。2026-09-25 用户本人验收通过（用户原话「可以，不错」）。 |
+
 ### 2026-09-25 拖拽时的导入提示
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

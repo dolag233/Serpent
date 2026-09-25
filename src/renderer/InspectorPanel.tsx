@@ -29,6 +29,8 @@ import { isImeKeyboardEvent, shouldHoldDismissForIme } from "./ime-safe-dismiss"
 import { TextAssetPreviewTile } from "./TextAssetPreviewTile";
 import {
   buildTagSuggestions,
+  namesFromTagInput,
+  peelTagInput,
   moveTagSuggestionIndex,
   type TagSuggestion,
 } from "./tag-suggestions";
@@ -197,6 +199,7 @@ export interface InspectorPanelProps {
   onAssignTagToAsset?: (tagId: string) => void;
   onRemoveTagFromAsset?: (tagId: string) => void;
   onCreateAndAssignTag?: (tagName: string) => void;
+  onApplyTagNames?: (tagNames: string[]) => void;
   // REQ-MENU-007 / REQ-SELECT-004: multi-select UE edit model (null = single-asset path).
   multiEdit?: InspectorMultiEditModel | null;
   /** 点击色卡分段复制颜色后的反馈（toast 由 App 统一发）。copied=false 表示剪贴板写入失败。 */
@@ -651,6 +654,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
     onAssignTagToAsset,
     onRemoveTagFromAsset,
     onCreateAndAssignTag,
+    onApplyTagNames,
     multiEdit = null,
     onPaletteColorCopy,
     onOpenSourceUrl,
@@ -726,6 +730,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
 
   // Tag input state
   const [tagInputValue, setTagInputValue] = useState("");
+  const [pendingTagNames, setPendingTagNames] = useState<string[]>([]);
   const [showTagInput, setShowTagInput] = useState(false);
   const [activeTagSuggestionIndex, setActiveTagSuggestionIndex] = useState(-1);
   const tagInputRef = useRef<HTMLInputElement>(null);
@@ -890,18 +895,67 @@ export function InspectorPanel(props: InspectorPanelProps) {
 
   const closeTagInput = () => {
     setTagInputValue("");
+    setPendingTagNames([]);
     setActiveTagSuggestionIndex(-1);
     setShowTagInput(false);
     tagInputComposingRef.current = false;
   };
 
-  const submitTagSuggestion = (suggestion: TagSuggestion) => {
-    if (suggestion.kind === "assign") {
-      onAssignTagToAsset?.(suggestion.tagId);
-    } else {
-      onCreateAndAssignTag?.(suggestion.name);
+  const rememberTagNames = (names: string[]) => {
+    if (names.length === 0) return;
+    setPendingTagNames((current) => {
+      const seen = new Set(current.map((name) => name.toLocaleLowerCase()));
+      const next = [...current];
+      for (const name of names) {
+        const key = name.toLocaleLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        next.push(name);
+      }
+      return next;
+    });
+  };
+
+  const handleTagInputChange = (value: string) => {
+    if (tagInputComposingRef.current) {
+      setTagInputValue(value);
+      setActiveTagSuggestionIndex(-1);
+      return;
     }
+    const peeled = peelTagInput(value);
+    rememberTagNames(peeled.committed);
+    setTagInputValue(peeled.draft);
+    setActiveTagSuggestionIndex(-1);
+  };
+
+  const applyTagInput = (chosen?: TagSuggestion | null) => {
+    const names = namesFromTagInput(
+      [...pendingTagNames, tagInputValue].join(","),
+      chosen,
+    );
+    if (names.length === 0) {
+      closeTagInput();
+      return;
+    }
+    if (names.length === 1 && !chosen) {
+      const only = names[0]!;
+      const exactTag = allTags.find(
+        (tag) => tag.name.toLocaleLowerCase() === only.toLocaleLowerCase(),
+      );
+      if (exactTag && !displayedTagIds.has(exactTag.tagId)) {
+        onAssignTagToAsset?.(exactTag.tagId);
+      } else if (!exactTag) {
+        onCreateAndAssignTag?.(only);
+      }
+      closeTagInput();
+      return;
+    }
+    onApplyTagNames?.(names);
     closeTagInput();
+  };
+
+  const submitTagSuggestion = (suggestion: TagSuggestion) => {
+    applyTagInput(suggestion);
   };
 
   const copyPaletteColor = (color: string) => {
@@ -949,28 +1003,23 @@ export function InspectorPanel(props: InspectorPanelProps) {
       return;
     }
 
+    if (
+      event.key === "Backspace"
+      && tagInputValue === ""
+      && pendingTagNames.length > 0
+    ) {
+      event.preventDefault();
+      const last = pendingTagNames[pendingTagNames.length - 1] ?? "";
+      setPendingTagNames((current) => current.slice(0, -1));
+      setTagInputValue(last);
+      setActiveTagSuggestionIndex(-1);
+      return;
+    }
+
     if (event.key === "Enter") {
       event.preventDefault();
       const activeSuggestion = tagSuggestions[activeTagSuggestionIndex];
-      if (activeSuggestion) {
-        submitTagSuggestion(activeSuggestion);
-        return;
-      }
-
-      const normalizedInput = tagInputValue.trim().toLocaleLowerCase();
-      const exactTag = allTags.find(
-        (tag) => tag.name.toLocaleLowerCase() === normalizedInput,
-      );
-      if (exactTag && !displayedTagIds.has(exactTag.tagId)) {
-        submitTagSuggestion({
-          kind: "assign",
-          tagId: exactTag.tagId,
-          name: exactTag.name,
-          assetCount: exactTag.assetCount,
-        });
-      } else if (tagInputValue.trim() && !exactTag) {
-        submitTagSuggestion({ kind: "create", name: tagInputValue.trim() });
-      }
+      applyTagInput(activeSuggestion);
       return;
     }
 
@@ -1220,6 +1269,25 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 <div className="tag-input-wrapper">
                   <div className="tag-input-chip">
                     <Icon name="tag" size={11} />
+                    {pendingTagNames.map((name) => (
+                      <span className="tag-chip tag-input-pending" key={name}>
+                        <span className="tag-chip-name">{name}</span>
+                        <button
+                          className="tag-chip-remove"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => {
+                            setPendingTagNames((current) =>
+                              current.filter((item) => item !== name),
+                            );
+                            tagInputRef.current?.focus();
+                          }}
+                          type="button"
+                          {...iconActionAttrs(t("inspector.removeTag"))}
+                        >
+                          <Icon name="close" size={9} />
+                        </button>
+                      </span>
+                    ))}
                     <input
                       aria-activedescendant={
                         activeTagSuggestionIndex >= 0
@@ -1248,18 +1316,22 @@ export function InspectorPanel(props: InspectorPanelProps) {
                           closeTagInput();
                         }
                       }}
-                      onCompositionEnd={() => {
+                      onCompositionEnd={(event) => {
                         tagInputComposingRef.current = false;
+                        handleTagInputChange(event.currentTarget.value);
                       }}
                       onCompositionStart={() => {
                         tagInputComposingRef.current = true;
                       }}
                       onChange={(event) => {
-                        setTagInputValue(event.target.value);
-                        setActiveTagSuggestionIndex(-1);
+                        handleTagInputChange(event.target.value);
                       }}
                       onKeyDown={handleAddTagKeyDown}
-                      placeholder={t("inspector.searchOrCreateTag")}
+                      placeholder={
+                        pendingTagNames.length > 0
+                          ? ""
+                          : t("inspector.searchOrCreateTag")
+                      }
                       ref={tagInputRef}
                       role="combobox"
                       value={tagInputValue}

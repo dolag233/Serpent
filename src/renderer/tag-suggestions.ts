@@ -1,6 +1,54 @@
 import type { TagSummary } from "../shared/asset-types";
 import { buildTagAssignCandidates } from "./tag-picker-candidates";
 
+const TAG_NAME_SEPARATOR = /[,，]/;
+
+/** Split one tag field on English or Chinese commas. Empty pieces are dropped. */
+export function splitTagNames(input: string): string[] {
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const part of input.split(TAG_NAME_SEPARATOR)) {
+    const name = part.trim();
+    if (!name) continue;
+    const key = name.toLocaleLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    names.push(name);
+  }
+  return names;
+}
+
+/**
+ * Names already closed by a comma, plus the fragment still being typed.
+ * The draft keeps its spacing so the caret does not jump mid-word.
+ */
+export function peelTagInput(input: string): { committed: string[]; draft: string } {
+  const parts = input.split(TAG_NAME_SEPARATOR);
+  const draft = parts.pop() ?? "";
+  return { committed: splitTagNames(parts.join(",")), draft };
+}
+
+/** The fragment still being typed, after the last comma. */
+export function tagSuggestionQuery(input: string): string {
+  const parts = input.split(TAG_NAME_SEPARATOR);
+  return (parts[parts.length - 1] ?? "").trim();
+}
+
+/**
+ * Tags to apply from the field. A chosen suggestion replaces the fragment
+ * after the last comma and keeps the names already typed before it.
+ */
+export function namesFromTagInput(
+  input: string,
+  chosen?: { name: string } | null,
+): string[] {
+  const segments = splitTagNames(input);
+  if (!chosen) return segments;
+  const draft = tagSuggestionQuery(input);
+  const committed = draft ? segments.slice(0, -1) : segments;
+  return splitTagNames([...committed, chosen.name].join(","));
+}
+
 export type TagSuggestion =
   | {
       kind: "assign";
@@ -24,7 +72,7 @@ export function buildTagSuggestions(
   inputValue: string,
   assignedTagIds: ReadonlySet<string>,
 ): TagSuggestion[] {
-  const query = inputValue.trim();
+  const query = tagSuggestionQuery(inputValue);
   const normalizedQuery = query.toLocaleLowerCase();
   const resultLimit = query ? 12 : 8;
 

@@ -12669,6 +12669,7 @@ select.ai-config-input.ai-config-languages {
 
 .tag-input-chip {
   display: flex;
+  flex-wrap: wrap;
   width: 100%;
   min-height: 28px;
   align-items: center;
@@ -12681,14 +12682,23 @@ select.ai-config-input.ai-config-languages {
   transition: border-color 120ms ease, background 120ms ease;
 }
 
+.tag-input-chip:has(.tag-input-pending) {
+  border-radius: 14px;
+}
+
+.tag-input-pending {
+  max-width: 100%;
+}
+
 .tag-input-chip:focus-within {
   border-color: color-mix(in srgb, var(--accent) 72%, var(--divider));
   background: color-mix(in srgb, var(--raised) 72%, var(--canvas));
 }
 
 .tag-add-input {
-  min-width: 0;
-  width: 100%;
+  flex: 1 1 6em;
+  min-width: 6em;
+  width: auto;
   height: 20px;
   padding: 0;
   border: 0;
