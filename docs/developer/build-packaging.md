@@ -148,7 +148,7 @@ npm run extension:build   # 构建 dist/extension
 
 ## 签名
 
-- **macOS**：当前 ad-hoc 签名（`osxSign.identity: '-'`，Apple Silicon 必需，不消除 Gatekeeper 警告）。拿到 Developer ID 证书后替换 identity 并补 `osxNotarize`
+- **macOS**：打包时做临时签名（`identity: '-'`，并关闭钥匙串身份校验，否则查找失败会被静默跳过，产物仍会被系统说成「已损坏」）。临时签名没有共同的团队标识，授权文件里要允许加载同包框架，否则应用一启动就被系统关掉。这不消除「无法验证开发者」；第一次打开需右键「打开」。拿到 Developer ID 证书后替换 identity 并补 `osxNotarize`
 - **Windows**：当前未签名（SmartScreen 警告）。正式发布建议 SignPath 免费签名（VSCodium 同款）或商业证书
 
 ## 发布前置（进行中）

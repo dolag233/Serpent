@@ -91,13 +91,28 @@ const config: ForgeConfig = {
         // from inside app.asar, so they must stay unpacked.
         '**/node_modules/@img/**',
     },
-    // Serpent 初版不购买签名证书（MarkText/VSCodium 先例：未签名发布 +
-    // 文档引导）。但 Apple Silicon 上完全不签名会报"已损坏"无法启动，所以
-    // 用 ad-hoc 签名（identity '-'）作为技术底线。拿到 Developer ID 后把
-    // identity 换成证书名并补 osxNotarize（Zettlr 条件模式）即可升级。
-    osxSign: {
-      identity: '-',
-    },
+    // Serpent 初版不购买签名证书。Apple Silicon 上只有链接器签名、没有
+    // _CodeSignature 时，隔离后的应用会被 Gatekeeper 说成「已损坏」。
+    // identity '-' 是临时签名，不是钥匙串里的证书名；默认会去钥匙串查找并失败，
+    // 而 packager 又默认 continueOnError，于是打包成功但包仍然没签上。
+    // 拿到 Developer ID 后换成证书名并补 osxNotarize。临时签名不消除
+    // 「无法验证开发者」，只让右键打开可用。
+    osxSign: Object.assign(
+      {
+        identity: '-',
+        identityValidation: false,
+        // 临时签名没有共同的 Team ID。加固运行时下，主程序会因「Team ID 不同」
+        // 拒绝加载 Electron Framework，系统就提示「因为出现问题而无法打开」。
+        // 这份授权允许加载同包里的框架和原生模块。Developer ID 签上同一证书后可以收紧。
+        optionsForFile: () => ({
+          entitlements: path.join(projectRoot, 'assets/mac/entitlements.plist'),
+        }),
+        // ffmpeg / ffprobe / oiiotool 的字节被清单锁定。再签一次会改写 Mach-O，
+        // 打包校验的 SHA-256 就对不上。它们保持随包带入的链接器签名，外层封印仍覆盖这些字节。
+        ignore: (file: string) => /[/\\]resources[/\\](?:ffmpeg|oiio)[/\\]/.test(file),
+      },
+      { continueOnError: false },
+    ),
     // Media executables must remain outside app.asar so the Library Worker can
     // spawn them. `npm run media:verify` is the release gate that validates the
     // platform bundle before packaging; `verify:package` repeats the same

@@ -1736,6 +1736,8 @@ export const zhCN = {
     playbackRate: "倍速",
     playbackRateOption: "{rate}×",
     unsupportedTitle: "不支持内置预览",
+    illustratorPdfTitle: "当前显示的是文件中的画面",
+    illustratorPdfBody: "这是文件里附带的 PDF 画面，不是 Illustrator 中的全部内容。",
     openWithSystem: "可使用系统默认应用打开源文件。",
     openExternal: "使用外部应用打开",
     generating: "正在生成预览",

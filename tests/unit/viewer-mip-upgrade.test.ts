@@ -44,6 +44,12 @@ describe("viewer mip upgrade (Serpent-eh07)", () => {
     );
     expect(
       resolveViewerPlaceholderUrl(
+        { ...readyDocument, displayName: "artwork.ai" },
+        "lib-1",
+      ),
+    ).toBe("serpent://preview/lib-1/pdf-art-1");
+    expect(
+      resolveViewerPlaceholderUrl(
         { ...readyDocument, displayName: "page.html" },
         "lib-1",
       ),

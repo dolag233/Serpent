@@ -881,13 +881,21 @@ const AssetPreviewModalContent = forwardRef<
     asset.mediaType === "image" &&
     Boolean(imageSrc) &&
     (ready || Boolean(placeholderUrl));
+  const isIllustratorFile = asset.relativeFilePath.toLowerCase().endsWith(".ai");
+  const illustratorPdfPreview = isIllustratorFile && (
+    (ready && resolution?.sourceMimeType === "application/pdf")
+    || Boolean(placeholderUrl)
+  );
   const isTextViewer = ready && resolution?.mediaType === "text";
-  const isDocumentViewer = ready && resolution?.mediaType === "document";
+  const isDocumentViewer = ready
+    && resolution?.mediaType === "document"
+    && !isIllustratorFile;
   const viewerContextMenuAvailable = ready && !isTextViewer;
   const viewerTransformable =
     Boolean(asset.sequence) ||
     asset.mediaType === "image" ||
-    asset.mediaType === "video";
+    asset.mediaType === "video" ||
+    illustratorPdfPreview;
   const fitShortcut = viewerTransformable ? "Numpad ." : undefined;
   const copyShortcut = isMacPlatform(navigator.userAgent) ? "⌘C" : "Ctrl+C";
 
@@ -896,16 +904,21 @@ const AssetPreviewModalContent = forwardRef<
   // cases the error surface is the honest presentation to swap to.
   useEffect(() => {
     if (!preloadOnly) return;
-    if (unsupported || viewerError || primarySurface === "unavailable") {
+    if (unsupported || viewerError || primarySurface === "unavailable" || illustratorPdfPreview) {
       notifyPresentationReady();
     }
   }, [
     notifyPresentationReady,
     preloadOnly,
     primarySurface,
+    illustratorPdfPreview,
     unsupported,
     viewerError,
   ]);
+
+  useEffect(() => {
+    if (illustratorPdfPreview) notifyPresentationReady();
+  }, [illustratorPdfPreview, notifyPresentationReady]);
 
   const bakingRotationRef = useRef(false);
   const rotateViewerBy = useCallback((
@@ -1218,6 +1231,40 @@ const AssetPreviewModalContent = forwardRef<
               onPresentationReady={notifyPresentationReady}
               sourceUrl={resolution.url}
             />
+          ) : illustratorPdfPreview ? (
+            <>
+              {placeholderUrl ? (
+                <ZoomableImage
+                  alt={asset.displayName}
+                  displayTransform={displayTransform}
+                  fitRequestToken={fitRequestToken}
+                  isFullscreen={isFullscreen}
+                  keyboardShortcutsDisabled={preloadOnly}
+                  key={asset.assetId}
+                  onFullscreen={() => void toggleFullscreen()}
+                  onPresentationReady={notifyPresentationReady}
+                  onRotate={rotateViewerClockwise}
+                  onRotateCounterClockwise={rotateViewerCounterClockwise}
+                  onSwipeNext={onNext}
+                  onSwipePrevious={onPrevious}
+                  preloadOnly={preloadOnly}
+                  src={placeholderUrl}
+                />
+              ) : null}
+              <div className="preview-state is-viewer-notice" data-preview-notice="illustrator-pdf" role="status">
+                <strong>{t("preview.illustratorPdfTitle")}</strong>
+                <p>
+                  {t("preview.illustratorPdfBody")} {t("preview.openWithSystem")}
+                </p>
+                <button
+                  onClick={() => void openExternal()}
+                  tabIndex={VIEWER_CHROME_TAB_INDEX}
+                  type="button"
+                >
+                  {t("preview.openExternal")}
+                </button>
+              </div>
+            </>
           ) : ready && resolution?.mediaType === "document" && resolution.url ? (
             resolution.sourceMimeType === "application/pdf" ? (
               <PdfViewerSurface
@@ -1240,7 +1287,7 @@ const AssetPreviewModalContent = forwardRef<
                 sourceUrl={resolution.url}
               />
             )
-          ) : asset.mediaType === "document" && placeholderUrl ? (
+          ) : asset.mediaType === "document" && placeholderUrl && !isIllustratorFile ? (
             <PdfViewerSurface
               api={api}
               assetId={asset.assetId}

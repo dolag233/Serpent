@@ -167,16 +167,14 @@ test("opens a multi-page PDF with one rendered wrap per page, no placeholder lef
     const illustratorCard = window.locator(".asset-card").filter({ hasText: "compatible.ai" });
     await expect(illustratorCard).toBeVisible();
     await illustratorCard.dblclick();
-    const illustratorViewer = window.locator(".pdf-viewer");
-    await expect(illustratorViewer).toBeVisible({ timeout: 30_000 });
-    const illustratorCanvas = illustratorViewer.locator("canvas.pdf-viewer-page");
-    await expect(illustratorCanvas).toBeVisible({ timeout: 30_000 });
-    const illustratorSize = await illustratorCanvas.evaluate((canvas) => ({
-      width: (canvas as HTMLCanvasElement).width,
-      height: (canvas as HTMLCanvasElement).height,
-    }));
-    expect(illustratorSize.width).toBeGreaterThan(0);
-    expect(illustratorSize.height).toBeGreaterThan(0);
+    const illustratorViewer = window.locator(".workspace-viewer");
+    await expect(illustratorViewer.locator("[data-preview-notice='illustrator-pdf']")).toBeVisible({ timeout: 30_000 });
+    const illustratorImage = illustratorViewer.locator("img.preview-image");
+    await expect(illustratorImage.first()).toBeVisible({ timeout: 30_000 });
+    await expect.poll(async () => illustratorImage.first().evaluate((image) => {
+      const element = image as HTMLImageElement;
+      return element.complete && element.naturalWidth > 0;
+    })).toBe(true);
 
   } finally {
     await application.close();

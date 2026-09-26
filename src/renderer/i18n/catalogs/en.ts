@@ -1756,6 +1756,8 @@ export const en = {
     playbackRate: "Speed",
     playbackRateOption: "{rate}×",
     unsupportedTitle: "In-app preview not supported",
+    illustratorPdfTitle: "This is the picture stored in the file",
+    illustratorPdfBody: "It is the PDF picture saved inside the file, not everything in the Illustrator document.",
     openWithSystem: "You can open the source file with the system default app.",
     openExternal: "Open with external app",
     generating: "Generating preview",

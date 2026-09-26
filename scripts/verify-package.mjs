@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -166,6 +167,25 @@ if (process.env.SERPENT_MEDIA_SKIP_PROVENANCE === '1') {
   );
 } else {
   verifyReleaseProvenance({ root: mediaResourcesPath, platform: mediaPlatform });
+}
+
+if (process.platform === 'darwin') {
+  const appPath = path.join(packageRoot, 'Serpent.app');
+  const codeResources = path.join(appPath, 'Contents', '_CodeSignature', 'CodeResources');
+  if (!existsSync(codeResources)) {
+    throw new Error(
+      'macOS package has no bundle signature (Contents/_CodeSignature/CodeResources). ' +
+        'A linker-signed executable is reported as damaged after quarantine. ' +
+        'Ad-hoc signing must run during packaging.',
+    );
+  }
+  const signature = spawnSync('codesign', ['--verify', '--strict', '--verbose=2', appPath], {
+    encoding: 'utf8',
+  });
+  if (signature.status !== 0) {
+    const detail = `${signature.stdout ?? ''}${signature.stderr ?? ''}`.trim();
+    throw new Error(`macOS package failed codesign --verify --strict:\n${detail}`);
+  }
 }
 
 console.log(`Verified packaged runtime files in ${resourcesPath}`);

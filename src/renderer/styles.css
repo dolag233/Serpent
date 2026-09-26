@@ -6253,6 +6253,17 @@ body.serpent-modal-open .app-shell {
   white-space: nowrap;
   border: 0;
 }
+.preview-state.is-viewer-notice {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  bottom: 28px;
+  max-width: min(520px, calc(100% - 32px));
+  transform: translateX(-50%);
+  border: 1px solid var(--divider);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--pane) 92%, transparent);
+}
 .preview-state strong {
   color: var(--text);
   font-size: calc(15px * var(--ui-font-scale));

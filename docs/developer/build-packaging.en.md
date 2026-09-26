@@ -151,7 +151,7 @@ npm run extension:build   # builds dist/extension
 
 ## Signing
 
-- **macOS**: currently ad-hoc signed (`osxSign.identity: '-'` — required on Apple Silicon; does not clear the Gatekeeper warning). Swap the identity for a Developer ID and add `osxNotarize` once you have a certificate
+- **macOS**: packages are ad-hoc signed (`identity: '-'` with keychain identity validation off; otherwise the lookup fails and is skipped, and Gatekeeper still reports the app as damaged). Ad-hoc signatures do not share a team identifier, so the entitlements must allow loading bundled frameworks; otherwise the system kills the app at launch. This does not clear the unidentified-developer prompt; the first launch needs right-click Open. Swap the identity for a Developer ID and add `osxNotarize` once you have a certificate
 - **Windows**: currently unsigned (SmartScreen warning). For formal releases, SignPath free signing (same as VSCodium) or a commercial certificate
 
 ## Release prerequisites (in progress)

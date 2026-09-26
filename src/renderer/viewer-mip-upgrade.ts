@@ -22,7 +22,8 @@ export function resolveViewerPlaceholderUrl(
     // The document media type also covers HTML, whose thumbnail must stay on
     // the HTML viewer path. The extension is the only document discriminator
     // available before requestPreview resolves its MIME type.
-    if (!asset.displayName.toLowerCase().endsWith(".pdf")) return null;
+    const displayName = asset.displayName.toLowerCase();
+    if (!displayName.endsWith(".pdf") && !displayName.endsWith(".ai")) return null;
   } else if (asset.mediaType !== "image") {
     return null;
   }
