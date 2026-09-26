@@ -65,6 +65,7 @@ test.skip(
 function generateVideoFixtures(root: string): {
   directPath: string;
   proxyPath: string;
+  flvPath: string;
 } {
   const width = 320;
   const height = 180;
@@ -95,6 +96,7 @@ function generateVideoFixtures(root: string): {
   // AVI/Matroska fixtures on macOS, so they never exercise the real
   // source-error -> proxy-fallback path this test is meant to cover.
   const proxyPath = path.join(root, "proxy-fallback.wmv");
+  const flvPath = path.join(root, "proxy-fallback.flv");
   writeFileSync(rawPath, rawVideo);
 
   const inputArguments = [
@@ -133,8 +135,17 @@ function generateVideoFixtures(root: string): {
     "-an",
     proxyPath,
   ]);
+  runMediaBinary(ffmpegPath, [
+    ...inputArguments,
+    "-c:v",
+    "flv",
+    "-q:v",
+    "5",
+    "-an",
+    flvPath,
+  ]);
 
-  for (const videoPath of [directPath, proxyPath]) {
+  for (const videoPath of [directPath, proxyPath, flvPath]) {
     runMediaBinary(ffprobePath, [
       "-hide_banner",
       "-loglevel",
@@ -147,7 +158,7 @@ function generateVideoFixtures(root: string): {
     ]);
   }
   rmSync(rawPath, { force: true });
-  return { directPath, proxyPath };
+  return { directPath, proxyPath, flvPath };
 }
 
 async function expectDecodedPoster(card: Locator, name: string) {
@@ -298,7 +309,7 @@ test("plays a direct MP4 and a generated WebM fallback through the asset viewer"
   let application: Awaited<ReturnType<typeof electron.launch>> | undefined;
 
   try {
-    const { directPath, proxyPath } = generateVideoFixtures(temporaryRoot);
+    const { directPath, proxyPath, flvPath } = generateVideoFixtures(temporaryRoot);
     application = await electron.launch({
       args: [applicationDirectory],
       cwd: applicationDirectory,
@@ -309,7 +320,7 @@ test("plays a direct MP4 and a generated WebM fallback through the asset viewer"
         SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
         SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
         SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, "user-data"),
-        SERPENT_E2E_IMPORT_FILES: [directPath, proxyPath].join(path.delimiter),
+        SERPENT_E2E_IMPORT_FILES: [directPath, proxyPath, flvPath].join(path.delimiter),
         SERPENT_FFMPEG_PATH: ffmpegPath,
       },
     });
@@ -328,8 +339,12 @@ test("plays a direct MP4 and a generated WebM fallback through the asset viewer"
     const proxyCard = window
       .locator(".asset-card")
       .filter({ hasText: "proxy-fallback.wmv" });
+    const flvCard = window
+      .locator(".asset-card")
+      .filter({ hasText: "proxy-fallback.flv" });
     await expectDecodedPoster(directCard, "direct-playback.mp4");
     await expectDecodedPoster(proxyCard, "proxy-fallback.wmv");
+    await expectDecodedPoster(flvCard, "proxy-fallback.flv");
 
     await directCard.dblclick();
     const directViewer = window.getByRole("region", {
@@ -459,8 +474,8 @@ test("plays a direct MP4 and a generated WebM fallback through the asset viewer"
       .toBeCloseTo(videoFitBox!.width, 0);
     // Viewer chrome intentionally fades while idle. Real pointer movement
     // wakes it before the close control is clicked.
-    await directVideo.hover();
-    await directViewer.getByRole("button", { name: "关闭查看页面" }).click();
+    await window.keyboard.press("Escape");
+    await expect(directViewer).toBeHidden();
 
     await proxyCard.click();
     await window.keyboard.press("Space");
@@ -546,6 +561,31 @@ test("plays a direct MP4 and a generated WebM fallback through the asset viewer"
       );
     });
     expect(proxyJobStatus).toBe("succeeded");
+
+    await window.keyboard.press("Escape");
+    await expect(proxyViewer).toBeHidden();
+    await flvCard.click();
+    await window.keyboard.press("Space");
+    const flvViewer = window.getByRole("region", {
+      name: "proxy-fallback.flv 查看页面",
+    });
+    const flvVideo = flvViewer.locator("video.preview-video");
+    await expect
+      .poll(() => flvVideo.getAttribute("src"), { timeout: 10_000 })
+      .toMatch(/^serpent:\/\/source\//);
+    // Exercise the explicit unsupported-source fallback deterministically,
+    // then verify that FLV's generated MP4 proxy decodes and supports seeking.
+    await flvVideo.evaluate((element) => {
+      Object.defineProperty(element, "error", {
+        configurable: true,
+        value: { code: 4, message: "unsupported FLV source in Chromium" },
+      });
+      element.dispatchEvent(new Event("error"));
+    });
+    await expect
+      .poll(() => flvVideo.getAttribute("src"), { timeout: 30_000 })
+      .toMatch(/^serpent:\/\/proxy\//);
+    await expectPlayableAndSeekable(flvVideo);
   } finally {
     await application?.close();
     rmSync(temporaryRoot, { force: true, recursive: true });

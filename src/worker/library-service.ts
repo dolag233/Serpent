@@ -54,6 +54,7 @@ import {
   resolveFfprobePath,
   resolveOiiotoolPath,
 } from './binary-resolver';
+import { hasPdfCompatibleIllustratorHeader } from './illustrator-ai-format';
 import {
   dominantColorMetrics,
   extractRepresentativePalette,
@@ -472,6 +473,7 @@ const DISPLAY_PREVIEW_KIND_SQL = `CASE
               OR LOWER(a.relative_file_path) LIKE '%.wmv'
               OR LOWER(a.relative_file_path) LIKE '%.mkv'
               OR LOWER(a.relative_file_path) LIKE '%.m4v'
+              OR LOWER(a.relative_file_path) LIKE '%.flv'
             THEN 'video_poster'
             ELSE 'thumbnail'
           END`;
@@ -16887,6 +16889,7 @@ export class LibraryService {
                     OR LOWER(a.relative_file_path) LIKE '%.wmv'
                     OR LOWER(a.relative_file_path) LIKE '%.mkv'
                     OR LOWER(a.relative_file_path) LIKE '%.m4v'
+                    OR LOWER(a.relative_file_path) LIKE '%.flv'
                   THEN 'video_poster'
                   ELSE 'thumbnail'
                 END
@@ -16999,6 +17002,7 @@ export class LibraryService {
                     OR LOWER(a.relative_file_path) LIKE '%.wmv'
                     OR LOWER(a.relative_file_path) LIKE '%.mkv'
                     OR LOWER(a.relative_file_path) LIKE '%.m4v'
+                    OR LOWER(a.relative_file_path) LIKE '%.flv'
                   THEN 'video_poster'
                   ELSE 'thumbnail'
                 END
@@ -21495,9 +21499,7 @@ export class LibraryService {
     // file is intentionally broader than this set; this gate only decides
     // whether AI can obtain a decoded visual derivative.
     const imageExts = new Set<string>(IMAGE_EXTENSIONS);
-    const videoExts = new Set([
-      '.mp4', '.mov', '.avi', '.wmv', '.webm', '.mkv', '.m4v',
-    ]);
+    const videoExts = new Set<string>(VIDEO_EXTENSIONS);
     const modelExts = new Set<string>(MODEL_EXTENSIONS);
 
     let enqueued = 0;
@@ -23169,7 +23171,7 @@ export class LibraryService {
     // offscreen in Main through the injected documentThumbnailRenderer.
     // Both are enqueued like any other asset — the enqueue gate must list the
     // document extensions (see enqueueThumbnailJobs supportedExtensions).
-    if (mediaType === 'document' && ext === '.pdf') {
+    if (mediaType === 'document' && (ext === '.pdf' || ext === '.ai')) {
       return this.generatePdfThumbnail(input, openLibrary, assetPath, revisionId, execution);
     }
     if (mediaType === 'document') {
@@ -23540,8 +23542,8 @@ export class LibraryService {
   }
 
   /**
-   * Serpent-8ca259: render the first page of a PDF to a standard thumbnail
-   * artifact with pdfjs-dist (pure JS) + @napi-rs/canvas (NAPI, no node-gyp).
+   * Render the first page of a PDF, or PDF-compatible AI file, to a standard
+   * thumbnail artifact with pdfjs-dist + @napi-rs/canvas.
    * The render result is written through the same revision_artifacts pipeline
    * as image thumbnails, so cards/Inspector/hover work unchanged.
    */
@@ -23559,6 +23561,12 @@ export class LibraryService {
     const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
 
     try {
+      if (
+        path.extname(assetPath).toLowerCase() === '.ai'
+        && !hasPdfCompatibleIllustratorHeader(assetPath)
+      ) {
+        throw new Error('Illustrator file has no PDF-compatible representation.');
+      }
       const pdfBytes = readFileSync(assetPath);
       if (pdfBytes.length === 0) {
         throw new Error('PDF file is empty.');
@@ -29226,12 +29234,24 @@ export class LibraryService {
       };
     }
 
-    // Serpent-8ca259: PDF/HTML documents open the original source through
-    // serpent://source (Main serves the file); the renderer previews them with
-    // pdfjs / an embedded browser. No thumbnail job is required to open.
+    // PDF/HTML documents and PDF-compatible AI files open the original source
+    // through serpent://source; the renderer previews them with pdfjs / an
+    // embedded browser. No thumbnail job is required to open.
     if (mediaType === 'document' && asset.current_revision_id) {
       const extension = path.extname(asset.relative_file_path).toLowerCase();
-      const documentMime = extension === '.pdf'
+      if (
+        extension === '.ai'
+        && !hasPdfCompatibleIllustratorHeader(this.resolveAssetPath(libraryId, assetId))
+      ) {
+        return {
+          mediaType,
+          status: 'missing',
+          kind,
+          mimeType: 'application/octet-stream',
+          errorCode: 'UNSUPPORTED_FORMAT',
+        };
+      }
+      const documentMime = extension === '.pdf' || extension === '.ai'
         ? 'application/pdf'
         : extension === '.html' || extension === '.htm'
           ? 'text/html'
@@ -29329,8 +29349,8 @@ export class LibraryService {
     if (mediaType === 'video' || mediaType === 'audio') {
       // Serpent-cljb: source playback is the viewer starting point for
       // Chromium-playable containers (mp4/webm/m4v). Other containers
-      // (mov/avi/wmv/mkv) are not a playback guarantee; a ready proxy is the
-      // viewer URL so generating a proxy actually unblocks preview.
+      // (mov/avi/wmv/mkv/flv) are not a playback guarantee; a ready proxy is
+      // the viewer URL so generating a proxy actually unblocks preview.
       // Hover (Serpent-c8a1a3): a ready proxy wins for every video so
       // undecodable containers can still preview in-place.
       if (mediaType === 'video' && intent !== 'proxy-fallback' && asset.current_revision_id) {
@@ -30054,9 +30074,10 @@ export class LibraryService {
       '.aac': 'audio/aac',
       '.flac': 'audio/flac',
       '.opus': 'audio/ogg',
-      // Serpent-8ca259: PDF/HTML source responses need their real MIME so the
-      // renderer can present them (pdfjs / iframe) instead of downloading.
+      // PDF/HTML and PDF-compatible AI source responses need their real MIME
+      // so the renderer can present them (pdfjs / iframe) instead of download.
       '.pdf': 'application/pdf',
+      '.ai': 'application/pdf',
       '.html': 'text/html; charset=utf-8',
       '.htm': 'text/html; charset=utf-8',
     };
@@ -31558,6 +31579,7 @@ export class LibraryService {
                 OR LOWER(a.relative_file_path) LIKE '%.wmv'
                 OR LOWER(a.relative_file_path) LIKE '%.mkv'
                 OR LOWER(a.relative_file_path) LIKE '%.m4v'
+                OR LOWER(a.relative_file_path) LIKE '%.flv'
               THEN 'video_poster'
               ELSE 'thumbnail'
             END
@@ -31707,14 +31729,14 @@ export class LibraryService {
     // even though `assetSupportsThumbnail` declares them thumbnail-capable.
     const supportedExtensions = [
       ...IMAGE_EXTENSIONS.map((extension) => extension.slice(1)),
-      'mp4', 'webm', 'mov', 'avi', 'wmv', 'mkv', 'm4v',
+      ...VIDEO_EXTENSIONS.map((extension) => extension.slice(1)),
       ...AUDIO_EXTENSION_NAMES,
       ...MODEL_EXTENSIONS.map((extension) => extension.slice(1)),
       ...DOCUMENT_EXTENSIONS.map((extension) => extension.slice(1)),
       // Serpent-485aeb: font cards render a real sample line offscreen in Main.
       ...FONT_EXTENSIONS.map((extension) => extension.slice(1)),
     ];
-    const videoExtensions = ['mp4', 'webm', 'mov', 'avi', 'wmv', 'mkv', 'm4v'];
+    const videoExtensions = VIDEO_EXTENSIONS.map((extension) => extension.slice(1));
     const nowInvalidate = new Date().toISOString();
     if (options.skipStaleRepair) {
       // Background fill only inserts missing generate_thumbnail rows.
@@ -39700,6 +39722,7 @@ export class LibraryService {
                     OR LOWER(a.relative_file_path) LIKE '%.wmv'
                     OR LOWER(a.relative_file_path) LIKE '%.mkv'
                     OR LOWER(a.relative_file_path) LIKE '%.m4v'
+                    OR LOWER(a.relative_file_path) LIKE '%.flv'
                   THEN 'video_poster'
                   ELSE 'thumbnail'
                 END
@@ -41836,6 +41859,7 @@ export class LibraryService {
              OR LOWER(a.relative_file_path) LIKE '%.wmv'
              OR LOWER(a.relative_file_path) LIKE '%.mkv'
              OR LOWER(a.relative_file_path) LIKE '%.m4v'
+             OR LOWER(a.relative_file_path) LIKE '%.flv'
            THEN 'video_poster'
            ELSE 'thumbnail'
          END
@@ -41918,6 +41942,7 @@ export class LibraryService {
                 OR LOWER(a.relative_file_path) LIKE '%.wmv'
                 OR LOWER(a.relative_file_path) LIKE '%.mkv'
                 OR LOWER(a.relative_file_path) LIKE '%.m4v'
+                OR LOWER(a.relative_file_path) LIKE '%.flv'
               THEN 'video_poster'
               ELSE 'thumbnail'
             END

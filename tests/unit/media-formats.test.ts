@@ -9,6 +9,7 @@ import {
   isChromiumDirectPlayVideoExtension,
   isRawImageExtension,
   isSupportedImageExtension,
+  isSupportedDocumentExtension,
   isSupportedModelExtension,
   isSupportedVideoExtension,
   mediaTypeHasPixelResolution,
@@ -52,11 +53,18 @@ describe('media format registry', () => {
   });
 
   it('keeps every supported video container on the proxy-capable route', () => {
-    for (const extension of ['.mp4', '.mov', '.avi', '.wmv', '.webm', '.mkv', '.m4v']) {
+    for (const extension of ['.mp4', '.mov', '.avi', '.wmv', '.webm', '.mkv', '.m4v', '.flv']) {
       expect(isSupportedVideoExtension(`clip${extension}`)).toBe(true);
       expect(videoMimeForExtension(extension)).toMatch(/^video\//);
     }
+    expect(videoMimeForExtension('.flv')).toBe('video/x-flv');
     expect(isSupportedVideoExtension('clip.mpeg')).toBe(false);
+  });
+
+  it('registers PDF-compatible Illustrator files as documents', () => {
+    expect(isSupportedDocumentExtension('Artwork.AI')).toBe(true);
+    expect(isSupportedDocumentExtension('Artwork.ai')).toBe(true);
+    expect(isSupportedDocumentExtension('Artwork.ai.txt')).toBe(false);
   });
 
   it('treats only Chromium-playable containers as viewer source-first', () => {

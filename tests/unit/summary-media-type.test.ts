@@ -20,6 +20,13 @@ describe("LibraryService.toSummaryMediaType (Serpent-671)", () => {
     ).toBe("audio");
   });
 
+  it("classifies Adobe Illustrator files as documents", () => {
+    expect(LibraryService.detectMediaType("illustration.ai")).toBe("document");
+    expect(LibraryService.toSummaryMediaType(
+      LibraryService.detectMediaType("illustration.ai"),
+    )).toBe("document");
+  });
+
   it("classifies the T1 3D formats as model (slice A)", () => {
     for (const filename of [
       "character.fbx",

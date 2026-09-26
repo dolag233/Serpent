@@ -37,7 +37,7 @@ export const IMAGE_EXTENSIONS = [
 ] as const;
 
 export const VIDEO_EXTENSIONS = [
-  '.mp4', '.mov', '.avi', '.wmv', '.webm', '.mkv', '.m4v',
+  '.mp4', '.mov', '.avi', '.wmv', '.webm', '.mkv', '.m4v', '.flv',
 ] as const;
 
 /**
@@ -58,7 +58,7 @@ export const MODEL_EXTENSIONS = [
 
 /** Document formats with a native preview/viewer path. */
 export const DOCUMENT_EXTENSIONS = [
-  '.pdf', '.html', '.htm',
+  '.pdf', '.html', '.htm', '.ai',
 ] as const;
 
 /**
@@ -257,6 +257,7 @@ export function videoMimeForExtension(extensionOrFilename: string): string | nul
     case '.webm': return 'video/webm';
     case '.mkv': return 'video/x-matroska';
     case '.m4v': return 'video/x-m4v';
+    case '.flv': return 'video/x-flv';
     default: return null;
   }
 }

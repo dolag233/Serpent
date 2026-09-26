@@ -976,6 +976,7 @@ export function readCatalogThumbnailArtifacts(
               OR LOWER(a.relative_file_path) LIKE '%.wmv'
               OR LOWER(a.relative_file_path) LIKE '%.mkv'
               OR LOWER(a.relative_file_path) LIKE '%.m4v'
+              OR LOWER(a.relative_file_path) LIKE '%.flv'
             THEN 'video_poster'
             ELSE 'thumbnail'
           END
