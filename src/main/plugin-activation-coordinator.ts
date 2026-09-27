@@ -85,6 +85,7 @@ export interface PluginActivationCoordinatorOptions {
   }) => Promise<void>;
   onInstanceActivated?: (input: { libraryId: string }) => void;
   onContributionsRegistered?: (input: { libraryId: string }) => void;
+  onProvidersChanged?: () => void;
 }
 
 type ActiveHookContribution = {
@@ -1302,6 +1303,7 @@ export class PluginActivationCoordinator {
   #revokeContributions(instanceId: string): void {
     this.options.contributions?.revokePluginInstance(instanceId);
     this.options.providers?.revokePluginInstance(instanceId);
+    this.options.onProvidersChanged?.();
   }
 
   #deactivateInstance(record: ActiveRecord, reason: PluginRuntimeDeactivateReason): void {

@@ -60,6 +60,7 @@ import {
 } from './bounded-write-command';
 import {
   parsePluginMediaProviderResponse,
+  parsePluginThumbnailExtensionsMessage,
   type PluginMediaProviderRequest,
   type PluginMediaProviderResult,
 } from '../shared/plugin-media-protocol';
@@ -2562,6 +2563,8 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     case 'asset.rename-files':
     case 'asset.restore-if-original-vacant':
     case 'asset.palette.aggregate-recent':
+    case 'asset.zip.list':
+    case 'asset.zip.read-entry':
     case 'asset.text.read':
     case 'asset.text.save':
     case 'asset.delete-permanent':
@@ -2851,6 +2854,19 @@ const handleLibraryWorkerMessage = async (event: { data: unknown }): Promise<voi
   const input: unknown = event.data;
   const callbackAt = WORKER_CMD_LOG ? Date.now() : 0;
 
+  const thumbnailExtensions = parsePluginThumbnailExtensionsMessage(input);
+  if (thumbnailExtensions) {
+    libraryService.setPluginThumbnailExtensions(
+      thumbnailExtensions.libraryId,
+      thumbnailExtensions.extensions,
+    );
+    if (libraryService.hasOpenLibrary(thumbnailExtensions.libraryId)) {
+      libraryService.enqueueThumbnailJobs(thumbnailExtensions.libraryId);
+      scheduleThumbnailQueue(thumbnailExtensions.libraryId);
+    }
+    return;
+  }
+
   try {
     const providerResponse = parsePluginMediaProviderResponse(input);
     const pending = pendingPluginMediaProviderRequests.get(providerResponse.requestId);
@@ -3036,6 +3052,8 @@ const handleLibraryWorkerMessage = async (event: { data: unknown }): Promise<voi
       if (
         request.command.type === 'media.get-preview-artifact'
         || request.command.type === 'asset.text.read'
+        || request.command.type === 'asset.zip.list'
+        || request.command.type === 'asset.zip.read-entry'
         || request.command.type === 'media.get-source-path'
       ) {
         // Source paths are cheap control lookups; preview resolution is a

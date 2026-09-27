@@ -93,6 +93,7 @@ Windows 安装器（Inno Setup，2026-08-08 决策替代 WiX MSI）：
 - **中英双语**：中文在前、英文在后，标题 `**Serpent <版本>** — <一句话主题> · <English one-liner>`。
 - **按重要程度排序**：新功能 > 性能/可靠性 > 错误提示 > 其他。
 - 重要功能逐条详细描述（中英对照条目，说明用户价值）；**UI 修改、简单 bug 修复用概括语句**（如「优化了若干 UI」「修复了若干稳定性问题」），不逐一列举。
+- **只写用户能直接感知的变化（2026-09-27，强制）**：Release 正文和 `release-meta.json` 只写用户会遇到的结果。版本内部的实现调整不写进去，包括查看管线替换、兼容层、解码路径，以及同一次更新自己引入又自己修掉、用户无从对照的行为。格式能不能打开、设置里新出现的开关、原来会碰到的问题是否消失，才可以写。先例：0.2.4 曾把「链接目录可以展开子文件夹」写成新特性，那是同一次更新造成的回归，用户不知道原先有这条；0.2.9 曾把「Illustrator 文件按图片查看，并说明当前是 PDF 画面」写进更新日志，这是查看实现的内部调整，没有需要单独告诉用户的新结果。发布前对照本条删掉这类条目，正文和 `release-meta.json` 一起改。
 - **不在仓库维护 `release-notes-<ver>.md`**。Changelog 直接写入 GitHub Release 正文；关于窗口短条目可选写入 `release-meta.json` 资产（见 §4）。发布时用本地临时草稿配合 `gh release create --notes-file` 或 `gh release edit`，草稿不要提交进 git。
 
 参考：[v0.1.1 release notes](https://github.com/dolag233/Serpent/releases/tag/v0.1.1)（WebDAV 同步、外部资源库、数据恢复、性能、错误提示的写法与排序）。
@@ -142,7 +143,7 @@ gh release upload v<ver> release-meta.json release-meta-<ver>.json
 - [ ] main 合流用**单一提交**完成（merge --no-commit → git rm 开发文件 → 一次 commit），禁止「引入又删除」的来回提交
 - [ ] 全部发布门禁通过（media verify / verify-package / ufbx WASM）——**在 dev 分支打包**
 - [ ] 产物按 §4 规范名精确重命名（`win-x86-64` 不是 `win32-x64`；安装包是 `-setup.zip` 不是裸 exe）+ 每个资产同名 `.sha256`（只含哈希）
-- [ ] Changelog 中英双语（中文在前，标题 `**Serpent <版本>** — 一句话 · English one-liner`）、按重要度排序、次要改动概括；已写入 GitHub Release 正文
+- [ ] Changelog 中英双语（中文在前，标题 `**Serpent <版本>** — 一句话 · English one-liner`）、按重要度排序、次要改动概括；已写入 GitHub Release 正文。只保留用户能直接感知的变化；内部实现调整（查看管线、兼容层、同一次更新自己引入又修掉的行为）不出现在正文或 `release-meta.json`（§5）
 - [ ] **`release-meta.json` 与 `release-meta-<ver>.json` 已上传，且 `version` 等于 tag 版本**（§4 强制项）
 - [ ] Release 正文只面向用户：不写构建/打包/平台流程或内部约束（如「本页只含某平台产物」）
 - [ ] `gh release create v<ver> --title "Serpent <ver>" --notes-file <本地临时草稿.md> --target main`（gh 全路径调用；草稿不提交进仓库）

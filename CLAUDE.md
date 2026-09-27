@@ -102,7 +102,7 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
   - Windows 安装包 `Serpent-win-x86-64-<ver>-setup.zip`（Inno 的 `SerpentSetup.exe` **打包成 zip** 上传）
   - macOS `Serpent-darwin-arm64-<ver>-portable.zip` / `-package.dmg`
   - 每个资产配套同名 `.sha256`（只含哈希）
-- **Changelog**：中英双语（中文在前），标题 `**Serpent <版本>** — 一句话 · English one-liner`，按重要度排序、次要改动概括；保存 `release-notes-<ver>.md`。
+- **Changelog**：中英双语（中文在前），标题 `**Serpent <版本>** — 一句话 · English one-liner`，按重要度排序、次要改动概括；直接写入 GitHub Release 正文，不提交 `release-notes-<ver>.md`。只写用户能直接感知的变化；查看管线、兼容层等内部实现调整不写进正文或 `release-meta.json`。
 - **Release**：`gh release create v<ver> --title "Serpent <ver>" --notes-file release-notes-<ver>.md --target main`；gh 在 `C:\Program Files\GitHub CLI\gh.exe`（PATH 可能缺失，全路径调用）；tag `v<ver>` 指向 main 发布基线。
 - **打包后必须** `npm run rebuild:native` 恢复 dev 环境（FTS5 probe OK），并切回 dev 分支。
 

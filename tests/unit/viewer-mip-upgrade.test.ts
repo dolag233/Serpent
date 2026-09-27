@@ -54,6 +54,17 @@ describe("viewer mip upgrade (Serpent-eh07)", () => {
         "lib-1",
       ),
     ).toBeNull();
+    expect(
+      resolveViewerPlaceholderUrl(
+        {
+          displayName: "bundle.zip",
+          mediaType: "other",
+          thumbnailStatus: "ready",
+          thumbnailArtifactId: "zip-art",
+        },
+        "lib-1",
+      ),
+    ).toBe("serpent://preview/lib-1/zip-art");
   });
 
   it("keeps placeholder visible until full image has decoded", () => {

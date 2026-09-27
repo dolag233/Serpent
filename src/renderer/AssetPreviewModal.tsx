@@ -40,6 +40,7 @@ import { VideoPlayerControls } from "./VideoPlayerControls";
 import { AudioPlayerControls } from "./AudioPlayerControls";
 import { TextViewerControls, type TextViewerControlsHandle } from "./TextViewerControls";
 import { PdfViewerSurface } from "./PdfViewerSurface";
+import { ZipArchiveViewer } from "./ZipArchiveViewer";
 import { HtmlViewerSurface } from "./HtmlViewerSurface";
 import { FontViewerSurface } from "./FontViewerSurface";
 import { useViewerVolume } from "./use-viewer-volume";
@@ -877,10 +878,20 @@ const AssetPreviewModalContent = forwardRef<
   const ready = primarySurface === "media";
   const unsupported = primarySurface === "unsupported";
   const imageSrc = resolution?.url ?? placeholderUrl;
+  const pluginProvidedImage = ready
+    && resolution?.mediaType === "image"
+    && Boolean(resolution.url)
+    && asset.mediaType !== "image";
   const showImage =
-    asset.mediaType === "image" &&
     Boolean(imageSrc) &&
+    (
+      asset.mediaType === "image"
+      || pluginProvidedImage
+      || (asset.mediaType === "other" && Boolean(placeholderUrl))
+    ) &&
     (ready || Boolean(placeholderUrl));
+  const isZipArchive = asset.relativeFilePath.toLowerCase().endsWith(".zip")
+    || asset.displayName.toLowerCase().endsWith(".zip");
   const isIllustratorFile = asset.relativeFilePath.toLowerCase().endsWith(".ai");
   const illustratorPdfPreview = isIllustratorFile && (
     (ready && resolution?.sourceMimeType === "application/pdf")
@@ -1104,13 +1115,22 @@ const AssetPreviewModalContent = forwardRef<
     >
       <ShellSurface className="preview-modal">
         {/* REQ-VIEW-006: no top filename/toolbar bar; nav sits on the edges. */}
-        <div className={`preview-content${isTextViewer ? " is-text-mode" : ""}${isDocumentViewer ? " is-document-mode" : ""}`}>
-          {primarySurface === "loading" && !placeholderUrl ? (
+        <div className={`preview-content${isTextViewer ? " is-text-mode" : ""}${isDocumentViewer ? " is-document-mode" : ""}${isZipArchive ? " is-archive-mode" : ""}`}>
+          {primarySurface === "loading" && !placeholderUrl && !isZipArchive ? (
             <div
               aria-busy="true"
               aria-label={t("preview.resolving")}
               className="preview-state is-silent"
               role="status"
+            />
+          ) : isZipArchive ? (
+            <ZipArchiveViewer
+              api={api}
+              assetId={asset.assetId}
+              fallbackSrc={showImage ? imageSrc : null}
+              key={`${libraryId}:${asset.assetId}`}
+              libraryId={libraryId}
+              onPresentationReady={notifyPresentationReady}
             />
           ) : asset.sequence ? (
             <ImageSequencePlayer

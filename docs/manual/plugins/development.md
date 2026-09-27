@@ -455,6 +455,10 @@ Provider 支持 `preview`、`thumbnail`、`metadata`、`import`、`export`、`ai
 或 MIME；derived-field 必须有 `fieldId` 和 `fieldType`。返回值受严格大小限制，不能返回路径、secret、token 或大对象；搜索应优先
 物化字段，不能在 Renderer 中逐资产同步调用插件。
 
+`thumbnail` 提供器声明的扩展名会进入缩略图队列。导入、扫描或插件激活之后，Serpent 自动调用它生成卡片图，用户不必逐个打开文件。内置格式仍由 Serpent 自己生成；提供器只补充尚未支持的扩展名，失败或超时时卡片保持通用图标。
+
+`preview` 提供器在打开查看器时被调用。它返回一张图时，查看器按图片显示这张图。没有提供器、或提供器没有返回图时，仍是不支持内置预览。
+
 Input Capture 有 `view`、`viewer`、`application` 三种 scope，需对应 `input.capture.*` 权限；会话失焦、停用、崩溃、关库或视图关闭时自动
 释放。它不是系统全局键鼠 Hook。
 

@@ -2131,6 +2131,31 @@ async function processAiQueue(libraryId: string): Promise<void> {
 }
 
 /** Shared post-open hook for dialog opens and startup recent-library restore. */
+function pluginThumbnailExtensionsFor(libraryId: string): string[] {
+  const extensions = new Set<string>();
+  for (const provider of pluginActivationCoordinator?.listActiveProviders(libraryId) ?? []) {
+    if (provider.kind !== 'thumbnail') continue;
+    for (const raw of provider.extensions ?? []) {
+      const extension = raw.replace(/^\./u, '').toLowerCase();
+      if (/^[a-z0-9][a-z0-9+_-]*$/u.test(extension)) extensions.add(extension);
+    }
+  }
+  return [...extensions];
+}
+
+async function syncPluginThumbnailExtensions(): Promise<void> {
+  const client = workerClient;
+  if (!client) return;
+  const listed = await client.request({ type: 'library.list' });
+  if (!listed.ok || listed.type !== 'library.list') return;
+  for (const library of listed.libraries) {
+    client.publishPluginThumbnailExtensions(
+      library.libraryId,
+      pluginThumbnailExtensionsFor(library.libraryId),
+    );
+  }
+}
+
 async function notifyLibraryOpenedSideEffects(input: {
   libraryId: string;
   libraryDirectory: string;
@@ -2150,6 +2175,7 @@ async function notifyLibraryOpenedSideEffects(input: {
   // library is open, tick only jobs explicitly enqueued or retried in this
   // application session; interrupted rows are never auto-recovered.
   pluginJobScheduler?.tick(input.libraryId);
+  await syncPluginThumbnailExtensions();
 }
 
 async function processAiQueueBatch(
@@ -2461,6 +2487,8 @@ async function commandFor(
     case "asset.copy.request":
     case "asset.copy-undo.request":
     case "asset.rename-file.request":
+    case "asset.zip.list.request":
+    case "asset.zip.read-entry.request":
     case "asset.text.read.request":
     case "asset.text.save.request":
     case "asset.delete-permanent.request":
@@ -4681,6 +4709,14 @@ async function startApplication(): Promise<void> {
           logger?.error('plugin.providers.materialize', error, { libraryId });
         });
         embeddedMcpServer?.notifyToolsChanged();
+        void syncPluginThumbnailExtensions().catch((error) => {
+          logger?.error('plugin.thumbnail-extensions', error, { libraryId });
+        });
+      },
+      onProvidersChanged: () => {
+        void syncPluginThumbnailExtensions().catch((error) => {
+          logger?.error('plugin.thumbnail-extensions', error);
+        });
       },
       logger,
     });

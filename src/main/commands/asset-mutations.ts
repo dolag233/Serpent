@@ -100,6 +100,19 @@ export async function executeAssetMutationMainCommand(
         ...(request.newBaseName === undefined ? {} : { newBaseName: request.newBaseName }),
         ...(request.newFileName === undefined ? {} : { newFileName: request.newFileName }),
       };
+    case "asset.zip.list.request":
+      return {
+        type: "asset.zip.list",
+        libraryId: request.libraryId,
+        assetId: request.assetId,
+      };
+    case "asset.zip.read-entry.request":
+      return {
+        type: "asset.zip.read-entry",
+        libraryId: request.libraryId,
+        assetId: request.assetId,
+        index: request.index,
+      };
     case "asset.text.read.request":
       return {
         type: "asset.text.read",

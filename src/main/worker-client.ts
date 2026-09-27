@@ -420,6 +420,14 @@ export class LibraryWorkerClient {
     return () => this.#aiClearedListeners.delete(listener);
   }
 
+  publishPluginThumbnailExtensions(libraryId: string, extensions: readonly string[]): void {
+    this.#child?.postMessage({
+      type: 'plugin-thumbnail-extensions.set',
+      libraryId,
+      extensions,
+    });
+  }
+
   onPluginMediaProviderRequest(
     listener: (request: PluginMediaProviderRequest) => Promise<PluginMediaProviderResult>,
   ): () => void {

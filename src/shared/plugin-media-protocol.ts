@@ -47,3 +47,15 @@ export function parsePluginMediaProviderRequest(input: unknown): PluginMediaProv
 export function parsePluginMediaProviderResponse(input: unknown): PluginMediaProviderResponse {
   return pluginMediaProviderResponseSchema.parse(input);
 }
+
+export const pluginThumbnailExtensionsMessageSchema = z.strictObject({
+  type: z.literal('plugin-thumbnail-extensions.set'),
+  libraryId: nonBlankString,
+  extensions: z.array(z.string().min(1).max(32)).max(256),
+});
+export type PluginThumbnailExtensionsMessage = z.infer<typeof pluginThumbnailExtensionsMessageSchema>;
+
+export function parsePluginThumbnailExtensionsMessage(input: unknown): PluginThumbnailExtensionsMessage | null {
+  const parsed = pluginThumbnailExtensionsMessageSchema.safeParse(input);
+  return parsed.success ? parsed.data : null;
+}

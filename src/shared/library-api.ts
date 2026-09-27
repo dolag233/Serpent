@@ -544,6 +544,24 @@ export interface SerpentLibraryApi {
   copyAssets(input: { libraryId: string; assetIds: string[]; targetFolderId: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ copiedCount: number; skippedCount: number; operationId: string | null; assets: AssetSummary[]; historyEntryId?: string }>>;
   undoCopyAssets(input: { libraryId: string; operationId: string; conflictStrategy?: 'error' | 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ undoneCount: number; skippedCount: number; assets: AssetSummary[] }>>;
   renameAssetFile(input: { libraryId: string; assetId: string; newBaseName?: string; newFileName?: string }): Promise<LibraryApiResult<AssetSummary & { historyEntryId?: string }>>;
+  listZipEntries(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<{
+    assetId: string;
+    revisionId: string;
+    status: 'ready' | 'unreadable';
+    truncated: boolean;
+    files: Array<{ index: number; name: string; uncompressedSize: number }>;
+  }>>;
+  readZipEntry(input: { libraryId: string; assetId: string; index: number }): Promise<LibraryApiResult<{
+    assetId: string;
+    index: number;
+    name: string;
+    uncompressedSize: number;
+    kind: 'image' | 'text' | 'unavailable';
+    mimeType?: string;
+    bytesBase64?: string;
+    text?: string;
+    truncated?: boolean;
+  }>>;
   readTextAsset(input: { libraryId: string; assetId: string; maxBytes?: number }): Promise<LibraryApiResult<{
     assetId: string;
     revisionId: string;

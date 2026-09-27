@@ -24,7 +24,7 @@ export function resolveViewerPlaceholderUrl(
     // available before requestPreview resolves its MIME type.
     const displayName = asset.displayName.toLowerCase();
     if (!displayName.endsWith(".pdf") && !displayName.endsWith(".ai")) return null;
-  } else if (asset.mediaType !== "image") {
+  } else if (asset.mediaType !== "image" && asset.mediaType !== "other") {
     return null;
   }
   if (asset.thumbnailStatus !== "ready" || !asset.thumbnailArtifactId) {

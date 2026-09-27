@@ -4979,8 +4979,81 @@ body.serpent-modal-open .app-shell {
   align-self: stretch;
 }
 .preview-content.is-text-mode,
-.preview-content.is-document-mode {
+.preview-content.is-document-mode,
+.preview-content.is-archive-mode {
   place-items: stretch;
+}
+.preview-content.is-archive-mode > .zip-archive-viewer {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+.zip-archive-viewer {
+  display: grid;
+  grid-template-columns: minmax(180px, 280px) minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--canvas);
+  color: var(--text);
+}
+.zip-archive-list {
+  overflow: auto;
+  border-right: 1px solid var(--divider);
+  padding: 8px 0;
+}
+.zip-archive-file {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.zip-archive-file[aria-selected="true"],
+.zip-archive-file:hover {
+  background: var(--menu-item-hover-background);
+}
+.zip-archive-file-name {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.zip-archive-file-size,
+.zip-archive-note {
+  color: var(--secondary);
+  font-size: calc(12px * var(--ui-font-scale));
+}
+.zip-archive-note {
+  margin: 0;
+  padding: 8px 12px;
+}
+.zip-archive-preview {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}
+.zip-archive-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.zip-archive-preview pre {
+  width: 100%;
+  margin: 0;
+  white-space: pre-wrap;
+  color: var(--text);
 }
 .preview-content.is-document-mode > .pdf-viewer,
 .preview-content.is-document-mode > .html-viewer {

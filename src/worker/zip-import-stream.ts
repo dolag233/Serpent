@@ -188,7 +188,7 @@ function extractionError(error: unknown): ZipImportStreamError {
   return archiveError(error);
 }
 
-function portableEntryName(fileName: string): { name: string; directoryByName: boolean } {
+export function portableEntryName(fileName: string): { name: string; directoryByName: boolean } {
   if (fileName.length === 0 || fileName.includes('\0') || fileName.includes('\\')) {
     throw new ZipImportStreamError('PATH_ESCAPE');
   }
@@ -220,7 +220,7 @@ const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
  * extra field, then valid UTF-8, and retain yauzl's CP437 decoder as the
  * compatibility fallback for older archives.
  */
-function decodeZipEntryName(entry: yauzl.Entry): string {
+export function decodeZipEntryName(entry: yauzl.Entry): string {
   const rawName = entry.fileNameRaw;
   const unicodePath = entry.extraFields.find((field) => field.id === 0x7075);
   if (unicodePath && unicodePath.data.length >= 5 && unicodePath.data[0] === 1) {

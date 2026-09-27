@@ -1484,6 +1484,42 @@ export const library: SerpentLibraryApi = Object.freeze({
     };
   },
 
+  async listZipEntries({ libraryId, assetId }: { libraryId: string; assetId: string }) {
+    const result = await request({ type: 'asset.zip.list.request', libraryId, assetId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.zip.listed') throw new Error('Unexpected zip-list response.');
+    return {
+      ok: true as const,
+      value: {
+        assetId: result.assetId,
+        revisionId: result.revisionId,
+        status: result.status,
+        truncated: result.truncated,
+        files: result.files,
+      },
+    };
+  },
+
+  async readZipEntry({ libraryId, assetId, index }: { libraryId: string; assetId: string; index: number }) {
+    const result = await request({ type: 'asset.zip.read-entry.request', libraryId, assetId, index });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.zip.entry') throw new Error('Unexpected zip-entry response.');
+    return {
+      ok: true as const,
+      value: {
+        assetId: result.assetId,
+        index: result.index,
+        name: result.name,
+        uncompressedSize: result.uncompressedSize,
+        kind: result.kind,
+        ...(result.mimeType === undefined ? {} : { mimeType: result.mimeType }),
+        ...(result.bytesBase64 === undefined ? {} : { bytesBase64: result.bytesBase64 }),
+        ...(result.text === undefined ? {} : { text: result.text }),
+        ...(result.truncated === undefined ? {} : { truncated: result.truncated }),
+      },
+    };
+  },
+
   async readTextAsset({ libraryId, assetId, maxBytes }: { libraryId: string; assetId: string; maxBytes?: number }) {
     const result = await request({ type: 'asset.text.read.request', libraryId, assetId, maxBytes });
     if (!result.ok) return failure(result);

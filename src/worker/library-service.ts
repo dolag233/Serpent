@@ -892,6 +892,7 @@ import {
   ZipImportStreamError,
   type ZipArchiveManifest,
 } from './zip-import-stream';
+import { listZipArchiveFiles, readZipArchiveEntry } from './zip-archive-preview';
 import {
   defaultPinnedHttpTransport,
   type DnsLookup,
@@ -23076,6 +23077,29 @@ export class LibraryService {
       : 'other';
   }
 
+  readonly #pluginThumbnailExtensions = new Map<string, Set<string>>();
+
+  /** Extensions a thumbnail provider claimed for this library, without a leading dot. */
+  setPluginThumbnailExtensions(libraryId: string, extensions: readonly string[]): void {
+    const normalized = new Set<string>();
+    for (const value of extensions) {
+      const extension = value.trim().replace(/^\./u, '').toLowerCase();
+      if (/^[a-z0-9][a-z0-9+_-]*$/u.test(extension)) normalized.add(extension);
+    }
+    this.#pluginThumbnailExtensions.set(libraryId, normalized);
+  }
+
+  private claimsPluginThumbnail(libraryId: string, relativePath: string): boolean {
+    const extension = path.extname(relativePath).slice(1).toLowerCase();
+    return extension.length > 0
+      && (this.#pluginThumbnailExtensions.get(libraryId)?.has(extension) ?? false);
+  }
+
+  private thumbnailEligible(libraryId: string, relativePath: string): boolean {
+    return this.claimsPluginThumbnail(libraryId, relativePath)
+      || LibraryService.supportsThumbnail(relativePath);
+  }
+
   static supportsThumbnail(filename: string): boolean {
     return assetSupportsThumbnail({
       mediaType: LibraryService.toSummaryMediaType(
@@ -25096,7 +25120,7 @@ export class LibraryService {
         )
         .run(now, existing.current_revision_id);
       if (
-        LibraryService.supportsThumbnail(existing.relative_file_path)
+        this.thumbnailEligible(libraryId, existing.relative_file_path)
         && !this.isExplicitlyIgnored(
           openLibrary,
           existing.location_kind,
@@ -31736,6 +31760,9 @@ export class LibraryService {
       // Serpent-485aeb: font cards render a real sample line offscreen in Main.
       ...FONT_EXTENSIONS.map((extension) => extension.slice(1)),
     ];
+    for (const extension of this.#pluginThumbnailExtensions.get(libraryId) ?? []) {
+      if (!supportedExtensions.includes(extension)) supportedExtensions.push(extension);
+    }
     const videoExtensions = VIDEO_EXTENSIONS.map((extension) => extension.slice(1));
     const nowInvalidate = new Date().toISOString();
     if (options.skipStaleRepair) {
@@ -32058,7 +32085,11 @@ export class LibraryService {
 
     for (const row of rows) {
       if (!schedulableIds.has(row.asset_id)) continue;
-      const mediaType = LibraryService.detectMediaType(row.relative_file_path);
+      const detectedMediaType = LibraryService.detectMediaType(row.relative_file_path);
+      const mediaType = detectedMediaType === 'other'
+        && this.claimsPluginThumbnail(libraryId, row.relative_file_path)
+        ? 'image'
+        : detectedMediaType;
       const sourceDirect = isSourceDirectPreview({
         fileName: row.relative_file_path,
         mediaType: LibraryService.toSummaryMediaType(mediaType),
@@ -32802,9 +32833,16 @@ export class LibraryService {
           source_width: number | null;
           source_height: number | null;
         } | undefined;
-      const claimMediaType = claimAsset
+      const detectedClaimMediaType = claimAsset
         ? LibraryService.detectMediaType(claimAsset.relative_file_path)
         : 'other';
+      // Plugin-owned formats stay `other` for the viewer and native decoders.
+      // Admission still needs an image thumbnail role so the provider can run.
+      const claimMediaType = claimAsset
+        && detectedClaimMediaType === 'other'
+        && this.claimsPluginThumbnail(libraryId, claimAsset.relative_file_path)
+        ? 'image'
+        : detectedClaimMediaType;
       const claimSourceDirect = claimAsset
         ? isSourceDirectPreview({
             fileName: claimAsset.relative_file_path,
@@ -36345,6 +36383,97 @@ export class LibraryService {
     }
   }
 
+  zipAssetAbsolutePath(input: { libraryId: string; assetId: string }): {
+    absolutePath: string;
+    revisionId: string;
+  } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, relative_file_path, current_revision_id,
+                availability, deleted_at
+           FROM assets WHERE asset_id = ?`,
+      )
+      .get(input.assetId) as {
+        asset_id: string;
+        relative_file_path: string;
+        current_revision_id: string | null;
+        availability: 'available' | 'missing';
+        deleted_at: string | null;
+      } | undefined;
+    if (!row?.current_revision_id) {
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+    const isTrashed = row.deleted_at !== null;
+    if (!isTrashed && row.availability !== 'available') {
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+    if (path.extname(row.relative_file_path).toLowerCase() !== '.zip') {
+      throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE');
+    }
+    const absolutePath = isTrashed
+      ? this.trashPath(
+          openLibrary,
+          row.asset_id,
+          path.posix.basename(row.relative_file_path),
+        )
+      : this.resolveAssetPath(input.libraryId, input.assetId);
+    return { absolutePath, revisionId: row.current_revision_id };
+  }
+
+  async listZipEntries(input: { libraryId: string; assetId: string }): Promise<{
+    assetId: string;
+    revisionId: string;
+    status: 'ready' | 'unreadable';
+    truncated: boolean;
+    files: Array<{ index: number; name: string; uncompressedSize: number }>;
+  }> {
+    const located = this.zipAssetAbsolutePath(input);
+    try {
+      const listing = await listZipArchiveFiles(located.absolutePath);
+      return {
+        assetId: input.assetId,
+        revisionId: located.revisionId,
+        status: listing.status,
+        truncated: listing.truncated,
+        files: listing.files,
+      };
+    } catch {
+      return {
+        assetId: input.assetId,
+        revisionId: located.revisionId,
+        status: 'unreadable',
+        truncated: false,
+        files: [],
+      };
+    }
+  }
+
+  async readZipEntry(input: { libraryId: string; assetId: string; index: number }): Promise<{
+    assetId: string;
+    index: number;
+    name: string;
+    uncompressedSize: number;
+    kind: 'image' | 'text' | 'unavailable';
+    mimeType?: string;
+    bytesBase64?: string;
+    text?: string;
+    truncated?: boolean;
+  }> {
+    const located = this.zipAssetAbsolutePath(input);
+    const entry = await readZipArchiveEntry(located.absolutePath, input.index);
+    if (!entry) {
+      return {
+        assetId: input.assetId,
+        index: input.index,
+        name: 'entry',
+        uncompressedSize: 0,
+        kind: 'unavailable',
+      };
+    }
+    return { assetId: input.assetId, index: input.index, ...entry };
+  }
+
   readTextAsset(input: {
     libraryId: string;
     assetId: string;
@@ -36918,7 +37047,7 @@ export class LibraryService {
       this.syncAssetSearchContent(openLibrary.connection, input.assetId);
     })();
 
-    if (LibraryService.supportsThumbnail(row.relative_file_path)) {
+    if (this.thumbnailEligible(input.libraryId, row.relative_file_path)) {
       this.enqueueThumbnailJobs(input.libraryId, {
         assetIds: [input.assetId],
         priority: 300,
@@ -45800,7 +45929,7 @@ export class LibraryService {
         existingManagedIdentities.set(pathIdentity, assetId);
         this.syncAssetSearchContent(openLibrary.connection, assetId);
         discoveredAssetIds.push(assetId);
-        if (LibraryService.supportsThumbnail(entry.relativePath)) {
+        if (this.thumbnailEligible(openLibrary.summary.libraryId, entry.relativePath)) {
           openLibrary.connection
             .prepare(
               `INSERT OR IGNORE INTO jobs
@@ -45970,7 +46099,7 @@ export class LibraryService {
               asset.asset_id,
             );
           if (
-            LibraryService.supportsThumbnail(currentRelativePath)
+            this.thumbnailEligible(openLibrary.summary.libraryId, currentRelativePath)
             && !this.isExplicitlyIgnored(
               openLibrary,
               asset.location_kind,
@@ -46092,7 +46221,7 @@ export class LibraryService {
           // Enqueue only decodable media; unsupported assets keep their normal
           // file icon and never churn through a permanently failing queue.
           if (
-            LibraryService.supportsThumbnail(currentRelativePath)
+            this.thumbnailEligible(openLibrary.summary.libraryId, currentRelativePath)
             && !this.isExplicitlyIgnored(
               openLibrary,
               asset.location_kind,

@@ -407,6 +407,14 @@ export async function executeAssetMutationWorkerCommand(
       const result = libraryService.aggregateRecentAssetPalette(request.command);
       return { ok: true, type: 'asset.palette.aggregated-recent', ...result };
     }
+    case 'asset.zip.list': {
+      const result = await libraryService.listZipEntries(request.command);
+      return { ok: true, type: 'asset.zip.listed', ...result };
+    }
+    case 'asset.zip.read-entry': {
+      const result = await libraryService.readZipEntry(request.command);
+      return { ok: true, type: 'asset.zip.entry', ...result };
+    }
     case 'asset.text.read': {
       const result = libraryService.readTextAsset(request.command);
       return { ok: true, type: 'asset.text.read', ...result };
