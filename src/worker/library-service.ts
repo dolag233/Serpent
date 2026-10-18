@@ -4114,8 +4114,10 @@ interface PendingImport {
   /** External bulk conversion skips full-file hashing (Serpent-7tjg). */
   skipContentHash?: boolean;
   /**
-   * Identity → on-disk destination for bulk conversion. Avoids readdir of
-   * Assets for every file (O(n²) on a 20k Eagle library).
+   * Identity → destination for imports. Bulk conversions pass a DB-only
+   * index; regular imports build a DB-backed index with a per-miss disk
+   * fallback. Either way this avoids readdir of Assets for every file
+   * (O(n²) on a 20k library).
    */
   destinationIndex?: Map<string, ExistingDestination>;
   /**
@@ -4140,6 +4142,64 @@ interface ExistingAssetRow {
 interface ExistingDestination {
   actualRelativePath: string;
   size: number;
+}
+
+/**
+ * Destination index for regular managed imports. Lookups hit the DB-backed
+ * index first (one map get per file); on a miss a single lstat of the
+ * normalized path decides whether the destination is absent (the common case
+ * for freshly staged files) before paying the full `portableDiskDestination`
+ * readdir walk. That keeps a large managed import O(n) in directory probes
+ * instead of readdirs Assets for every staged file (O(n²) on a 20k-item
+ * library), while on-disk destinations the index has not absorbed yet (an
+ * external watcher ingest still in flight, a recovered operation) still
+ * surface as conflicts instead of being silently overwritten by the apply
+ * rename. Entries written by the apply phase (keep-both placements) take
+ * precedence over both layers, matching the plain-map behavior it replaces.
+ */
+class DiskFallbackDestinationIndex extends Map<string, ExistingDestination> {
+  private readonly indexed: Map<string, ExistingDestination>;
+  private readonly assetsPath: string;
+  private readonly statPath: (absolutePath: string) => Stats;
+  private readonly diskLookup: (identity: string) => ExistingDestination | undefined;
+
+  constructor(input: {
+    assetsPath: string;
+    indexed: Map<string, ExistingDestination>;
+    statPath: (absolutePath: string) => Stats;
+    diskLookup: (identity: string) => ExistingDestination | undefined;
+  }) {
+    super();
+    this.assetsPath = input.assetsPath;
+    this.indexed = input.indexed;
+    this.statPath = input.statPath;
+    this.diskLookup = input.diskLookup;
+  }
+
+  override set(key: string, value: ExistingDestination): this {
+    super.set(key, value);
+    return this;
+  }
+
+  override get(key: string): ExistingDestination | undefined {
+    const claimed = super.get(key);
+    if (claimed !== undefined) return claimed;
+    const indexed = this.indexed.get(key);
+    if (indexed !== undefined) return indexed;
+    // One stat of the normalized path: case-insensitive volumes (Windows,
+    // macOS) also match spelling variants, and on Linux the normalized
+    // spelling is what Serpent itself wrote. The injected destinationLstat
+    // (same hook portableDiskDestination uses for absent components) keeps
+    // candidate-name rejection testable and consistent. Only a stat hit
+    // falls through to the full readdir walk.
+    try {
+      this.statPath(path.join(this.assetsPath, ...key.split('/')));
+    } catch (error) {
+      if (isMissingPathError(error)) return undefined;
+      // Unexpected stat failure: defer to the disk walk's error semantics.
+    }
+    return this.diskLookup(key);
+  }
 }
 
 interface PortablePathRow {
@@ -12991,6 +13051,24 @@ export class LibraryService {
       });
     }
     return index;
+  }
+
+  /**
+   * Index for regular managed imports: DB-backed with a per-miss disk
+   * fallback so orphaned on-disk destinations keep surfacing as conflicts.
+   * The DB query and directory probe each run once per import, not once per
+   * staged file.
+   */
+  private destinationIndexWithDiskFallback(
+    openLibrary: OpenLibrary,
+  ): Map<string, ExistingDestination> {
+    const statPath = this.options.destinationLstat ?? lstatSync;
+    return new DiskFallbackDestinationIndex({
+      assetsPath: this.assetsPath(openLibrary),
+      indexed: this.managedDestinationIndex(openLibrary),
+      statPath: (absolutePath) => statPath(absolutePath),
+      diskLookup: (identity) => this.portableDiskDestination(openLibrary, identity),
+    });
   }
 
   private lookupImportDestination(
@@ -43183,9 +43261,12 @@ export class LibraryService {
     );
     const stagePath = path.join(operationPath, 'stage');
     const skipContentHash = input.skipContentHash === true;
-    const destinationIndex = skipContentHash
-      ? (input.destinationIndex ?? this.managedDestinationIndex(openLibrary))
-      : undefined;
+    // Bulk conversions pass an explicit DB-only index; regular imports get a
+    // DB-backed index with a per-miss disk fallback so both avoid readdirs
+    // Assets for every staged file (the dominant pre-copy cost on a
+    // 20k-item HDD library) without losing orphan-on-disk conflict detection.
+    const destinationIndex =
+      input.destinationIndex ?? this.destinationIndexWithDiskFallback(openLibrary);
     let preparingManifest: OperationManifest;
     try {
       preparingManifest = {
