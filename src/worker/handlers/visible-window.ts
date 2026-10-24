@@ -143,18 +143,21 @@ export function executeVisibleWindowWorkerCommand(
     libraryService.interruptThumbnailJobsOutsideViewport(libraryId, visibleAssetIds);
     runtime.lastViewportPreemptAtMs.set(libraryId, nowMs);
   }
-  // Models use Main's single-flight offscreen renderer. Keep that
-  // potentially slow/timeout-prone work out of the fast visible raster
-  // wave so it cannot occupy one of the two Worker queue slots while the
-  // user-visible image/video cards are being filled. Startup and mutation
-  // scenes still process model jobs in the background, and an explicit
-  // model preview request still uses the normal visible hint.
+  // Raster cards stay ahead of models: a model thumbnail is one offscreen
+  // GPU render and must not be the first claim while images in the same
+  // viewport still need a decoder. Models are still part of this wave.
+  // Dropping them left a model folder with queued jobs and nothing running:
+  // the fast-id list was empty, so no pump started, and the background
+  // startup scene only runs after this wave yields.
   const fastVisibleAssetIds = libraryService.filterVisibleThumbnailAssetIds(
     libraryId,
     visibleAssetIds,
   );
-  if (fastVisibleAssetIds.length > 0) {
-    runtime.scheduleVisibleThumbnails(libraryId, fastVisibleAssetIds, preemptVisible);
+  const fastVisibleIdSet = new Set(fastVisibleAssetIds);
+  const modelAssetIds = visibleAssetIds.filter((assetId) => !fastVisibleIdSet.has(assetId));
+  const scheduledAssetIds = [...fastVisibleAssetIds, ...modelAssetIds];
+  if (scheduledAssetIds.length > 0) {
+    runtime.scheduleVisibleThumbnails(libraryId, scheduledAssetIds, preemptVisible);
   }
   // Header probes used to run synchronously here, before the ACK. On a
   // cold/remote volume that made a scroll report monopolize the Worker

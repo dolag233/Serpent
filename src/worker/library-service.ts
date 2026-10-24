@@ -23919,9 +23919,13 @@ export class LibraryService {
   }
 
   /**
-   * Keep the fast visible-thumbnail wave on media that can complete in the
-   * Worker. GPU models are rendered through Main's single-flight offscreen
-   * window and stay off this wave.
+   * Raster ids for a visible wave, in caller order. GPU models are omitted
+   * here so the handler can place them after images: a model thumbnail is one
+   * offscreen render and should not be the first claim while the same
+   * viewport still has image cards. The omission is not permission to drop
+   * those ids from the wave. A model-only viewport used to schedule nothing,
+   * leave every generate_thumbnail row queued, and keep running at 0 because
+   * the startup scene cannot take the pump until this wave yields.
    */
   filterVisibleThumbnailAssetIds(
     libraryId: string,

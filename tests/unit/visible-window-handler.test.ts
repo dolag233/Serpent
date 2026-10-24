@@ -91,3 +91,55 @@ test('visible-window schedules a light visible wave for newly reported assets', 
     ['asset-1', 'asset-2'],
   );
 });
+
+test('visible-window still schedules models after the fast raster ids', () => {
+  const libraryService = {
+    filterIgnoredAssetIds: vi.fn((_libraryId: string, assetIds: string[]) => assetIds),
+    filterVisibleThumbnailAssetIds: vi.fn(() => ['image-1']),
+    interruptThumbnailJobsOutsideViewport: vi.fn(),
+  } as unknown as LibraryService;
+  const windowRuntime = runtime();
+
+  executeVisibleWindowWorkerCommand(
+    libraryService,
+    visibleWindowRequest({
+      type: 'asset.thumbnail.visible-window',
+      libraryId: 'lib-1',
+      assetIds: ['model-1', 'image-1', 'model-2'],
+      viewportGeneration: 8,
+    }),
+    windowRuntime,
+  );
+
+  expect(windowRuntime.scheduleVisibleThumbnails).toHaveBeenCalledWith(
+    'lib-1',
+    ['image-1', 'model-1', 'model-2'],
+    expect.any(Boolean),
+  );
+});
+
+test('visible-window schedules a model-only viewport', () => {
+  const libraryService = {
+    filterIgnoredAssetIds: vi.fn((_libraryId: string, assetIds: string[]) => assetIds),
+    filterVisibleThumbnailAssetIds: vi.fn(() => []),
+    interruptThumbnailJobsOutsideViewport: vi.fn(),
+  } as unknown as LibraryService;
+  const windowRuntime = runtime();
+
+  executeVisibleWindowWorkerCommand(
+    libraryService,
+    visibleWindowRequest({
+      type: 'asset.thumbnail.visible-window',
+      libraryId: 'lib-1',
+      assetIds: ['model-1', 'model-2'],
+      viewportGeneration: 9,
+    }),
+    windowRuntime,
+  );
+
+  expect(windowRuntime.scheduleVisibleThumbnails).toHaveBeenCalledWith(
+    'lib-1',
+    ['model-1', 'model-2'],
+    expect.any(Boolean),
+  );
+});
