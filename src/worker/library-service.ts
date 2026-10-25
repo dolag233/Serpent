@@ -37437,8 +37437,8 @@ export class LibraryService {
   }
 
   /**
-   * Read UTF-8 text for a text-classified asset with a hard byte cap (Serpent-sh7).
-   * Linked assets are readable; only managed assets are editable via saveTextAsset.
+   * Read text for a text-classified asset with a hard byte cap (Serpent-sh7).
+   * Managed and linked assets are editable. Trashed assets stay read-only.
    */
   private textAssetPreviewCacheKey(
     libraryId: string,
@@ -37706,7 +37706,7 @@ export class LibraryService {
       truncated,
       byteSize: truncated ? maxBytes : buffer.length,
       lineCount: countTextLines(content),
-      editable: row.location_kind === 'managed' && !isTrashed,
+      editable: !isTrashed,
       mimeType: textMimeForExtension(extension) ?? 'text/plain',
     };
     this.cacheTextAssetPreview(cacheKey, value);
@@ -37714,8 +37714,9 @@ export class LibraryService {
   }
 
   /**
-   * Save UTF-8 text back to a managed asset source. Linked assets are rejected
-   * with LIBRARY_NOT_WRITABLE so the UI can show a clear read-only reason.
+   * Save UTF-8 text back to the asset source. Managed files stay inside the
+   * library. Linked files are written to their source path. Trashed assets
+   * are rejected.
    */
   saveTextAsset(input: {
     libraryId: string;
@@ -37750,9 +37751,6 @@ export class LibraryService {
       } | undefined;
     if (!row || row.deleted_at || row.availability !== 'available' || !row.current_revision_id) {
       throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
-    }
-    if (row.location_kind !== 'managed') {
-      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
     }
     if (LibraryService.detectMediaType(row.relative_file_path) !== 'text') {
       throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE');

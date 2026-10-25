@@ -122,6 +122,48 @@ describe('Linked folder import', () => {
     service.closeAll();
   });
 
+  it('saves text edits back to the linked source file', () => {
+    const root = temporaryRoot();
+    const sourceRoot = path.join(root, 'source');
+    mkdirSync(sourceRoot);
+    const notePath = path.join(sourceRoot, 'note.txt');
+    writeFileSync(notePath, 'original');
+
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Linked Text', selectedParentPath: root });
+    service.importFolderAsLinked({
+      libraryId: created.libraryId,
+      sourceRootPath: sourceRoot,
+    });
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })
+      .find((item) => item.relativeFilePath === 'note.txt');
+    expect(asset?.assetId).toEqual(expect.any(String));
+
+    const read = service.readTextAsset({
+      libraryId: created.libraryId,
+      assetId: asset!.assetId,
+    });
+    expect(read.editable).toBe(true);
+    expect(read.content).toBe('original');
+
+    service.saveTextAsset({
+      libraryId: created.libraryId,
+      assetId: asset!.assetId,
+      content: 'edited in place',
+      expectedRevisionId: read.revisionId,
+    });
+
+    expect(readFileSync(notePath, 'utf8')).toBe('edited in place');
+    expect(existsSync(path.join(created.libraryPath, 'Assets', 'note.txt'))).toBe(false);
+    const again = service.readTextAsset({
+      libraryId: created.libraryId,
+      assetId: asset!.assetId,
+    });
+    expect(again.content).toBe('edited in place');
+    expect(again.editable).toBe(true);
+    service.closeAll();
+  });
+
   it('Serpent-a9vh: exposes virtual child folders and non-recursive browse', () => {
     const root = temporaryRoot();
     const sourceRoot = path.join(root, 'source');
