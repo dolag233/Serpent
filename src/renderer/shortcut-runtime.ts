@@ -54,7 +54,22 @@ export function listenForShortcutInputs(
 ): () => void {
   const onKeyDown: EventListener = (rawEvent) => {
     const event = rawEvent as KeyboardEvent;
-    handler(event, event);
+    // Native keyboard fields are prototype getters. Copy them explicitly so
+    // consumers can spread the input to attach a target without losing keys.
+    const input = {
+      kind: "keyboard" as const,
+      key: event.key,
+      code: event.code,
+      keyCode: event.keyCode,
+      location: event.location,
+      metaKey: event.metaKey,
+      ctrlKey: event.ctrlKey,
+      altKey: event.altKey,
+      shiftKey: event.shiftKey,
+      repeat: event.repeat,
+      isComposing: event.isComposing,
+    };
+    handler(input, event);
   };
   const onMouseDown: EventListener = (rawEvent) => {
     const event = rawEvent as MouseEvent;

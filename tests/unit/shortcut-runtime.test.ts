@@ -11,6 +11,7 @@ import {
   DEFAULT_SHORTCUT_BINDINGS,
   setShortcutOverride,
 } from "../../src/shared/shortcut-bindings";
+import { matchVideoPlaybackSeekKey } from "../../src/renderer/video-player-controls";
 
 const event = (key: string, code: string) => ({
   key,
@@ -71,5 +72,50 @@ describe("shortcut runtime", () => {
     });
     expect(matchesRuntimeShortcut("asset.rename", seen[0]!.input as never, "windows"))
       .toBe(true);
+  });
+
+  it.each([false, true])("preserves native keyboard prototype fields when a viewer spreads the input (repeat: %s)", (repeat) => {
+    const fields = {
+      key: "ArrowRight",
+      code: "ArrowRight",
+      keyCode: 39,
+      location: 0,
+      metaKey: false,
+      ctrlKey: true,
+      altKey: false,
+      shiftKey: false,
+      repeat,
+      isComposing: false,
+    };
+    const keyboardEvent = new KeyboardEvent("keydown", {
+      ...fields, bubbles: true, cancelable: true,
+    });
+    // happy-dom may expose own data properties; Chromium exposes prototype
+    // getters. Model that native shape explicitly to catch accidental spread.
+    const prototype = Object.create(Object.getPrototypeOf(keyboardEvent));
+    for (const [name, value] of Object.entries(fields)) {
+      Reflect.deleteProperty(keyboardEvent, name);
+      Object.defineProperty(prototype, name, { get: () => value, enumerable: true });
+    }
+    Object.setPrototypeOf(keyboardEvent, prototype);
+    expect(Object.hasOwn(keyboardEvent, "key")).toBe(false);
+    expect({ ...keyboardEvent }).not.toHaveProperty("key");
+
+    const seen: Array<{ input: unknown; original: Event; action: unknown }> = [];
+    const remove = listenForShortcutInputs(window, (input, original) => {
+      const viewerInput = { ...input, target: original.target };
+      seen.push({ input: viewerInput, original, action: matchVideoPlaybackSeekKey(viewerInput) });
+      original.preventDefault();
+    });
+    try {
+      window.dispatchEvent(keyboardEvent);
+      expect(seen).toHaveLength(1);
+      expect(seen[0]?.input).toMatchObject({ ...fields, kind: "keyboard" });
+      expect(seen[0]?.action).toEqual(repeat ? null : { kind: "skip", direction: 1 });
+      expect(seen[0]?.original).toBe(keyboardEvent);
+      expect(keyboardEvent.defaultPrevented).toBe(true);
+    } finally {
+      remove();
+    }
   });
 });
