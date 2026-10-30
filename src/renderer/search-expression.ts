@@ -1,7 +1,22 @@
 import type { SearchQuery } from '../shared/asset-types';
-import { parseSearchExpression } from '../shared/search-expression';
+import { parseSearchExpression as parseSharedSearchExpression } from '../shared/search-expression';
 
-export { parseSearchExpression } from '../shared/search-expression';
+export function searchExpressionError(value: string): string | null {
+  try { parseSharedSearchExpression(value); return null; }
+  catch (error) { return error instanceof Error ? error.message : '标签公式格式不正确。'; }
+}
+
+// Rendering and highlighting run while the user is still typing. An unfinished
+// formula must not crash React or accidentally broaden the query to every asset.
+export function parseSearchExpression(value: string): SearchQuery {
+  try { return parseSharedSearchExpression(value); }
+  catch {
+    return { clauses: [
+      { field: 'tags', values: ['__invalid_tag_formula__'], exact: true, exclude: false },
+      { field: 'tags', values: ['__invalid_tag_formula__'], exact: true, exclude: true },
+    ] };
+  }
+}
 
 export type SearchHighlightSegment = { text: string; matched: boolean };
 

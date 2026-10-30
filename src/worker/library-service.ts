@@ -6577,11 +6577,12 @@ function ftsCanNarrowSearchGroups(groups: SearchGroup[]): boolean {
 function buildContextualSearchWhere(
   groups: SearchGroup[],
   assetOnly = false,
+  hasAiAssetTags = true,
 ): {
   sql: string;
   params: string[];
 } {
-  return buildCatalogContextualSearchWhere(groups, assetOnly);
+  return buildCatalogContextualSearchWhere(groups, assetOnly, hasAiAssetTags);
 }
 
 /**
@@ -35214,7 +35215,7 @@ export class LibraryService {
       ? buildCatalogFtsQuery(searchGroups)
       : null;
     const { sql: contextualSearchWhere, params: contextualSearchParams } = hasQuery
-      ? buildContextualSearchWhere(searchGroups, !hasSearchIndex)
+      ? buildContextualSearchWhere(searchGroups, !hasSearchIndex, hasAiAssetTags)
       : { sql: '', params: [] };
     const { sql: filterWhere, params: filterParams } = this.buildFilterWhere(
       input.filters ?? [],

@@ -1,5 +1,13 @@
 # Serpent 人类功能验收清单
 
+## 标签公式参考实现（待讨论）
+
+关联功能讨论 [#80](https://github.com/dolag233/Serpent/issues/80)。此 Draft 尚未进入人类验收队列，未将产品简报中的后续功能标记为已接受。
+
+| 需求 | 实现 | 自动化证据 | 人工与平台证据 |
+| --- | --- | --- | --- |
+| 显式入口的括号标签与或非；保留旧搜索；兼容缺搜索索引和 AI 表的库 | `src/shared/tag-formula.ts` / `src/worker/catalog-read.ts` / [提案说明](../../developer/tag-formula-proposal.md) | `node scripts/run-vitest-with-electron.mjs run tests/unit/tag-formula.test.ts tests/worker/tag-formula-search.test.ts --maxWorkers=1`：2 files / 21 tests passed，Windows x64；真实临时库重开验证四种表组合 | 当前 dev 构建的人工体验、macOS、packaged、大型库性能未验证；错误提示尚缺英文翻译。 |
+
 > 2026-09-13 交互性能计划：见[第二阶段设计](../implementation/2026-09-13-interactive-performance-design.md)与[工单索引](../development/2026-09-13-interactive-performance-execution.md)，总工单 `Serpent-e9a66b`。PERF2-01 只交付读版本/回执协议与 Worker persist 基线入口，没有可独立操作的 UI 增量。`PERF2-NAV` / `PERF2-NAS` / `PERF2-MEDIA` / `PERF2-MUT` / `PERF2-REFRESH` 目前仅规划、均未实现/未验证，不进入「待人类验收」队列。后续由集成者按可操作增量和实际测试证据登记；历史验收状态不因本设计改变。
 
 > 状态：持续维护

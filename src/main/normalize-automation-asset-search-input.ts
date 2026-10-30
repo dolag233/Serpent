@@ -10,8 +10,12 @@ import { parseSearchExpression } from '../shared/search-expression';
 export function normalizeAutomationAssetSearchInput(rawInput: unknown): unknown | undefined {
   const search = automationScriptAssetSearchInputSchema.safeParse(rawInput);
   if (!search.success) return undefined;
-  return {
-    ...search.data,
-    query: search.data.query === null ? null : parseSearchExpression(search.data.query),
-  };
+  try {
+    return {
+      ...search.data,
+      query: search.data.query === null ? null : parseSearchExpression(search.data.query),
+    };
+  } catch {
+    return undefined;
+  }
 }
