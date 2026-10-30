@@ -7,7 +7,7 @@ import {
   useViewerZoomPan,
   type UseViewerZoomPanApi,
 } from "../../src/renderer/use-viewer-zoom-pan";
-import { DEFAULT_SHORTCUT_BINDINGS } from "../../src/shared/shortcut-bindings";
+import { DEFAULT_SHORTCUT_BINDINGS, setShortcutOverride } from "../../src/shared/shortcut-bindings";
 import { setShortcutRuntime } from "../../src/renderer/shortcut-runtime";
 
 type HarnessProps = {
@@ -15,7 +15,7 @@ type HarnessProps = {
 };
 
 function PanHarness({ onApi }: HarnessProps): ReactElement {
-  const api = useViewerZoomPan({});
+  const api = useViewerZoomPan({ imageWheelShortcut: true });
   useLayoutEffect(() => {
     const viewport = document.querySelector("[data-pan-harness]");
     if (!(viewport instanceof HTMLElement)) return;
@@ -49,6 +49,7 @@ function PanHarness({ onApi }: HarnessProps): ReactElement {
     "data-pan-harness": "",
     "data-x": String(api.view.x),
     "data-y": String(api.view.y),
+    "data-scale": String(api.view.scale),
     ref: api.viewportRef,
   });
 }
@@ -134,6 +135,27 @@ describe("useViewerZoomPan middle-button pan (Serpent-16cd1e)", () => {
     const after = readPan(container!);
     expect(after.x - before.x).toBe(40);
     expect(after.y - before.y).toBe(20);
+  });
+
+  it("zooms with small wheel deltas and honors a changed wheel binding", () => {
+    const viewport = container!.firstElementChild as HTMLElement;
+    const scale = () => Number(viewport.dataset.scale);
+    const wheel = (altKey = false) => {
+      const event = new WheelEvent("wheel", {
+        bubbles: true, cancelable: true, deltaY: -10, clientX: 100, clientY: 100,
+      });
+      Object.defineProperty(event, "altKey", { value: altKey });
+      return event;
+    };
+    const initial = scale();
+    act(() => { viewport.dispatchEvent(wheel()); });
+    expect(scale()).toBeGreaterThan(initial);
+    setShortcutRuntime("windows", setShortcutOverride(DEFAULT_SHORTCUT_BINDINGS, "windows", "viewer.image.wheel-zoom", { key: "Wheel", altKey: true }));
+    const afterDefault = scale();
+    act(() => { viewport.dispatchEvent(wheel()); });
+    expect(scale()).toBe(afterDefault);
+    act(() => { viewport.dispatchEvent(wheel(true)); });
+    expect(scale()).toBeGreaterThan(afterDefault);
   });
 
   it("still pans with the left mouse button via mousedown", () => {

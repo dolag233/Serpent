@@ -13,6 +13,7 @@ import {
 import { createPortal, flushSync } from "react-dom";
 
 import { Icon, type IconName } from "./Icons";
+import { capturePhotoReturnFlight, cardPhotoRadius, containedPhotoRect, createPhotoFlight, movePhotoFlight, preparePhotoFlightSource, schedulePhotoFlightStart, type PhotoFlight } from "./viewer-image-transition";
 import { isCurrentAiConnectionProbe } from "./ai-connection-probe-guard";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { EditTextContextMenuHost } from "./edit-text-context-menu";
@@ -2363,6 +2364,21 @@ function AppInner() {
   // top of the canvas during a rapid open/close.
   const [previewRestoring, setPreviewRestoring] = useState(false);
   const previewModalRef = useRef<AssetPreviewModalHandle>(null);
+  const previewTransitionOriginRef = useRef<{ assetId: string; rect: DOMRect; radius: string; naturalWidth: number; naturalHeight: number; started: boolean; ready: boolean; finished: boolean } | null>(null);
+  const previewOpeningImageRef = useRef<{ assetId: string; url: string } | null>(null);
+  const previewPhotoRasterRef = useRef<{ assetId: string; revisionId: string; image: HTMLCanvasElement } | null>(null);
+  const previewOpeningDecodeRef = useRef<AbortController | null>(null);
+  useEffect(() => () => previewOpeningDecodeRef.current?.abort(), []);
+  const [photoFlightOpeningAssetId, setPhotoFlightOpeningAssetId] = useState<string | null>(null);
+  const photoFlightRef = useRef<PhotoFlight | null>(null);
+  const clearPhotoFlight = useCallback(() => {
+    setPhotoFlightOpeningAssetId(null);
+    photoFlightRef.current?.remove();
+    photoFlightRef.current = null;
+    document.querySelectorAll(".workspace-viewer.is-photo-flight").forEach((viewer) => viewer.classList.remove("is-photo-flight"));
+    document.querySelectorAll(".workspace[data-photo-return]").forEach((workspace) => workspace.removeAttribute("data-photo-return"));
+  }, []);
+  useEffect(() => () => clearPhotoFlight(), [clearPhotoFlight]);
   // REQ-CANVAS-019: read synchronously inside the canvas ResizeObserver
   // callback (which is created once and does not close over fresh state)
   // to skip the reflow-anchor logic while the viewer hides the canvas.
@@ -4295,11 +4311,24 @@ function AppInner() {
     );
   }, [navHistoryRef]);
 
-  const openAssetPreview = useCallback((
+  const openAssetPreview = useCallback(async (
     asset: AssetSummary,
     options?: { recordHistory?: boolean },
   ) => {
     if (asset.availability !== "available" || asset.deletedAt) return;
+    previewOpeningDecodeRef.current?.abort();
+    const opening = new AbortController();
+    previewOpeningDecodeRef.current = opening;
+    setPhotoFlightOpeningAssetId(asset.assetId);
+    if (asset.mediaType === "image") {
+      const cover = workspaceCanvasRef.current?.querySelector<HTMLImageElement>(
+        `.asset-card[data-asset-id="${CSS.escape(asset.assetId)}"] .asset-preview img:not(.adaptive-card-upgrade)`,
+      ) ?? null;
+      if (cover) await preparePhotoFlightSource(cover, opening.signal);
+      if (opening.signal.aborted) return;
+    }
+    previewPhotoRasterRef.current = null;
+    clearPhotoFlight();
     previewAssetRef.current = asset;
     pendingViewportRestoreRef.current = null;
     if (
@@ -4346,6 +4375,38 @@ function AppInner() {
       const card = Array.from(
         canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
       ).find((el) => el.dataset.assetId === asset.assetId);
+      const cardImage = card?.querySelector<HTMLElement>(".asset-preview");
+      const upgradedPhoto = cardImage?.querySelector<HTMLImageElement>(".adaptive-card-upgrade") ?? null;
+      const coverPhoto = cardImage?.querySelector<HTMLImageElement>("img:not(.adaptive-card-upgrade)") ?? null;
+      // Motion uses the decoded cover, not a possibly 50MP adaptive original.
+      const cardPhoto = coverPhoto?.complete && coverPhoto.naturalWidth > 0 ? coverPhoto
+        : upgradedPhoto && upgradedPhoto.complete && upgradedPhoto.naturalWidth > 0
+        && getComputedStyle(upgradedPhoto).opacity !== "0"
+        ? upgradedPhoto
+        : cardImage?.querySelector<HTMLImageElement>("img") ?? null;
+      previewOpeningImageRef.current = cardPhoto?.complete && cardPhoto.naturalWidth > 0
+        ? { assetId: asset.assetId, url: cardPhoto.currentSrc || cardPhoto.src }
+        : null;
+      const photoRect = cardImage && cardPhoto ? containedPhotoRect(cardImage.getBoundingClientRect(), cardPhoto.naturalWidth, cardPhoto.naturalHeight) : null;
+      previewTransitionOriginRef.current = asset.mediaType === "image" && cardImage && photoRect
+        ? { assetId: asset.assetId, rect: photoRect, radius: cardPhotoRadius(cardImage, photoRect), naturalWidth: cardPhoto!.naturalWidth, naturalHeight: cardPhoto!.naturalHeight, started: false, ready: false, finished: false }
+        : null;
+      if (previewTransitionOriginRef.current) {
+        photoFlightRef.current = createPhotoFlight(cardPhoto, previewTransitionOriginRef.current.rect, previewTransitionOriginRef.current.radius);
+        if (photoFlightRef.current?.element instanceof HTMLCanvasElement) {
+          previewPhotoRasterRef.current = { assetId: asset.assetId, revisionId: asset.currentRevisionId, image: photoFlightRef.current.element };
+        }
+        if (!photoFlightRef.current) previewTransitionOriginRef.current = null;
+        else {
+          canvas.closest(".workspace")?.setAttribute("data-photo-return", "opening");
+          const flight = photoFlightRef.current;
+          window.setTimeout(() => {
+            if (photoFlightRef.current !== flight || previewTransitionOriginRef.current?.assetId !== asset.assetId) return;
+            previewTransitionOriginRef.current = null;
+            clearPhotoFlight();
+          }, 3000);
+        }
+      }
       previewScrollSnapshotRef.current = captureBrowseViewSnapshot(
         asset.assetId,
         card?.getBoundingClientRect() ?? null,
@@ -4357,8 +4418,11 @@ function AppInner() {
         hasCard: Boolean(card),
       });
     } else {
+      previewTransitionOriginRef.current = null;
+      previewOpeningImageRef.current = null;
       previewScrollSnapshotRef.current = null;
     }
+    setPhotoFlightOpeningAssetId(previewTransitionOriginRef.current ? asset.assetId : null);
     setSelectedAssetIds([asset.assetId]);
     setSelectedAssetId(asset.assetId);
     selectionAnchorRef.current = asset.assetId;
@@ -4382,7 +4446,41 @@ function AppInner() {
         canForward: navHistoryRef.current.canForward,
       });
     }
-  }, [navHistoryRef, saveCurrentWorkspaceHistoryViewport, selectionAnchorRef, setNavHistoryUi, syncActiveWorkspaceTabLocation, wakeViewerChrome, clearPreviewScrollHold]);
+  }, [clearPhotoFlight, navHistoryRef, saveCurrentWorkspaceHistoryViewport, selectionAnchorRef, setNavHistoryUi, syncActiveWorkspaceTabLocation, wakeViewerChrome, clearPreviewScrollHold]);
+
+  // Start the flight as soon as the viewer layout exists. The decoded card
+  // remains in place at its destination until the real viewer is ready.
+  useLayoutEffect(() => {
+    const origin = previewTransitionOriginRef.current;
+    const flight = photoFlightRef.current;
+    if (!previewAsset || !origin || !flight || origin.started || origin.assetId !== previewAsset.assetId) return;
+    return schedulePhotoFlightStart(
+      () => previewTransitionOriginRef.current === origin && photoFlightRef.current === flight && !closingPreviewRef.current,
+      () => {
+        const viewer = document.querySelector<HTMLElement>(".workspace-viewer:not(.is-preview-preloading)");
+        const content = viewer?.querySelector<HTMLElement>(".preview-content");
+        if (!viewer || !content) return false;
+        const destination = containedPhotoRect(content.getBoundingClientRect(), origin.naturalWidth, origin.naturalHeight);
+        if (destination.width < 1 || destination.height < 1) return false;
+        origin.started = true;
+        viewer.classList.add("is-photo-flight");
+        requestAnimationFrame(() => {
+          if (previewTransitionOriginRef.current !== origin || photoFlightRef.current !== flight || closingPreviewRef.current) return;
+          workspaceCanvasRef.current?.closest(".workspace")?.setAttribute("data-photo-return", "opening-active");
+          void movePhotoFlight(flight, origin.rect, destination, origin.radius, "0px").then(() => {
+            if (previewTransitionOriginRef.current !== origin || photoFlightRef.current !== flight) return;
+            origin.finished = true;
+            setPhotoFlightOpeningAssetId(null);
+            if (origin.ready) {
+              previewTransitionOriginRef.current = null;
+              clearPhotoFlight();
+            }
+          });
+        });
+        return true;
+      },
+    );
+  }, [clearPhotoFlight, previewAsset]);
 
   const persistAssetColorSpace = useCallback(async (assetId: string, colorSpace: string | null) => {
     if (!api || !library) return;
@@ -4402,6 +4500,9 @@ function AppInner() {
     asset: AssetSummary,
     options?: { recordHistory?: boolean },
   ) => {
+    previewOpeningDecodeRef.current?.abort();
+    previewTransitionOriginRef.current = null;
+    clearPhotoFlight();
     setSelectedAssetIds([asset.assetId]);
     setSelectedAssetId(asset.assetId);
     selectionAnchorRef.current = asset.assetId;
@@ -4419,7 +4520,7 @@ function AppInner() {
         canForward: navHistoryRef.current.canForward,
       });
     }
-  }, [navHistoryRef, selectionAnchorRef, setNavHistoryUi, syncActiveWorkspaceTabLocation]);
+  }, [clearPhotoFlight, navHistoryRef, selectionAnchorRef, setNavHistoryUi, syncActiveWorkspaceTabLocation]);
 
   useEffect(() => {
     const pendingPreview = pendingWorkspacePreviewRef.current;
@@ -4448,6 +4549,7 @@ function AppInner() {
     restoreBrowsePosition = true,
     updateHistory = true,
   ) => {
+    previewOpeningDecodeRef.current?.abort();
     // A scope transition can arrive after React has already cleared
     // `previewAsset` but before browse restoration finishes. Cancel that
     // stale restoration even when there is no longer an asset to close,
@@ -4461,8 +4563,68 @@ function AppInner() {
       }
     }
     const closingAsset = previewAsset;
-    if (!closingAsset) return;
-    if (closingPreviewRef.current === closingAsset.assetId) return;
+    if (!closingAsset) { setPhotoFlightOpeningAssetId(null); return; }
+    if (closingPreviewRef.current === closingAsset.assetId && restoreBrowsePosition) return;
+    const closeGeneration = ++previewCloseGenerationRef.current;
+    closingPreviewRef.current = closingAsset.assetId;
+    previewTransitionOriginRef.current = null;
+    const image = document.querySelector<HTMLImageElement>(
+      ".workspace-viewer:not(.is-preview-preloading) .preview-image:not(.is-hidden)",
+    );
+    const returning = restoreBrowsePosition && closingAsset.mediaType === "image"
+      ? capturePhotoReturnFlight(image, photoFlightRef.current,
+        previewPhotoRasterRef.current?.assetId === closingAsset.assetId
+          && previewPhotoRasterRef.current.revisionId === closingAsset.currentRevisionId ? previewPhotoRasterRef.current.image : null)
+      : null;
+    // Transfer ownership before clearing the old handoff state. In particular,
+    // never discard the only visible image during an interrupted opening.
+    if (returning?.flight === photoFlightRef.current) photoFlightRef.current = null;
+    clearPhotoFlight();
+    if (returning) {
+      photoFlightRef.current = returning.flight;
+      image?.closest(".workspace-viewer")?.classList.add("is-photo-flight");
+    }
+    if (restoreBrowsePosition && closingAsset.mediaType === "image") {
+      const canvas = workspaceCanvasRef.current;
+      const snapshot = previewScrollSnapshotRef.current;
+      const workspace = canvas?.closest<HTMLElement>(".workspace");
+      workspace?.setAttribute("data-photo-return", "prepare");
+      if (canvas && snapshot) {
+        await new Promise<void>((resolve) => {
+          const cancel = scheduleBrowseViewRestore({
+            canvas, snapshot,
+            isCurrent: () => closeGeneration === previewCloseGenerationRef.current,
+            onComplete: () => { cancelPreviewViewRestoreRef.current = null; resolve(); },
+          });
+          cancelPreviewViewRestoreRef.current = () => { cancel(); resolve(); };
+        });
+      }
+      if (closeGeneration !== previewCloseGenerationRef.current || previewAssetRef.current?.assetId !== closingAsset.assetId) return;
+      const card = workspaceCanvasRef.current?.querySelector<HTMLElement>(
+        `.asset-card[data-asset-id="${CSS.escape(closingAsset.assetId)}"] .asset-preview`,
+      );
+      const from = returning?.from ?? null;
+      const cardRect = card?.getBoundingClientRect() ?? null;
+      const canvasRect = canvas?.getBoundingClientRect();
+      const cardVisible = cardRect && canvasRect && cardRect.bottom > canvasRect.top && cardRect.top < canvasRect.bottom &&
+        cardRect.right > canvasRect.left && cardRect.left < canvasRect.right;
+      // Virtualized cards may not have mounted/decoded their thumbnail yet.
+      // The retained viewer bitmap already supplies the image proportions.
+      const to = cardVisible && cardRect && from ? containedPhotoRect(cardRect, from.width, from.height) : null;
+      const flight = returning?.flight ?? null;
+      if (flight && from && to) {
+        photoFlightRef.current = flight;
+        workspace?.setAttribute("data-photo-return", "active");
+        image?.closest(".workspace-viewer")?.classList.add("is-photo-flight");
+        await movePhotoFlight(flight, from, to, returning!.radius, card ? cardPhotoRadius(card, to) : "0px");
+      } else {
+        clearPhotoFlight();
+        workspace?.setAttribute("data-photo-return", "active");
+      }
+      if (closeGeneration !== previewCloseGenerationRef.current || previewAssetRef.current?.assetId !== closingAsset.assetId) {
+        return;
+      }
+    }
     // Serpent-b7e173：查看器被关闭时（无论 X/Esc 显式关还是导航触发），若当前
     // 历史条目仍是 preview 则硬移除——否则「从预览导航到别处」会残留一个已关闭
     // 的 preview，导致 back 回到它。back()/forward() 已移 index（当前非 preview）
@@ -4475,7 +4637,6 @@ function AppInner() {
         canForward: navHistoryRef.current.canForward,
       });
     }
-    const closeGeneration = ++previewCloseGenerationRef.current;
     closingPreviewRef.current = closingAsset.assetId;
     previewRestoringRef.current = restoreBrowsePosition;
     setPreviewRestoring(restoreBrowsePosition);
@@ -4571,6 +4732,9 @@ function AppInner() {
             armPreviewScrollHold(scrollSnapshot.scrollTop);
             previewRestoringRef.current = false;
             setPreviewRestoring(false);
+            window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+              if (closeGeneration === previewCloseGenerationRef.current) clearPhotoFlight();
+            }));
             previewRestoreFrameRef.current = window.requestAnimationFrame(() =>
               settleRestoredFocus(12),
             );
@@ -4579,12 +4743,16 @@ function AppInner() {
       } else {
         previewRestoringRef.current = false;
         setPreviewRestoring(false);
+        window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+          if (closeGeneration === previewCloseGenerationRef.current) clearPhotoFlight();
+        }));
         previewRestoreFrameRef.current = window.requestAnimationFrame(() =>
           settleRestoredFocus(12),
         );
       }
     }
     if (!restoreBrowsePosition) {
+      clearPhotoFlight();
       clearPreviewScrollHold();
       setPreviewRestoring(false);
     }
@@ -4605,7 +4773,7 @@ function AppInner() {
         closingPreviewRef.current = null;
       }
     }
-  }, [api, armPreviewScrollHold, clearPreviewScrollHold, library, navHistoryRef, previewAsset, setNavHistoryUi, syncActiveWorkspaceTabLocation]);
+  }, [api, armPreviewScrollHold, clearPhotoFlight, clearPreviewScrollHold, library, navHistoryRef, previewAsset, setNavHistoryUi, syncActiveWorkspaceTabLocation]);
 
   // Collection tree helper
   const collectionTree = useMemo(() => {
@@ -12498,6 +12666,25 @@ function AppInner() {
         )
       )
         return;
+      const selectPrevious = matchesRuntimeShortcut("asset.select-previous", shortcutInput, SHORTCUT_PLATFORM);
+      const selectNext = matchesRuntimeShortcut("asset.select-next", shortcutInput, SHORTCUT_PLATFORM);
+      if ((selectPrevious || selectNext) && selectedAsset) {
+        const ids = selectionAssetIds ?? visibleAssets.map((asset) => asset.assetId);
+        const index = ids.indexOf(selectedAsset.assetId);
+        const nextId = index < 0 ? undefined : ids[index + (selectPrevious ? -1 : 1)];
+        if (nextId) {
+          event.preventDefault();
+          setSelectedAssetIds([nextId]);
+          setSelectedAssetId(nextId);
+          setAssetSelectionAnchor(nextId);
+          const card = workspaceCanvasRef.current?.querySelector<HTMLElement>(
+            `.asset-card[data-asset-id="${CSS.escape(nextId)}"]`,
+          );
+          card?.focus();
+          card?.scrollIntoView({ block: "nearest", inline: "nearest" });
+        }
+        return;
+      }
       if (!keyboard || (keyboard.key !== "Enter" && keyboard.key !== " ") || keyboard.repeat) return;
       if (
         !selectedAsset ||
@@ -12522,6 +12709,8 @@ function AppInner() {
     openAssetPreview,
     restoreDialog,
     selectedAsset,
+    selectionAssetIds,
+    setAssetSelectionAnchor,
     visibleAssets,
   ]);
 
@@ -15528,6 +15717,11 @@ function AppInner() {
                               <AssetCardMedia
                                 alt={asset.displayName}
                                 coverUrl={thumbCover}
+                                adaptiveSource={api && asset.mediaType === "image" && asset.availability === "available" && !asset.deletedAt && asset.width && asset.height ? {
+                                  api, libraryId: library.libraryId, assetId: asset.assetId,
+                                  revisionId: asset.currentRevisionId, width: asset.width, height: asset.height,
+                                } : undefined}
+                                suspendUpgrade={Boolean(previewAsset || previewRestoring || photoFlightOpeningAssetId)}
                                 failed={cardThumbFailed}
                                 hovering={hoveredAssetId === asset.assetId}
                                 hoverAudioPlay={canvasPrefs.hoverAudioPlay}
@@ -15928,6 +16122,9 @@ function AppInner() {
             ref={previewModalRef}
             api={api}
             asset={previewAsset}
+            deferOriginal={photoFlightOpeningAssetId === previewAsset.assetId}
+            openingPlaceholder={previewOpeningImageRef.current?.assetId === previewAsset.assetId
+              ? previewOpeningImageRef.current.url : undefined}
             bakeImageRotation={bakeImageRotation}
             chromeIdle={viewerChromeIdle}
             canDiskDeleteAsset={!showTrash && previewAsset.deletedAt === null}
@@ -15969,6 +16166,15 @@ function AppInner() {
               void persistAssetColorSpace(assetId, colorSpace);
             }}
             onClose={() => void closeAssetPreview()}
+            onPresentationReady={() => {
+              const origin = previewTransitionOriginRef.current;
+              if (!origin || origin.assetId !== previewAsset.assetId) return;
+              origin.ready = true;
+              if (origin.finished) {
+                previewTransitionOriginRef.current = null;
+                clearPhotoFlight();
+              }
+            }}
             onInfoNotice={setNotice}
             onNext={
               previewIndex >= 0 && previewIndex < visibleAssets.length - 1

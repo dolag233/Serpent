@@ -1370,6 +1370,7 @@ export const en = {
     mouse: {
       back: "Mouse Back",
       forward: "Mouse Forward",
+      wheel: "Mouse Wheel",
     },
     fixed: "Fixed",
     unassigned: "Not set",
@@ -1408,6 +1409,8 @@ export const en = {
     },
     action: {
       asset: {
+        selectPrevious: "Select previous asset",
+        selectNext: "Select next asset",
         openExternal: "Open with system app",
         revealInFolder: "Reveal in file manager",
         showInLibraryFolder: "Show in library folder",
@@ -1434,6 +1437,7 @@ export const en = {
         refresh: "Refresh assets",
       },
       viewer: {
+        wheelZoom: "Image viewer wheel zoom",
         playPause: "Play/pause",
         framePrevious: "Previous frame",
         frameNext: "Next frame",

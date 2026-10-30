@@ -92,6 +92,9 @@ import { isBakeableStillImageFile } from "../shared/bakeable-still-image";
 interface AssetPreviewModalProps {
   api: SerpentLibraryApi;
   asset: AssetSummary;
+  openingPlaceholder?: string;
+  /** Let the decoded thumbnail carry the opening flight before loading the original. */
+  deferOriginal?: boolean;
   /** When on, quarter-turns of bakeable stills are written into the file. */
   bakeImageRotation?: boolean;
   /** Owned by a parent that survives per-asset remounts (Serpent-ayf). */
@@ -206,6 +209,8 @@ const AssetPreviewModalContent = forwardRef<
   {
     api,
     asset,
+    openingPlaceholder,
+    deferOriginal = false,
     bakeImageRotation = false,
     chromeIdle,
     libraryId,
@@ -913,7 +918,7 @@ const AssetPreviewModalContent = forwardRef<
       .catch(() => undefined);
   }
 
-  const placeholderUrl = resolveViewerPlaceholderUrl(asset, libraryId);
+  const placeholderUrl = openingPlaceholder ?? resolveViewerPlaceholderUrl(asset, libraryId);
   const primarySurface = resolveViewerPrimarySurface({
     loading,
     resolution,
@@ -925,7 +930,7 @@ const AssetPreviewModalContent = forwardRef<
   const viewerError = error ?? manualRetryError;
   const ready = primarySurface === "media";
   const unsupported = primarySurface === "unsupported";
-  const imageSrc = resolution?.url ?? placeholderUrl;
+  const imageSrc = deferOriginal && placeholderUrl ? placeholderUrl : resolution?.url ?? placeholderUrl;
   const pluginProvidedImage = ready
     && resolution?.mediaType === "image"
     && Boolean(resolution.url)
@@ -1168,6 +1173,12 @@ const AssetPreviewModalContent = forwardRef<
       aria-hidden={preloadOnly || undefined}
       inert={preloadOnly || undefined}
       className={`workspace-viewer${chromeIdle ? " is-chrome-idle" : ""}${isTextViewer ? " is-text-viewer" : ""}${isDocumentViewer ? " is-document-viewer" : ""}${preloadOnly ? " is-preview-preloading" : ""}${navArrowsOnApproach ? " is-nav-proximity" : ""}${navNear === "prev" ? " is-nav-near-prev" : ""}${navNear === "next" ? " is-nav-near-next" : ""}`}
+      onDoubleClick={(event) => {
+        if (preloadOnly || !showImage || !(event.target instanceof Element) ||
+            !event.target.closest(".preview-image-viewport, .preview-video-viewport")) return;
+        event.stopPropagation();
+        void requestClose();
+      }}
       onContextMenu={(event) => {
         if (preloadOnly || !viewerContextMenuAvailable) return;
         event.preventDefault();
@@ -1768,7 +1779,7 @@ export const AssetPreviewModal = forwardRef<
           asset={asset}
           fullscreenRootRef={fullscreenRootRef}
           key={asset.assetId}
-          onPresentationReady={targetIsCurrent || targetWasPromoted ? undefined : promoteTarget}
+          onPresentationReady={targetIsCurrent || targetWasPromoted ? props.onPresentationReady : promoteTarget}
           preloadOnly={!targetIsCurrent && !targetWasPromoted}
           ref={targetIsCurrent || targetWasPromoted ? ref : undefined}
         />

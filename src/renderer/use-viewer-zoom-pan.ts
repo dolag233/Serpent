@@ -15,7 +15,7 @@ import {
   isAtFitScale,
 } from "./viewer-fit";
 import { isViewerPanPointerButton } from "./viewer-pointer-pan";
-import { listenForShortcutInputs } from "./shortcut-runtime";
+import { getShortcutRuntimePlatform, listenForShortcutInputs, matchesRuntimeShortcut } from "./shortcut-runtime";
 import type { ShortcutEventLike } from "../shared/shortcut-resolution";
 import {
   classifyViewerWheel,
@@ -35,6 +35,7 @@ export interface ViewerViewState {
 }
 
 interface UseViewerZoomPanOptions {
+  imageWheelShortcut?: boolean;
   keyboardShortcutsDisabled?: boolean;
   onSwipeNext?: () => void;
   onSwipePrevious?: () => void;
@@ -53,6 +54,7 @@ interface UseViewerZoomPanOptions {
  * media's intrinsic size becomes known.
  */
 export function useViewerZoomPan({
+  imageWheelShortcut = false,
   keyboardShortcutsDisabled = false,
   onSwipeNext,
   onSwipePrevious,
@@ -124,7 +126,12 @@ export function useViewerZoomPan({
       } else {
         const ratio = viewRef.current.scale / previousFit;
         commitView({
-          scale: clampViewerScale(nextFit * ratio),
+          // Camera originals may fit below the manual zoom floor. Preserve
+          // their fitted size across mip upgrades, just as reset/fit does;
+          // clamping a fitted original to 5% makes large portraits jump larger.
+          scale: isAtFitScale(viewRef.current.scale, previousFit)
+            ? nextFit
+            : clampViewerScale(nextFit * ratio),
           x: viewRef.current.x,
           y: viewRef.current.y,
         });
@@ -242,15 +249,21 @@ export function useViewerZoomPan({
             ? event.deltaY * viewport.clientHeight
             : event.deltaY;
 
-      if (
-        classifyViewerWheel({
+      const wheelIntent = classifyViewerWheel({
           ctrlKey: event.ctrlKey,
           metaKey: event.metaKey,
           deltaX: event.deltaX,
           deltaY: event.deltaY,
           deltaMode: event.deltaMode,
-        }) === "zoom"
-      ) {
+        });
+      const wheelMatches = imageWheelShortcut && matchesRuntimeShortcut(
+        "viewer.image.wheel-zoom",
+        { key: "Wheel", ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey, shiftKey: event.shiftKey },
+        getShortcutRuntimePlatform(),
+      );
+      const fixedModifiedZoom = (event.ctrlKey || event.metaKey) && wheelIntent === "zoom";
+      const customZoom = wheelMatches && deltaY !== 0 && !isPrimarilyHorizontalWheel({ deltaX, deltaY });
+      if (imageWheelShortcut ? (fixedModifiedZoom || customZoom) : wheelIntent === "zoom") {
         if (deltaY === 0) return;
         // The zoom center is frozen at the gesture-start pointer position
         // (Serpent-yo0n): mid-gesture pointer drift must not move it.
@@ -293,7 +306,7 @@ export function useViewerZoomPan({
     };
     viewport.addEventListener("wheel", onWheel, { passive: false });
     return () => viewport.removeEventListener("wheel", onWheel);
-  }, [commitView, onSwipeNext, onSwipePrevious, zoomAt]);
+  }, [commitView, imageWheelShortcut, onSwipeNext, onSwipePrevious, zoomAt]);
 
   // Mouse pan is driven from mousedown, not pointerdown. Chromium/Electron
   // often omits pointer events for the middle button (or setPointerCapture

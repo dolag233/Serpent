@@ -167,6 +167,17 @@ const rendererViewerMain: readonly ShortcutSurface[] = [
 
 export const SHORTCUT_ACTIONS: readonly ShortcutActionDefinition[] = Object.freeze([
   {
+    id: "viewer.image.wheel-zoom",
+    labelKey: "shortcuts.action.viewer.wheelZoom",
+    category: "viewer",
+    scopes: ["viewer.image"],
+    defaults: { mac: [chord("Wheel")], windows: [chord("Wheel")] },
+    customizable: true,
+    surfaces: ["renderer"],
+  },
+  { id: "asset.select-previous", labelKey: "shortcuts.action.asset.selectPrevious", category: "asset", scopes: ["browse"], defaults: { mac: [viewerNamedKey("ArrowLeft")], windows: [viewerNamedKey("ArrowLeft")] }, customizable: true, surfaces: ["renderer"] },
+  { id: "asset.select-next", labelKey: "shortcuts.action.asset.selectNext", category: "asset", scopes: ["browse"], defaults: { mac: [viewerNamedKey("ArrowRight")], windows: [viewerNamedKey("ArrowRight")] }, customizable: true, surfaces: ["renderer"] },
+  {
     id: "asset.open-external",
     labelKey: "shortcuts.action.asset.openExternal",
     category: "asset",

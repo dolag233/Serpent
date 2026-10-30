@@ -106,6 +106,7 @@ export function AppSettingsShortcutsPage(): ReactNode {
     () => buildShortcutRows(platform, bindings, {
       mouseBack: t("shortcuts.mouse.back"),
       mouseForward: t("shortcuts.mouse.forward"),
+      wheel: t("shortcuts.mouse.wheel"),
     } satisfies ShortcutMouseLabels),
     [bindings, platform, t],
   );
@@ -300,6 +301,25 @@ export function AppSettingsShortcutsPage(): ReactNode {
         setConflictDraft({ actionId: action.id, chord, conflicts });
       }
     };
+    const onWheel = (event: WheelEvent) => {
+      if (action.id !== "viewer.image.wheel-zoom") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (saving || event.deltaY === 0) return;
+      const chord: ShortcutChord = {
+        key: "Wheel",
+        ...(event.metaKey ? { metaKey: true } : {}),
+        ...(event.ctrlKey ? { ctrlKey: true } : {}),
+        ...(event.altKey ? { altKey: true } : {}),
+        ...(event.shiftKey ? { shiftKey: true } : {}),
+      };
+      setModifierPreview("");
+      setDraftChord(chord);
+      setRecorderError(null);
+      const conflicts = findShortcutConflictsForChord(action.id, chord, platform, bindings);
+      setConflictDraft(conflicts.length ? { actionId: action.id, chord, conflicts } : null);
+    };
+    window.addEventListener("wheel", onWheel, { capture: true, passive: false });
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("keyup", onKeyUp, true);
     window.addEventListener("mousedown", onMouseDown, true);
@@ -307,6 +327,7 @@ export function AppSettingsShortcutsPage(): ReactNode {
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("mousedown", onMouseDown, true);
+      window.removeEventListener("wheel", onWheel, true);
     };
   }, [
     acceptDraft,
@@ -481,6 +502,7 @@ export function AppSettingsShortcutsPage(): ReactNode {
                   ? formatShortcutChord(draftChord, platform, {
                       mouseBack: t("shortcuts.mouse.back"),
                       mouseForward: t("shortcuts.mouse.forward"),
+                      wheel: t("shortcuts.mouse.wheel"),
                     })
                   : modifierPreview;
                 return (

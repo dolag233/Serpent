@@ -227,6 +227,7 @@ function GifAnimatedStage({
     viewportPointerHandlers,
     viewportRef,
   } = useViewerZoomPan({
+    imageWheelShortcut: true,
     keyboardShortcutsDisabled,
     onSwipeNext,
     onSwipePrevious,

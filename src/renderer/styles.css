@@ -4977,6 +4977,12 @@ body.serpent-modal-open .app-shell {
   visibility: hidden;
   pointer-events: none;
 }
+.workspace-viewer.is-photo-flight .preview-image {
+  visibility: hidden;
+  /* The flight owns the pixels; hide every viewer layer in the same frame
+     without inheriting a transition from another presentation state. */
+  transition: none;
+}
 .workspace-viewer:focus,
 .workspace-viewer:focus-visible {
   outline: none;
@@ -6180,15 +6186,30 @@ body.serpent-modal-open .app-shell {
 }
 .preview-image-full {
   visibility: hidden;
+  opacity: 0;
+  /* Swap decoded mip layers in one frame. Fading both layers together
+     exposes the backdrop halfway through (even for an opaque photograph). */
+  transition: none;
 }
 .preview-image-full.is-hidden {
   visibility: hidden;
+  opacity: 0;
 }
 .preview-image-full.is-visible {
   visibility: visible;
+  opacity: 1;
+  transition: none;
+}
+.preview-image-placeholder {
+  opacity: 1;
+  transition: none;
 }
 .preview-image-placeholder.is-hidden {
   visibility: hidden;
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .preview-image-full, .preview-image-placeholder { transition: none; }
 }
 .preview-chrome-fade {
   opacity: 1;
@@ -12104,6 +12125,11 @@ select.ai-config-input.ai-config-languages {
   overflow: hidden;
   border-radius: inherit;
   pointer-events: none;
+}
+
+.asset-card-media .adaptive-card-upgrade {
+  position: absolute;
+  inset: 0;
 }
 
 /* Serpent-l2at / Serpent-qc7v: 占位 caption 与完成卡共用 .asset-caption 间距；
@@ -19749,4 +19775,54 @@ body.platform-darwin .app-shell[data-shell-layout="islands"] .toolbar-nav-cluste
   border-color: var(--danger);
   background: var(--danger-muted);
   color: var(--danger);
+}
+
+/* Prepare the final browse layout behind the viewer before measuring a return. */
+.workspace[data-photo-return] > .workspace-toolstrip {
+  display: block;
+}
+.app-shell[data-shell-layout="islands"] .workspace[data-photo-return] > .workspace-toolstrip {
+  display: flex;
+}
+.workspace[data-photo-return] .workspace-bar.is-viewing,
+.workspace[data-photo-return] .workspace-discovery.is-viewing {
+  display: flex;
+}
+.workspace[data-photo-return] > .workspace-canvas-host.is-viewing {
+  position: relative;
+  inset: auto;
+  width: auto;
+  height: auto;
+  flex: 1;
+}
+.workspace[data-photo-return] > .workspace-viewer-transition {
+  position: absolute;
+  inset: 0;
+}
+.workspace[data-photo-return="prepare"] > .workspace-toolstrip,
+.workspace[data-photo-return="prepare"] > .workspace-canvas-host {
+  visibility: hidden;
+}
+.workspace[data-photo-return="active"] > .workspace-toolstrip,
+.workspace[data-photo-return="active"] .workspace-bar,
+.workspace[data-photo-return="active"] .workspace-discovery,
+.workspace[data-photo-return="active"] > .workspace-canvas-host,
+.workspace[data-photo-return="active"] > .workspace-canvas-host > .workspace-canvas {
+  visibility: visible;
+}
+.workspace[data-photo-return="opening"] > .workspace-canvas-host,
+.workspace[data-photo-return="opening"] > .workspace-canvas-host > .workspace-canvas,
+.workspace[data-photo-return="opening-active"] > .workspace-canvas-host,
+.workspace[data-photo-return="opening-active"] > .workspace-canvas-host > .workspace-canvas {
+  visibility: visible;
+}
+.workspace[data-photo-return="opening"] > .workspace-toolstrip,
+.workspace[data-photo-return="opening"] > .workspace-canvas-host,
+.workspace[data-photo-return="opening-active"] > .workspace-toolstrip,
+.workspace[data-photo-return="opening-active"] > .workspace-canvas-host {
+  transition: opacity 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.workspace[data-photo-return="opening-active"] > .workspace-toolstrip,
+.workspace[data-photo-return="opening-active"] > .workspace-canvas-host {
+  opacity: 0;
 }

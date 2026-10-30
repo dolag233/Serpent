@@ -68,6 +68,7 @@ export type ShortcutValidationReason =
 export type ShortcutMouseLabels = {
   readonly mouseBack?: string;
   readonly mouseForward?: string;
+  readonly wheel?: string;
 };
 
 const NAMED_KEY_CODES: Readonly<Record<string, number>> = {
@@ -123,6 +124,7 @@ function keyLabel(
   const normalized = chord.key.toLowerCase();
   if (normalized === "mouseback") return mouseLabels.mouseBack ?? "Mouse Back";
   if (normalized === "mouseforward") return mouseLabels.mouseForward ?? "Mouse Forward";
+  if (normalized === "wheel") return mouseLabels.wheel ?? "Mouse Wheel";
   if (platform === "mac" && normalized === "backspace") return "⌫";
   if (platform === "mac" && normalized === "enter") return "↵";
   if (KEY_LABELS[normalized] !== undefined) return KEY_LABELS[normalized];
@@ -169,7 +171,7 @@ export function formatElectronAccelerator(
   platform: ShortcutPlatform,
 ): string | null {
   const key = chord.key.toLowerCase();
-  if (key === "mouseback" || key === "mouseforward") return null;
+  if (key === "mouseback" || key === "mouseforward" || key === "wheel") return null;
   const electronKey = key === "add" || chord.code?.toLowerCase() === "numpadadd"
     ? "numadd"
     : key === "subtract" || chord.code?.toLowerCase() === "numpadsubtract"
@@ -524,6 +526,8 @@ export function validateShortcutChord(
   actionId?: string,
 ): ShortcutValidationReason | null {
   const key = normalizedKey(chord);
+  if (key === "wheel") return actionId === "viewer.image.wheel-zoom" ? null : "mouse-button";
+  if (actionId === "viewer.image.wheel-zoom") return "mouse-button";
   if (key.length === 0 || key === "process" || key === "dead" || key === "unidentified") {
     return "no-key";
   }

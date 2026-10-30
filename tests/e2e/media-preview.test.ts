@@ -119,6 +119,139 @@ type ImageDecodeGate = {
   releaseAll?: () => void;
 };
 
+test("animates cold first opens and zoomed returns for large landscape and portrait photos", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "serpent-cold-photo-flight-"));
+  const fixtures = [
+    { name: "cold-landscape.jpg", width: 12000, height: 4223 },
+    { name: "cold-portrait.jpg", width: 3672, height: 4896 },
+  ];
+  const names = fixtures.map(({ name }) => name);
+  for (const { name, width, height } of fixtures) {
+    await sharp({ create: {
+      width, height, channels: 3,
+      background: { r: 48, g: 112, b: 160 },
+    } }).composite([{ input: Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 1200 600" preserveAspectRatio="none">
+        <defs><pattern id="grid" width="100" height="100" patternUnits="userSpaceOnUse"><path d="M 100 0 L 0 0 0 100" fill="none" stroke="white" stroke-width="3"/></pattern></defs>
+        <rect width="600" height="300" fill="#c84e38"/><rect x="600" y="300" width="600" height="300" fill="#e7b33b"/>
+        <rect width="1200" height="600" fill="url(#grid)"/>
+        <circle cx="600" cy="300" r="80" fill="#2cbd71"/>
+      </svg>`,
+    ) }]).jpeg({ quality: 94 }).toFile(path.join(root, name));
+  }
+  const libraryName = "首次大图动画验收";
+  const application = await electron.launch({
+    args: [process.cwd()], cwd: process.cwd(),
+    executablePath: resolveElectronExecutablePath(),
+    env: { ...process.env, SERPENT_E2E: "1",
+      SERPENT_E2E_CREATE_PARENT_PATH: root,
+      SERPENT_E2E_OPEN_LIBRARY_PATH: path.join(root, libraryName),
+      SERPENT_E2E_USER_DATA_PATH: path.join(root, "user-data"),
+      SERPENT_E2E_IMPORT_FILES: names.map((name) => path.join(root, name)).join(path.delimiter),
+    },
+  });
+  try {
+    const page = await application.firstWindow();
+    await page.getByRole("button", { name: "创建资源库" }).click();
+    await page.getByRole("textbox", { name: "名称" }).fill(libraryName);
+    await page.getByRole("button", { name: "创建", exact: true }).click();
+    await page.getByRole("button", { name: "导入文件", exact: true }).first().click();
+    await page.evaluate(() => {
+      const traces: Array<{ done: boolean; frames: number[]; clip: string; visibleWidths: number[]; initialVisibleWidth: number }> = [];
+      Object.assign(window, { coldPhotoFlights: traces });
+      const animate = Element.prototype.animate;
+      Element.prototype.animate = function (...args: Parameters<typeof animate>) {
+        const animation = animate.apply(this, args);
+        if (this.classList.contains("viewer-photo-flight")) {
+          const visibleWidth = () => {
+            const rect = this.getBoundingClientRect();
+            const parent = this.parentElement;
+            const clipOwner = parent?.classList.contains("viewer-photo-flight-clip") ? parent : this;
+            const clipRect = clipOwner.getBoundingClientRect();
+            const values = getComputedStyle(clipOwner).clipPath.match(/[\d.]+(?=px)/g)?.map(Number) ?? [0];
+            const crop = [values[0]!, values[1] ?? values[0]!, values[2] ?? values[0]!, values[3] ?? values[1] ?? values[0]!];
+            const scale = clipOwner === this ? rect.width / (this as HTMLElement).offsetWidth : 1;
+            return Math.max(0, Math.min(innerWidth, rect.right, clipRect.right - crop[1]! * scale)
+              - Math.max(0, rect.left, clipRect.left + crop[3]! * scale));
+          };
+          const clipOwner = this.parentElement?.classList.contains("viewer-photo-flight-clip") ? this.parentElement : this as HTMLElement;
+          const trace = { done: false, frames: [] as number[], clip: clipOwner.style.clipPath,
+            visibleWidths: [] as number[], initialVisibleWidth: visibleWidth() };
+          traces.push(trace);
+          const sample = () => {
+            trace.frames.push(this.getBoundingClientRect().width);
+            trace.visibleWidths.push(visibleWidth());
+            if (!trace.done) requestAnimationFrame(sample);
+          };
+          requestAnimationFrame(sample);
+          void animation.finished.then(() => { trace.done = true; }, () => { trace.done = true; });
+        }
+        return animation;
+      };
+    });
+    let expectedFlights = 0;
+    for (const name of names) {
+      const card = page.locator(".asset-card").filter({ hasText: name });
+      await expect(card).toBeVisible();
+      await expectImageDecoded(card.locator(`img[alt="${name}"]`).first());
+      await card.dblclick();
+      await expect(page.locator(".workspace-viewer:not(.is-preview-preloading)")).toBeVisible();
+      expectedFlights++;
+      await expect.poll(() => page.evaluate(() => {
+        const traces = (window as unknown as { coldPhotoFlights: Array<{ done: boolean; frames: number[] }> }).coldPhotoFlights;
+        return traces.filter((trace) => trace.done && new Set(trace.frames.map((width) => Math.round(width))).size >= 3).length;
+      })).toBe(expectedFlights);
+      await expect(page.locator(".viewer-photo-flight")).toHaveCount(0);
+      const fullImage = page.locator(".workspace-viewer .preview-image-full.is-visible");
+      await expectImageDecoded(fullImage);
+      const fit = await fullImage.boundingBox();
+      const viewport = await page.locator(".workspace-viewer .preview-image-viewport").boundingBox();
+      await page.mouse.move(viewport!.x + viewport!.width * 0.72, viewport!.y + viewport!.height * 0.31);
+      await page.mouse.wheel(0, -1200);
+      await expect.poll(async () => (await fullImage.boundingBox())?.width ?? 0).toBeGreaterThan(fit!.width * 1.5);
+      const zoomed = await fullImage.boundingBox();
+      const expectedCrop = await fullImage.evaluate((image) => {
+        const from = image.getBoundingClientRect();
+        const viewport = image.closest(".preview-image-viewport")!.getBoundingClientRect();
+        return [
+          Math.max(0, viewport.top, from.top),
+          innerWidth - Math.min(innerWidth, viewport.right, from.right),
+          innerHeight - Math.min(innerHeight, viewport.bottom, from.bottom),
+          Math.max(0, viewport.left, from.left),
+        ];
+      });
+      await page.keyboard.press("Escape");
+      expectedFlights++;
+      await expect.poll(() => page.evaluate(() => {
+        const traces = (window as unknown as { coldPhotoFlights: Array<{ done: boolean; frames: number[] }> }).coldPhotoFlights;
+        return traces.filter((trace) => trace.done && new Set(trace.frames.map((width) => Math.round(width))).size >= 3).length;
+      })).toBe(expectedFlights);
+      const returnTrace = await page.evaluate(() => {
+        const traces = (window as unknown as { coldPhotoFlights: Array<{ clip: string; visibleWidths: number[]; initialVisibleWidth: number }> }).coldPhotoFlights;
+        return traces[traces.length - 1]!;
+      });
+      expect(Math.max(...returnTrace.visibleWidths)).toBeLessThanOrEqual(returnTrace.initialVisibleWidth + 1);
+      for (let i = 1; i < returnTrace.visibleWidths.length; i++) {
+        expect(returnTrace.visibleWidths[i]!).toBeLessThanOrEqual(returnTrace.visibleWidths[i - 1]! + 1);
+      }
+      const returnClip = returnTrace.clip;
+      expect(zoomed!.width).toBeGreaterThan(fit!.width * 1.5);
+      expect(returnClip).toMatch(/^inset\(/);
+      expect(returnClip).not.toBe("inset(0px 0px 0px 0px)");
+      const actualCrop = returnClip!.match(/[\d.]+(?=px)/g)!.map(Number);
+      expect(actualCrop).toHaveLength(4);
+      for (let i = 0; i < 4; i++) {
+        expect(Math.abs(actualCrop[i]! - expectedCrop[i]!)).toBeLessThan(1);
+      }
+      await expect(page.locator(".workspace-viewer")).toHaveCount(0);
+      await expect(card).toBeVisible();
+    }
+  } finally {
+    await application.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("generates a decoded thumbnail and keeps asset viewer context coherent", async () => {
   const temporaryRoot = mkdtempSync(
     path.join(tmpdir(), "serpent-auto-thumbnail-e2e-"),
@@ -197,7 +330,7 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
     // show a 1–2px letterbox. The inspector preview below stays contain.
     expect(
       await thumbnail.evaluate((image) => getComputedStyle(image).objectFit),
-    ).toBe("cover");
+    ).toBe("contain");
 
     // Import reveal selects the imported batch and reapplies it once the
     // debounced browse refresh settles. Clear that intentional reveal before
@@ -680,8 +813,32 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
     await expect
       .poll(() => svgPreviewImage.getAttribute("src"))
       .toContain("serpent://source/");
-    await window.keyboard.press("Escape");
+    const imageViewport = svgPreview.locator(".preview-image-viewport");
+    const imageWidth = await svgPreviewImage.evaluate((image) => image.getBoundingClientRect().width);
+    await imageViewport.hover();
+    await window.mouse.wheel(0, -10);
+    await expect.poll(() => svgPreviewImage.evaluate((image) => image.getBoundingClientRect().width)).toBeGreaterThan(imageWidth);
+    const returnLayout = window.evaluate(() => new Promise<{ toolbarVisible: boolean; cardTop: number; flightAnimating: boolean }>((resolve) => {
+      const workspace = document.querySelector<HTMLElement>(".workspace")!;
+      const observer = new MutationObserver(() => {
+        if (workspace.dataset.photoReturn !== "active") return;
+        const toolbar = workspace.querySelector<HTMLElement>(".workspace-bar")!;
+        const card = workspace.querySelector<HTMLElement>('.asset-card[aria-pressed="true"] .asset-preview')!;
+        observer.disconnect();
+        const flightAnimating = Array.from(document.querySelectorAll(".viewer-photo-flight")).some((element) =>
+          element.getAnimations().some((animation) => animation.playState === "running"),
+        );
+        resolve({ toolbarVisible: getComputedStyle(toolbar).visibility === "visible" && getComputedStyle(toolbar).display !== "none", cardTop: card.getBoundingClientRect().top, flightAnimating });
+      });
+      observer.observe(workspace, { attributes: true, attributeFilter: ["data-photo-return"] });
+    }));
+    await imageViewport.dblclick();
+    const duringReturn = await returnLayout;
     await expect(svgPreview).toBeHidden();
+    expect(duringReturn.toolbarVisible).toBe(true);
+    expect(duringReturn.flightAnimating).toBe(true);
+    const finalCardTop = await svgAssetCard.locator(".asset-preview").evaluate((card) => card.getBoundingClientRect().top);
+    expect(Math.abs(duringReturn.cardTop - finalCardTop)).toBeLessThanOrEqual(2);
 
     const masonryViewButton = window.locator(
       'button[aria-label="瀑布流视图"]',

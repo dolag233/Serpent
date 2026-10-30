@@ -24,6 +24,14 @@ const definitionById = new Map(
 );
 
 describe("shortcut catalog", () => {
+  it("supports recording a modified wheel for image zoom without creating a native accelerator", () => {
+    const wheel = { key: "Wheel", altKey: true };
+    expect(validateShortcutChord(wheel, "windows", ["viewer.image"], "viewer.image.wheel-zoom")).toBeNull();
+    expect(validateShortcutChord(wheel, "windows", ["browse"], "asset.select-next")).toBe("mouse-button");
+    expect(validateShortcutChord({ key: "A" }, "windows", ["viewer.image"], "viewer.image.wheel-zoom")).toBe("mouse-button");
+    expect(formatElectronAccelerator(wheel, "windows")).toBeNull();
+    expect(formatShortcutChord(wheel, "windows", { wheel: "滚轮" })).toBe("Alt+滚轮");
+  });
   it("has unique ids and both platform defaults", () => {
     const ids = SHORTCUT_ACTIONS.map((action) => action.id);
     expect(new Set(ids).size).toBe(ids.length);

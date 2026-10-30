@@ -131,13 +131,16 @@ export const ZoomableImage = forwardRef<
     preloadOnly && isAnimated && placeholderSrc,
   );
   const fullSource = useAnimatedPlaceholder ? placeholderSrc! : src;
+  const hasFullUpgrade = Boolean(
+    placeholderSrc && src && placeholderSrc !== src,
+  );
   const activeSourceRef = useRef(fullSource);
   activeSourceRef.current = fullSource;
   // Keep the decode latch tied to the URL it proved. The first viewer render
   // can legitimately use the thumbnail as both `placeholderSrc` and `src`;
   // a later source URL must not inherit that thumbnail's decoded state.
   const fullDecoded = !useAnimatedPlaceholder && decodedSource === src;
-  const fullLayerDecoded = decodedSource === fullSource;
+  const fullLayerDecoded = decodedSource === fullSource && (!placeholderSrc || hasFullUpgrade);
   const {
     fitToWindow,
     measureAndFit,
@@ -146,6 +149,7 @@ export const ZoomableImage = forwardRef<
     viewportRef,
     zoomAt,
   } = useViewerZoomPan({
+    imageWheelShortcut: true,
     keyboardShortcutsDisabled,
     onSwipeNext,
     onSwipePrevious,
@@ -270,9 +274,6 @@ export const ZoomableImage = forwardRef<
     fullDecoded,
   });
   const paintSrc = display.displayUrl ?? src;
-  const hasFullUpgrade = Boolean(
-    placeholderSrc && src && placeholderSrc !== src,
-  );
 
   // Keep exactly one <img> reading the full source. The previous middle layer
   // fetched the same `src` again, decoded it through ImageBitmap, rasterized
@@ -340,7 +341,10 @@ export const ZoomableImage = forwardRef<
             <Icon name="broken-file" size={42} />
             <span className="preview-image-error-name">{alt}</span>
           </div>
-        ) : hasFullUpgrade ? (
+        ) : placeholderSrc ? (
+          // Keep this placeholder node mounted when requestPreview replaces
+          // the initial thumbnail URL with the original. Recreating it would
+          // discard the pixels already on screen while the new nodes load.
           <>
             <img
               alt={fullLayerDecoded ? "" : alt}
@@ -350,6 +354,7 @@ export const ZoomableImage = forwardRef<
               draggable={false}
               onError={handleImageError}
               onLoad={(event) => {
+                if (fullLayerDecoded) return;
                 setImageError(false);
                 measureFromImage(event.currentTarget);
                 // The placeholder is already a valid presentation for a
@@ -365,7 +370,7 @@ export const ZoomableImage = forwardRef<
                 transformOrigin: "center center",
               }}
             />
-            <img
+            {hasFullUpgrade && <img
               alt={fullLayerDecoded ? alt : ""}
               aria-hidden={!fullLayerDecoded ? true : undefined}
               className={`preview-image preview-image-full${fullLayerDecoded ? " is-visible" : " is-hidden"}`}
@@ -389,7 +394,7 @@ export const ZoomableImage = forwardRef<
                 transform: `translate(${view.x}px, ${view.y}px) ${viewerDisplayTransformCss(displayTransform)}`,
                 transformOrigin: "center center",
               }}
-            />
+            />}
           </>
         ) : (
           <img

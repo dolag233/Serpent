@@ -1351,6 +1351,7 @@ export const zhCN = {
     mouse: {
       back: "鼠标后退",
       forward: "鼠标前进",
+      wheel: "鼠标滚轮",
     },
     fixed: "固定",
     unassigned: "未设置",
@@ -1389,6 +1390,8 @@ export const zhCN = {
     },
     action: {
       asset: {
+        selectPrevious: "选择上一张素材",
+        selectNext: "选择下一张素材",
         openExternal: "用系统程序打开",
         revealInFolder: "在文件管理器显示",
         showInLibraryFolder: "在库内定位",
@@ -1415,6 +1418,7 @@ export const zhCN = {
         refresh: "刷新资产",
       },
       viewer: {
+        wheelZoom: "照片查看器滚轮缩放",
         playPause: "播放/暂停",
         framePrevious: "上一帧",
         frameNext: "下一帧",
