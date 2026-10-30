@@ -566,7 +566,7 @@ export const SHORTCUT_ACTIONS: readonly ShortcutActionDefinition[] = Object.free
     scopes: ["viewer.video"],
     defaults: { mac: [chord("ArrowLeft", { code: "ArrowLeft", ctrlKey: true })], windows: [chord("ArrowLeft", { code: "ArrowLeft", ctrlKey: true })] },
     customizable: true,
-    surfaces: ["renderer"],
+    surfaces: rendererViewerMain,
   },
   {
     id: "viewer.video.seek-forward",
@@ -575,7 +575,7 @@ export const SHORTCUT_ACTIONS: readonly ShortcutActionDefinition[] = Object.free
     scopes: ["viewer.video"],
     defaults: { mac: [chord("ArrowRight", { code: "ArrowRight", ctrlKey: true })], windows: [chord("ArrowRight", { code: "ArrowRight", ctrlKey: true })] },
     customizable: true,
-    surfaces: ["renderer"],
+    surfaces: rendererViewerMain,
   },
   {
     id: "viewer.volume-up",

@@ -14,6 +14,10 @@ export const VIDEO_PLAYBACK_RATES = [0.25, 0.5, 1, 1.5, 2, 4] as const;
 
 import { matchesRuntimeShortcut } from "./shortcut-runtime";
 import type { ShortcutEventLike } from "../shared/shortcut-resolution";
+import {
+  DEFAULT_VIDEO_SEEK_JUMP_PREFERENCES,
+  type VideoSeekJumpPreferences,
+} from "./video-seek-jump-preferences";
 
 export type VideoPlaybackRate = (typeof VIDEO_PLAYBACK_RATES)[number];
 
@@ -152,7 +156,7 @@ export function shouldHandleVideoSpaceKey(event: ShortcutEventLike & {
  */
 export const VIDEO_FRAME_STEP_SECONDS = 1 / 30;
 
-/** Ctrl+← / Ctrl+→ skip distance (Serpent-sk1). */
+/** Default Ctrl+← / Ctrl+→ skip when the jump setting is “by time” (Serpent-sk1). */
 export const VIDEO_SKIP_SECONDS = 2;
 
 export type VideoKeyboardSeekAction =
@@ -161,7 +165,7 @@ export type VideoKeyboardSeekAction =
 
 /**
  * D = previous frame, F = next frame (Serpent-soii);
- * Ctrl+←/→ = ±2s.
+ * Ctrl+←/→ jumps by the seek setting (time or a share of the duration).
  * Capture-phase callers must stopPropagation so shell ←/→ asset nav does not fire.
  * Uses Ctrl (not Cmd) on all platforms per product request.
  */
@@ -187,6 +191,12 @@ export function matchVideoPlaybackSeekKey(event: ShortcutEventLike & {
 }
 
 export type VideoPlaybackRateStep = "slower" | "faster";
+
+/** Commands the viewer context menu can run against the open player. */
+export type ViewerPlaybackHandle = {
+  stepRate(direction: VideoPlaybackRateStep): void;
+  seekBy(direction: 1 | -1, unit: "time" | "percent"): void;
+};
 
 /**
  * X = slower, C = faster — step within VIDEO_PLAYBACK_RATES (Serpent-soii).
@@ -249,14 +259,75 @@ export function stepVideoPlaybackRate(
 export function videoSeekDeltaSeconds(
   action: VideoKeyboardSeekAction,
   frameStepSeconds: number = VIDEO_FRAME_STEP_SECONDS,
+  jump: Pick<VideoSeekJumpPreferences, "mode" | "seconds" | "percent"> = DEFAULT_VIDEO_SEEK_JUMP_PREFERENCES,
+  durationSeconds = 0,
 ): number {
   const step =
     action.kind === "frame"
       ? Number.isFinite(frameStepSeconds) && frameStepSeconds > 0
         ? frameStepSeconds
         : VIDEO_FRAME_STEP_SECONDS
-      : VIDEO_SKIP_SECONDS;
+      : seekJumpMagnitudeSeconds(jump, durationSeconds);
   return step * action.direction;
+}
+
+function seekJumpMagnitudeSeconds(
+  jump: Pick<VideoSeekJumpPreferences, "mode" | "seconds" | "percent">,
+  durationSeconds: number,
+): number {
+  if (jump.mode === "percent") {
+    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return 0;
+    if (!Number.isFinite(jump.percent) || jump.percent <= 0) return 0;
+    return durationSeconds * (jump.percent / 100);
+  }
+  return Number.isFinite(jump.seconds) && jump.seconds > 0
+    ? jump.seconds
+    : VIDEO_SKIP_SECONDS;
+}
+
+/**
+ * One wheel notch on the progress track equals one configured jump.
+ * Positive `steps` (wheel down) move earlier.
+ */
+export function videoWheelSeekTime(
+  currentTime: number,
+  duration: number,
+  steps: number,
+  jump: Pick<VideoSeekJumpPreferences, "mode" | "seconds" | "percent"> = DEFAULT_VIDEO_SEEK_JUMP_PREFERENCES,
+): number {
+  if (!Number.isFinite(steps) || steps === 0) {
+    return clampScrubTime(currentTime, duration);
+  }
+  const direction = steps > 0 ? -1 : 1;
+  const count = Math.min(24, Math.abs(Math.trunc(steps)));
+  let time = Number.isFinite(currentTime) ? currentTime : 0;
+  for (let index = 0; index < count; index += 1) {
+    time = clampScrubTime(
+      time + videoSeekDeltaSeconds(
+        { kind: "skip", direction },
+        VIDEO_FRAME_STEP_SECONDS,
+        jump,
+        duration,
+      ),
+      duration,
+    );
+  }
+  return time;
+}
+
+/** Positive `steps` (wheel down) select a slower rate. */
+export function playbackRateAfterWheelSteps(
+  current: VideoPlaybackRate,
+  steps: number,
+): VideoPlaybackRate {
+  if (!Number.isFinite(steps) || steps === 0) return current;
+  const step: VideoPlaybackRateStep = steps > 0 ? "slower" : "faster";
+  let rate = current;
+  const count = Math.min(VIDEO_PLAYBACK_RATES.length, Math.abs(Math.trunc(steps)));
+  for (let index = 0; index < count; index += 1) {
+    rate = stepVideoPlaybackRate(rate, step);
+  }
+  return rate;
 }
 
 export function parsePlaybackRate(value: string): VideoPlaybackRate {

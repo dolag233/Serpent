@@ -1,9 +1,11 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import { scrubRatioFromClientX } from "./video-player-controls";
+import { volumeAfterWheelSteps } from "./viewer-volume-preferences";
 import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
+import { bindVerticalWheelSteps } from "./viewer-wheel-intent";
 
 export type ViewerVolumeControlsProps = {
   volume: number;
@@ -23,7 +25,14 @@ export function ViewerVolumeControls({
   onInteract,
 }: ViewerVolumeControlsProps) {
   const t = useT();
+  const rootRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
+  const volumeRef = useRef(volume);
+  const echoedVolumeRef = useRef(volume);
+  if (volume !== echoedVolumeRef.current) {
+    volumeRef.current = volume;
+    echoedVolumeRef.current = volume;
+  }
   const scrubbingPointerId = useRef<number | null>(null);
   const [scrubRatio, setScrubRatio] = useState<number | null>(null);
   const [adjusting, setAdjusting] = useState(false);
@@ -40,6 +49,18 @@ export function ViewerVolumeControls({
     [onVolumeChange],
   );
 
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    return bindVerticalWheelSteps(root, (steps) => {
+      onInteract?.();
+      const next = volumeAfterWheelSteps(volumeRef.current, steps);
+      volumeRef.current = next;
+      echoedVolumeRef.current = next;
+      onVolumeChange(next);
+    });
+  }, [onInteract, onVolumeChange]);
+
   const ratioFromPointer = useCallback((clientX: number): number => {
     const track = trackRef.current;
     if (!track) return 0;
@@ -50,6 +71,7 @@ export function ViewerVolumeControls({
   return (
     <div
       className={`preview-viewer-volume${adjusting ? " is-adjusting" : ""}`}
+      ref={rootRef}
     >
       <button
         className="preview-video-playpause preview-viewer-volume-mute"

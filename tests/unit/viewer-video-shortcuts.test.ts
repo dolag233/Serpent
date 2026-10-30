@@ -134,6 +134,26 @@ describe("matchViewerVideoLetterShortcut (Main before-input)", () => {
     expect(viewerMainShortcutRoutes("viewer.audio").map((route) => route.action))
       .toEqual(["play-pause"]);
     expect(viewerMainShortcutRoutes("viewer.video").map((route) => route.action))
-      .toEqual(["play-pause", "frame-prev", "frame-next", "rate-slower", "rate-faster"]);
+      .toEqual([
+        "play-pause",
+        "frame-prev",
+        "frame-next",
+        "rate-slower",
+        "rate-faster",
+        "seek-back",
+        "seek-forward",
+      ]);
+    expect(matchViewerVideoLetterShortcut(
+      { ...base, code: "ArrowLeft", key: "ArrowLeft", control: true },
+      bindings,
+      "windows",
+      "viewer.video",
+    )).toBe("seek-back");
+    expect(matchViewerVideoLetterShortcut(
+      { ...base, code: "ArrowRight", key: "ArrowRight", control: true },
+      bindings,
+      "windows",
+      "viewer.video",
+    )).toBe("seek-forward");
   });
 });

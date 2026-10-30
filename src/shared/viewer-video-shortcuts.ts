@@ -22,6 +22,8 @@ const RENDERER_ROUTE_BY_ACTION_ID = {
   "viewer.video.frame-next": { action: "frame-next", label: "Next frame" },
   "viewer.video.rate-slower": { action: "rate-slower", label: "Slower playback" },
   "viewer.video.rate-faster": { action: "rate-faster", label: "Faster playback" },
+  "viewer.video.seek-back": { action: "seek-back", label: "Seek backward" },
+  "viewer.video.seek-forward": { action: "seek-forward", label: "Seek forward" },
 } as const;
 
 export type ViewerVideoShortcutAction =

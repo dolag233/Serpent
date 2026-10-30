@@ -10023,6 +10023,19 @@ select.ai-config-input.ai-config-languages {
   min-width: 112px;
 }
 
+.video-seek-jump-amount {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--secondary);
+  font-size: calc(12px * var(--ui-font-scale));
+}
+
+.video-seek-jump-amount .text-field {
+  width: 96px;
+  flex: 0 0 auto;
+}
+
 .settings-error-message,
 .settings-success-message {
   margin: 12px 0 0;

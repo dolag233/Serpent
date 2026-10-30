@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 import type { SerpentShellApi } from "../shared/external-url";
 import type { ViewerVideoShortcutAction } from "../shared/viewer-video-shortcuts";
@@ -31,7 +31,9 @@ import {
   stepVideoPlaybackRate,
   videoSeekDeltaSeconds,
   type VideoPlaybackRate,
+  type ViewerPlaybackHandle,
 } from "./video-player-controls";
+import { loadVideoSeekJumpPreferences } from "./video-seek-jump-preferences";
 import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
 import {
   IDENTITY_VIEWER_DISPLAY_TRANSFORM,
@@ -69,6 +71,7 @@ export type GifViewerPlayerProps = {
   onSwipePrevious?: () => void;
   onUserActivity?: () => void;
   placeholderSrc?: string;
+  playbackHandleRef?: RefObject<ViewerPlaybackHandle | null>;
   src: string;
 };
 
@@ -190,6 +193,7 @@ function GifAnimatedStage({
   onSwipePrevious,
   onUserActivity,
   placeholderSrc,
+  playbackHandleRef,
   session,
 }: GifViewerPlayerProps & { session: GifPlaybackSession | null }) {
   const t = useT();
@@ -275,6 +279,21 @@ function GifAnimatedStage({
     paint(index);
   }, [paint]);
 
+  const seekByConfiguredJump = useCallback((direction: 1 | -1) => {
+    const durationSeconds = gifTimelineDurationMs(framesRef.current) / 1000;
+    seekToMs(
+      clampScrubTime(
+        timeRef.current / 1000 + videoSeekDeltaSeconds(
+          { kind: "skip", direction },
+          undefined,
+          loadVideoSeekJumpPreferences(),
+          durationSeconds,
+        ),
+        durationSeconds,
+      ) * 1000,
+    );
+  }, [seekToMs]);
+
   const stepFrame = useCallback((direction: 1 | -1) => {
     const frames = framesRef.current;
     if (frames.length === 0) return;
@@ -302,6 +321,33 @@ function GifAnimatedStage({
     playbackRateRef.current = next;
     setPlaybackRate(next);
   }, []);
+
+  useEffect(() => {
+    const slot = playbackHandleRef;
+    if (!slot) return;
+    slot.current = {
+      stepRate(direction) {
+        applyPlaybackRate(stepVideoPlaybackRate(playbackRateRef.current, direction));
+      },
+      seekBy(direction, unit) {
+        const durationSeconds = gifTimelineDurationMs(framesRef.current) / 1000;
+        const stored = loadVideoSeekJumpPreferences();
+        const nextSeconds = clampScrubTime(
+          timeRef.current / 1000 + videoSeekDeltaSeconds(
+            { kind: "skip", direction },
+            undefined,
+            { ...stored, mode: unit },
+            durationSeconds,
+          ),
+          durationSeconds,
+        );
+        seekToMs(nextSeconds * 1000);
+      },
+    };
+    return () => {
+      slot.current = null;
+    };
+  }, [applyPlaybackRate, playbackHandleRef, seekToMs]);
 
   useEffect(() => {
     framesRef.current = session?.frames ?? [];
@@ -383,13 +429,7 @@ function GifAnimatedStage({
           stepFrame(action.direction);
           return;
         }
-        const durationSeconds = gifTimelineDurationMs(framesRef.current) / 1000;
-        seekToMs(
-          clampScrubTime(
-            timeRef.current / 1000 + videoSeekDeltaSeconds(action),
-            durationSeconds,
-          ) * 1000,
-        );
+        seekByConfiguredJump(action.direction);
         return;
       }
       const rateStep = matchVideoPlaybackRateKey(input);
@@ -405,7 +445,7 @@ function GifAnimatedStage({
     applyPlaybackRate,
     fitToWindow,
     keyboardShortcutsDisabled,
-    seekToMs,
+    seekByConfiguredJump,
     session,
     stepFrame,
     togglePlayback,
@@ -445,6 +485,10 @@ function GifAnimatedStage({
         stepFrame(1);
         return;
       }
+      if (action === "seek-back" || action === "seek-forward") {
+        seekByConfiguredJump(action === "seek-back" ? -1 : 1);
+        return;
+      }
       applyPlaybackRate(
         stepVideoPlaybackRate(
           playbackRateRef.current,
@@ -464,6 +508,7 @@ function GifAnimatedStage({
     applyPlaybackRate,
     keyboardShortcutsDisabled,
     onUserActivity,
+    seekByConfiguredJump,
     session,
     stepFrame,
     togglePlayback,

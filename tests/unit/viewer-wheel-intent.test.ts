@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  accumulateWheelNotches,
   classifyViewerWheel,
   isPrimarilyHorizontalWheel,
   resolveWheelGestureAnchor,
   VIEWER_WHEEL_GESTURE_TIMEOUT_MS,
   VIEWER_WHEEL_HORIZONTAL_DOMINANCE_RATIO,
   VIEWER_WHEEL_MOUSE_NOTCH_THRESHOLD,
+  VIEWER_WHEEL_NOTCH_PIXELS,
 } from '../../src/renderer/viewer-wheel-intent';
 
 const sample = (overrides: Partial<Parameters<typeof classifyViewerWheel>[0]>) => ({
@@ -182,5 +184,33 @@ describe('resolveWheelGestureAnchor (Serpent-yo0n gesture-start anchor)', () => 
       1_000 + VIEWER_WHEEL_GESTURE_TIMEOUT_MS,
     );
     expect(atBoundary.clientX).toBe(100);
+  });
+});
+
+describe("accumulateWheelNotches", () => {
+  it("turns one mouse notch into one step and keeps the leftover", () => {
+    expect(accumulateWheelNotches(0, VIEWER_WHEEL_NOTCH_PIXELS, 0)).toEqual({
+      steps: 1,
+      accumulatedPixels: 0,
+    });
+    expect(accumulateWheelNotches(0, -VIEWER_WHEEL_NOTCH_PIXELS, 0).steps).toBe(-1);
+    expect(accumulateWheelNotches(40, 80, 0)).toEqual({
+      steps: 1,
+      accumulatedPixels: 20,
+    });
+  });
+
+  it("drops the leftover when the wheel reverses", () => {
+    expect(accumulateWheelNotches(40, -VIEWER_WHEEL_NOTCH_PIXELS, 0)).toEqual({
+      steps: -1,
+      accumulatedPixels: 0,
+    });
+  });
+
+  it("treats one line as one step", () => {
+    expect(accumulateWheelNotches(30, 1, 1)).toEqual({
+      steps: 1,
+      accumulatedPixels: 0,
+    });
   });
 });

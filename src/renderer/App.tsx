@@ -16016,6 +16016,18 @@ function AppInner() {
             }
             libraryId={library.libraryId}
             navArrowsOnApproach={viewerChromePrefs.navArrowsOnApproach}
+            onToggleNavArrowsOnApproach={() => {
+              setViewerChromePrefs((current) => ({
+                ...current,
+                navArrowsOnApproach: !current.navArrowsOnApproach,
+              }));
+            }}
+            onToggleVideoTransportOnApproach={() => {
+              setViewerChromePrefs((current) => ({
+                ...current,
+                videoTransportOnApproach: !current.videoTransportOnApproach,
+              }));
+            }}
             onDiskDeleteAsset={() => {
               requestSelectionDiskDelete([previewAsset.assetId], []);
             }}
