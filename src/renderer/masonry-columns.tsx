@@ -1,3 +1,4 @@
+import { observeCanvasLayoutMeasure } from "./canvas-layout-measure";
 import {
   useLayoutEffect,
   useMemo,
@@ -248,10 +249,12 @@ function RegularMasonryColumns({
       }
     };
     updateWidth();
+    const stopMeasuring = observeCanvasLayoutMeasure(element, updateWidth);
     const observer = new ResizeObserver(updateWidth);
     observer.observe(element);
     root?.addEventListener("scroll", cancelRawRestoreOnUserScroll, { passive: true });
     return () => {
+      stopMeasuring();
       observer.disconnect();
       root?.removeEventListener("scroll", cancelRawRestoreOnUserScroll);
       if (restoreFrameRef.current !== null) {

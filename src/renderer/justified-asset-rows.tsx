@@ -1,3 +1,4 @@
+import { observeCanvasLayoutMeasure } from "./canvas-layout-measure";
 import {
   useLayoutEffect,
   useMemo,
@@ -146,9 +147,10 @@ function RegularJustifiedAssetRows({
     if (!element) return;
     const updateWidth = () => setAvailableWidth(element.clientWidth);
     updateWidth();
+    const stopMeasuring = observeCanvasLayoutMeasure(element, updateWidth);
     const observer = new ResizeObserver(updateWidth);
     observer.observe(element);
-    return () => observer.disconnect();
+    return () => { stopMeasuring(); observer.disconnect(); };
   }, []);
 
   const fallbackLayout = useMemo(

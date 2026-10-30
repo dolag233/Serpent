@@ -1,3 +1,5 @@
+import { CANVAS_LAYOUT_MEASURE, settleCanvasLayout } from "./canvas-layout-measure";
+import { restoreVerticalReflowAnchor } from "./canvas-reflow-restore";
 import { LocalConfirmationHost, useLocalConfirmation, requestConfirmation } from "./local-confirmation";
 import {
   useCallback,
@@ -14,6 +16,9 @@ import { createPortal, flushSync } from "react-dom";
 
 import { Icon, type IconName } from "./Icons";
 import { isCurrentAiConnectionProbe } from "./ai-connection-probe-guard";
+import { CardReflowMotion, cardReflowLayoutRect } from "./card-reflow-motion";
+import { NavigationReflowTransition, NavigationPressAction, stageNavigationToggle } from "./navigation-reflow-transition";
+import { CardWheelResize } from "./card-wheel-resize";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { EditTextContextMenuHost } from "./edit-text-context-menu";
 import { HoverTipHost } from "./hover-tip";
@@ -639,7 +644,6 @@ import {
 import {
   enumerateDiscreteCardSizes,
   nearestDiscreteCardSize,
-  nextDiscreteCardSizeFromWheelDelta,
   stepDiscreteCardSize,
 } from "./card-size-stops";
 import { assetGridLayoutStyle } from "./asset-grid-layout";
@@ -855,12 +859,16 @@ function ToolButton({
   label,
   icon,
   onClick,
+  onPointerDown,
+  onPointerCancel,
   pressed,
   disabled,
 }: {
   label: string;
   icon: IconName;
-  onClick?: () => void;
+  onClick?: React.MouseEventHandler<HTMLButtonElement>;
+  onPointerDown?: React.PointerEventHandler<HTMLButtonElement>;
+  onPointerCancel?: React.PointerEventHandler<HTMLButtonElement>;
   pressed?: boolean;
   disabled?: boolean;
 }) {
@@ -870,6 +878,8 @@ function ToolButton({
       className="tool-button"
       disabled={disabled}
       onClick={onClick}
+      onPointerDown={onPointerDown}
+      onPointerCancel={onPointerCancel}
       type="button"
       {...iconActionAttrs(label)}
     >
@@ -1224,6 +1234,9 @@ function AppInner() {
     setImportSourceFailurePlan(null);
   }, []);
   const [leftOpen, setLeftOpen] = useState(() => window.innerWidth > 800);
+  const navTransitioningRef = useRef(false);
+  const navigationMotionRef = useRef(new NavigationReflowTransition());
+  const navigationPressRef = useRef(new NavigationPressAction());
   const [rightOpen, setRightOpen] = useState(() => window.innerWidth > 1020);
   const panelResizeReleaseRef = useRef<() => void>(() => undefined);
   // REQ-SHELL-007 / REQ-SHELL-011: draggable nav/inspector pane widths + auto-hide.
@@ -2524,6 +2537,7 @@ function AppInner() {
   const marqueeBoxRef = useRef<HTMLDivElement>(null);
   // REQ-CANVAS-019: rAF handle for the card-size-slider anchor restore.
   const cardSizeRestoreFrameRef = useRef<number | null>(null);
+  const cardReflowMotionRef = useRef(new CardReflowMotion());
   // REQ-CANVAS-019: rAF handle for the container-width (sidebar/window
   // resize) anchor restore; separate from the card-size one above so the
   // two triggers never cancel each other's in-flight restoration.
@@ -2568,6 +2582,7 @@ function AppInner() {
   }, []);
 
   const restorePanelAfterResize = useCallback(() => {
+    if (navTransitioningRef.current) return;
     panelResizeLockRef.current = false;
     const canvas = workspaceCanvasRef.current;
     const anchor = reflowAnchorRef.current;
@@ -2593,6 +2608,60 @@ function AppInner() {
       },
       reflowScrollSnapshotRef.current ?? undefined,
     );
+  }, []);
+
+  const toggleNavigation = useCallback(() => {
+    const canvas = workspaceCanvasRef.current;
+    const shell = canvas?.closest<HTMLElement>(".app-shell");
+    if (!canvas || !shell || panelResizingRef.current || typeof document.startViewTransition !== "function" ||
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setLeftOpen((open) => !open);
+      return;
+    }
+    let destinationOpen = !shell.classList.contains("left-collapsed");
+    void navigationMotionRef.current.run(shell, () => {
+      cardReflowMotionRef.current.cancel();
+      for (const frame of [reflowRestoreFrameRef, cardSizeRestoreFrameRef]) {
+        if (frame.current !== null) window.cancelAnimationFrame(frame.current);
+        frame.current = null;
+      }
+      cardResizeAnchorRef.current = null;
+      cardResizeScrollSnapshotRef.current = null;
+      reflowScrollSnapshotRef.current = { left: canvas.scrollLeft, top: canvas.scrollTop };
+      navTransitioningRef.current = true;
+      canvas.classList.add("is-reflow-restoring");
+    }, () => {
+      // Measure the destination before committing React. Publishing visibility
+      // and width together avoids rendering the entire library at the old width.
+      destinationOpen = stageNavigationToggle(shell);
+    }, async () => {
+      // Native updates pause rAF/ResizeObserver: publish final geometry now.
+      settleCanvasLayout(canvas,
+        () => flushSync(() => {
+          setLeftOpen(destinationOpen);
+          canvas.dispatchEvent(new Event(CANVAS_LAYOUT_MEASURE));
+        }),
+        () => restoreVerticalReflowAnchor(canvas, reflowAnchorRef.current),
+      );
+      navTransitioningRef.current = false;
+      canvas.classList.remove("is-reflow-restoring");
+      reflowAnchorRef.current = null;
+      reflowScrollSnapshotRef.current = null;
+    }, (captured, viewport) => {
+      const cards = captured.flatMap(({ card, rect }) => card.dataset.assetId
+        ? [{ assetId: card.dataset.assetId, ...rectLikeFromDomRect(rect) }]
+        : []);
+      reflowAnchorRef.current = viewport
+        ? captureReflowAnchorFromCards(cards, rectLikeFromDomRect(viewport))
+        : null;
+    }).catch(() => {
+      // Reconcile the staged shell even if measurement/snapshot capture fails.
+      setLeftOpen(!shell.classList.contains("left-collapsed"));
+      navTransitioningRef.current = false;
+      canvas.classList.remove("is-reflow-restoring");
+      reflowAnchorRef.current = null;
+      reflowScrollSnapshotRef.current = null;
+    });
   }, []);
 
   useEffect(() => {
@@ -2661,6 +2730,8 @@ function AppInner() {
   }, [inspectorPanelWidth, navPanelWidth]);
   useEffect(
     () => () => {
+      navigationMotionRef.current.cancel();
+      cardReflowMotionRef.current.cancel();
       if (cardSizeRestoreFrameRef.current !== null) {
         window.cancelAnimationFrame(cardSizeRestoreFrameRef.current);
       }
@@ -3986,6 +4057,8 @@ function AppInner() {
       );
       if (!root || nextSize === assetCardSize) return;
 
+      cardReflowMotionRef.current.capture(root);
+
       const rootRect = root.getBoundingClientRect();
       const anchorX = clientX ?? rootRect.left + rootRect.width / 2;
       const anchorY = clientY ?? rootRect.top + rootRect.height / 2;
@@ -4048,23 +4121,30 @@ function AppInner() {
         root.classList.add("is-reflow-restoring");
       }
       setCanvasPrefs((p) => ({ ...p, cardSize: nextSize }));
-      // Serpent-32p: always re-anchor after settle; width/size reflow may reset
-      // scrollTop mid-wait, and bailing left the visible set wrong.
-      scheduleAnchorRestore(
-        root,
-        cardResizeAnchorRef.current,
-        cardSizeRestoreFrameRef,
-        30,
-        () => {
-          root.classList.remove("is-reflow-restoring");
-          cardResizeAnchorRef.current = null;
-          cardResizeScrollSnapshotRef.current = null;
-        },
-        cardResizeScrollSnapshotRef.current ?? undefined,
-      );
+      // Restore after React commits the new geometry, before playing motion.
+      // Waiting 30 frames here made the finished animation jump a second time.
     },
     [assetCardSize],
   );
+
+  useLayoutEffect(() => {
+    const root = workspaceCanvasRef.current;
+    if (!root) return;
+    scheduleAnchorRestore(
+      root,
+      cardResizeAnchorRef.current,
+      cardSizeRestoreFrameRef,
+      0,
+      () => {
+        root.classList.remove("is-reflow-restoring");
+        cardResizeAnchorRef.current = null;
+        cardResizeScrollSnapshotRef.current = null;
+      },
+      cardResizeScrollSnapshotRef.current ?? undefined,
+      cardReflowLayoutRect,
+    );
+    cardReflowMotionRef.current.play(root);
+  }, [assetCardSize]);
 
   // REQ-CANVAS-019: dragging the sidebar or resizing the window changes the
   // canvas's available width, which the grid/masonry/justified layouts react
@@ -4078,7 +4158,7 @@ function AppInner() {
     if (!canvas) return;
     let lastWidth: number | null = null;
     const host = canvas.parentElement;
-    const observer = new ResizeObserver(() => {
+    const updateCanvasWidth = () => {
       // The host is the flex item whose width changes when a divider moves.
       // Read the canvas's current width instead of trusting observer entry
       // ordering when both elements resize in the same notification.
@@ -4094,6 +4174,12 @@ function AppInner() {
       }
       setCanvasWidthPx(Math.round(width));
       setFolderCanvasContentWidthPx(Math.round(contentWidth));
+      // Navigation publishes its destination once; its snapshot update owns
+      // anchoring until that geometry settles, without horizontal compensation.
+      if (navTransitioningRef.current) {
+        lastWidth = width;
+        return;
+      }
       if (lastWidth === null) {
         lastWidth = width;
         return;
@@ -4157,14 +4243,20 @@ function AppInner() {
         },
         reflowScrollSnapshotRef.current ?? undefined,
       );
-    });
+    };
+    const observer = new ResizeObserver(updateCanvasWidth);
+    canvas.addEventListener(CANVAS_LAYOUT_MEASURE, updateCanvasWidth);
     observer.observe(canvas);
     if (host) observer.observe(host);
-    return () => observer.disconnect();
+    return () => {
+      canvas.removeEventListener(CANVAS_LAYOUT_MEASURE, updateCanvasWidth);
+      observer.disconnect();
+    };
   }, []);
 
   useLayoutEffect(() => {
     if (!previewAsset && !previewRestoring) return;
+    cardReflowMotionRef.current.cancel();
     if (cardSizeRestoreFrameRef.current !== null) {
       window.cancelAnimationFrame(cardSizeRestoreFrameRef.current);
       cardSizeRestoreFrameRef.current = null;
@@ -4200,37 +4292,31 @@ function AppInner() {
     saveViewerChromePreferences(viewerChromePrefs);
   }, [viewerChromePrefs]);
 
+  const cardWheelTargetRef = useRef({ size: assetCardSize, resize: resizeAssetCards });
+  cardWheelTargetRef.current = { size: assetCardSize, resize: resizeAssetCards };
   useEffect(() => {
     const canvas = workspaceCanvasRef.current;
     if (!canvas) return;
+    const wheelResize = new CardWheelResize(
+      () => cardWheelTargetRef.current.size,
+      () => enumerateDiscreteCardSizes(browseCardLayoutWidthPx(canvas)),
+      // Commit inside the scheduled frame so React does not postpone the new
+      // geometry beyond paint or leave the next wheel batch reading old size.
+      (size, x, y) => flushSync(() => cardWheelTargetRef.current.resize(size, x, y)),
+    );
     const handleWheel = (event: WheelEvent) => {
       if (!event.ctrlKey || previewAsset) return;
       event.preventDefault();
-      const wheelSample = {
-        deltaX: event.deltaX,
-        deltaY: event.deltaY,
-        deltaMode: event.deltaMode,
-      };
-      // Mouse notches: sign-only (one stop). Trackpad pinch: normalize LINE/PAGE
-      // into pixels for the continuous high-gain path (Serpent-fvpi / Serpent-7ny).
-      const delta =
-        event.deltaMode === WheelEvent.DOM_DELTA_LINE
-          ? event.deltaY * 16
-          : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
-            ? event.deltaY * canvas.clientHeight
-            : event.deltaY;
-      const stops = enumerateDiscreteCardSizes(browseCardLayoutWidthPx(canvas));
-      const nextSize = nextDiscreteCardSizeFromWheelDelta(
-        assetCardSize,
-        delta,
-        stops,
-        wheelSample,
-      );
-      resizeAssetCards(nextSize, event.clientX, event.clientY);
+      // Match the size slider: one adjacent stop regardless of wheel delta
+      // magnitude, fractional precision, or PIXEL/LINE/PAGE units.
+      wheelResize.enqueue(event.deltaY, event.clientX, event.clientY);
     };
     canvas.addEventListener("wheel", handleWheel, { passive: false });
-    return () => canvas.removeEventListener("wheel", handleWheel);
-  }, [assetCardSize, previewAsset, resizeAssetCards]);
+    return () => {
+      canvas.removeEventListener("wheel", handleWheel);
+      wheelResize.cancel();
+    };
+  }, [previewAsset]);
 
   // Browse canvas Cmd/Ctrl+=|-|0 — discrete card stops; 0 = default size
   // (Serpent-46i9 / Serpent-7ny). Viewer owns the chord while preview is open.
@@ -14133,7 +14219,9 @@ function AppInner() {
           <ToolButton
             icon={leftOpen ? "panel-left-close" : "panel-left"}
             label={leftOpen ? t("shell.collapseNav") : t("shell.expandNav")}
-            onClick={() => setLeftOpen((v) => !v)}
+            onPointerDown={(event) => navigationPressRef.current.pointerDown(event, toggleNavigation)}
+            onPointerCancel={() => navigationPressRef.current.cancel()}
+            onClick={(event) => navigationPressRef.current.click(event, toggleNavigation)}
             pressed={leftOpen}
           />
           <LibrarySwitcher
@@ -15528,6 +15616,11 @@ function AppInner() {
                               <AssetCardMedia
                                 alt={asset.displayName}
                                 coverUrl={thumbCover}
+                                adaptiveSource={api && asset.mediaType === "image" && asset.availability === "available" && !asset.deletedAt && asset.width && asset.height ? {
+                                  api, libraryId: library.libraryId, assetId: asset.assetId,
+                                  revisionId: asset.currentRevisionId, width: asset.width, height: asset.height,
+                                } : undefined}
+                                suspendUpgrade={Boolean(previewAsset || previewRestoring)}
                                 failed={cardThumbFailed}
                                 hovering={hoveredAssetId === asset.assetId}
                                 hoverAudioPlay={canvasPrefs.hoverAudioPlay}

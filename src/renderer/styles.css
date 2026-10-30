@@ -426,6 +426,107 @@ summary:focus-visible {
   transition: grid-template-columns 160ms ease;
 }
 
+/* Compute navigation destination once; browser snapshots interpolate all layers. */
+:root[data-nav-transition] .app-shell {
+  transition: none;
+}
+:root[data-nav-transition] .workspace-canvas {
+  overflow-anchor: none;
+  view-transition-group: contain;
+}
+:root[data-nav-transition]::view-transition { pointer-events: none; }
+:root[data-nav-transition]::view-transition-group(*),
+:root[data-nav-transition]::view-transition-group-children(*),
+:root[data-nav-transition]::view-transition-old(*),
+:root[data-nav-transition]::view-transition-new(*) {
+  animation-duration: 300ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  /* Old card pixels are hidden; plus-lighter cross-fade blending only adds
+     another offscreen surface for every independently moving thumbnail. */
+  mix-blend-mode: normal;
+}
+:root[data-nav-transition]::view-transition-group(*) { z-index: 2; }
+:root[data-nav-transition]::view-transition-group(root) { z-index: 0; }
+:root[data-nav-transition]::view-transition-group(root),
+:root[data-nav-transition]::view-transition-old(root),
+:root[data-nav-transition]::view-transition-new(root) {
+  animation: none;
+}
+:root[data-nav-transition]::view-transition-group(nav-workspace) { z-index: 1; }
+:root[data-nav-transition]::view-transition-group(nav-canvas) { z-index: 2; }
+/* Preserve the scroll viewport around every independently moving card. A
+   transparent title bar must not reveal a scrolled card's full snapshot. */
+:root[data-nav-transition]::view-transition-group-children(nav-canvas) {
+  overflow: clip;
+}
+:root[data-nav-transition]::view-transition-old(nav-canvas) {
+  animation: none;
+  opacity: 0;
+}
+:root[data-nav-transition]::view-transition-new(nav-canvas) {
+  animation: none;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+:root[data-nav-transition]::view-transition-group(nav-toolstrip) { z-index: 4; }
+:root[data-nav-transition]::view-transition-group(nav-toolbar) { z-index: 5; }
+/* Chrome is a persistent upper layer, never cross-faded with the canvas. */
+:root[data-nav-transition]::view-transition-old(nav-toolstrip),
+:root[data-nav-transition]::view-transition-old(nav-toolbar) {
+  animation: none;
+  opacity: 0;
+}
+:root[data-nav-transition]::view-transition-new(nav-toolstrip),
+:root[data-nav-transition]::view-transition-new(nav-toolbar) {
+  animation: none;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+:root[data-nav-transition]::view-transition-group(nav-panel) {
+  animation: none;
+  z-index: 3;
+}
+:root[data-nav-transition]::view-transition-old(*.nav-card) {
+  animation: none;
+  opacity: 0;
+}
+:root[data-nav-transition]::view-transition-new(*.nav-card) {
+  animation: none;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+:root[data-nav-transition]::view-transition-old(nav-workspace),
+:root[data-nav-transition]::view-transition-new(nav-workspace) {
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+:root[data-nav-transition]::view-transition-new(nav-panel) {
+  animation-name: nav-panel-enter;
+  animation-fill-mode: both;
+}
+:root[data-nav-transition]::view-transition-old(nav-panel) {
+  animation-name: nav-panel-exit;
+  /* Keep the outgoing snapshot offscreen until every card transition ends.
+     Otherwise it resets to translateX(0) for a frame before teardown. */
+  animation-fill-mode: both;
+}
+@keyframes nav-panel-enter {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+@keyframes nav-panel-exit {
+  from { transform: translateX(0); }
+  to { transform: translateX(-100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell { transition: none; }
+}
+
 /* Live drags must not fight the collapse transition. */
 .app-shell.is-resizing {
   transition: none;
@@ -2210,6 +2311,8 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  /* Keep row and count widths stable when expanding folders adds a scrollbar. */
+  scrollbar-gutter: stable;
   padding: 10px 8px 12px;
 }
 
@@ -12106,6 +12209,11 @@ select.ai-config-input.ai-config-languages {
   pointer-events: none;
 }
 
+.asset-card-media .adaptive-card-upgrade {
+  position: absolute;
+  inset: 0;
+}
+
 /* Serpent-l2at / Serpent-qc7v: 占位 caption 与完成卡共用 .asset-caption 间距；
    骨架条只填尚未到达的文件名/大小日期行，高度贴近对应文字行。 */
 .asset-caption-skeleton-line {
@@ -18668,13 +18776,17 @@ body.platform-darwin .app-shell[data-shell-layout="islands"] .toolbar-nav-cluste
   overflow: visible;
 }
 .app-shell[data-shell-layout="islands"] .asset-card .asset-preview {
-  border-radius: var(--island-card-radius);
+  /* The preview meets the caption inside the card: only its outer top
+     corners are rounded. Keep a single mask here so stacked cover/live
+     layers do not repeatedly clip the same antialiased edge. */
+  border-radius: var(--island-card-radius) var(--island-card-radius) 0 0;
   outline: 1px solid var(--island-hairline);
   outline-offset: -1px;
 }
 .app-shell[data-shell-layout="islands"] .asset-card .asset-preview .asset-card-media,
 .app-shell[data-shell-layout="islands"] .asset-card .asset-preview .asset-thumbnail {
-  border-radius: inherit;
+  border-radius: 0;
+  overflow: visible;
 }
 .app-shell[data-shell-layout="islands"] .asset-card.is-selected,
 .app-shell[data-shell-layout="islands"] .asset-card:focus-visible,
