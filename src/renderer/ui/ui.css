@@ -60,23 +60,31 @@
 }
 
 .ui-button--primary {
-  border-color: var(--ui-action-accent);
+  border-color: transparent;
   background: var(--ui-action-accent-pressed);
   color: var(--ui-content-on-accent);
 }
 
 .ui-button--primary:hover:not(:disabled) {
-  border-color: var(--ui-action-accent-hover);
+  border-color: transparent;
   background: var(--ui-action-accent);
 }
 
+.ui-button--primary:focus,
+.ui-button--primary:focus-visible,
+.ui-button--danger:focus,
+.ui-button--danger:focus-visible {
+  outline: none;
+}
+
 .ui-button--danger {
-  border-color: var(--ui-action-danger);
+  border-color: transparent;
   background: var(--ui-action-danger);
   color: var(--ui-content-on-accent);
 }
 
 .ui-button--danger:hover:not(:disabled) {
+  border-color: transparent;
   background: var(--ui-action-danger-hover);
 }
 

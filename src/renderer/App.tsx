@@ -1464,6 +1464,11 @@ function AppInner() {
   const [shuffleSeed, setShuffleSeed] = useState<number | null>(null);
   const [searchOffset, setSearchOffset] = useState(0);
   const [searchTotal, setSearchTotal] = useState<number | null>(null);
+  const [filteredFolderCounts, setFilteredFolderCounts] = useState<{
+    all: number;
+    root: number;
+    byFolderId: ReadonlyMap<string, number>;
+  } | null>(null);
   const [searchSnippets, setSearchSnippets] = useState<Map<string, string>>(
     new Map(),
   );
@@ -9602,6 +9607,70 @@ function AppInner() {
     sortOrder,
   ]);
 
+  useEffect(() => {
+    if (!api || !library || showTrash) {
+      setFilteredFolderCounts(null);
+      return;
+    }
+    const filters: FilterClause[] | undefined = currentQueryDefinition().filters;
+    if (!filters || filters.length === 0) {
+      setFilteredFolderCounts(null);
+      return;
+    }
+    let cancelled = false;
+    const libraryId = library.libraryId;
+    void api.listFilteredFolderCounts({
+      libraryId,
+      filters,
+      showIgnored: showIgnoredItems,
+    }).then((result) => {
+      if (cancelled) return;
+      if (!result.ok) {
+        setFilteredFolderCounts(null);
+        return;
+      }
+      setFilteredFolderCounts({
+        all: result.value.all,
+        root: result.value.root,
+        byFolderId: new Map(
+          result.value.folders.map((folder) => [folder.folderId, folder.count]),
+        ),
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Folder badges follow the same discovery filters as the grid.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    api,
+    library,
+    showTrash,
+    showIgnoredItems,
+    colorFilter,
+    excludeColorFilter,
+    colorSimilarity,
+    formatFilter,
+    excludeFormatFilter,
+    tagFilter,
+    excludeTagFilter,
+    includeAiTagFilter,
+    tagFilterMatch,
+    ratingFilter,
+    excludeRatingFilter,
+    includeAiRatingFilter,
+    favoriteFilter,
+    sourceUrlFilter,
+    availabilityFilter,
+    excludeAvailabilityFilter,
+    widthRange,
+    heightRange,
+    aspectRatioRange,
+    aspectRatioRanges,
+    durationRange,
+    longEdgeRange,
+  ]);
+
   async function chooseSmartCollection(
     collectionId: string,
     navigation?: WorkspaceNavigationRequest,
@@ -13894,6 +13963,11 @@ function AppInner() {
           key={entry.folderId}
           libraryId={library.libraryId}
           trashed={showTrash}
+          filteredCount={
+            showTrash || !filteredFolderCounts
+              ? undefined
+              : filteredFolderCounts.byFolderId.get(entry.folderId) ?? 0
+          }
           {...(showTrash
             ? {}
             : createFolderCardDropHandlers(entry.folderId))}
@@ -14432,6 +14506,7 @@ function AppInner() {
         }}
         allAssetCount={allAssetCount}
         rootAssetCount={rootAssetCount}
+        filteredFolderCounts={showTrash ? null : filteredFolderCounts}
         trashedAssetCount={trashedAssetCount}
         folders={folders}
         collections={collections}

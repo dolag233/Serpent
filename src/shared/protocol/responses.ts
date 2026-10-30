@@ -826,6 +826,16 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('folder.filtered-counts'),
+    all: z.number().int().nonnegative(),
+    root: z.number().int().nonnegative(),
+    folders: z.array(z.strictObject({
+      folderId: z.string().min(1).max(4096),
+      count: z.number().int().nonnegative(),
+    })).max(50_000),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('folder.entries'),
     entries: z.array(folderBrowseEntrySchema),
   }),

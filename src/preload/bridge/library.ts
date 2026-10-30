@@ -556,6 +556,31 @@ export const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: result.entries };
   },
 
+  async listFilteredFolderCounts(input: {
+    libraryId: string;
+    filters?: FilterClause[];
+    showIgnored?: boolean;
+  }): Promise<LibraryApiResult<{
+    all: number;
+    root: number;
+    folders: Array<{ folderId: string; count: number }>;
+  }>> {
+    const result = await request({
+      type: 'folder.filtered-counts.request',
+      libraryId: input.libraryId,
+      filters: input.filters,
+      showIgnored: input.showIgnored,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.filtered-counts') {
+      throw new Error('Unexpected filtered-folder-counts response.');
+    }
+    return {
+      ok: true,
+      value: { all: result.all, root: result.root, folders: result.folders },
+    };
+  },
+
   async listFolderEntriesByRefs(input: {
     libraryId: string;
     refs: Array<{ locationKind: 'managed' | 'linked'; folderId: string }>;

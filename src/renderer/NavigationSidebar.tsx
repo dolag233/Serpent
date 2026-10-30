@@ -152,7 +152,7 @@ function NavRow({
   appearance?: EntityAppearance | null;
   linkedBadge?: "link" | "link-off" | null;
   label: string;
-  count?: number;
+  count?: ReactNode;
   active?: boolean;
   onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void;
   onContextMenu?: (e: React.MouseEvent) => void;
@@ -893,6 +893,15 @@ export interface NavigationSidebarProps {
   allAssetCount: number;
   /** Assets stored directly under the library root (distinct from all assets). */
   rootAssetCount: number;
+  /**
+   * Set while a discovery filter is active. Counts render as filtered/total.
+   * Missing folder ids count as zero matches.
+   */
+  filteredFolderCounts?: {
+    all: number;
+    root: number;
+    byFolderId: ReadonlyMap<string, number>;
+  } | null;
   trashedAssetCount: number;
   folders: ManagedFolderSummary[];
   collections: CollectionSummary[];
@@ -1082,6 +1091,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     revealTarget = null,
     allAssetCount,
     rootAssetCount,
+    filteredFolderCounts = null,
     trashedAssetCount,
     folders,
     collections,
@@ -2101,7 +2111,9 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         return (
           <NavRow
             active={isManagedFolderNavActive(browseNavFlags, entry.folderId)}
-            count={entry.directAssetCount}
+            count={filteredFolderCounts
+              ? filteredFolderCounts.byFolderId.get(entry.folderId) ?? 0
+              : entry.directAssetCount}
             depth={entry.depth}
             disclosure={
               hasChildren ? (
@@ -2254,7 +2266,9 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           navFolderId={entry.folderId}
           navFolderKind="linked"
           multiSelected={selectedFolderIds.includes(entry.folderId)}
-          count={entry.assetCount}
+          count={filteredFolderCounts
+            ? filteredFolderCounts.byFolderId.get(entry.folderId) ?? 0
+            : entry.assetCount}
           title={linkedFolderHoverDetail(
             entry.status,
             lf.absoluteRootPath,
@@ -2764,7 +2778,11 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
       <nav className="navigation-scroll">
         <NavRow
           active={library ? isAllAssetsNavActive(browseNavFlags) : true}
-          count={library ? allAssetCount : undefined}
+          count={library
+            ? (filteredFolderCounts
+              ? filteredFolderCounts.all
+              : allAssetCount)
+            : undefined}
           disabled={!library}
           icon="grid"
           label={t("scope.allAssets")}
@@ -2779,7 +2797,11 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         />
         <NavRow
           active={Boolean(library && isRootFolderNavActive(browseNavFlags))}
-          count={library ? rootAssetCount : undefined}
+          count={library
+            ? (filteredFolderCounts
+              ? filteredFolderCounts.root
+              : rootAssetCount)
+            : undefined}
           disabled={!library}
           icon="folder"
           label={t("scope.rootFolder")}

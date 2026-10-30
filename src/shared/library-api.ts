@@ -367,6 +367,15 @@ export interface SerpentLibraryApi {
     parentFolderId: string | null;
     showIgnored?: boolean;
   }): Promise<LibraryApiResult<FolderBrowseEntry[]>>;
+  listFilteredFolderCounts(input: {
+    libraryId: string;
+    filters?: FilterClause[];
+    showIgnored?: boolean;
+  }): Promise<LibraryApiResult<{
+    all: number;
+    root: number;
+    folders: Array<{ folderId: string; count: number }>;
+  }>>;
   listFolderEntriesByRefs(input: {
     libraryId: string;
     refs: Array<{ locationKind: 'managed' | 'linked'; folderId: string }>;

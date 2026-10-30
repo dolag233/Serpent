@@ -300,6 +300,12 @@ summary:focus-visible {
   outline-offset: 1px;
 }
 
+/* A solid fill already draws the edge. Another outline repeats it. */
+.primary-button:focus,
+.primary-button:focus-visible {
+  outline: none;
+}
+
 ::selection {
   background: color-mix(in srgb, var(--accent) 34%, transparent);
 }
@@ -1391,6 +1397,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   color: var(--text);
   font-family: inherit;
   font-size: var(--menu-item-font-size);
+  font-weight: 450;
   line-height: var(--menu-item-line-height);
   text-align: left;
   white-space: nowrap;
@@ -1497,8 +1504,35 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   letter-spacing: 0.02em;
 }
 
+.library-switcher-item > .icon {
+  display: flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  color: var(--secondary);
+}
+
+.library-switcher-menu:not(.is-keyboard-navigation) .library-switcher-item:hover:not(:disabled) > .icon,
+.library-switcher-item:focus-visible:not(:disabled) > .icon {
+  color: var(--text);
+}
+
+.library-switcher-item.is-danger > .icon,
+.library-switcher-item.is-danger:hover:not(:disabled) > .icon,
+.library-switcher-item.is-danger:focus-visible:not(:disabled) > .icon {
+  color: var(--menu-danger-color);
+}
+
+.library-switcher-item:disabled > .icon {
+  color: inherit;
+}
+
 .library-switcher-item-label {
   display: block;
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4021,10 +4055,10 @@ input[type="range"] {
 }
 
 .primary-button {
-  border: 1px solid color-mix(in srgb, var(--accent) 92%, white);
+  border: none;
   background: var(--accent-dark);
   color: white;
-  box-shadow: inset 0 1px rgb(255 255 255 / 12%);
+  box-shadow: none;
 }
 
 .primary-button:hover {
@@ -5567,7 +5601,7 @@ body.serpent-modal-open .app-shell {
    own native-controls hide timer, which caused the prior VIEW-009 failure. */
 .preview-video-controls {
   position: absolute;
-  z-index: 2;
+  z-index: 4;
   left: 14px;
   right: 14px;
   bottom: 14px;
@@ -6269,7 +6303,7 @@ body.serpent-modal-open .app-shell {
 }
 .preview-zoom-controls {
   position: absolute;
-  z-index: 2;
+  z-index: 4;
   bottom: 12px;
   left: 50%;
   display: flex;
@@ -6624,20 +6658,45 @@ body.serpent-modal-open .app-shell {
 .preview-nav {
   position: absolute;
   z-index: 2;
-  top: 50%;
-  display: grid;
-  width: 52px;
-  height: 64px;
-  padding: 0;
-  place-items: center;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 22%;
+  max-width: 320px;
+  height: auto;
+  padding: 0 12px;
   border: 0;
-  border-radius: calc(8px * var(--ui-radius-scale, 1));
+  border-radius: 0;
   background: transparent;
   box-shadow: none;
   color: var(--text);
   cursor: pointer;
   opacity: 0.55;
-  transform: translateY(-50%);
+}
+.preview-nav-glyph {
+  display: grid;
+  place-items: center;
+}
+.preview-nav-glyph .icon {
+  grid-area: 1 / 1;
+}
+.preview-nav.is-on-dark .preview-nav-glyph .icon:first-child {
+  color: #000;
+  stroke-width: 3.5;
+}
+.preview-nav.is-on-dark .preview-nav-glyph .icon:last-child {
+  color: #fff;
+  stroke-width: 2.85;
+}
+.preview-nav.is-on-light .preview-nav-glyph .icon:first-child {
+  color: #fff;
+  stroke-width: 3.5;
+}
+.preview-nav.is-on-light .preview-nav-glyph .icon:last-child {
+  color: #111;
+  stroke-width: 2.85;
 }
 .preview-exr-plane-selector {
   position: absolute;
@@ -6668,12 +6727,10 @@ body.serpent-modal-open .app-shell {
   box-shadow: 0 0 0 2px var(--accent);
 }
 .preview-nav.is-on-dark {
-  color: rgb(255 255 255 / 88%);
-  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 55%));
+  color: #fff;
 }
 .preview-nav.is-on-light {
-  color: rgb(20 20 20 / 82%);
-  filter: drop-shadow(0 1px 1px rgb(255 255 255 / 55%));
+  color: #111;
 }
 .preview-nav:hover:not(:disabled),
 .preview-nav:focus-visible:not(:disabled) {
@@ -6681,19 +6738,19 @@ body.serpent-modal-open .app-shell {
   color: inherit;
   opacity: 1;
   outline: none;
-}
-.preview-nav:focus-visible:not(:disabled) {
-  box-shadow: 0 0 0 2px var(--accent);
+  box-shadow: none;
 }
 .preview-nav:disabled {
   opacity: 0.2;
   cursor: default;
 }
 .preview-nav.is-prev {
-  left: 4px;
+  left: 0;
+  justify-content: flex-start;
 }
 .preview-nav.is-next {
-  right: 4px;
+  right: 0;
+  justify-content: flex-end;
 }
 .preview-fullscreen-chip {
   position: absolute;
@@ -14364,11 +14421,15 @@ select.ai-config-input.ai-config-languages {
 :root[data-platform="windows"] .app-shell[data-shell-layout="islands"] :is(
     .nav-section-heading,
     .nav-count,
-    .library-switcher-section-label,
-    .library-switcher-item
+    .library-switcher-section-label
   ) {
   font-size: calc(12px * var(--ui-font-scale));
   color: var(--secondary);
+}
+
+:root[data-platform="windows"] .app-shell[data-shell-layout="islands"] .library-switcher-item:not(.is-danger):not(:disabled) {
+  font-size: calc(12px * var(--ui-font-scale));
+  color: var(--text);
 }
 
 :root[data-platform="windows"] :where(
@@ -15828,7 +15889,7 @@ select.ai-config-input.ai-config-languages {
 }
 
 .primary-button {
-  border-color: color-mix(in srgb, var(--accent) 88%, white);
+  border: none;
   background: var(--accent);
   color: var(--ui-content-on-accent);
   box-shadow: none;
@@ -15836,7 +15897,6 @@ select.ai-config-input.ai-config-languages {
 
 .primary-button:hover:not(:disabled) {
   background: var(--ui-action-accent-hover, color-mix(in srgb, var(--accent) 86%, white));
-  border-color: color-mix(in srgb, var(--accent) 80%, white);
 }
 
 .main-menu-section.is-active,
@@ -16045,24 +16105,35 @@ html.serpent-window-square .window-edge-resize-layer.is-disabled {
 }
 
 .preview-nav {
-  width: 44px;
-  height: 56px;
-  border-radius: var(--ui-radius-surface);
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  width: 22%;
+  max-width: 320px;
+  height: auto;
+  padding: 0 12px;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   opacity: 0.45;
 }
 
 .preview-nav:hover:not(:disabled),
 .preview-nav:focus-visible:not(:disabled) {
-  background: color-mix(in srgb, var(--raised) 55%, transparent);
+  background: transparent;
+  box-shadow: none;
   opacity: 1;
 }
 
 .preview-nav.is-prev {
-  left: 8px;
+  left: 0;
+  justify-content: flex-start;
 }
 
 .preview-nav.is-next {
-  right: 8px;
+  right: 0;
+  justify-content: flex-end;
 }
 
 .model-viewer-toolbar {
@@ -17397,6 +17468,7 @@ html.serpent-window-square .window-edge-resize-layer.is-disabled {
   background: var(--ui-content-primary);
   color: var(--ui-content-inverse);
   border: none;
+  outline: none;
   border-radius: 9999px;
   box-shadow: none;
   min-height: 32px;
