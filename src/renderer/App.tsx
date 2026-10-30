@@ -13,6 +13,8 @@ import {
 import { createPortal, flushSync } from "react-dom";
 
 import { Icon, type IconName } from "./Icons";
+import { createCoalescedRefresh } from "./coalesced-refresh";
+import { importFolderCustomOrder } from "./folder-custom-order";
 import { isCurrentAiConnectionProbe } from "./ai-connection-probe-guard";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { EditTextContextMenuHost } from "./edit-text-context-menu";
@@ -1787,6 +1789,7 @@ function AppInner() {
       document.removeEventListener("focusout", onFocusOut, true);
     };
   }, []);
+  const [coalesceOperationHistoryRefresh] = useState(createCoalescedRefresh);
   const refreshOperationHistory = useCallback(async () => {
     if (!api || !library) {
       setOperationHistory(null);
@@ -1795,11 +1798,13 @@ function AppInner() {
     const targetLibraryId = library.libraryId;
     const viewSession = ensureLibraryView(targetLibraryId);
     if (!viewSession) return;
-    const result = await api.getOperationHistoryStatus({ libraryId: targetLibraryId });
-    if (result.ok && isCurrentLibraryView(viewSession)) {
-      setOperationHistory(result.value);
-    }
-  }, [api, ensureLibraryView, isCurrentLibraryView, library]);
+    await coalesceOperationHistoryRefresh(targetLibraryId, async () => {
+      const result = await api.getOperationHistoryStatus({ libraryId: targetLibraryId });
+      if (result.ok && isCurrentLibraryView(viewSession)) {
+        setOperationHistory(result.value);
+      }
+    });
+  }, [api, coalesceOperationHistoryRefresh, ensureLibraryView, isCurrentLibraryView, library]);
   useEffect(() => {
     const refreshTimer = window.setTimeout(() => {
       void refreshOperationHistory();
@@ -9967,6 +9972,48 @@ function AppInner() {
     }
   }
 
+  const [pixcallSkippedReport, setPixcallSkippedReport] = useState<Array<{ relativePath: string; reason: "unreadable" | "unsafe" | "duplicate" | "metadata-failed" }> | null>(null);
+  const [pixcallSkippedPage, setPixcallSkippedPage] = useState(0);
+
+  async function importPixcallLibrary() {
+    if (!api || !library || importProgress) return;
+    const startedAt = Date.now();
+    setLibraryTransferKind("import");
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await runCurrentImportRpc(() =>
+        api.importPixcallLibrary({ libraryId: library.libraryId }),
+      );
+      if (!result.ok) {
+        if (result.error.code === "CANCELLED") {
+          setNotice(locale === "zh-CN"
+            ? "导入已停止；此前导入的素材已保留在 Serpent 资源库中。"
+            : "Import stopped. Previously imported assets remain in the Serpent library.");
+          return;
+        }
+        throw new LibraryOperationError(result.error);
+      }
+      importFolderCustomOrder(library.libraryId, result.value.folderOrder ?? []);
+      setNotice(importSummaryMessage(result.value, locale));
+      if (result.value.skippedItems.length > 0) {
+        setPixcallSkippedPage(0);
+        setPixcallSkippedReport(result.value.skippedItems);
+      }
+      setFolderBrowseRefreshToken((token) => token + 1);
+      await reloadCurrentContent({ blockingNavigation: true });
+      playTaskCompletionSound(startedAt);
+    } catch (caught) {
+      playTaskCompletionSound(startedAt);
+      showBlockingError(
+        t("dialog.blockingError.importFailed"),
+        toMessage(caught, t("toast.importFailed"), locale),
+      );
+    } finally {
+      setImportProgress(null);
+    }
+  }
+
   async function confirmImageSequenceImportOffer(input: {
     action: "import-sequence" | "import-selected";
     firstFrame: number;
@@ -16770,6 +16817,14 @@ function AppInner() {
           setImportLibraryChooserOpen(false);
           void importBillfishLibrary();
         }}
+        onImportPixcall={
+          library
+            ? () => {
+                setImportLibraryChooserOpen(false);
+                void importPixcallLibrary();
+              }
+            : undefined
+        }
       />
       {importValidated && (
         <ImportDialog
@@ -16802,6 +16857,27 @@ function AppInner() {
         onRetry={handleAiConnectionFailureRetry}
         open={aiConnectionFailureGate.open}
       />
+      {pixcallSkippedReport && (() => {
+        const pageSize = 50;
+        const pageCount = Math.max(1, Math.ceil(pixcallSkippedReport.length / pageSize));
+        const reasonText = (reason: "unreadable" | "unsafe" | "duplicate" | "metadata-failed") => locale === "zh-CN"
+          ? ({ unreadable: "文件缺失或无法读取", unsafe: "路径或文件类型不安全", duplicate: "重复素材", "metadata-failed": "素材已导入，但 EXIF 信息写入失败" } as const)[reason]
+          : ({ unreadable: "Missing or unreadable", unsafe: "Unsafe path or file type", duplicate: "Duplicate", "metadata-failed": "Asset imported, but EXIF metadata could not be saved" } as const)[reason];
+        return <div className="dialog-backdrop" role="presentation">
+          <div className="create-dialog" role="dialog" aria-modal="true" aria-label={locale === "zh-CN" ? "Pixcall 导入问题明细" : "Pixcall import issues"}>
+            <div className="dialog-heading"><h2>{locale === "zh-CN" ? "Pixcall 导入问题明细" : "Pixcall import issues"}</h2></div>
+            <p className="dialog-body-copy">{locale === "zh-CN" ? `共 ${pixcallSkippedReport.length} 项，第 ${pixcallSkippedPage + 1} / ${pageCount} 页` : `${pixcallSkippedReport.length} items, page ${pixcallSkippedPage + 1} / ${pageCount}`}</p>
+            <div style={{ maxHeight: "45vh", overflow: "auto", overflowWrap: "anywhere" }}>
+              {pixcallSkippedReport.slice(pixcallSkippedPage * pageSize, (pixcallSkippedPage + 1) * pageSize).map((item, index) => <p key={`${pixcallSkippedPage}-${index}`}>{item.relativePath} — {reasonText(item.reason)}</p>)}
+            </div>
+            <div className="dialog-actions">
+              <button className="secondary-button" disabled={pixcallSkippedPage === 0} onClick={() => setPixcallSkippedPage((page) => page - 1)} type="button">{locale === "zh-CN" ? "上一页" : "Previous"}</button>
+              <button className="secondary-button" disabled={pixcallSkippedPage + 1 >= pageCount} onClick={() => setPixcallSkippedPage((page) => page + 1)} type="button">{locale === "zh-CN" ? "下一页" : "Next"}</button>
+              <button className="primary-button" onClick={() => setPixcallSkippedReport(null)} type="button">{locale === "zh-CN" ? "关闭" : "Close"}</button>
+            </div>
+          </div>
+        </div>;
+      })()}
       <FatalAlertDialog
         cancelLabel={fatalAlertAlreadyOpen ? t("common.cancel") : null}
         confirmLabel={fatalAlertAlreadyOpen ? t("common.confirm") : null}

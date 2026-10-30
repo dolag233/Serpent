@@ -52,6 +52,7 @@ import {
   type ImageSequenceImportOffer,
   type EagleImportResult,
   type BillfishImportResult,
+  type PixcallImportResult,
   type AssetChangeEvent,
   parseAssetChangeEvent,
   type LibraryChangedEvent,
@@ -770,6 +771,15 @@ export const library: SerpentLibraryApi = Object.freeze({
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.import-billfish.completed') {
       throw new Error('Unexpected Billfish-library import response.');
+    }
+    return { ok: true, value: result.result };
+  },
+
+  async importPixcallLibrary({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<PixcallImportResult>> {
+    const result = await request({ type: 'asset.import-pixcall.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.import-pixcall.completed') {
+      throw new Error('Unexpected Pixcall-library import response.');
     }
     return { ok: true, value: result.result };
   },

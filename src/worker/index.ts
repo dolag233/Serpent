@@ -2651,6 +2651,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     case 'asset.import.prepare':
     case 'asset.import-eagle':
     case 'asset.import-billfish':
+    case 'asset.import-pixcall':
     case 'asset.import.resolve':
     case 'asset.import.skip-source-failure':
     case 'asset.import.abandon':

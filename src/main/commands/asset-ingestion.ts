@@ -104,6 +104,21 @@ export async function executeAssetIngestionMainCommand(
           }
         : undefined;
     }
+    case "asset.import-pixcall.request": {
+      const sourceRootPath = await selectOpenDirectory(
+        runtime.createNativeDialogHost(),
+        "importPixcallLibrary",
+        process.env.SERPENT_E2E_IMPORT_PIXCALL_LIBRARY,
+      );
+      if (!sourceRootPath) return undefined;
+      return sourceRootPath
+        ? {
+            type: "asset.import-pixcall",
+            libraryId: request.libraryId,
+            sourceRootPath,
+          }
+        : undefined;
+    }
     case "asset.import-drop.request":
       // Classified in handleLibraryRequest because classification failures need
       // a renderer-safe, specific public error instead of an INTERNAL_ERROR.

@@ -1,7 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   applyFolderSiblingOrder,
+  mergeImportedFolderOrder,
+  importFolderCustomOrder,
+  FOLDER_CUSTOM_ORDER_CHANGED,
   customOrderKey,
   insertBesideSibling,
   loadCollectionCustomOrder,
@@ -20,6 +23,45 @@ import type {
   CollectionSummary,
   ManagedFolderSummary,
 } from "../../src/shared/asset-types";
+
+describe("imported folder order", () => {
+  it("persists migrated positions and notifies the current sidebar", () => {
+    const storage = memoryStorage();
+    const events = new EventTarget();
+    const listener = vi.fn();
+    events.addEventListener(FOLDER_CUSTOM_ORDER_CHANGED, listener);
+    vi.stubGlobal("localStorage", storage);
+    vi.stubGlobal("window", events);
+    try {
+      importFolderCustomOrder("target", [
+        { folderId: "z", parentFolderId: null, position: 0 },
+        { folderId: "a", parentFolderId: null, position: 1 },
+      ]);
+      const saved = loadFolderCustomOrder("target");
+      expect(saved.get(customOrderKey(null, "z"))).toBe(0);
+      expect(saved.get(customOrderKey(null, "a"))).toBe(1);
+      expect(loadFolderCustomOrder("another").size).toBe(0);
+      expect(listener).toHaveBeenCalledOnce();
+      expect((listener.mock.calls[0]![0] as CustomEvent<string>).detail).toBe("target");
+    } finally { vi.unstubAllGlobals(); }
+  });
+  it("seeds root and child order while preserving existing sibling arrangements", () => {
+    const existing = new Map([[customOrderKey(null, "manual"), 5], [customOrderKey("parent", "a"), 3]]);
+    const next = mergeImportedFolderOrder(existing, [
+      { folderId: "z", parentFolderId: null, position: 0 },
+      { folderId: "b", parentFolderId: "other", position: 0 },
+      { folderId: "c", parentFolderId: "other", position: 1 },
+      { folderId: "a", parentFolderId: "parent", position: 0 },
+      { folderId: "d", parentFolderId: "parent", position: 1 },
+    ]);
+    expect(next.get(customOrderKey(null, "manual"))).toBe(5);
+    expect(next.get(customOrderKey(null, "z"))).toBe(0);
+    expect(next.get(customOrderKey("other", "c"))).toBe(1);
+    expect(next.get(customOrderKey("parent", "a"))).toBe(3);
+    expect(next.has(customOrderKey("parent", "d"))).toBe(false);
+    expect(existing.size).toBe(2);
+  });
+});
 
 const folder = (
   folderId: string,

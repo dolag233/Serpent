@@ -94,7 +94,8 @@ export function nativeDragAssetsForResult(
   }
   if (
     type === "asset.import-eagle.completed" ||
-    type === "asset.import-billfish.completed"
+    type === "asset.import-billfish.completed" ||
+    type === "asset.import-pixcall.completed"
   ) {
     return nestedAssetArray(result.result);
   }

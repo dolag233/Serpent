@@ -109,6 +109,7 @@ import { PortaledPopover } from "./PortaledPopover";
 import { PaneSurface } from "./ui/surfaces";
 import {
   applyFolderSiblingOrder,
+  FOLDER_CUSTOM_ORDER_CHANGED,
   insertBesideSibling,
   loadCollectionCustomOrder,
   loadFolderCustomOrder,
@@ -1195,6 +1196,14 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     ReadonlyMap<string, number>
   >(() => loadFolderCustomOrder(library?.libraryId));
   const loadedCustomOrderLibraryRef = useRef<string | null>(null);
+  useEffect(() => {
+    const onImportedOrder = (event: Event) => {
+      if ((event as CustomEvent<string>).detail !== library?.libraryId) return;
+      setFolderCustomOrder(loadFolderCustomOrder(library.libraryId));
+    };
+    window.addEventListener(FOLDER_CUSTOM_ORDER_CHANGED, onImportedOrder);
+    return () => window.removeEventListener(FOLDER_CUSTOM_ORDER_CHANGED, onImportedOrder);
+  }, [library?.libraryId]);
   useEffect(() => {
     const libraryId = library?.libraryId ?? null;
     if (loadedCustomOrderLibraryRef.current === libraryId) return;

@@ -34,6 +34,7 @@ const LIBRARY_WRITE_METHODS: ReadonlySet<keyof SerpentLibraryApi> = new Set([
   "importFolder",
   "importEagleLibrary",
   "importBillfishLibrary",
+  "importPixcallLibrary",
   "importDropped",
   "pasteClipboardImage",
   "confirmImageSequenceImport",

@@ -126,6 +126,12 @@ export async function executeAssetIngestionWorkerCommand(
         libraryService.importBillfishLibrary(command));
       return { ok: true, type: 'asset.import-billfish.completed', result };
     }
+    case 'asset.import-pixcall': {
+      const command = request.command;
+      const result = await hooks.withMediaSchedulingSuspended(command.libraryId, () =>
+        libraryService.importPixcallLibrary(command));
+      return { ok: true, type: 'asset.import-pixcall.completed', result };
+    }
     case 'asset.import.resolve': {
       const command = request.command;
       const completion = await hooks.withMediaSchedulingSuspended(undefined, () =>

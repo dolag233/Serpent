@@ -265,6 +265,30 @@ export const billfishImportResultSchema = z.strictObject({
 
 export type BillfishImportResult = z.infer<typeof billfishImportResultSchema>;
 
+/** Result of importing a Pixcall library folder into the current library. */
+export const pixcallImportResultSchema = z.strictObject({
+  folderOrder: z.array(z.strictObject({
+    folderId: nonBlankString,
+    parentFolderId: nonBlankString.nullable(),
+    position: z.number().int().nonnegative(),
+  })).optional(),
+
+  skippedItems: z.array(z.strictObject({ relativePath: z.string().min(1).max(32768), reason: z.enum(['unreadable', 'unsafe', 'duplicate', 'metadata-failed']) })).max(1000000),
+  sourceDisplayName: safeDisplayName,
+  importedCount: z.number().int().nonnegative(),
+  fileCount: z.number().int().nonnegative(),
+  assetCount: z.number().int().nonnegative(),
+  skippedCount: z.number().int().nonnegative(),
+  replacedCount: z.number().int().nonnegative(),
+  collectionCount: z.number().int().nonnegative(),
+  tagCount: z.number().int().nonnegative(),
+  invalidItemCount: z.number().int().nonnegative(),
+  metadataCount: z.number().int().nonnegative(),
+  assets: z.array(assetSummarySchema).max(300),
+});
+
+export type PixcallImportResult = z.infer<typeof pixcallImportResultSchema>;
+
 export const imageSequenceImportCandidateSchema = z.strictObject({
   displayName: safeDisplayName,
   extension: nonBlankString.max(16),
@@ -1762,6 +1786,11 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('asset.import-billfish.completed'),
     result: billfishImportResultSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.import-pixcall.completed'),
+    result: pixcallImportResultSchema,
   }),
 ] as const;
 

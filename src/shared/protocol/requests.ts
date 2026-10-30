@@ -488,6 +488,10 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.import-billfish.request'),
     libraryId: identifierSchema,
   }),
+  z.strictObject({
+    type: z.literal('asset.import-pixcall.request'),
+    libraryId: identifierSchema,
+  }),
   // This request is created only inside the preload bridge after Electron's
   // webUtils has resolved genuine renderer File objects. Renderer code never
   // accepts or constructs these paths directly.
@@ -1870,6 +1874,11 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('asset.import-billfish'),
+    libraryId: identifierSchema,
+    sourceRootPath: selectedPathSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.import-pixcall'),
     libraryId: identifierSchema,
     sourceRootPath: selectedPathSchema,
   }),

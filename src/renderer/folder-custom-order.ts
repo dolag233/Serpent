@@ -8,6 +8,32 @@
 
 const FOLDER_STORAGE_PREFIX = "serpent.folder-custom-order.v1.";
 const COLLECTION_STORAGE_PREFIX = "serpent.collection-custom-order.v1.";
+export const FOLDER_CUSTOM_ORDER_CHANGED = "serpent:folder-custom-order-changed";
+
+/** Seed source ordering without replacing this device's existing manual order. */
+export function mergeImportedFolderOrder(
+  existing: ReadonlyMap<string, number>,
+  imported: readonly { folderId: string; parentFolderId: string | null; position: number }[],
+): Map<string, number> {
+  const next = new Map(existing);
+  const manuallyOrderedParents = new Set(imported
+    .filter((folder) => resolveCustomPosition(existing, folder.parentFolderId, folder.folderId) !== undefined)
+    .map((folder) => folder.parentFolderId));
+  for (const folder of imported) {
+    if (manuallyOrderedParents.has(folder.parentFolderId)) continue;
+    next.set(customOrderKey(folder.parentFolderId, folder.folderId), folder.position);
+  }
+  return next;
+}
+
+export function importFolderCustomOrder(
+  libraryId: string,
+  imported: Parameters<typeof mergeImportedFolderOrder>[1],
+): void {
+  if (imported.length === 0) return;
+  saveFolderCustomOrder(libraryId, mergeImportedFolderOrder(loadFolderCustomOrder(libraryId), imported));
+  window.dispatchEvent(new CustomEvent(FOLDER_CUSTOM_ORDER_CHANGED, { detail: libraryId }));
+}
 
 export type FolderDropEdge = "before" | "after";
 

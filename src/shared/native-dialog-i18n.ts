@@ -46,6 +46,7 @@ export type NativeDialogId =
   | "importFolder"
   | "importEagleLibrary"
   | "importBillfishLibrary"
+  | "importPixcallLibrary"
   | "openEagleLibrary"
   | "openBillfishLibrary"
   | "openEagleLibraryDestination"
@@ -93,6 +94,10 @@ const EN: DialogCatalog = {
   importBillfishLibrary: {
     title: "Import Billfish Library",
     buttonLabel: "Import Billfish Library",
+  },
+  importPixcallLibrary: {
+    title: "Choose a Pixcall library or folder",
+    buttonLabel: "Select folder",
   },
   openEagleLibrary: {
     title: "Open Eagle Library",
@@ -208,6 +213,10 @@ const ZH_CN: DialogCatalog = {
   importBillfishLibrary: {
     title: "\u5bfc\u5165 Billfish \u8d44\u6e90\u5e93",
     buttonLabel: "\u5bfc\u5165 Billfish \u8d44\u6e90\u5e93",
+  },
+  importPixcallLibrary: {
+    title: "选择 Pixcall 资源库或文件夹",
+    buttonLabel: "选择文件夹",
   },
   openEagleLibrary: {
     title: "\u6253\u5f00 Eagle \u8d44\u6e90\u5e93",

@@ -93,6 +93,7 @@ import type {
   ImageSequenceImportOffer,
   EagleImportResult,
   BillfishImportResult,
+  PixcallImportResult,
   AssetChangeEvent,
   ExtensionSaveCompletedEvent,
   LibraryChangedEvent,
@@ -466,6 +467,9 @@ export interface SerpentLibraryApi {
   importBillfishLibrary(input: {
     libraryId: string;
   }): Promise<LibraryApiResult<BillfishImportResult>>;
+  importPixcallLibrary(input: {
+    libraryId: string;
+  }): Promise<LibraryApiResult<PixcallImportResult>>;
   importDropped(input: {
     libraryId: string;
     targetFolderId?: string;

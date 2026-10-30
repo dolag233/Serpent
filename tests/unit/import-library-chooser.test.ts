@@ -80,6 +80,7 @@ describe("ImportLibraryChooserDialog external library open", () => {
   it("uses import-external copy and the merge Eagle action when a library is open", async () => {
     const onImportEagle = vi.fn();
     const onImportBillfish = vi.fn();
+    const onImportPixcall = vi.fn();
     const onOpenEagle = vi.fn();
     container = document.createElement("div");
     document.body.append(container);
@@ -98,6 +99,7 @@ describe("ImportLibraryChooserDialog external library open", () => {
             onOpenEagle,
             onImportEagle,
             onImportBillfish,
+            onImportPixcall,
             onCancel: vi.fn(),
           }),
         ),
@@ -122,11 +124,13 @@ describe("ImportLibraryChooserDialog external library open", () => {
     expect(eagle?.className).toContain("secondary-button");
     expect(eagle?.parentElement?.className).toContain("dialog-actions");
     expect(findButton(/导入 Billfish/)?.disabled).toBe(false);
+    expect(findButton(/导入 Pixcall/)?.disabled).toBe(false);
 
     await act(async () => {
       eagle?.click();
     });
     expect(onImportEagle).toHaveBeenCalledTimes(1);
+    expect(onImportPixcall).not.toHaveBeenCalled();
     expect(onOpenEagle).not.toHaveBeenCalled();
   });
 });

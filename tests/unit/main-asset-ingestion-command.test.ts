@@ -78,3 +78,24 @@ test("asset.import.resolve forwards duplicate and name decisions", async () => {
     nameConflict: "keep-both",
   });
 });
+
+test("asset.import-pixcall selects a library folder and keeps the current library", async () => {
+  const previous = process.env.SERPENT_E2E_IMPORT_PIXCALL_LIBRARY;
+  process.env.SERPENT_E2E_IMPORT_PIXCALL_LIBRARY = "C:\\libraries\\Pixcall";
+  try {
+    await expect(executeAssetIngestionMainCommand(
+      {
+        type: "asset.import-pixcall.request",
+        libraryId: "lib-1",
+      },
+      ingestionRuntime({ isUnpackagedE2e: () => true }),
+    )).resolves.toEqual({
+      type: "asset.import-pixcall",
+      libraryId: "lib-1",
+      sourceRootPath: "C:\\libraries\\Pixcall",
+    });
+  } finally {
+    if (previous === undefined) delete process.env.SERPENT_E2E_IMPORT_PIXCALL_LIBRARY;
+    else process.env.SERPENT_E2E_IMPORT_PIXCALL_LIBRARY = previous;
+  }
+});
