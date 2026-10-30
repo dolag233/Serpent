@@ -6266,11 +6266,17 @@ body.serpent-modal-open .app-shell {
   opacity: 0;
   pointer-events: none;
 }
-.workspace-viewer.is-nav-proximity.is-nav-near-prev:not(.is-chrome-idle) .preview-nav.is-prev.preview-chrome-fade,
-.workspace-viewer.is-nav-proximity.is-nav-near-next:not(.is-chrome-idle) .preview-nav.is-next.preview-chrome-fade,
-.workspace-viewer.is-nav-proximity .preview-nav.preview-chrome-fade:focus-visible {
+.workspace-viewer.is-nav-proximity.is-nav-near-prev:not(.is-chrome-idle) .preview-nav.is-prev.preview-chrome-fade:not(:disabled),
+.workspace-viewer.is-nav-proximity.is-nav-near-next:not(.is-chrome-idle) .preview-nav.is-next.preview-chrome-fade:not(:disabled),
+.workspace-viewer.is-nav-proximity .preview-nav.preview-chrome-fade:focus-visible:not(:disabled) {
   opacity: 0.55;
   pointer-events: auto;
+}
+.workspace-viewer.is-nav-proximity.is-nav-near-prev:not(.is-chrome-idle) .preview-nav.is-prev.preview-chrome-fade:disabled,
+.workspace-viewer.is-nav-proximity.is-nav-near-next:not(.is-chrome-idle) .preview-nav.is-next.preview-chrome-fade:disabled,
+.workspace-viewer.is-nav-proximity .preview-nav.preview-chrome-fade:focus-visible:disabled {
+  opacity: 0.55;
+  pointer-events: none;
 }
 .workspace-viewer.is-nav-proximity .preview-nav.preview-chrome-fade:hover:not(:disabled),
 .workspace-viewer.is-nav-proximity .preview-nav.preview-chrome-fade:focus-visible:not(:disabled) {
@@ -6698,6 +6704,18 @@ body.serpent-modal-open .app-shell {
   color: #111;
   stroke-width: 2.85;
 }
+.preview-nav.is-on-dark:disabled .preview-nav-glyph .icon:first-child {
+  color: #2a2a2a;
+}
+.preview-nav.is-on-dark:disabled .preview-nav-glyph .icon:last-child {
+  color: #8d8d8d;
+}
+.preview-nav.is-on-light:disabled .preview-nav-glyph .icon:first-child {
+  color: #f3f3f3;
+}
+.preview-nav.is-on-light:disabled .preview-nav-glyph .icon:last-child {
+  color: #8a8a8a;
+}
 .preview-exr-plane-selector {
   position: absolute;
   z-index: 3;
@@ -6741,7 +6759,7 @@ body.serpent-modal-open .app-shell {
   box-shadow: none;
 }
 .preview-nav:disabled {
-  opacity: 0.2;
+  opacity: 0.45;
   cursor: default;
 }
 .preview-nav.is-prev {
