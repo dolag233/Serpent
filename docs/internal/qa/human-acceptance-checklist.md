@@ -43,7 +43,7 @@
 | VIEW-NAV-HIT-001 | 查看器左右切换热区加大，箭头贴边、竖直居中，并带相反色细描边 | 人类验收通过 | ① 打开一张图或一个视频。② 看左右箭头是否落在画面竖直中心，并靠近左右边缘。③ 在浅色画面和深色画面各看一次箭头。④ 把指针移到画面左侧大约五分之一的高度范围内点一下，右侧同样。 | 箭头在画面竖直中心，外侧只留一小段空白。浅色画面上是深色箭头、白色细描边；深色画面上是白色箭头、黑色细描边。没有按钮方框。左右约 22% 宽仍可切换。底部播放条和缩放条仍可点。 | `src/renderer/AssetPreviewModal.tsx` / `src/renderer/styles.css` `.preview-nav` | 2026-10-30 用户确认箭头外观通过。连点消失另见 VIEW-NAV-REPEAT-001。 |
 | VIEW-NAV-REPEAT-001 | 查看器箭头在切换资产后仍可连点 | 人类验收通过 | ① 打开查看器，把指针停在右侧箭头上。② 连续点击，不要移动指针。③ 左侧箭头同样操作。 | 每次点击都切到上一项或下一项。箭头不消失，指针不动也能连续点。 | `src/renderer/AssetPreviewModal.tsx` `navNear` | 2026-10-30 用户确认验收通过。 |
 | VIEW-NAV-END-001 | 查看器到头的一侧箭头变灰 | 待人类验收 | ① 打开当前列表的第一项，把指针移到左侧箭头。② 再移到右侧箭头并点一下。③ 切到最后一项，看右侧箭头，再点左侧。④ 若列表只有一项，两侧都看一次。 | 没有上一项时左箭头是灰色，点击不切换。没有下一项时右箭头是灰色，点击不切换。仍有下一项或上一项的那一侧保持原来的白/深色箭头。只有一项时两侧都是灰色。 | `src/renderer/styles.css` `.preview-nav:disabled` | 真实窗口未执行。 |
-| VIEW-IME-VIDEO-001 | 打开视频后不切换输入法 | 待人类验收 | ① 在 Windows 打开中文输入法并切到中文。② 打开一个视频。③ 看输入法是否仍是进入前的状态。④ 关闭视频后再看一次。 | 进入和离开视频都不改当前输入法。音频查看器仍按原有媒体键需要时处理。 | `src/main/viewer-video-shortcut-capture.ts` | 真实 Windows 输入法未执行。macOS 不走这套切换。 |
+| VIEW-IME-VIDEO-001 | 打开视频后不切换输入法 | 待人类验收 | ① 在 Windows 打开中文输入法并切到中文。② 打开一个视频。③ 看输入法是否仍是进入前的状态。④ 关闭视频后再看一次。 | 进入和离开视频都不改当前输入法。音频查看器仍按原有媒体键需要时处理。 | `src/main/viewer-video-shortcut-capture.ts` / `tests/unit/viewer-video-shortcut-capture.test.ts` | 补充 Main 调用契约回归：viewer-video-shortcut-capture.test.ts 5 tests passed；模拟 IMM32 边界，真实 Windows 输入法未执行。macOS 不走这套切换。 |
 
 ## 2026-10-25 链接文件夹文本编辑
 
