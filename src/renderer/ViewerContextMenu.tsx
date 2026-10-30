@@ -11,6 +11,11 @@ import { useT } from "./i18n";
 import { isImeKeyboardEvent } from "./ime-safe-dismiss";
 import { PopoverSurface } from "./ui/patterns";
 import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
+import {
+  ViewerQuickSettingsMenu,
+  type ViewerChromeMenuProps,
+  type ViewerPlaybackMenuProps,
+} from "./viewer-quick-settings-menu";
 
 export interface ViewerContextMenuPosition {
   x: number;
@@ -44,6 +49,8 @@ interface ViewerContextMenuProps {
   onDiskDelete?: () => void;
   onRemoveFromCollection?: () => void;
   onPermanentDelete?: () => void;
+  playback?: ViewerPlaybackMenuProps | null;
+  chromeSettings?: ViewerChromeMenuProps | null;
 }
 
 /**
@@ -78,6 +85,8 @@ export function ViewerContextMenu({
   onDiskDelete,
   onRemoveFromCollection,
   onPermanentDelete,
+  playback = null,
+  chromeSettings = null,
 }: ViewerContextMenuProps) {
   const t = useT();
   const menuId = useId();
@@ -120,13 +129,19 @@ export function ViewerContextMenu({
   }, [menuId, position]);
 
   useEffect(() => {
-    const onMouseDown = (event: MouseEvent) => {
+    const insideMenu = (target: EventTarget | null) => {
+      if (!(target instanceof Node)) return false;
       const menu = document.getElementById(menuId);
-      if (!menu?.contains(event.target as Node)) onClose();
+      if (menu?.contains(target)) return true;
+      return Array.from(document.querySelectorAll(".context-menu")).some((node) =>
+        node.contains(target),
+      );
+    };
+    const onMouseDown = (event: MouseEvent) => {
+      if (!insideMenu(event.target)) onClose();
     };
     const onPointerDown = (event: PointerEvent) => {
-      const menu = document.getElementById(menuId);
-      if (!menu?.contains(event.target as Node)) onClose();
+      if (!insideMenu(event.target)) onClose();
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (isImeKeyboardEvent(event)) return;
@@ -176,6 +191,15 @@ export function ViewerContextMenu({
       role="menu"
       style={style}
     >
+      {playback || chromeSettings ? (
+        <div className="context-menu-section" role="group">
+          <ViewerQuickSettingsMenu
+            chrome={chromeSettings}
+            onClose={onClose}
+            playback={playback}
+          />
+        </div>
+      ) : null}
       {transformable ? (
         <div className="context-menu-section" role="group">
           <button

@@ -67,6 +67,12 @@ export function stepViewerVolumeLevel(
   return clampViewerVolume(current + delta);
 }
 
+/** Positive `steps` (wheel down) lower the volume by one step each. */
+export function volumeAfterWheelSteps(current: number, steps: number): number {
+  if (!Number.isFinite(steps) || steps === 0) return clampViewerVolume(current);
+  return clampViewerVolume(current - steps * VIEWER_VOLUME_STEP);
+}
+
 /**
  * ↑ / ↓ adjust global viewer volume (Serpent-8w6x). Capture-phase callers
  * should stopPropagation so browse shortcuts do not fire underneath.

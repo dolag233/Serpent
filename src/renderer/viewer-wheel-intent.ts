@@ -94,6 +94,61 @@ export interface ViewerWheelGestureAnchor {
 
 export const VIEWER_WHEEL_GESTURE_TIMEOUT_MS = 500;
 
+/**
+ * Pixel distance that counts as one mouse-wheel notch. Chromium reports a
+ * physical notch as about 100px. Trackpad samples accumulate until they
+ * cross this distance. Reversing direction drops the leftover.
+ */
+export const VIEWER_WHEEL_NOTCH_PIXELS = 100;
+
+export function accumulateWheelNotches(
+  accumulatedPixels: number,
+  deltaY: number,
+  deltaMode: number,
+  notchPixels: number = VIEWER_WHEEL_NOTCH_PIXELS,
+): { steps: number; accumulatedPixels: number } {
+  const kept = Number.isFinite(accumulatedPixels) ? accumulatedPixels : 0;
+  if (!Number.isFinite(deltaY) || deltaY === 0) {
+    return { steps: 0, accumulatedPixels: kept };
+  }
+  // Line and page devices already report one gesture as a small integer.
+  if (deltaMode === 1) {
+    return { steps: Math.trunc(deltaY), accumulatedPixels: 0 };
+  }
+  if (deltaMode === 2) {
+    return { steps: Math.sign(deltaY), accumulatedPixels: 0 };
+  }
+  if (!Number.isFinite(notchPixels) || notchPixels <= 0) {
+    return { steps: 0, accumulatedPixels: 0 };
+  }
+  const base = kept !== 0 && Math.sign(deltaY) !== Math.sign(kept) ? 0 : kept;
+  const total = base + deltaY;
+  const steps = Math.trunc(total / notchPixels);
+  return { steps, accumulatedPixels: total - steps * notchPixels };
+}
+
+/** Non-passive listener. Positive steps are a downward wheel. */
+export function bindVerticalWheelSteps(
+  element: HTMLElement,
+  onSteps: (steps: number) => void,
+): () => void {
+  let accumulated = 0;
+  const onWheel = (event: WheelEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const next = accumulateWheelNotches(
+      accumulated,
+      event.deltaY,
+      event.deltaMode,
+    );
+    accumulated = next.accumulatedPixels;
+    if (next.steps === 0) return;
+    onSteps(next.steps);
+  };
+  element.addEventListener("wheel", onWheel, { passive: false });
+  return () => element.removeEventListener("wheel", onWheel);
+}
+
 export function resolveWheelGestureAnchor(
   previous: ViewerWheelGestureAnchor | null,
   clientX: number,
