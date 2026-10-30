@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyDimensionSelectionClick,
+  applyTagFilterClick,
+  buildTagFilterClauses,
   formatGroupSelectionState,
   formatTokensHas,
+  resolveTagFilterSets,
   toggleFormatGroup,
   toggleFormatToken,
 } from "../../src/renderer/dimension-filter-selection";
@@ -47,6 +50,83 @@ describe("applyDimensionSelectionClick (REQ-FILTER-025)", () => {
 
   it("shift click on an empty selection behaves like default click", () => {
     expect(applyDimensionSelectionClick([], "red", true)).toEqual(["red"]);
+  });
+});
+
+describe("applyTagFilterClick", () => {
+  it("keeps an included tag when another tag is excluded", () => {
+    expect(applyTagFilterClick(
+      { includes: ["A"], excludes: [] },
+      "B",
+      "exclude",
+      false,
+    )).toEqual({ includes: ["A"], excludes: ["B"] });
+  });
+
+  it("shift+right-click adds another excluded tag without clearing the include set", () => {
+    expect(applyTagFilterClick(
+      { includes: ["A"], excludes: ["B"] },
+      "C",
+      "exclude",
+      true,
+    )).toEqual({ includes: ["A"], excludes: ["B", "C"] });
+  });
+
+  it("shift+right-click removes one excluded tag", () => {
+    expect(applyTagFilterClick(
+      { includes: ["A"], excludes: ["B", "C"] },
+      "B",
+      "exclude",
+      true,
+    )).toEqual({ includes: ["A"], excludes: ["C"] });
+  });
+
+  it("moves a tag out of the other set", () => {
+    expect(applyTagFilterClick(
+      { includes: ["A"], excludes: ["B"] },
+      "A",
+      "exclude",
+      false,
+    )).toEqual({ includes: [], excludes: ["A"] });
+  });
+
+  it("right-click on the only excluded tag clears just that set", () => {
+    expect(applyTagFilterClick(
+      { includes: ["A"], excludes: ["B"] },
+      "B",
+      "exclude",
+      false,
+    )).toEqual({ includes: ["A"], excludes: [] });
+  });
+});
+
+describe("resolveTagFilterSets", () => {
+  it("reads include and exclude lists together", () => {
+    expect(resolveTagFilterSets({
+      tagFilter: "A",
+      excludeTagFilter: false,
+      excludedTagFilter: "B",
+    })).toEqual({ includes: ["A"], excludes: ["B"] });
+  });
+
+  it("treats a legacy exclude flag as the exclude list", () => {
+    expect(resolveTagFilterSets({
+      tagFilter: "A, B",
+      excludeTagFilter: true,
+    })).toEqual({ includes: [], excludes: ["A", "B"] });
+  });
+});
+
+describe("buildTagFilterClauses", () => {
+  it("ands an include clause with an exclude clause", () => {
+    expect(buildTagFilterClauses(
+      { includes: ["A"], excludes: ["B"] },
+      "any",
+      true,
+    )).toEqual([
+      { field: "tag", values: ["A"], exclude: false, includeAi: true },
+      { field: "tag", values: ["B"], exclude: true, includeAi: true },
+    ]);
   });
 });
 

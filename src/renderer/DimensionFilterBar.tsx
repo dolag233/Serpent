@@ -23,6 +23,7 @@ import {
   applyDimensionSelectionClick,
   formatGroupSelectionState,
   formatTokensHas,
+  resolveTagFilterSets,
   toggleFormatGroup,
   toggleFormatToken,
 } from "./dimension-filter-selection";
@@ -111,6 +112,8 @@ export type DimensionFilterBarProps = {
   setTagFilter: (value: string) => void;
   excludeTagFilter: boolean;
   setExcludeTagFilter: (value: boolean) => void;
+  excludedTagFilter: string;
+  setExcludedTagFilter: (value: string) => void;
   includeAiTag: boolean;
   setIncludeAiTag: (value: boolean) => void;
   onTagNamesChange: (names: string[]) => void;
@@ -240,6 +243,8 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     tagFilter,
     excludeTagFilter,
     setExcludeTagFilter,
+    excludedTagFilter,
+    setExcludedTagFilter,
     includeAiTag,
     setIncludeAiTag,
     onTagNamesChange,
@@ -466,7 +471,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     new DimensionEnableToggle<{ colorFilter: string; exclude: boolean }>(),
   );
   const tagsToggleRef = useRef(
-    new DimensionEnableToggle<{ names: string[]; exclude: boolean }>(),
+    new DimensionEnableToggle<{ includes: string[]; excludes: string[] }>(),
   );
   const shapeToggleRef = useRef(
     new DimensionEnableToggle<{
@@ -487,10 +492,13 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     unknownFormatLabel: t("filter.formatUnrecognized"),
   });
   const controlsDisabled = Boolean(disabled || interactionsLocked);
-  const selectedTagNames = tagFilter
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
+  const tagSets = resolveTagFilterSets({
+    tagFilter,
+    excludeTagFilter,
+    excludedTagFilter,
+  });
+  const includedTagNames = tagSets.includes;
+  const excludedTagNames = tagSets.excludes;
   const selectedRatings = new Set(
     ratingFilter
       .split(",")
@@ -508,7 +516,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
   };
 
   const selectedColors = new Set(parseColorFilterValues(colorFilter));
-  const tagActive = selectedTagNames.length > 0;
+  const tagActive = includedTagNames.length > 0 || excludedTagNames.length > 0;
   const colorActive = selectedColors.size > 0;
   const shapeActive =
     aspectRatioRanges.length > 0 ||
@@ -577,29 +585,37 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
   // before forwarding to the caller's onTagNamesChange. Only additions are
   // recorded — removing a tag from the selection should not affect its
   // recency (it may still be worth surfacing again next time).
-  const handleTagNamesChange = (names: string[]) => {
-    const added = names.filter((name) => !selectedTagNames.includes(name));
+  const handleTagSelectionChange = (next: { includes: string[]; excludes: string[] }) => {
+    const previous = new Set(
+      [...includedTagNames, ...excludedTagNames].map((name) => name.toLocaleLowerCase()),
+    );
+    const added = [...next.includes, ...next.excludes].filter(
+      (name) => !previous.has(name.toLocaleLowerCase()),
+    );
     if (added.length > 0) {
       setTagRecency((current) => {
-        const next = added.reduce(
+        const recency = added.reduce(
           (acc, name) => withTagFilterUsed(acc, name),
           current,
         );
-        saveTagFilterRecency(next);
-        return next;
+        saveTagFilterRecency(recency);
+        return recency;
       });
     }
-    onTagNamesChange(names);
+    setExcludeTagFilter(false);
+    onTagNamesChange(next.includes);
+    setExcludedTagFilter(next.excludes.join(", "));
   };
 
   const handleTagsDimensionClick = () => {
     tagsToggleRef.current.toggle(
       tagActive,
-      { names: selectedTagNames, exclude: excludeTagFilter },
-      { names: [], exclude: false },
+      { includes: includedTagNames, excludes: excludedTagNames },
+      { includes: [], excludes: [] },
       (value) => {
-        onTagNamesChange(value.names);
-        setExcludeTagFilter(value.exclude);
+        setExcludeTagFilter(false);
+        onTagNamesChange(value.includes);
+        setExcludedTagFilter(value.excludes.join(", "));
       },
     );
   };
@@ -715,7 +731,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
           <DimensionButton
             active={tagActive}
             disabled={controlsDisabled}
-            excluding={excludeTagFilter && tagActive}
+            excluding={excludedTagNames.length > 0 && includedTagNames.length === 0}
             icon="tag"
             label={t("filter.dimTags")}
             onClick={handleTagsDimensionClick}
@@ -730,23 +746,13 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
             >
               <FilterTagPicker
                 disabled={controlsDisabled}
-                onChange={handleTagNamesChange}
+                excludedNames={excludedTagNames}
+                includedNames={includedTagNames}
+                onChange={handleTagSelectionChange}
                 recentNames={tagRecency.names}
-                selectedNames={selectedTagNames}
                 tags={tags}
               />
               <div className="dimension-filter-check-row">
-                <label className="dimension-filter-check">
-                  <input
-                    checked={excludeTagFilter}
-                    disabled={disabled || selectedTagNames.length === 0}
-                    onChange={(event) =>
-                      setExcludeTagFilter(event.target.checked)
-                    }
-                    type="checkbox"
-                  />
-                  {t("filter.exclude")}
-                </label>
                 <label className="dimension-filter-check">
                   <input
                     checked={includeAiTag}
@@ -757,7 +763,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                   <span className="inspector-ai-badge">{t("filter.ai")}</span>
                 </label>
               </div>
-              <p className="dimension-filter-hint">{t("filter.shiftMultiSelectHint")}</p>
+              <p className="dimension-filter-hint">{t("filter.tagClickHint")}</p>
             </PortaledPopover>
           )}
         </div>

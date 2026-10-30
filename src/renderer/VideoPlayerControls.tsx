@@ -12,6 +12,7 @@ import {
   matchVideoPlaybackRateKey,
   nextFrameSeekTime,
   applyMediaAutoplayIntent,
+  nextKeyboardSeekBase,
   nextPlaybackIntent,
   resolveFrameStepSeconds,
   shouldAutoStartMediaPlayback,
@@ -151,6 +152,7 @@ export function VideoPlayerControls({
   const scrubbingPointerId = useRef<number | null>(null);
   const wheelTargetRef = useRef<number | null>(null);
   const wheelHoldUntilRef = useRef(0);
+  const keyboardSeekRef = useRef<{ time: number; at: number } | null>(null);
   // Create the seek session in an effect (not render) so react-hooks/refs
   // doesn't flag the ref-reading closures. createMediaSeekSession stores
   // them and only calls them during seek events; all session access here is
@@ -255,8 +257,14 @@ export function VideoPlayerControls({
     const video = videoRef.current;
     if (!video) return;
     const mediaDuration = video.duration || durationRef.current;
+    const now = Date.now();
+    const base = nextKeyboardSeekBase(
+      video.currentTime,
+      keyboardSeekRef.current,
+      now,
+    );
     const nextTime = clampScrubTime(
-      video.currentTime + videoSeekDeltaSeconds(
+      base + videoSeekDeltaSeconds(
         { kind: "skip", direction },
         undefined,
         loadVideoSeekJumpPreferences(),
@@ -264,6 +272,7 @@ export function VideoPlayerControls({
       ),
       mediaDuration,
     );
+    keyboardSeekRef.current = { time: nextTime, at: now };
     seekSessionRef.current?.commit(nextTime);
     setCurrentTime(nextTime);
   }, []);
@@ -682,6 +691,7 @@ export function VideoPlayerControls({
             event.preventDefault();
             wheelTargetRef.current = null;
             wheelHoldUntilRef.current = 0;
+            keyboardSeekRef.current = null;
             // preventDefault suppresses the browser's implicit mousedown
             // focus, so focus explicitly to keep arrow-key seeking working.
             event.currentTarget.focus();

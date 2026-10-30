@@ -1053,9 +1053,9 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
       element.scrollTop = element.scrollHeight;
       element.dispatchEvent(new Event("scroll", { bubbles: true }));
     });
-    await expect(tagPopover.getByText("排除", { exact: true })).toBeVisible();
+    await expect(tagPopover.getByText("AI", { exact: true })).toBeVisible();
     await expect(
-      tagPopover.getByText("按住 Shift 可多选", { exact: true }),
+      tagPopover.getByText("左键表示选择，右键表示排除。按住 Shift 可多选。", { exact: true }),
     ).toBeVisible();
     await window.keyboard.press("Escape");
 

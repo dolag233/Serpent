@@ -38,8 +38,9 @@ describe("FilterTagPicker sorting", () => {
           LocaleProvider,
           { children: null, initialPreference: "en" },
           createElement(FilterTagPicker, {
+            excludedNames: [],
+            includedNames: [],
             onChange: () => undefined,
-            selectedNames: [],
             tags,
           }),
         ),
@@ -79,8 +80,9 @@ describe("FilterTagPicker sorting", () => {
           LocaleProvider,
           { children: null, initialPreference: "en" },
           createElement(FilterTagPicker, {
+            excludedNames: [],
+            includedNames: ["Warm"],
             onChange: () => undefined,
-            selectedNames: ["Warm"],
             tags,
           }),
         ),
@@ -90,5 +92,44 @@ describe("FilterTagPicker sorting", () => {
     const selectedChip = container!.querySelector(".filter-tag-chip.is-selected");
     expect(selectedChip).not.toBeNull();
     expect(selectedChip?.textContent).toContain("Warm");
+  });
+
+  it("right-click excludes the tag and shift+right-click reports multi-exclude", async () => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    const changes: Array<{ includes: string[]; excludes: string[] }> = [];
+
+    await act(async () => {
+      root?.render(
+        createElement(
+          LocaleProvider,
+          { children: null, initialPreference: "zh-CN" },
+          createElement(FilterTagPicker, {
+            excludedNames: [],
+            includedNames: ["Wood"],
+            onChange: (next) => {
+              changes.push(next);
+            },
+            tags,
+          }),
+        ),
+      );
+    });
+
+    const warm = [...container!.querySelectorAll("button")].find((button) =>
+      button.textContent?.includes("Warm"),
+    );
+    expect(warm).toBeTruthy();
+    const menuEvent = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      shiftKey: false,
+    });
+    await act(async () => {
+      warm!.dispatchEvent(menuEvent);
+    });
+    expect(menuEvent.defaultPrevented).toBe(true);
+    expect(changes).toEqual([{ includes: ["Wood"], excludes: ["Warm"] }]);
   });
 });
