@@ -67,6 +67,11 @@ import { parseSearchExpression, splitSearchHighlights } from "./search-expressio
 import { ConvertLinkedDialog } from "./ConvertLinkedDialog";
 import { LinkedRulesDialog } from "./LinkedRulesDialog";
 import { TagManagementWorkspace } from "./TagManagementWorkspace";
+import {
+  currentFilteredFolderCounts,
+  favoriteFolderBrowseEntries,
+  type FilteredFolderCountSnapshot,
+} from "./favorite-folder-visibility";
 import { useFolderDeleteActions } from "./use-folder-delete-actions";
 import { canDeleteAssetFromDiskWithShortcut } from "./browse-key-command";
 import { useFolderOrganizeActions } from "./use-folder-organize-actions";
@@ -1464,11 +1469,9 @@ function AppInner() {
   const [shuffleSeed, setShuffleSeed] = useState<number | null>(null);
   const [searchOffset, setSearchOffset] = useState(0);
   const [searchTotal, setSearchTotal] = useState<number | null>(null);
-  const [filteredFolderCounts, setFilteredFolderCounts] = useState<{
-    all: number;
-    root: number;
-    byFolderId: ReadonlyMap<string, number>;
-  } | null>(null);
+  const [filteredFolderCountSnapshot, setFilteredFolderCounts] =
+    useState<FilteredFolderCountSnapshot | null>(null);
+  const [filteredFolderCountRefreshToken, setFilteredFolderCountRefreshToken] = useState(0);
   const [searchSnippets, setSearchSnippets] = useState<Map<string, string>>(
     new Map(),
   );
@@ -3492,12 +3495,33 @@ function AppInner() {
 
   // CANVAS-022: folders-only (recursive off, zero direct assets) must not
   // mount an empty asset grid — its min-height:100% left a large void.
+  const filteredFolderCountQuery = JSON.stringify([
+    library?.libraryId,
+    showTrash,
+    showIgnoredItems,
+    currentQueryDefinition({ searchValue: null }).filters ?? [],
+    filteredFolderCountRefreshToken,
+  ]);
+  // Re-entering the same filter still needs a fresh response after leaving it.
+  const filteredFolderCountRequestKey = useMemo(
+    () => ({ query: filteredFolderCountQuery }),
+    [filteredFolderCountQuery],
+  );
+  const filteredFolderCounts = !api || !library || showTrash
+    ? null
+    : currentFilteredFolderCounts(filteredFolderCountSnapshot, filteredFolderCountRequestKey);
   const canvasFolderBrowseEntries = useMemo(() => {
-    if (!showTrash) return folderBrowseEntries;
+    if (!showTrash) {
+      return favoriteFolderBrowseEntries(
+        folderBrowseEntries,
+        favoriteFilter === "yes",
+        filteredFolderCounts,
+      );
+    }
     return trashedFoldersToBrowseEntries(
       filterTrashedFoldersAtTombstone(trashedFolders, trashBrowseTombstoneId),
     );
-  }, [folderBrowseEntries, showTrash, trashBrowseTombstoneId, trashedFolders]);
+  }, [folderBrowseEntries, favoriteFilter, filteredFolderCounts, showTrash, trashBrowseTombstoneId, trashedFolders]);
   const trashBreadcrumbHops = useMemo(
     () =>
       showTrash
@@ -8469,6 +8493,9 @@ function AppInner() {
   }
 
   function syncBrowseFilterMembership(change: BrowseMembershipChange): void {
+    if (change.kind === "favorite") {
+      setFilteredFolderCountRefreshToken((token) => token + 1);
+    }
     if (change.kind === "dimensions" && showTrash) return;
     const visible = showTrash ? trashedAssets : assets;
     const next = assetsRemainingAfterMembership(visible, visibleBrowseFilters(), change);
@@ -9608,15 +9635,9 @@ function AppInner() {
   ]);
 
   useEffect(() => {
-    if (!api || !library || showTrash) {
-      setFilteredFolderCounts(null);
-      return;
-    }
-    const filters: FilterClause[] | undefined = currentQueryDefinition().filters;
-    if (!filters || filters.length === 0) {
-      setFilteredFolderCounts(null);
-      return;
-    }
+    if (!api || !library || showTrash) return;
+    const filters = currentQueryDefinition({ searchValue: null }).filters;
+    if (!filters || filters.length === 0) return;
     let cancelled = false;
     const libraryId = library.libraryId;
     void api.listFilteredFolderCounts({
@@ -9630,21 +9651,25 @@ function AppInner() {
         return;
       }
       setFilteredFolderCounts({
+        requestKey: filteredFolderCountRequestKey,
         all: result.value.all,
         root: result.value.root,
         byFolderId: new Map(
           result.value.folders.map((folder) => [folder.folderId, folder.count]),
         ),
       });
+    }).catch(() => {
+      if (!cancelled) setFilteredFolderCounts(null);
     });
     return () => {
       cancelled = true;
     };
-    // Folder badges follow the same discovery filters as the grid.
+    // The request key includes the library, discovery filters and metadata refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     api,
     library,
+    filteredFolderCountRequestKey,
     showTrash,
     showIgnoredItems,
     colorFilter,
@@ -11891,6 +11916,7 @@ function AppInner() {
             if (!isEffectLibraryCurrent()) return;
             await reloadCurrentContentRef.current();
             if (!isEffectLibraryCurrent()) return;
+            setFilteredFolderCountRefreshToken((token) => token + 1);
             const currentSelectedAssetId = selectedAssetIdRef.current;
             if (currentSelectedAssetId) {
               const metadata = await api.getAssetMetadata({
