@@ -401,7 +401,7 @@ import {
   shouldHideApplicationMenuBar,
   shouldUseFramelessTitleBar,
 } from "../shared/window-controls";
-import { matchViewerVideoLetterShortcut } from "../shared/viewer-video-shortcuts";
+import { matchViewerVideoLetterShortcut, viewerShortcutRepeatForward } from "../shared/viewer-video-shortcuts";
 import {
   resolveOpenExternalUrlTarget,
   type OpenExternalUrlResult,
@@ -2435,7 +2435,12 @@ async function createMainWindow(): Promise<void> {
       : null;
     if (!action && !repeatedViewerAction) return;
     event.preventDefault();
-    if (action) forwardViewerVideoShortcut(window.webContents, action);
+    const forward = viewerShortcutRepeatForward(action, repeatedViewerAction);
+    if (forward) {
+      forwardViewerVideoShortcut(window.webContents, forward.action, {
+        repeat: forward.repeat,
+      });
+    }
   });
   // Defense in depth (Serpent-46i9): even if a page-zoom accelerator sneaks
   // back into the menu, Chromium must not rescale the whole UI.

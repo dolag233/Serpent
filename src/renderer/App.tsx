@@ -460,6 +460,7 @@ import {
   showAssetDragPreview,
 } from "./asset-drag-preview";
 import { DimensionFilterBar } from "./DimensionFilterBar";
+import { buildTagFilterClauses, resolveTagFilterSets } from "./dimension-filter-selection";
 import {
   buildActiveFilterChips,
   type ClearableFilterId,
@@ -771,6 +772,7 @@ type QueryFilterSnapshot = {
   excludeFormatFilter: boolean;
   tagFilter: string;
   excludeTagFilter: boolean;
+  excludedTagFilter: string;
   includeAiTagFilter: boolean;
   tagFilterMatch: "any" | "all";
   ratingFilter: string;
@@ -1405,6 +1407,7 @@ function AppInner() {
   const [excludeColorFilter, setExcludeColorFilter] = useState(false);
   const [tagFilter, setTagFilter] = useState("");
   const [excludeTagFilter, setExcludeTagFilter] = useState(false);
+  const [excludedTagFilter, setExcludedTagFilter] = useState("");
   const [includeAiTagFilter, setIncludeAiTagFilter] = useState(true);
   // Serpent-eaxs: tag-management AND search ("包含 N 个标签") splits the tag
   // names into separate clauses (clauses are ANDed; values within one clause
@@ -3339,6 +3342,7 @@ function AppInner() {
         excludeFormatFilter,
         tagFilter,
         excludeTagFilter,
+        excludedTagFilter,
         tagFilterMatch,
         ratingFilter,
         excludeRatingFilter,
@@ -3368,6 +3372,7 @@ function AppInner() {
       excludeFormatFilter,
       excludeRatingFilter,
       excludeTagFilter,
+      excludedTagFilter,
       favoriteFilter,
       formatFilter,
       heightRange,
@@ -3439,6 +3444,7 @@ function AppInner() {
       excludeFormatFilter,
       tagFilter,
       excludeTagFilter,
+      excludedTagFilter,
       includeAiTagFilter,
       ratingFilter,
       excludeRatingFilter,
@@ -3474,6 +3480,7 @@ function AppInner() {
     excludeFormatFilter,
     tagFilter,
     excludeTagFilter,
+    excludedTagFilter,
     includeAiTagFilter,
     ratingFilter,
     excludeRatingFilter,
@@ -5554,6 +5561,7 @@ function AppInner() {
         colorSimilarity,
         tagFilter,
         excludeTagFilter,
+        excludedTagFilter,
         includeAiTagFilter,
         tagFilterMatch,
         ratingFilter,
@@ -5765,6 +5773,7 @@ function AppInner() {
     setExcludeColorFilter(state.filters.excludeColorFilter);
     setTagFilter(state.filters.tagFilter);
     setExcludeTagFilter(state.filters.excludeTagFilter);
+    setExcludedTagFilter(state.filters.excludedTagFilter ?? "");
     setIncludeAiTagFilter(state.filters.includeAiTagFilter);
     setTagFilterMatch(state.filters.tagFilterMatch);
     setRatingFilter(state.filters.ratingFilter);
@@ -6484,6 +6493,7 @@ function AppInner() {
     setExcludeColorFilter(false);
     setTagFilter("");
     setExcludeTagFilter(false);
+    setExcludedTagFilter("");
     setIncludeAiTagFilter(true);
     setRatingFilter("");
     setExcludeRatingFilter(false);
@@ -6508,6 +6518,7 @@ function AppInner() {
     setExcludeColorFilter(false);
     setTagFilter("");
     setExcludeTagFilter(false);
+    setExcludedTagFilter("");
     setIncludeAiTagFilter(true);
     setRatingFilter("");
     setExcludeRatingFilter(false);
@@ -6540,6 +6551,7 @@ function AppInner() {
       case "tag":
         setTagFilter("");
         setExcludeTagFilter(false);
+        setExcludedTagFilter("");
         setActiveTagId(null);
         return;
       case "rating":
@@ -6937,6 +6949,8 @@ function AppInner() {
       const definition = currentQueryDefinition({
         tagFilter: joined,
         tagFilterMatch: match,
+        excludeTagFilter: false,
+        excludedTagFilter: "",
       });
       const includeIgnored =
         request.browseState?.showIgnoredItems ?? showIgnoredItems;
@@ -6963,6 +6977,8 @@ function AppInner() {
       setAssetScope("all");
       clearAssetSelection();
       setTagFilter(joined);
+      setExcludeTagFilter(false);
+      setExcludedTagFilter("");
       setTagFilterMatch(match);
       setSearchOffset(0);
       api.setActiveContext(targetLibraryId);
@@ -7015,7 +7031,11 @@ function AppInner() {
     try {
       const definition = request.browseState
         ? queryDefinitionForWorkspaceBrowseState(request.browseState)
-        : currentQueryDefinition({ tagFilter: tag.name });
+        : currentQueryDefinition({
+          tagFilter: tag.name,
+          excludeTagFilter: false,
+          excludedTagFilter: "",
+        });
       const includeIgnored =
         request.browseState?.showIgnoredItems ?? showIgnoredItems;
       const result = await api.openBrowseSession({
@@ -7046,6 +7066,8 @@ function AppInner() {
       clearAssetSelection();
       if (!request.browseState) {
         setTagFilter(tag.name);
+        setExcludeTagFilter(false);
+        setExcludedTagFilter("");
         setTagFilterMatch("any");
       }
       setSearchOffset(0);
@@ -7816,6 +7838,8 @@ function AppInner() {
     overrides: {
       tagFilter?: string;
       tagFilterMatch?: "any" | "all";
+      excludeTagFilter?: boolean;
+      excludedTagFilter?: string;
       searchValue?: string | null;
       colorFilter?: string | null;
       excludeColorFilter?: boolean;
@@ -7830,6 +7854,7 @@ function AppInner() {
       excludeFormatFilter,
       tagFilter,
       excludeTagFilter,
+      excludedTagFilter,
       includeAiTagFilter,
       tagFilterMatch,
       ratingFilter,
@@ -7852,10 +7877,6 @@ function AppInner() {
       .map((value) => value.trim().replace(/^\./, ""))
       .filter(Boolean);
     const formatValues = compactFormatFilterTokens(formatTokens);
-    const selectedTags = (overrides.tagFilter ?? filtersState.tagFilter)
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
     const ratings = filtersState.ratingFilter
       .split(",")
       .map((value) => value.trim())
@@ -7880,30 +7901,15 @@ function AppInner() {
         values: formatValues,
         exclude: filtersState.excludeFormatFilter,
       });
-    if (selectedTags.length > 0) {
-      const matchAll =
-        (overrides.tagFilterMatch ?? filtersState.tagFilterMatch) === "all" &&
-        selectedTags.length > 1;
-      // AND semantics ("包含 N 个标签"): one clause per tag — separate
-      // clauses are ANDed, values within a clause are ORed.
-      if (matchAll) {
-        for (const tag of selectedTags) {
-          filters.push({
-            field: "tag",
-            values: [tag],
-            exclude: filtersState.excludeTagFilter,
-            includeAi: filtersState.includeAiTagFilter,
-          });
-        }
-      } else {
-        filters.push({
-          field: "tag",
-          values: selectedTags,
-          exclude: filtersState.excludeTagFilter,
-          includeAi: filtersState.includeAiTagFilter,
-        });
-      }
-    }
+    filters.push(...buildTagFilterClauses(
+      resolveTagFilterSets({
+        tagFilter: overrides.tagFilter ?? filtersState.tagFilter,
+        excludeTagFilter: overrides.excludeTagFilter ?? filtersState.excludeTagFilter,
+        excludedTagFilter: overrides.excludedTagFilter ?? filtersState.excludedTagFilter,
+      }),
+      overrides.tagFilterMatch ?? filtersState.tagFilterMatch,
+      filtersState.includeAiTagFilter,
+    ));
     if (ratings.length > 0)
       filters.push({
         field: "rating",
@@ -8010,6 +8016,7 @@ function AppInner() {
         excludeFormatFilter: state.filters.excludeFormatFilter,
         tagFilter: state.filters.tagFilter,
         excludeTagFilter: state.filters.excludeTagFilter,
+        excludedTagFilter: state.filters.excludedTagFilter ?? "",
         includeAiTagFilter: state.filters.includeAiTagFilter,
         tagFilterMatch: state.filters.tagFilterMatch,
         ratingFilter: state.filters.ratingFilter,
@@ -9589,6 +9596,7 @@ function AppInner() {
     excludeFormatFilter,
     tagFilter,
     excludeTagFilter,
+    excludedTagFilter,
     includeAiTagFilter,
     ratingFilter,
     excludeRatingFilter,
@@ -9654,6 +9662,7 @@ function AppInner() {
     excludeFormatFilter,
     tagFilter,
     excludeTagFilter,
+    excludedTagFilter,
     includeAiTagFilter,
     tagFilterMatch,
     ratingFilter,
@@ -14932,6 +14941,7 @@ function AppInner() {
             excludeFormatFilter={excludeFormatFilter}
             excludeRatingFilter={excludeRatingFilter}
             excludeTagFilter={excludeTagFilter}
+            excludedTagFilter={excludedTagFilter}
             includeAiRating={includeAiRatingFilter}
             includeAiTag={includeAiTagFilter}
             favoriteFilter={favoriteFilter}
@@ -14981,6 +14991,7 @@ function AppInner() {
               setTagFilterMatch("any");
               setTagFilter(value);
             }}
+            setExcludedTagFilter={setExcludedTagFilter}
             setWidthRange={setWidthRange}
             shuffleActive={shuffleSeed !== null}
             onShuffle={() => {
@@ -14996,6 +15007,7 @@ function AppInner() {
               excludeFormatFilter,
               tagFilter,
               excludeTagFilter,
+              excludedTagFilter,
               includeAiTagFilter,
               ratingFilter,
               excludeRatingFilter,

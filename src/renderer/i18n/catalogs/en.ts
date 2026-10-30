@@ -447,6 +447,7 @@ export const en = {
     exclude: "Exclude",
     ai: "AI",
     shiftMultiSelectHint: "Hold Shift to multi-select",
+    tagClickHint: "Left-click selects. Right-click excludes. Hold Shift to select more than one.",
     addCustomColor: "Add a custom color",
     removeCustomColor: "Remove custom color",
     colorSimilarity: "Similarity",

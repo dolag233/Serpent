@@ -16,9 +16,10 @@ export { shouldForwardViewerVideoShortcut };
 export function forwardViewerVideoShortcut(
   contents: WebContents | null | undefined,
   action: ViewerVideoShortcutAction,
+  options?: { repeat?: boolean },
 ): void {
   if (!contents || contents.isDestroyed()) return;
-  if (!shouldForwardViewerVideoShortcut(action)) return;
+  if (!shouldForwardViewerVideoShortcut(action, Date.now(), options)) return;
   contents.send(VIEWER_VIDEO_SHORTCUT_CHANNEL, { action });
 }
 

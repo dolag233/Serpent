@@ -56,6 +56,8 @@ function props(): DimensionFilterBarProps {
     setTagFilter: vi.fn(),
     excludeTagFilter: false,
     setExcludeTagFilter: vi.fn(),
+    excludedTagFilter: "",
+    setExcludedTagFilter: vi.fn(),
     includeAiTag: true,
     setIncludeAiTag: vi.fn(),
     onTagNamesChange: vi.fn(),

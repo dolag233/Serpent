@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   matchViewerVideoLetterShortcut,
   viewerMainShortcutRoutes,
+  viewerShortcutRepeatForward,
   viewerVideoShortcutNeedsImeSuspension,
 } from "../../src/shared/viewer-video-shortcuts";
 import { DEFAULT_SHORTCUT_BINDINGS } from "../../src/shared/shortcut-bindings";
@@ -104,6 +105,18 @@ describe("matchViewerVideoLetterShortcut (Main before-input)", () => {
     })).toBeNull();
   });
 
+  it("forwards held Ctrl+Arrow seeks and keeps letter repeats one-shot", () => {
+    expect(viewerShortcutRepeatForward("seek-back", "seek-back")).toEqual({
+      action: "seek-back",
+      repeat: false,
+    });
+    expect(viewerShortcutRepeatForward(null, "seek-forward")).toEqual({
+      action: "seek-forward",
+      repeat: true,
+    });
+    expect(viewerShortcutRepeatForward(null, "frame-next")).toBeNull();
+  });
+
   it("routes audio/video play-pause through the catalog even when frame/rate letters are modified", () => {
     let bindings = DEFAULT_SHORTCUT_BINDINGS;
     bindings = setShortcutOverride(bindings, "windows", "viewer.media.play-pause", {
@@ -132,7 +145,7 @@ describe("matchViewerVideoLetterShortcut (Main before-input)", () => {
     expect(matchViewerVideoLetterShortcut({ ...base, code: "KeyP" }, bindings, "windows", "viewer.video"))
       .toBe("play-pause");
     expect(viewerMainShortcutRoutes("viewer.audio").map((route) => route.action))
-      .toEqual(["play-pause"]);
+      .toEqual(["play-pause", "seek-back", "seek-forward"]);
     expect(viewerMainShortcutRoutes("viewer.video").map((route) => route.action))
       .toEqual([
         "play-pause",
@@ -155,5 +168,11 @@ describe("matchViewerVideoLetterShortcut (Main before-input)", () => {
       "windows",
       "viewer.video",
     )).toBe("seek-forward");
+    expect(matchViewerVideoLetterShortcut(
+      { ...base, code: "ArrowLeft", key: "ArrowLeft", control: true },
+      bindings,
+      "windows",
+      "viewer.audio",
+    )).toBe("seek-back");
   });
 });

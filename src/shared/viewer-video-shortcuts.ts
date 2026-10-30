@@ -107,6 +107,17 @@ function isKeyDown(input: ViewerVideoShortcutInput): boolean {
   return type === "keyDown" || type === "keydown";
 }
 
+export function viewerShortcutRepeatForward(
+  action: ViewerVideoShortcutAction | null,
+  repeatedAction: ViewerVideoShortcutAction | null,
+): { action: ViewerVideoShortcutAction; repeat: boolean } | null {
+  if (action) return { action, repeat: false };
+  if (repeatedAction === "seek-back" || repeatedAction === "seek-forward") {
+    return { action: repeatedAction, repeat: true };
+  }
+  return null;
+}
+
 /** Match a catalog action from Main `before-input-event`, including IME Process events. */
 export function matchViewerVideoLetterShortcut(
   input: ViewerVideoShortcutInput,

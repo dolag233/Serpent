@@ -1,5 +1,6 @@
 import type { PluginContributionContext } from "../plugins/plugin-context";
 import type { AssetSummary } from "../shared/asset-types";
+import { resolveTagFilterSets } from "./dimension-filter-selection";
 
 export type PluginBrowseFilterInput = {
   colorFilter: string;
@@ -8,6 +9,7 @@ export type PluginBrowseFilterInput = {
   excludeFormatFilter: boolean;
   tagFilter: string;
   excludeTagFilter: boolean;
+  excludedTagFilter?: string;
   tagFilterMatch: "any" | "all";
   ratingFilter: string;
   excludeRatingFilter: boolean;
@@ -46,7 +48,13 @@ export function buildPluginBrowseFilter(
 
   addText("color", input.colorFilter, input.excludeColorFilter);
   addText("format", input.formatFilter, input.excludeFormatFilter);
-  addText("tag", input.tagFilter, input.excludeTagFilter);
+  const sets = resolveTagFilterSets({
+    tagFilter: input.tagFilter,
+    excludeTagFilter: input.excludeTagFilter,
+    excludedTagFilter: input.excludedTagFilter,
+  });
+  if (sets.includes.length > 0) parts.push(`tag=${sets.includes.join(", ")}`);
+  if (sets.excludes.length > 0) parts.push(`tag=!${sets.excludes.join(", ")}`);
   if (input.tagFilter.trim().length > 0 && input.tagFilterMatch === "all") {
     parts.push("tagMatch=all");
   }

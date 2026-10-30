@@ -434,6 +434,7 @@ export const zhCN = {
     exclude: "排除",
     ai: "AI",
     shiftMultiSelectHint: "按住 Shift 可多选",
+    tagClickHint: "左键表示选择，右键表示排除。按住 Shift 可多选。",
     addCustomColor: "添加自定义颜色",
     removeCustomColor: "移除自定义颜色",
     colorSimilarity: "相似度",

@@ -25,13 +25,19 @@ import {
   clampScrubTime,
   formatVideoClockTime,
   applyMediaAutoplayIntent,
+  matchVideoPlaybackSeekKey,
   nextPlaybackIntent,
   scrubRatioFromClientX,
   shouldAutoStartMediaPlayback,
   scrubRatioFromTime,
   scrubTimeFromRatio,
   shouldHandleVideoSpaceKey,
+  videoSeekDeltaSeconds,
+  videoWheelSeekTime,
+  nextKeyboardSeekBase,
 } from "./video-player-controls";
+import { loadVideoSeekJumpPreferences } from "./video-seek-jump-preferences";
+import { bindVerticalWheelSteps } from "./viewer-wheel-intent";
 import { ViewerVolumeControls } from "./ViewerVolumeControls";
 import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
 import { applyViewerVolumeToMedia } from "./viewer-volume-preferences";
@@ -100,6 +106,9 @@ export function AudioPlayerControls({
   // them and only calls them during seek events; all session access here is
   // event/effect time (after mount), so null-safe ?. is just for TypeScript.
   const seekSessionRef = useRef<MediaSeekSession | null>(null);
+  const wheelHoldUntilRef = useRef(0);
+  const wheelTargetRef = useRef<number | null>(null);
+  const keyboardSeekRef = useRef<{ time: number; at: number } | null>(null);
   useEffect(() => {
     seekSessionRef.current = createMediaSeekSession(
       () => audioRef.current,
@@ -136,17 +145,52 @@ export function AudioPlayerControls({
     }
   }, []);
 
+  const seekByConfiguredJump = useCallback((direction: 1 | -1) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const mediaDuration = audio.duration || duration;
+    const now = Date.now();
+    const base = nextKeyboardSeekBase(
+      audio.currentTime,
+      keyboardSeekRef.current,
+      now,
+    );
+    const nextTime = clampScrubTime(
+      base + videoSeekDeltaSeconds(
+        { kind: "skip", direction },
+        undefined,
+        loadVideoSeekJumpPreferences(),
+        mediaDuration,
+      ),
+      mediaDuration,
+    );
+    keyboardSeekRef.current = { time: nextTime, at: now };
+    seekSessionRef.current?.commit(nextTime);
+    setCurrentTime(nextTime);
+    trailParticlesRef.current = [];
+    trailLastEmitAtRef.current = null;
+    setTrailParticles([]);
+  }, [duration]);
+
   useEffect(() => {
     if (keyboardShortcutsDisabled) return;
     const onShortcutInput = (input: ShortcutEventLike, event: KeyboardEvent | MouseEvent) => {
       if (hasActiveModalDialog()) return;
-      if (!shouldHandleVideoSpaceKey({ ...input, target: event.target })) return;
+      const withTarget = { ...input, target: event.target };
+      if (shouldHandleVideoSpaceKey(withTarget)) {
+        event.preventDefault();
+        event.stopPropagation();
+        togglePlayback();
+        return;
+      }
+      const action = matchVideoPlaybackSeekKey(withTarget);
+      if (!action || action.kind !== "skip") return;
       event.preventDefault();
       event.stopPropagation();
-      togglePlayback();
+      seekByConfiguredJump(action.direction);
     };
     return listenForShortcutInputs(window, onShortcutInput, true);
-  }, [keyboardShortcutsDisabled, togglePlayback]);
+  }, [keyboardShortcutsDisabled, seekByConfiguredJump, togglePlayback]);
 
   useEffect(() => {
     if (keyboardShortcutsDisabled) return;
@@ -167,10 +211,16 @@ export function AudioPlayerControls({
     window.addEventListener("keyup", syncArmed, true);
 
     const applyMainAction = (action: ViewerVideoShortcutAction) => {
-      if (action !== "play-pause") return;
       if (isTypingKeyboardTarget(document.activeElement) || hasActiveModalDialog()) return;
-      onUserActivity?.();
-      togglePlayback();
+      if (action === "play-pause") {
+        onUserActivity?.();
+        togglePlayback();
+        return;
+      }
+      if (action === "seek-back" || action === "seek-forward") {
+        onUserActivity?.();
+        seekByConfiguredJump(action === "seek-back" ? -1 : 1);
+      }
     };
     const unsubscribe = shell.onViewerVideoShortcut(applyMainAction);
     return () => {
@@ -180,13 +230,48 @@ export function AudioPlayerControls({
       window.removeEventListener("keyup", syncArmed, true);
       unsubscribe();
     };
-  }, [keyboardShortcutsDisabled, onUserActivity, togglePlayback]);
+  }, [keyboardShortcutsDisabled, onUserActivity, seekByConfiguredJump, togglePlayback]);
 
   // Parent remounts with key={src}; only cancel in-flight seek on unmount/src change.
   useEffect(() => {
     seekSessionRef.current?.cancel();
     return () => seekSessionRef.current?.cancel();
   }, [src]);
+
+  useEffect(() => {
+    const nodes = [trackRef.current, waveformRef.current].filter(
+      (node): node is HTMLDivElement => node !== null,
+    );
+    if (nodes.length === 0) return;
+    let holdTimer = 0;
+    const unbind = nodes.map((node) => bindVerticalWheelSteps(node, (steps) => {
+      onUserActivity?.();
+      const audio = audioRef.current;
+      if (!audio) return;
+      const mediaDuration = Number.isFinite(audio.duration) && audio.duration > 0
+        ? audio.duration
+        : duration;
+      const base = wheelTargetRef.current ?? audio.currentTime;
+      const next = videoWheelSeekTime(
+        base,
+        mediaDuration,
+        steps,
+        loadVideoSeekJumpPreferences(),
+      );
+      wheelTargetRef.current = next;
+      wheelHoldUntilRef.current = Date.now() + 400;
+      window.clearTimeout(holdTimer);
+      holdTimer = window.setTimeout(() => {
+        wheelTargetRef.current = null;
+      }, 400);
+      setCurrentTime(next);
+      seekSessionRef.current?.request(next);
+    }));
+    return () => {
+      window.clearTimeout(holdTimer);
+      for (const stop of unbind) stop();
+    };
+  }, [duration, onUserActivity, src]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -308,12 +393,12 @@ export function AudioPlayerControls({
           const audio = audioRef.current;
           if (!audio) return;
           let nextTime: number | null = null;
-          if (event.key === "ArrowLeft") {
+          if (event.key === "ArrowLeft" && !event.ctrlKey && !event.metaKey && !event.altKey) {
             nextTime = clampScrubTime(
               audio.currentTime - SCRUB_STEP_SECONDS,
               duration,
             );
-          } else if (event.key === "ArrowRight") {
+          } else if (event.key === "ArrowRight" && !event.ctrlKey && !event.metaKey && !event.altKey) {
             nextTime = clampScrubTime(
               audio.currentTime + SCRUB_STEP_SECONDS,
               duration,
@@ -328,6 +413,7 @@ export function AudioPlayerControls({
           applyKeySeek(nextTime);
         }}
         onPointerDown={(event) => {
+          keyboardSeekRef.current = null;
           event.preventDefault();
           event.currentTarget.focus();
           waveformScrubbingPointerId.current = event.pointerId;
@@ -411,6 +497,7 @@ export function AudioPlayerControls({
         onPlay={() => setPaused(false)}
         onSeeked={() => {
           seekSessionRef.current?.onSeeked();
+          if (Date.now() < wheelHoldUntilRef.current) return;
           if (
             scrubbingPointerId.current === null &&
             waveformScrubbingPointerId.current === null &&
@@ -420,6 +507,7 @@ export function AudioPlayerControls({
           }
         }}
         onTimeUpdate={(event) => {
+          if (Date.now() < wheelHoldUntilRef.current) return;
           if (
             scrubbingPointerId.current !== null ||
             waveformScrubbingPointerId.current !== null
@@ -459,12 +547,12 @@ export function AudioPlayerControls({
             const audio = audioRef.current;
             if (!audio) return;
             let nextTime: number | null = null;
-            if (event.key === "ArrowLeft") {
+            if (event.key === "ArrowLeft" && !event.ctrlKey && !event.metaKey && !event.altKey) {
               nextTime = clampScrubTime(
                 audio.currentTime - SCRUB_STEP_SECONDS,
                 duration,
               );
-            } else if (event.key === "ArrowRight") {
+            } else if (event.key === "ArrowRight" && !event.ctrlKey && !event.metaKey && !event.altKey) {
               nextTime = clampScrubTime(
                 audio.currentTime + SCRUB_STEP_SECONDS,
                 duration,
@@ -479,6 +567,7 @@ export function AudioPlayerControls({
             applyKeySeek(nextTime);
           }}
           onPointerDown={(event) => {
+            keyboardSeekRef.current = null;
             event.preventDefault();
             event.currentTarget.focus();
             scrubbingPointerId.current = event.pointerId;

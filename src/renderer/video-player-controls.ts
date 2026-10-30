@@ -159,6 +159,25 @@ export const VIDEO_FRAME_STEP_SECONDS = 1 / 30;
 /** Default Ctrl+← / Ctrl+→ skip when the jump setting is “by time” (Serpent-sk1). */
 export const VIDEO_SKIP_SECONDS = 2;
 
+/**
+ * Gap that still counts as one held Ctrl+Arrow. The first OS repeat can
+ * arrive hundreds of milliseconds after the initial key; later repeats are
+ * faster. While this window is open, the next jump continues from the last
+ * commanded time so an in-flight seek does not freeze the step.
+ */
+export const KEYBOARD_SEEK_REPEAT_GAP_MS = 1200;
+
+export function nextKeyboardSeekBase(
+  currentTime: number,
+  previous: { time: number; at: number } | null,
+  now: number,
+): number {
+  if (previous !== null && now - previous.at <= KEYBOARD_SEEK_REPEAT_GAP_MS) {
+    return previous.time;
+  }
+  return currentTime;
+}
+
 export type VideoKeyboardSeekAction =
   | { kind: "frame"; direction: 1 | -1 }
   | { kind: "skip"; direction: 1 | -1 };
@@ -175,10 +194,12 @@ export function matchVideoPlaybackSeekKey(event: ShortcutEventLike & {
   // Only block true typing surfaces — not viewer chrome select/buttons.
   if (isTypingKeyboardTarget(event.target)) return null;
 
-  if (matchesRuntimeShortcut("viewer.video.seek-back", event) === true) {
+  // Holding Ctrl+Arrow repeats. Frame keys stay one-shot.
+  const seekEvent = event.repeat === true ? { ...event, repeat: false } : event;
+  if (matchesRuntimeShortcut("viewer.video.seek-back", seekEvent) === true) {
     return { kind: "skip", direction: -1 };
   }
-  if (matchesRuntimeShortcut("viewer.video.seek-forward", event) === true) {
+  if (matchesRuntimeShortcut("viewer.video.seek-forward", seekEvent) === true) {
     return { kind: "skip", direction: 1 };
   }
   if (matchesRuntimeShortcut("viewer.video.frame-prev", event) === true) {

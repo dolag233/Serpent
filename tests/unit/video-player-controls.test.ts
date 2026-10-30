@@ -9,6 +9,7 @@ import {
   matchVideoPlaybackSeekKey,
   matchVideoPlaybackRateKey,
   nextFrameSeekTime,
+  nextKeyboardSeekBase,
   nextPlaybackIntent,
   parsePlaybackRate,
   resolveFrameStepSeconds,
@@ -197,14 +198,26 @@ describe("matchVideoPlaybackSeekKey / videoSeekDeltaSeconds (Serpent-sk1)", () =
     ).toBeCloseTo(VIDEO_FRAME_STEP_SECONDS);
   });
 
-  it("ignores auto-repeat for frame and seek actions", () => {
+  it("ignores auto-repeat for frame steps and keeps seeking while Ctrl+Arrow is held", () => {
     expect(matchVideoPlaybackSeekKey({ ...base, key: "d", repeat: true })).toBeNull();
     expect(matchVideoPlaybackSeekKey({
       ...base,
       key: "ArrowLeft",
       ctrlKey: true,
       repeat: true,
-    })).toBeNull();
+    })).toEqual({ kind: "skip", direction: -1 });
+    expect(matchVideoPlaybackSeekKey({
+      ...base,
+      key: "ArrowRight",
+      ctrlKey: true,
+      repeat: true,
+    })).toEqual({ kind: "skip", direction: 1 });
+  });
+
+  it("continues a held Ctrl+Arrow from the last commanded time", () => {
+    expect(nextKeyboardSeekBase(1, { time: 5, at: 1000 }, 1300)).toBe(5);
+    expect(nextKeyboardSeekBase(1, { time: 5, at: 1000 }, 2300)).toBe(1);
+    expect(nextKeyboardSeekBase(1, null, 1300)).toBe(1);
   });
 
   it("matches D/F by physical code even when IME sets key to Process", () => {
