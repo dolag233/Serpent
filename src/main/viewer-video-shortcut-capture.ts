@@ -24,6 +24,7 @@ import {
 
 const imeTokensByContentsId = new Map<number, WindowsImeSuspendToken>();
 const activeScopeByContentsId = new Map<number, ViewerShortcutScope>();
+const imeSuspendByContentsId = new Map<number, boolean>();
 
 function refreshViewerMenus(): void {
   const activeScopes = new Set(activeScopeByContentsId.values());
@@ -48,23 +49,29 @@ export function setViewerVideoShortcutCaptureActive(
   active: boolean,
   bindings: ShortcutBindings = DEFAULT_SHORTCUT_BINDINGS,
   scope: ViewerShortcutScope = "viewer.video",
+  suspendIme = scope !== "viewer.video",
 ): void {
   const contentsId = contents.id;
   if (active) {
     const previousScope = activeScopeByContentsId.get(contentsId);
+    const previousSuspend = imeSuspendByContentsId.get(contentsId) ?? false;
+    const shouldSuspend = suspendIme && viewerVideoShortcutNeedsImeSuspension(
+      bindings,
+      shortcutPlatformFromProcess(process.platform),
+      scope,
+    );
     activeScopeByContentsId.set(contentsId, scope);
+    imeSuspendByContentsId.set(contentsId, shouldSuspend);
     refreshViewerMenus();
-    if (previousScope === scope) return;
+    if (previousScope === scope && previousSuspend === shouldSuspend) return;
 
     const previousToken = imeTokensByContentsId.get(contentsId) ?? null;
     imeTokensByContentsId.delete(contentsId);
     restoreWindowsIme(previousToken);
 
-    if (viewerVideoShortcutNeedsImeSuspension(
-      bindings,
-      shortcutPlatformFromProcess(process.platform),
-      scope,
-    )) {
+    // Letter shortcuts still use the hidden menu accelerator. Closing the
+    // input method is optional, so an open IME is left alone unless requested.
+    if (shouldSuspend) {
       const window = BrowserWindow.fromWebContents(contents);
       const token = suspendWindowsIme(window);
       if (token) {
@@ -75,6 +82,7 @@ export function setViewerVideoShortcutCaptureActive(
   }
 
   activeScopeByContentsId.delete(contentsId);
+  imeSuspendByContentsId.delete(contentsId);
   const token = imeTokensByContentsId.get(contentsId) ?? null;
   imeTokensByContentsId.delete(contentsId);
   restoreWindowsIme(token);
@@ -89,6 +97,7 @@ export function clearViewerVideoShortcutCapture(contentsId: number): void {
     return;
   }
   activeScopeByContentsId.delete(contentsId);
+  imeSuspendByContentsId.delete(contentsId);
   const token = imeTokensByContentsId.get(contentsId) ?? null;
   imeTokensByContentsId.delete(contentsId);
   restoreWindowsIme(token);
@@ -101,6 +110,7 @@ export function resetViewerVideoShortcutCaptureForTests(): void {
   }
   imeTokensByContentsId.clear();
   activeScopeByContentsId.clear();
+  imeSuspendByContentsId.clear();
   resetViewerVideoShortcutForwardForTests();
   setViewerVideoShortcutMenuActive(false);
 }

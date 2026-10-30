@@ -42,6 +42,7 @@ export type IconName =
   | "link-off"
   | "loader"
   | "menu"
+  | "minus"
   | "palette"
   | "plus"
   | "refresh"
@@ -341,6 +342,7 @@ const iconPaths: Record<IconName, ReactNode> = {
     </>
   ),
   menu: <path d="M4 7h16M4 12h16M4 17h16" />,
+  minus: <path d="M5 12h14" />,
   plus: <path d="M12 5v14M5 12h14" />,
   refresh: (
     <>

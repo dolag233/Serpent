@@ -71,6 +71,13 @@ export async function executeFolderMainCommand(
         parentFolderId: request.parentFolderId,
         showIgnored: request.showIgnored,
       };
+    case "folder.filtered-counts.request":
+      return {
+        type: "folder.filtered-counts",
+        libraryId: request.libraryId,
+        filters: request.filters,
+        showIgnored: request.showIgnored,
+      };
     case "folder.entries-request":
       return {
         type: "folder.entries",

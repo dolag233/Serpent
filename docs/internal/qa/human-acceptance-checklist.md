@@ -23,6 +23,27 @@
 > 记为“人类验收通过”；该授权不自动延伸到后续会话或未实际操作的条目。
 > 2026-08-01：插件/脚本轨道改走自动化验收（见下表），与上条 Computer Use 人类等价授权无关。
 
+## 2026-10-30 资源库菜单文字
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| MENU-LIBRARY-TEXT-001 | 资源库菜单条目文字与主菜单一致，并带图标 | 待人类验收 | ① 打开左上角资源库名称菜单。② 打开右侧主菜单。③ 并排看两边的条目文字和图标。 | 资源库菜单的条目文字与主菜单一样深，每项左侧有图标。分区标题仍较浅。从硬盘删除仍是危险色，图标同色。 | `src/renderer/LibrarySwitcher.tsx` / `src/renderer/styles.css` `.library-switcher-item` | 界面改动。真实窗口、packaged 与 macOS 未执行。 |
+
+## 2026-10-30 实心按钮描边
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| BUTTON-FILL-STROKE-001 | 实心按钮不再另加一圈描边 | 人类验收通过 | ① 完全退出后再打开含这次改动的构建。② 在没有打开资源库的界面看「创建资源库」，并点一下让它获得焦点。③ 对照旁边的「打开资源库」「导入资源库」。④ 再看一处实心主按钮或危险按钮，例如确认删除。 | 实心按钮只有填充本身，静止和焦点都没有第二圈线。线框按钮仍保留细描边。设置里浅底加强调色描边的主按钮保持原样。 | `src/renderer/styles.css` `.primary-button` / `src/renderer/ui/ui.css` `.ui-button--primary` | 2026-10-30 用户确认验收通过。 |
+
+## 2026-10-30 筛选数量、查看切换和视频输入法
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| FILTER-FOLDER-COUNT-001 | 筛选时文件夹数量以筛出数为主，总数仅在有变化时以浅色附上 | 待人类验收 | ① 完全退出后再打开含这次改动的构建。② 打开有多层文件夹的资源库，记下侧栏和文件夹卡片上的数量。③ 打开筛选，只留一种格式或一种颜色。④ 看侧栏文件夹、「全部」「根目录」和当前层的文件夹卡片。⑤ 清掉筛选。 | ③ 网格只剩符合条件的资产。④ 数量仍以筛出数为主。和原来一样的文件夹继续显示一个数字。有变化时，筛出数样式不变，总数用更浅的颜色跟在斜线后面；没有命中的是浅色总数前的 0。父文件夹的筛出数包含子文件夹里筛中的资产。⑤ 恢复为原来的单个数量。 | `src/worker/library-service.ts` `filteredFolderCounts` / `src/renderer/filtered-count.tsx` / `src/renderer/NavigationSidebar.tsx` / `src/renderer/FolderCard.tsx` / `tests/unit/filtered-folder-counts.test.ts` / `tests/worker/folder-browse-entries.test.ts` | 2026-10-30：`node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/folder-browse-entries.test.ts -t "counts filtered assets"` 1 passed。真实窗口、packaged 与 macOS 未执行。 |
+| VIEW-NAV-HIT-001 | 查看器左右切换热区加大，箭头贴边、竖直居中，并带相反色细描边 | 人类验收通过 | ① 打开一张图或一个视频。② 看左右箭头是否落在画面竖直中心，并靠近左右边缘。③ 在浅色画面和深色画面各看一次箭头。④ 把指针移到画面左侧大约五分之一的高度范围内点一下，右侧同样。 | 箭头在画面竖直中心，外侧只留一小段空白。浅色画面上是深色箭头、白色细描边；深色画面上是白色箭头、黑色细描边。没有按钮方框。左右约 22% 宽仍可切换。底部播放条和缩放条仍可点。 | `src/renderer/AssetPreviewModal.tsx` / `src/renderer/styles.css` `.preview-nav` | 2026-10-30 用户确认箭头外观通过。连点消失另见 VIEW-NAV-REPEAT-001。 |
+| VIEW-NAV-REPEAT-001 | 查看器箭头在切换资产后仍可连点 | 人类验收通过 | ① 打开查看器，把指针停在右侧箭头上。② 连续点击，不要移动指针。③ 左侧箭头同样操作。 | 每次点击都切到上一项或下一项。箭头不消失，指针不动也能连续点。 | `src/renderer/AssetPreviewModal.tsx` `navNear` | 2026-10-30 用户确认验收通过。 |
+| VIEW-IME-VIDEO-001 | 打开视频后不切换输入法 | 待人类验收 | ① 在 Windows 打开中文输入法并切到中文。② 打开一个视频。③ 看输入法是否仍是进入前的状态。④ 关闭视频后再看一次。 | 进入和离开视频都不改当前输入法。音频查看器仍按原有媒体键需要时处理。 | `src/main/viewer-video-shortcut-capture.ts` | 真实 Windows 输入法未执行。macOS 不走这套切换。 |
+
 ## 2026-10-25 链接文件夹文本编辑
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

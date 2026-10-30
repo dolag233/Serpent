@@ -778,6 +778,7 @@ import {
   type CatalogAssetSummaryRow,
   type CatalogSearchGroup as SearchGroup,
 } from './catalog-read';
+import { rollupDirectFolderCounts } from '../shared/filtered-folder-counts';
 import {
   GIF_GOOD_PAGE_SCORE_THRESHOLD,
   GIF_THUMBNAIL_PROBE_SIZE,
@@ -16743,6 +16744,148 @@ export class LibraryService {
       );
     }
     return totals;
+  }
+
+  /**
+   * Recursive counts for the assets that match the current discovery filters.
+   * Folder ids match the sidebar: managed folder ids, linked roots, and
+   * linked virtual subdirectory ids. Folders with no matches are omitted.
+   */
+  filteredFolderCounts(input: {
+    libraryId: string;
+    filters?: FilterClause[] | null;
+    showIgnored?: boolean;
+  }): {
+    all: number;
+    root: number;
+    folders: Array<{ folderId: string; count: number }>;
+  } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const connection = openLibrary.connection;
+    const filters = input.filters ?? [];
+    const showIgnored = input.showIgnored === true;
+    const artifactColumns = columnsFor(connection, 'revision_artifacts');
+    const hasIgnoreTable = hasTable(connection, 'linked_ignored_assets');
+    const hasAiContent = hasTable(connection, 'ai_content');
+    const hasAiAssetTags = hasTable(connection, 'ai_asset_tags');
+    const hasSequenceFrames = hasTable(connection, 'asset_sequence_frames');
+    const filterFields = new Set(filters.map((filter) => filter.field));
+    const { sql: filterWhere, params: filterParams } = this.buildFilterWhere(filters, {
+      hasAiContent,
+      hasAiAssetTags,
+    });
+    const needsDurationMeta =
+      filterFields.has('width') ||
+      filterFields.has('height') ||
+      filterFields.has('duration_ms') ||
+      filterFields.has('long_edge') ||
+      filterFields.has('aspect_ratio');
+    const needsPaletteMeta = filterFields.has('color');
+    const needsTechnicalThumbnail =
+      filterFields.has('width') ||
+      filterFields.has('height') ||
+      filterFields.has('long_edge') ||
+      filterFields.has('aspect_ratio');
+    const needsMetadata =
+      filterFields.has('rating') ||
+      filterFields.has('favorite') ||
+      filterFields.has('source_url');
+    const durationMetaJoin = needsDurationMeta
+      ? `LEFT JOIN revision_artifacts duration_meta
+           ON duration_meta.revision_id = a.current_revision_id
+          AND duration_meta.kind = 'extracted_metadata'
+          ${artifactColumns.has('status') ? "AND duration_meta.status = 'ready'" : ''}
+          AND duration_meta.invalidated_at IS NULL`
+      : '';
+    const paletteMetaJoin = needsPaletteMeta
+      ? `LEFT JOIN revision_artifacts palette_meta
+           ON palette_meta.revision_id = a.current_revision_id
+          AND palette_meta.kind = 'extracted_palette'
+          ${artifactColumns.has('status') ? "AND palette_meta.status = 'ready'" : ''}
+          AND palette_meta.invalidated_at IS NULL`
+      : '';
+    const technicalThumbnailJoin = needsTechnicalThumbnail
+      ? singleDisplayArtifactJoin(
+          'technical_thumbnail',
+          artifactColumns.has('status') ? "AND chosen.status = 'ready'" : '',
+        )
+      : '';
+    const from = `FROM assets a
+         ${needsMetadata ? 'LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id' : ''}
+         ${durationMetaJoin}
+         ${paletteMetaJoin}
+         ${technicalThumbnailJoin}`;
+    const whereParts = buildCatalogAssetVisibilityPredicates({
+      scopeKind: 'all',
+      showIgnored,
+      showMissingLinked: this.#showMissingLinkedFiles,
+      explicitIgnoreSql: this.explicitIgnoreSql(connection, 'a', showIgnored),
+      hasLinkedIgnoredAssets: hasIgnoreTable,
+      hasSequenceFrames,
+    });
+    const params: unknown[] = [];
+    if (filterWhere.length > 0) {
+      whereParts.push(filterWhere);
+      params.push(...filterParams);
+    }
+    const rows = connection.prepare(
+      `SELECT a.location_kind AS location_kind,
+              a.managed_folder_id AS managed_folder_id,
+              a.linked_folder_id AS linked_folder_id,
+              a.relative_file_path AS relative_file_path
+         ${from}
+        WHERE ${whereParts.join(' AND ')}`,
+    ).all(...params) as Array<{
+      location_kind: 'managed' | 'linked';
+      managed_folder_id: string | null;
+      linked_folder_id: string | null;
+      relative_file_path: string;
+    }>;
+
+    const direct = new Map<string, number>();
+    const linkedPaths = new Map<string, string[]>();
+    let root = 0;
+    for (const row of rows) {
+      if (row.location_kind === 'linked' && row.linked_folder_id) {
+        const paths = linkedPaths.get(row.linked_folder_id) ?? [];
+        paths.push(row.relative_file_path);
+        linkedPaths.set(row.linked_folder_id, paths);
+        continue;
+      }
+      if (row.managed_folder_id) {
+        direct.set(row.managed_folder_id, (direct.get(row.managed_folder_id) ?? 0) + 1);
+      } else {
+        root += 1;
+      }
+    }
+
+    const managedFolders = connection.prepare(
+      'SELECT folder_id, parent_folder_id FROM managed_folders',
+    ).all() as Array<{ folder_id: string; parent_folder_id: string | null }>;
+    const rolled = rollupDirectFolderCounts(
+      managedFolders.map((folder) => ({
+        folderId: folder.folder_id,
+        parentFolderId: folder.parent_folder_id,
+      })),
+      direct,
+    );
+    const folders: Array<{ folderId: string; count: number }> = [];
+    for (const [folderId, count] of rolled) {
+      if (count > 0) folders.push({ folderId, count });
+    }
+    for (const [linkedFolderId, paths] of linkedPaths) {
+      const counts = countLinkedDirectoryAssets(paths);
+      for (const [relativePath, count] of counts) {
+        if (count.recursive <= 0) continue;
+        folders.push({
+          folderId: relativePath === ''
+            ? linkedFolderId
+            : encodeLinkedVirtualFolderId(linkedFolderId, relativePath),
+          count: count.recursive,
+        });
+      }
+    }
+    return { all: rows.length, root, folders };
   }
 
   /**

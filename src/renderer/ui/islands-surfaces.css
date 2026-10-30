@@ -18,11 +18,22 @@ body.serpent-modal-open .ui-shell-style-scope > [data-modal-popover="true"] {
   color: var(--ui-content-primary);
   box-shadow: var(--ui-shadow-none);
 }
+.app-shell[data-shell-layout="islands"] .ui-button--primary,
+.app-shell[data-shell-layout="islands"] .ui-button--danger {
+  border-color: transparent;
+}
 .app-shell[data-shell-layout="islands"] .ui-button--primary {
   background: var(--ui-content-primary);
-  border-color: transparent;
   color: var(--ui-content-inverse);
   box-shadow: var(--ui-shadow-none);
+}
+.app-shell[data-shell-layout="islands"] .primary-button:focus,
+.app-shell[data-shell-layout="islands"] .primary-button:focus-visible,
+.app-shell[data-shell-layout="islands"] .ui-button--primary:focus,
+.app-shell[data-shell-layout="islands"] .ui-button--primary:focus-visible,
+.app-shell[data-shell-layout="islands"] .ui-button--danger:focus,
+.app-shell[data-shell-layout="islands"] .ui-button--danger:focus-visible {
+  outline: none;
 }
 .app-shell[data-shell-layout="islands"] .ui-button--primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--ui-content-primary) 82%, var(--ui-content-inverse));

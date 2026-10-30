@@ -528,4 +528,55 @@ describe('folder browse entries', () => {
 
     service.closeAll();
   });
+
+  it('counts filtered assets as filtered over the folder subtree', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Filtered counts', selectedParentPath: root });
+    const parent = service.createManagedFolder({ libraryId: library.libraryId, name: 'Parent' });
+    const child = service.createManagedFolder({
+      libraryId: library.libraryId,
+      parentFolderId: parent.folderId,
+      name: 'Child',
+    });
+    const png = path.join(root, 'keep.png');
+    const rootPng = path.join(root, 'root.png');
+    const text = path.join(root, 'skip.txt');
+    writeFileSync(png, VALID_1X1_PNG);
+    writeFileSync(rootPng, Buffer.concat([VALID_1X1_PNG, Buffer.from([7])]));
+    writeFileSync(text, 'notes');
+    const importedPng = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      targetFolderId: child.folderId,
+      sourceKind: 'files',
+      sourcePaths: [png],
+    });
+    const importedText = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      targetFolderId: parent.folderId,
+      sourceKind: 'files',
+      sourcePaths: [text],
+    });
+    const importedRoot = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [rootPng],
+    });
+    if ('importId' in importedPng || 'importId' in importedText || 'importId' in importedRoot) {
+      throw new Error('unexpected conflict');
+    }
+
+    const counts = service.filteredFolderCounts({
+      libraryId: library.libraryId,
+      filters: [{ field: 'format', values: ['png'], exclude: false }],
+    });
+    expect(counts.all).toBe(2);
+    expect(counts.root).toBe(1);
+    expect(counts.folders).toEqual(expect.arrayContaining([
+      { folderId: child.folderId, count: 1 },
+      { folderId: parent.folderId, count: 1 },
+    ]));
+    expect(counts.folders.some((folder) => folder.folderId === parent.folderId && folder.count === 2)).toBe(false);
+    service.closeAll();
+  });
 });

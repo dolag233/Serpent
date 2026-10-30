@@ -3,6 +3,7 @@ import {
   useId,
   useRef,
   useState,
+  type ButtonHTMLAttributes,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import type { ImportMenuCopy } from "./browse-empty-state";
@@ -13,12 +14,36 @@ import {
   focusFirstRovingItem,
   handleRovingListKeyDown,
 } from "./roving-list-keyboard";
-import { Icon } from "./Icons";
+import { Icon, type IconName } from "./Icons";
 import { Tooltip } from "./ui/primitives/Tooltip";
 import { PortaledPopover } from "./PortaledPopover";
 import { MenuSurface, resolveMenuNodes } from "./ui/patterns";
 
 const MENU_ITEM_SELECTOR = '[role="menuitem"], [role="menuitemradio"]';
+
+function LibraryMenuAction({
+  icon,
+  label,
+  danger = false,
+  ...props
+}: {
+  icon: IconName;
+  label: string;
+  danger?: boolean;
+} & Omit<ButtonHTMLAttributes<HTMLButtonElement>, "className" | "children" | "type" | "role">) {
+  return (
+    <button
+      className={`library-switcher-item${danger ? " is-danger" : ""}`}
+      role="menuitem"
+      tabIndex={-1}
+      type="button"
+      {...props}
+    >
+      <Icon name={icon} size={14} />
+      <span className="library-switcher-item-label">{label}</span>
+    </button>
+  );
+}
 const LIBRARY_MENU_SURFACE_NODES = resolveMenuNodes([
   { id: "library-menu-content", kind: "separator" as const },
 ]);
@@ -185,96 +210,65 @@ export function LibrarySwitcher({
 
   const menuItems = (
     <>
-        <button
-          className="library-switcher-item"
+        <LibraryMenuAction
+          icon="plus"
+          label={t("shell.createLibraryEllipsis")}
           onClick={() => runMenuAction(onCreateLibrary)}
-          role="menuitem"
-          tabIndex={-1}
-          type="button"
-        >
-          {t("shell.createLibraryEllipsis")}
-        </button>
-        <button
-          className="library-switcher-item"
+        />
+        <LibraryMenuAction
+          icon="folder"
+          label={t("shell.openLibraryEllipsis")}
           onClick={() => runMenuAction(onOpenLibrary)}
-          role="menuitem"
-          tabIndex={-1}
-          type="button"
-        >
-          {t("shell.openLibraryEllipsis")}
-        </button>
-        <button
-          className="library-switcher-item"
+        />
+        <LibraryMenuAction
           disabled={!libraryName}
+          icon="close"
+          label={t("shell.closeLibrary")}
           onClick={() => runMenuAction(onCloseLibrary)}
-          role="menuitem"
-          tabIndex={-1}
-          type="button"
-        >
-          {t("shell.closeLibrary")}
-        </button>
-        <button
-          className="library-switcher-item"
+        />
+        <LibraryMenuAction
           data-hover-tip={t("toolbar.importLibraryHint")}
           disabled={!onImportLibrary || !libraryOpen || busy}
+          icon="download"
+          label={t("toolbar.importLibrary")}
           onClick={() => {
             if (onImportLibrary) runMenuAction(onImportLibrary);
           }}
-          role="menuitem"
-          tabIndex={-1}
-          type="button"
-        >
-          {t("toolbar.importLibrary")}
-        </button>
-        <button
-          className="library-switcher-item"
+        />
+        <LibraryMenuAction
           disabled={!onExportLibrary || !libraryOpen || busy}
+          icon="upload"
+          label={t("toolbar.exportLibrary")}
           onClick={() => {
             if (onExportLibrary) runMenuAction(onExportLibrary);
           }}
-          role="menuitem"
-          tabIndex={-1}
-          type="button"
-        >
-          {t("toolbar.exportLibrary")}
-        </button>
-        <button
-          className="library-switcher-item"
+        />
+        <LibraryMenuAction
+          data-hover-tip={t("shell.removeLibraryHint")}
           disabled={!libraryName || !onRemoveLibrary}
+          icon="minus"
+          label={t("shell.removeLibrary")}
           onClick={() => {
             if (onRemoveLibrary) runMenuAction(onRemoveLibrary);
           }}
-          role="menuitem"
-          tabIndex={-1}
-          data-hover-tip={t("shell.removeLibraryHint")}
-          type="button"
-        >
-          {t("shell.removeLibrary")}
-        </button>
-        <button
-          className="library-switcher-item is-danger"
+        />
+        <LibraryMenuAction
+          danger
           disabled={!libraryName || !onDeleteLibraryFromDisk}
+          icon="trash"
+          label={t("shell.deleteLibraryFromDisk")}
           onClick={() => {
             if (onDeleteLibraryFromDisk) runMenuAction(onDeleteLibraryFromDisk);
           }}
-          role="menuitem"
-          tabIndex={-1}
-          type="button"
-        >
-          {t("shell.deleteLibraryFromDisk")}
-        </button>
-        <button
-          className="library-switcher-item"
+        />
+        <LibraryMenuAction
           disabled={!libraryName || busy || !onOpenLibrarySettings}
+          icon="settings"
+          label={t("settings.librarySettings")}
           onClick={() => {
             if (onOpenLibrarySettings) runMenuAction(onOpenLibrarySettings);
           }}
-          role="menuitem"
-          tabIndex={-1}
-          type="button"
-        >
-          {t("settings.librarySettings")}
-        </button>
+        />
         {recentLibraries.length > 0 && (
           <>
             <div aria-hidden="true" className="library-switcher-divider" />
@@ -302,6 +296,7 @@ export function LibrarySwitcher({
                       tabIndex={-1}
                       type="button"
                     >
+                      <Icon name="folder" size={14} />
                       <span className="library-switcher-item-label">
                         {entry.name}
                       </span>

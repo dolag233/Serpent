@@ -339,6 +339,7 @@ const BACKGROUND_SECONDARY_COMMANDS = new Set([
   // Sidebar hydration is progressive: it must yield between its independent
   // count/list passes so a browse page can enter the Worker while it runs.
   'library.navigation-summary',
+  'folder.filtered-counts',
   'plugin.jobs.claim-next',
   'plugin.derived-fields.materialize',
   // Renderer status polls used to default to interactive-control and steal
@@ -412,6 +413,7 @@ const NON_PREEMPTIVE_MEDIA_COMMANDS = new Set([
   'asset.list-trash',
   'folder.list',
   'folder.browse-entries',
+  'folder.filtered-counts',
   'folder.list-trashed',
   'linked-folder.list',
   'browse.session.open',

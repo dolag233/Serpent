@@ -3319,6 +3319,7 @@ async function commandFor(
     case "folder.cover.set-asset.request":
     case "folder.list.request":
     case "folder.browse-entries.request":
+    case "folder.filtered-counts.request":
     case "folder.entries-request":
     case "folder.indexed-bytes.request":
     case "folder.trash.request":

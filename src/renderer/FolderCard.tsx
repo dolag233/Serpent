@@ -26,6 +26,8 @@ interface FolderCardProps {
   onDragStart?: (event: React.DragEvent<HTMLButtonElement>) => void;
   /** Trash tombstone card; double-click enters hierarchy (Serpent-6pcd). */
   trashed?: boolean;
+  /** Matches inside this folder while a discovery filter is active. */
+  filteredCount?: number;
 }
 
 /**
@@ -50,6 +52,7 @@ export function FolderCard({
   draggable = false,
   onDragStart,
   trashed = false,
+  filteredCount,
 }: FolderCardProps) {
   const t = useT();
   const customCover = entry.hasCustomCover ? folderCoverImageSrc(libraryId, entry) : null;
@@ -200,7 +203,11 @@ export function FolderCard({
           {entry.name}
         </strong>
         <span className="folder-card-count">
-          {t("common.itemCount", { count: entry.recursiveAssetCount })}
+          {t("common.itemCount", {
+            count: filteredCount === undefined
+              ? entry.recursiveAssetCount
+              : filteredCount,
+          })}
         </span>
       </div>
     </CardSurface>

@@ -2603,6 +2603,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     case 'folder.get-path':
     case 'folder.list':
     case 'folder.browse-entries':
+    case 'folder.filtered-counts':
     case 'folder.entries':
     case 'folder.indexed-bytes':
     case 'folder.list-trashed':
