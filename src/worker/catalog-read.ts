@@ -83,12 +83,31 @@ function searchFieldsForClause(field: string | null): readonly SearchIndexField[
 export function buildCatalogContextualSearchWhere(
   groups: CatalogSearchGroup[],
   assetOnly = false,
+  hasAiAssetTags = true,
 ): { sql: string; params: string[] } {
   const params: string[] = [];
   const groupExpressions: string[] = [];
   for (const group of groups) {
     const clauseExpressions: string[] = [];
     for (const clause of group) {
+      if (clause.field === 'tags' && clause.exact) {
+        const values = clause.values.map((value) => value.trim()).filter(Boolean);
+        // Whole-tag predicates read the relational tag tables directly and
+        // remain available when the optional text search index is absent.
+        if (values.length === 0) { clauseExpressions.push('0'); continue; }
+        const placeholders = values.map(() => '?').join(',');
+        const tagged = `a.asset_id IN (
+          SELECT hat.asset_id FROM human_asset_tags hat JOIN tags t ON t.tag_id = hat.tag_id
+          WHERE t.name COLLATE NOCASE IN (${placeholders})
+          ${hasAiAssetTags ? `UNION
+          SELECT aat.asset_id FROM ai_asset_tags aat JOIN tags t ON t.tag_id = aat.tag_id
+          WHERE t.name COLLATE NOCASE IN (${placeholders})` : ''}
+        )`;
+        params.push(...values);
+        if (hasAiAssetTags) params.push(...values);
+        clauseExpressions.push(clause.exclude ? `NOT (${tagged})` : `(${tagged})`);
+        continue;
+      }
       const fields = searchFieldsForClause(clause.field);
       const normalizedValues = clause.values
         .map((value) => normalizeSearchText(value).trim())
@@ -143,7 +162,9 @@ export function buildCatalogContextualSearchRank(groups: CatalogSearchGroup[]): 
   const params: string[] = [];
   const termRanks: string[] = [];
   for (const clause of groups.flat()) {
-    if (clause.exclude) continue;
+    // Exact tag formulas are Boolean filters; substring relevance has no
+    // meaning here, and a large DNF must not become an oversized SQL MIN().
+    if (clause.exclude || clause.exact) continue;
     const fields = searchFieldsForClause(clause.field);
     for (const rawValue of clause.values) {
       const value = normalizeSearchText(rawValue).trim();

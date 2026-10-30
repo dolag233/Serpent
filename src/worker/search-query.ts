@@ -13,6 +13,7 @@ export interface SearchClause {
   values: string[];
   /** When true the clause is negated (FTS5 NOT). */
   exclude: boolean;
+  exact?: boolean;
 }
 
 export type SearchGroup = SearchClause[];
@@ -50,6 +51,8 @@ export function searchValueLength(value: string): number {
 
 /** True when each requested value can be narrowed safely by a trigram MATCH. */
 export function canUseTrigramSearch(groups: SearchGroup[]): boolean {
+  // Substring FTS exclusions would incorrectly drop e.g. "A-long" for !"A".
+  if (groups.some((group) => group.some((clause) => clause.exact))) return false;
   const values = groups.flatMap((group) =>
     group.flatMap((clause) => clause.values),
   );

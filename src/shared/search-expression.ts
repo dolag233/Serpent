@@ -1,4 +1,5 @@
 import type { SearchQuery } from './asset-types';
+import { parseTagFormula, tagFormulaBody } from './tag-formula';
 
 const SEARCH_FIELD_ALIASES: Record<
   string,
@@ -69,6 +70,8 @@ function tokenizeSearchExpression(value: string): Array<string | '|'> {
  * and field aliases scope a term. Quotes preserve spaces and `|`.
  */
 export function parseSearchExpression(value: string): SearchQuery {
+  const formula = tagFormulaBody(value);
+  if (formula !== null) return parseTagFormula(formula);
   const groups: SearchQuery['clauses'][] = [[]];
   for (const rawToken of tokenizeSearchExpression(value)) {
     if (rawToken === '|') {

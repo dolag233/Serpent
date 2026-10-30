@@ -63,7 +63,8 @@ import { useAssetCardHoverPreview } from "./use-asset-card-hover-preview";
 import { SyncCardStatusBadge } from "./SyncCardStatusBadge";
 import { useSyncCardStatuses } from "./use-sync-card-status";
 import { resolveSearchSnippetCaption } from "./search-snippet-caption";
-import { parseSearchExpression, splitSearchHighlights } from "./search-expression";
+import { parseSearchExpression, searchExpressionError, splitSearchHighlights } from "./search-expression";
+import { tagFormulaBody } from "../shared/tag-formula";
 import { ConvertLinkedDialog } from "./ConvertLinkedDialog";
 import { LinkedRulesDialog } from "./LinkedRulesDialog";
 import { TagManagementWorkspace } from "./TagManagementWorkspace";
@@ -1376,6 +1377,7 @@ function AppInner() {
     string | null
   >(null);
   const [searchValue, setSearchValue] = useState("");
+  const formulaError = useMemo(() => searchExpressionError(searchValue), [searchValue]);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [storedSearchHistory, setStoredSearchHistory] = useState<{
     libraryId: string;
@@ -9465,8 +9467,10 @@ function AppInner() {
     }
     if (!api || !library) return;
     const semanticQuery = searchValue.trim();
+    const syntaxError = searchExpressionError(searchValue);
+    if (syntaxError) { setError(syntaxError); return; }
     const semantic = loadSemanticSearchPreferences();
-    if (semantic.searchMode === "semantic" && embeddingSelectionRef.current && semanticQuery) {
+    if (semantic.searchMode === "semantic" && embeddingSelectionRef.current && semanticQuery && tagFormulaBody(semanticQuery) === null) {
       await runSemanticSearch(semanticQuery, opts?.silent);
       return;
     }
@@ -14321,6 +14325,8 @@ function AppInner() {
                   filterSearchHistory(searchHistory, searchValue).length > 0
                 }
                 aria-label={t("toolbar.searchLibrary")}
+                aria-invalid={Boolean(formulaError)}
+                title={formulaError ?? undefined}
                 className="search-control"
                 disabled={!library}
                 onBlur={() => {
