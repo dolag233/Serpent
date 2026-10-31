@@ -14,11 +14,23 @@ export type ViewerPlaybackMenuProps = {
   slowerShortcut?: string | null;
   seekForwardShortcut?: string | null;
   seekBackShortcut?: string | null;
-  onFaster: () => void;
-  onSlower: () => void;
+  onFaster?: () => void;
+  onSlower?: () => void;
   onSeek: (direction: 1 | -1, unit: VideoSeekJumpMode) => void;
   onToggleMode: () => void;
 };
+
+/** Which viewers get the shared 「播放」 submenu. Rate exists only where the player changes speed. */
+export function viewerShowsPlaybackMenu(input: {
+  mediaType?: string | null;
+  gif?: boolean;
+}): { seek: true; rate: boolean } | null {
+  if (input.mediaType === "video" || input.gif === true) {
+    return { seek: true, rate: true };
+  }
+  if (input.mediaType === "audio") return { seek: true, rate: false };
+  return null;
+}
 
 export type ViewerChromeMenuProps = {
   toolbarOnApproach: boolean;
@@ -77,16 +89,20 @@ export function ViewerQuickSettingsMenu({
           icon={<Icon name="play" size={14} />}
           label={t("preview.playbackMenu")}
         >
-          <MenuRow
-            label={t("preview.playbackFaster")}
-            onClick={run(playback.onFaster)}
-            shortcut={playback.fasterShortcut}
-          />
-          <MenuRow
-            label={t("preview.playbackSlower")}
-            onClick={run(playback.onSlower)}
-            shortcut={playback.slowerShortcut}
-          />
+          {playback.onFaster && playback.onSlower ? (
+            <>
+              <MenuRow
+                label={t("preview.playbackFaster")}
+                onClick={run(playback.onFaster)}
+                shortcut={playback.fasterShortcut}
+              />
+              <MenuRow
+                label={t("preview.playbackSlower")}
+                onClick={run(playback.onSlower)}
+                shortcut={playback.slowerShortcut}
+              />
+            </>
+          ) : null}
           <MenuRow
             label={t("preview.seekForwardSeconds", { seconds: playback.seconds })}
             onClick={run(() => playback.onSeek(1, "time"))}

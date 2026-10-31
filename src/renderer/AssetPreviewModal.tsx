@@ -66,6 +66,7 @@ import {
   ViewerContextMenu,
   type ViewerContextMenuPosition,
 } from "./ViewerContextMenu";
+import { viewerShowsPlaybackMenu } from "./viewer-quick-settings-menu";
 import type { ViewerPlaybackHandle } from "./video-player-controls";
 import {
   loadVideoSeekJumpPreferences,
@@ -987,6 +988,10 @@ const AssetPreviewModalContent = forwardRef<
     asset.mediaType === "video" ||
     illustratorPdfPreview;
   const fitShortcut = viewerTransformable ? "Numpad ." : undefined;
+  const playbackMenu = viewerShowsPlaybackMenu({
+    mediaType: ready ? resolution?.mediaType : null,
+    gif: showImage && isGifDisplayName(asset.displayName) && !preloadOnly,
+  });
   const shortcutPlatform = isMacPlatform(navigator.userAgent) ? "mac" : "windows";
   const copyShortcut = shortcutPlatform === "mac" ? "⌘C" : "Ctrl+C";
   const copyPathShortcut = formatRuntimeShortcut("asset.copy-file-path", shortcutPlatform);
@@ -1321,6 +1326,7 @@ const AssetPreviewModalContent = forwardRef<
               onReady={() => setDirectApproved(true)}
               onUserActivity={() => onChromeActivity("pointerdownOrClick")}
               onVolumeChange={setViewerVolume}
+              playbackHandleRef={playbackHandleRef}
               src={resolution.url}
               volume={viewerVolume}
               waveformUrl={resolution.posterUrl}
@@ -1633,14 +1639,18 @@ const AssetPreviewModalContent = forwardRef<
             }
             copyShortcut={copyShortcut}
             playback={
-              (ready && resolution?.mediaType === "video")
-              || (showImage && isGifDisplayName(asset.displayName) && !preloadOnly)
+              playbackMenu
                 ? {
-                    fasterShortcut: formatRuntimeShortcut("viewer.video.rate-faster", shortcutPlatform),
+                    ...(playbackMenu.rate
+                      ? {
+                          fasterShortcut: formatRuntimeShortcut("viewer.video.rate-faster", shortcutPlatform),
+                          onFaster: () => playbackHandleRef.current?.stepRate("faster"),
+                          onSlower: () => playbackHandleRef.current?.stepRate("slower"),
+                          slowerShortcut: formatRuntimeShortcut("viewer.video.rate-slower", shortcutPlatform),
+                        }
+                      : {}),
                     mode: loadVideoSeekJumpPreferences().mode,
-                    onFaster: () => playbackHandleRef.current?.stepRate("faster"),
                     onSeek: (direction, unit) => playbackHandleRef.current?.seekBy(direction, unit),
-                    onSlower: () => playbackHandleRef.current?.stepRate("slower"),
                     onToggleMode: () => {
                       const current = loadVideoSeekJumpPreferences();
                       saveVideoSeekJumpPreferences({
@@ -1652,7 +1662,6 @@ const AssetPreviewModalContent = forwardRef<
                     seconds: loadVideoSeekJumpPreferences().seconds,
                     seekBackShortcut: formatRuntimeShortcut("viewer.video.seek-back", shortcutPlatform),
                     seekForwardShortcut: formatRuntimeShortcut("viewer.video.seek-forward", shortcutPlatform),
-                    slowerShortcut: formatRuntimeShortcut("viewer.video.rate-slower", shortcutPlatform),
                   }
                 : null
             }
