@@ -11,26 +11,16 @@
 
 **磁盘与工作区洁净（2026-08-26 用户要求，强制生效）**：任何代码路径都不得在用户磁盘/工作区留下未清理的内容——删除必须真正删除（失败/旁置/后台路径不得静默残留，无法即时删除须向用户提示并提供清理入口）；临时文件必须有空间预检、生命周期内清理与异常回收兜底；不得在用户选择的数据目录之外静默写大体积内容。详见 AGENTS.md「磁盘与工作区洁净纪律」。
 
-## 分支结构与合流约定（Serpent-pou3，2026-08-15 起生效）
+## 分支结构（2026-10-31 起）
 
-仓库两条长期分支，职责严格分离：
+- **`main`**：最新分支，也是 Pull Request 的合并目标。产品代码、测试、公开文档和 issue / PR 模板以这里为准。内部开发文件仍然不能进入 `main`：`.beads/`、`.codex/`、`.cursor/`、`AGENTS.md`、`CLAUDE.md`、`CONTEXT.md`、`docs/internal/`，以及 `.github/` 里的 CI 配置。`.github/ISSUE_TEMPLATE/` 与 `.github/PULL_REQUEST_TEMPLATE.md` 保留在 `main`。
+- **`dolag_dev`**：维护者个人工作分支，由原 `dev` 改名而来。它可以携带内部工单和内部文档。它不是最新分支，外部 Pull Request 不合并到这里。
 
-- **`main`**：发布基线，只维护**完整软件代码**（`src/`、`tests/`、`resources/`、`scripts/`、`assets/`、`extension/`、`website/`、公开 `docs/`、构建/打包配置）。**不含**任何纯开发文件：`.beads/`、`.codex/`、`.cursor/`、`.cursorignore`、`AGENTS.md`、`CLAUDE.md`、`CONTEXT.md`、`docs/internal/`。打包/发布以 main 为基。
-- **`dev`**：日常开发分支，派生自 main（dev HEAD 是 main HEAD 的后代），在 main 基础上**额外携带**上述开发文件（工单、agent 指南、内部文档）。所有开发、验收、beads 操作都在 dev 上进行；功能分支一律基于 `dev` 创建。
+功能通过 Pull Request 进入 `main`。不要把 `dolag_dev` 整支合并进 `main`。一次 PR 只包含一个已接受 issue 里的那一项改动。
 
-**合流规则（防止开发文件泄漏进 main）：**
+**内部文档仍可在 `dolag_dev` 上跟踪（2026-09-14）：** `.gitignore` 只忽略 `AGENTS.md`、`CLAUDE.md`、`.beads/`、`.github/`。`docs/internal/` 在 `dolag_dev` 上正常提交。`main` 由 `scripts/hooks/pre-commit` 拒绝内部开发文件。
 
-1. **禁止直接 `git merge dev` 到 main**——会把开发文件带进发布基线。
-2. 合入功能采用其一：
-   - `git cherry-pick <commit>` 逐个挑选功能提交；或
-   - `git merge dev --no-commit` 后手动 `git rm -r --cached` 排除开发文件清单（`.beads .codex .cursor .cursorignore AGENTS.md CLAUDE.md CONTEXT.md docs/internal`）再提交。
-3. 推送 main 必须用 `git push --no-verify origin main`（main 无 `.beads`，beads pre-push hook 无法运行，会拦截推送）。
-4. 推送 dev 保持正常流程（pre-push 自动同步 beads）。
-5. 合流后核对：`git ls-tree main --name-only` 不含开发文件；`git merge-base --is-ancestor main dev` 为真。
-
-**dev 侧不再用 `.gitignore` 拦 `docs/internal/`（2026-09-14 用户要求）：** 内部文档在 dev 上必须能正常跟踪提交。此前 `.gitignore` 的 `docs/internal/` 只会拦未跟踪文件，新版开发日志/审查/工单会被静默跳过（当日实测漏掉一份开发日志，需要 `git add -f` 才补回）。现在 `.gitignore` 仅保留 `AGENTS.md`、`CLAUDE.md`、`.beads/`、`.github/`；main 剥离仍由上面的合流流程与 `scripts/hooks/pre-commit` 钩子强制。
-
-执行记录：2026-08-15 完成首次重构——main `3d6474f`（strip dev-only files），dev `f4a37d4`（restore dev-only files，派生自 main）。
+2026-08-15 的首次拆分记录仍有效：当时的 `main` `3d6474f` 去掉了仅供开发的文件，当时的 `dev` `f4a37d4` 保留了这些文件。
 
 ## 每个切片的文档集合
 
@@ -83,16 +73,26 @@ QA 报告至少包含：
 
 “没有执行”不能写成“通过”。因环境缺失未执行的项目必须明确保留为交付风险。
 
+### 最小化测试原则（2026-10-25）
+
+测试范围跟改动所在的层走。没有改到的层，不跑那一层的检查。
+
+- 只改界面（样式、文案、渲染层控件，且没有改 Main、Preload、Worker 协议、数据库、资源库或媒体管线）时，最多跑直接相关的渲染层单测。禁止为此运行 Worker 测试、`test:library-availability`、搜索性能、全量 `npm test`、`test:e2e`、`verify:mainline`、`release:verify`。
+- 只改后端时，不跑与这次改动无关的界面套件。
+- 改到哪一层，只跑那一层里和这次改动直接相关的测试。
+- `npm run test:library-availability` 只在本次修改了资源库打开、关闭、迁移、schema、损坏恢复、切库、`library-service` 或 `library.db` 时才完整运行。界面改动不得触发它。
+- `verify:mainline` 和 `release:verify` 不是日常步骤。只有用户明确要求整套门禁时才运行。多人合流或进入发布流程本身不构成这个要求。
+
 ### 核心用户旅程门禁
 
-- **资源库可用性是项目最重要的底线**：库必须能打开、可写、关闭后再打开仍能用；Desktop 不提供只读资源库；损坏自动备份/抢救。任何资源库相关修改都必须完整跑完 `npm run test:library-availability`（`tests/worker/library-availability.test.ts` 合同及相关 schema/损坏/生命周期套件），不得用「测试范围从简」跳过。`verify:mainline` 在全量 `test` 之前先跑该门禁。
+- **资源库可用性是项目最重要的底线**：库必须能打开、可写、关闭后再打开仍能用；Desktop 不提供只读资源库；损坏自动备份/抢救。本次修改了资源库打开、关闭、迁移、schema、损坏恢复、切库、`library-service` 或 library Worker 协议时，完整跑完 `npm run test:library-availability`（`tests/worker/library-availability.test.ts` 合同及相关 schema/损坏/生命周期套件）。只改界面时不跑这套后端检查。
 - **数据兼容性是发布级门禁（Serpent-033e / ADR-0028）**：任何版本都必须完全兼容旧版本数据——新代码打开旧库自动无损迁移、升级后全功能可用是硬目标；Desktop 不提供只读资源库，损坏自动备份/抢救。迁移只加不改（禁删改现有表/列/索引/触发器）；每个迁移的验收必须证明「旧版本库 → 迁移后全功能可用」（数据不丢、语义不变、派生数据可重建）；违反不合并。涉及 `MIGRATIONS` / schema 变更的提交，代码审查必须核对此条。
 - **迁移纪律静态门禁（Serpent-verg.7）**：`tests/worker/migration-discipline.test.ts` 对每个迁移做静态检查（禁 DROP/ALTER/RENAME 现有表/列/索引/触发器；新增列必须可空或带默认值；表重建例外清单与 worker 的 FK 处理保持同步）。新增/修改迁移后必须通过该检查，且重建例外清单（`TABLE_REBUILD_VERSIONS`）与 `migrateDatabaseUnserialized` 的 `rebuildsTable` 集合保持一一对应，否则视为门禁违规。
-- 浏览、缩略图解码、放大预览、导入、搜索和删除属于核心用户旅程。任何影响 Renderer、Preload、Main、Worker、CSP、自定义协议或打包资源的改动合并后，都必须重新执行这些旅程的 Electron E2E，不能只依赖所属模块的单元测试。
+- 浏览、缩略图解码、放大预览、导入、搜索和删除的行为有变化时，重跑对应的 Electron E2E。只改界面外观、文案或控件样式时不跑这些旅程，也不跑后端检查。
 - UI 冒烟测试必须验证用户获得了有效结果，不能只验证容器或 DOM 元素存在。例如图片必须满足 `complete && naturalWidth > 0`，视频必须至少到达 `HAVE_METADATA` 且宽高非零，下载必须校验文件内容而非只校验进度条出现。
 - 持久化功能至少覆盖“创建/导入 → 关闭资源库或应用 → 重新打开 → 再次使用”的路径；只测本次会话新建数据不能代表已有资源库兼容。
 - 测试替身必须核对会影响真实工具执行的关键参数。FFmpeg/OIIO/系统命令除检查“被调用”外，还要检查关键 option 名称和值，并保留一条真实二进制或打包产物冒烟路径。
-- 共享工作树或多 agent 扇出结束后，由主 agent 在最终合并状态执行一次 `npm run verify:mainline`。该命令未通过时停止功能扩展，切片状态回到 `fixing`，不得以各子任务曾单独通过代替最终门禁。
+- 共享工作树或多 agent 扇出结束后，只复跑本轮改到的层。不自动运行 `npm run verify:mainline`。
 - **禁止使用 `git worktree`（2026-09-15 用户要求）**：并行推进用分支 + 串行交接，对照基线用 `git stash`（跑完 `git stash pop`）或把对照产物复制到仓库外目录，不新建检出。实测教训（`Serpent-9b1af8`）：多检出只能靠 junction 共享 `node_modules`，删除检出时 git 会穿过 junction 递归删除目标内容，把主工作树依赖清空；本仓 2026-07-20 的交接记录也已判定 worktree isolation 在本仓库不可靠。规则正文与理由见 `AGENTS.md` §磁盘与工作区洁净纪律 第 5 条。
 - 功能变更后的测试同步是完成定义的一部分：测试失败需要先判断是实现回归还是规格/fixture 已变化；前者修复代码，后者更新测试和文档，二者都不能留作“测试落后”的已知红灯。
 - 每个 Electron E2E 应使用唯一的临时 `userData` 目录，禁止默认读写开发者真实配置目录。只有显式验证完整重启或单实例语义的同一条用例，才能在该用例内共享一个显式传入的 profile。`SingletonLock` 等启动冲突属于测试基础设施失败，必须修复隔离原因，不得通过重试将其隐藏。
