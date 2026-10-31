@@ -3,6 +3,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type RefObject,
   type SyntheticEvent,
 } from "react";
 
@@ -47,6 +48,8 @@ import { isTypingKeyboardTarget } from "./video-player-controls";
 import type { ShortcutEventLike } from "../shared/shortcut-resolution";
 import type { SerpentShellApi } from "../shared/external-url";
 import type { ViewerVideoShortcutAction } from "../shared/viewer-video-shortcuts";
+import type { ViewerPlaybackHandle } from "./video-player-controls";
+import type { VideoSeekJumpMode } from "./video-seek-jump-preferences";
 
 type RendererWindow = Window & {
   serpent?: { shell?: SerpentShellApi };
@@ -68,6 +71,7 @@ export interface AudioPlayerControlsProps {
   volume: number;
   /** Wide viewer waveform strip (audio `video_poster`), optional until ready. */
   waveformUrl?: string;
+  playbackHandleRef?: RefObject<ViewerPlaybackHandle | null>;
 }
 
 const SCRUB_STEP_SECONDS = 5;
@@ -91,6 +95,7 @@ export function AudioPlayerControls({
   src,
   volume,
   waveformUrl,
+  playbackHandleRef,
 }: AudioPlayerControlsProps) {
   const t = useT();
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -145,7 +150,10 @@ export function AudioPlayerControls({
     }
   }, []);
 
-  const seekByConfiguredJump = useCallback((direction: 1 | -1) => {
+  const seekByConfiguredJump = useCallback((
+    direction: 1 | -1,
+    unit?: VideoSeekJumpMode,
+  ) => {
     const audio = audioRef.current;
     if (!audio) return;
     const mediaDuration = audio.duration || duration;
@@ -155,11 +163,12 @@ export function AudioPlayerControls({
       keyboardSeekRef.current,
       now,
     );
+    const stored = loadVideoSeekJumpPreferences();
     const nextTime = clampScrubTime(
       base + videoSeekDeltaSeconds(
         { kind: "skip", direction },
         undefined,
-        loadVideoSeekJumpPreferences(),
+        unit === undefined ? stored : { ...stored, mode: unit },
         mediaDuration,
       ),
       mediaDuration,
@@ -171,6 +180,20 @@ export function AudioPlayerControls({
     trailLastEmitAtRef.current = null;
     setTrailParticles([]);
   }, [duration]);
+
+  useEffect(() => {
+    const slot = playbackHandleRef;
+    if (!slot) return;
+    slot.current = {
+      stepRate: () => undefined,
+      seekBy(direction, unit) {
+        seekByConfiguredJump(direction, unit);
+      },
+    };
+    return () => {
+      slot.current = null;
+    };
+  }, [playbackHandleRef, seekByConfiguredJump]);
 
   useEffect(() => {
     if (keyboardShortcutsDisabled) return;
