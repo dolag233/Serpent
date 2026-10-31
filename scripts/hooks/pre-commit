@@ -3,7 +3,7 @@
 #
 # Internal-only paths (AI guides AGENTS.md/CLAUDE.md, ticket data .beads/,
 # CI config under .github/workflows and the rest of .github/, slice records
-# docs/internal/) are tracked on dev and must be stripped before any main
+# docs/internal/) are tracked on dolag_dev and must stay off any main
 # commit/merge (2026-08-21 用户要求 + 发布手册 §2). gitignore alone cannot
 # stop merges — tracked files merge regardless — so this hook rejects any
 # main commit that stages them.
@@ -25,7 +25,7 @@ files="$(
     || true
 )"
 if [ -n "$files" ]; then
-  echo "pre-commit: 内部开发文件禁止进入 main 分支（仅属 dev）：" >&2
+  echo "pre-commit: 内部开发文件禁止进入 main 分支（留在 dolag_dev）：" >&2
   echo "$files" | sed 's/^/  /' >&2
   echo "请先剥离后再提交：git rm -r --cached <上述文件>" >&2
   echo "注意：docs/developer/ 是公开贡献者文档，应保留在 main。" >&2

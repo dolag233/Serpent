@@ -36,8 +36,8 @@ If you encounter unexpected errors, performance bottlenecks, or bugs while runni
 
 ### 3.1 Branching Strategy
 
-- **`main`**: The public release baseline. Maintained and updated by maintainers when releasing new versions.
-- **`dev`**: The active integration branch for feature development and bug fixes. **All external Pull Requests must target `dev`**.
+- **`main`**: The latest branch. Product code, tests, and public documentation live here. **Every Pull Request merges into `main`**.
+- **`dolag_dev`**: The maintainer's working branch. External contributions do not merge here.
 
 ### 3.2 Step-by-Step Guide
 
@@ -58,10 +58,10 @@ If you encounter unexpected errors, performance bottlenecks, or bugs while runni
      npm ci --registry=https://registry.npmjs.org
      npm run rebuild:native
      ```
-4. **Create a branch from `dev`**:
+4. **Create a branch from `main`**:
    ```bash
-   git checkout dev
-   git pull origin dev
+   git checkout main
+   git pull origin main
    git checkout -b feature/your-feature-name
    # Or for bug fixes:
    git checkout -b fix/your-bugfix-name
@@ -86,8 +86,14 @@ If you encounter unexpected errors, performance bottlenecks, or bugs while runni
    - Example: `fix(viewer): autoplay video smoothly after navigation`.
 7. **Submit a Pull Request**:
    - Push your branch to your GitHub fork: `git push origin feature/your-feature-name`.
-   - Open a Pull Request on GitHub, **ensuring the base branch is set to `dev`**.
+   - Open a Pull Request on GitHub, **ensuring the base branch is set to `main`**.
    - Clearly explain the motivation, impact scope, and test evidence in the PR description.
+
+### 3.3 Pull Request rules
+
+- This PR changes one feature, rather than submitting several feature changes at once.
+- A corresponding valid issue was opened before this PR. Put the issue number in the description.
+- The repository pull request template asks you to confirm both rules, plus local verification, test coverage, and that the change contains no machine paths or credentials.
 
 ---
 
@@ -110,6 +116,6 @@ When writing code, keep Serpent's core architectural constraints in mind:
 
 ## 5. Acknowledgments
 
-All merged contributions are credited in [`CONTRIBUTORS.md`](https://github.com/dolag233/Serpent/blob/dev/CONTRIBUTORS.md) in the root directory.
+All merged contributions are credited in [`CONTRIBUTORS.md`](https://github.com/dolag233/Serpent/blob/main/CONTRIBUTORS.md) in the root directory.
 
 Thank you for contributing to Serpent!

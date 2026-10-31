@@ -2,16 +2,16 @@
 
 面向参与 Serpent 开发的贡献者与维护者。解释仓库长期分支架构、外部贡献流程以及内部维护者工作规范。
 
-## 1. 分支定位：`main` 与 `dev`
+## 1. 分支定位：`main` 与 `dolag_dev`
 
 | 分支 | 定位 | 包含内容 | 访问与发布 |
 | --- | --- | --- | --- |
-| `main` | **发布基线与公开分支** | 稳定代码、自动化测试、运行时资源、公开文档（含 `docs/developer/`）及构建配置 | 外部默认分支、对外打包与 Release 基线 |
-| `dev` | **日常开发集成分支** | `main` 的全部内容，加上内部协作工单（`.beads/`）、开发日志与切片设计（`docs/internal/`） | 功能开发与 PR 合流的目标分支 |
+| `main` | **最新分支** | 产品代码、自动化测试、运行时资源、公开文档（含 `docs/developer/`）及构建配置 | 默认分支。所有 Pull Request 合并到这里 |
+| `dolag_dev` | **维护者个人工作分支** | 可以在 `main` 的产品代码之外携带内部工单（`.beads/`）和内部文档（`docs/internal/`） | 不接收外部 Pull Request |
 
-- `main` 的目标是“拿来发布、稳定可用、公开透明”，随发布交付给用户与开源社区；
-- `dev` 的目标是“支撑活跃开发、追踪过程证据”，承载日常演进；
-- **外部贡献者发起 Pull Request 时，目标分支一律选择 `dev`**。
+- `main` 始终保持最新。产品改动通过 Pull Request 进入这里；
+- `dolag_dev` 给维护者存放内部记录；
+- **外部贡献者发起 Pull Request 时，目标分支一律选择 `main`**。
 
 ---
 
@@ -32,10 +32,10 @@
    npm ci --registry=https://registry.npmjs.org
    npm run rebuild:native
    ```
-4. 检出最新的 `dev` 分支并创建你的特性或修复分支：
+4. 检出最新的 `main` 并创建你的特性或修复分支：
    ```bash
-   git checkout dev
-   git pull origin dev
+   git checkout main
+   git pull origin main
    git checkout -b feature/my-feature-name
    ```
 
@@ -94,10 +94,11 @@ git commit -m "feat(canvas): 增加卡片悬停进度跳转"
    ```bash
    git push origin feature/my-feature-name
    ```
-2. 在 GitHub 页面创建 Pull Request，**Base 分支选择 `dev`**；
-3. 在 PR 描述中清晰说明修改目的、涉及范围、以及本地验证所运行的测试命令和结果；
-4. 维护者会在 PR 中进行审查并可能提出修改建议，完成必要的修改后会合并入 `dev`；
-5. 合并入项目的贡献会同步收录至根目录的 [`CONTRIBUTORS.md`](https://github.com/dolag233/Serpent/blob/dev/CONTRIBUTORS.md) 予以致谢。
+2. 在 GitHub 页面创建 Pull Request，**Base 分支选择 `main`**；
+3. 当前 PR 只修改一个功能，而不是多个功能修改一次性提交。在发起 PR 之前已经提出相应的有效 Issue；
+4. 在 PR 描述中清晰说明修改目的、涉及范围、以及本地验证所运行的测试命令和结果；
+5. 维护者审查后把改动合并入 `main`；
+6. 合并入项目的贡献会同步收录至根目录的 [`CONTRIBUTORS.md`](https://github.com/dolag233/Serpent/blob/main/CONTRIBUTORS.md) 予以致谢。
 
 ---
 
@@ -107,7 +108,7 @@ git commit -m "feat(canvas): 增加卡片悬停进度跳转"
 
 ### 3.1 内部工单追踪（`.beads/`）
 
-核心团队在 `dev` 分支使用轻量纯文本工单管理日常待办：
+核心团队在 `dolag_dev` 上使用轻量纯文本工单管理日常待办：
 
 ```bash
 # 查看就绪待办
@@ -122,17 +123,16 @@ node scripts/ticket.mjs status <issue-id> closed --reason "完成说明，附提
 
 ### 3.2 内部切片与设计文档（`docs/internal/`）
 
-大型垂直切片开发需在 `docs/internal/` 中维护技术规格、开发日志与代码审查记录。这些记录属于过程制品，仅保留在 `dev` 分支，便于追溯架构演变。
+大型垂直切片开发需在 `docs/internal/` 中维护技术规格、开发日志与代码审查记录。这些记录留在 `dolag_dev`，不进入 `main`。
 
-### 3.3 发布合流与公开分支剥离纪律
+### 3.3 发布与公开分支
 
-当 `dev` 上的功能达到发布阶段、需要将代码合流至 `main` 时，必须遵守以下纪律：
+产品改动经 Pull Request 进入 `main`。不要把 `dolag_dev` 整支合并进 `main`。
 
-1. **单次合并提交剥离内部开发文件**：
-   - 内部开发资料（包括 `AGENTS.md`、`CLAUDE.md`、`docs/internal/`、`.beads/`、`.github/` 里的 CI 配置等）只属于 `dev`，不得污染公开的 `main` 发布基线；
-   - `.github/ISSUE_TEMPLATE/` 与 `.github/PULL_REQUEST_TEMPLATE.md` 是公开的 issue / PR 模板，保留在 `main`；
-   - `docs/developer/` 是公开开发者与贡献者文档，**必须保留在 `main`**；
-   - 合流使用单次提交完成：从 `dev` 合入 `main` 时剥离内部文件，禁止在公开分支上出现“引入又删除”的冗余提交历史。
-2. **构建与打包必须在 `dev` 上执行**：
-   - 打包流水线包含全量校验门禁，正式发布制品由维护者在 `dev` 环境下执行 `npm run release:local` 生成；
-   - 打包完成后执行 `npm run rebuild:native` 恢复开发环境。
+1. **内部开发文件留在 `dolag_dev`**：
+   - `AGENTS.md`、`CLAUDE.md`、`docs/internal/`、`.beads/`，以及 `.github/` 里的 CI 配置，不进入 `main`；
+   - `.github/ISSUE_TEMPLATE/` 与 `.github/PULL_REQUEST_TEMPLATE.md` 是公开模板，保留在 `main`；
+   - `docs/developer/` 是公开开发者与贡献者文档，**必须保留在 `main`**。
+2. **发布打包在 `main` 上执行**：
+   - 正式发布制品由维护者在 `main` 上执行 `npm run release:local` 生成；
+   - 打包完成后执行 `npm run rebuild:native` 恢复开发用的 native 模块。
