@@ -129,7 +129,8 @@ Major vertical slice developments maintain technical specifications, development
 When features on `dev` reach the release milestone and need to be merged into `main`, the following rules apply:
 
 1. **Single merge commit stripping internal files**:
-   - Internal development files (including `AGENTS.md`, `CLAUDE.md`, `docs/internal/`, `.beads/`, `.github/`, etc.) belong only on `dev` and must never pollute the public `main` baseline;
+   - Internal development files (including `AGENTS.md`, `CLAUDE.md`, `docs/internal/`, `.beads/`, CI config under `.github/`, and similar) belong only on `dev` and must never pollute the public `main` baseline;
+   - `.github/ISSUE_TEMPLATE/` and `.github/PULL_REQUEST_TEMPLATE.md` are the public issue and pull request templates and stay on `main`;
    - `docs/developer/` is public developer and contributor documentation and **must remain on `main`**;
    - Merging is done in a single commit: stripping internal files while merging from `dev` to `main`, preventing "add-then-remove" commit churn on the public branch.
 2. **Packaging and building must be performed on `dev`**:

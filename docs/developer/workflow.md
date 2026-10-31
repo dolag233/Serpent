@@ -129,7 +129,8 @@ node scripts/ticket.mjs status <issue-id> closed --reason "完成说明，附提
 当 `dev` 上的功能达到发布阶段、需要将代码合流至 `main` 时，必须遵守以下纪律：
 
 1. **单次合并提交剥离内部开发文件**：
-   - 内部开发资料（包括 `AGENTS.md`、`CLAUDE.md`、`docs/internal/`、`.beads/`、`.github/` 等）只属于 `dev`，不得污染公开的 `main` 发布基线；
+   - 内部开发资料（包括 `AGENTS.md`、`CLAUDE.md`、`docs/internal/`、`.beads/`、`.github/` 里的 CI 配置等）只属于 `dev`，不得污染公开的 `main` 发布基线；
+   - `.github/ISSUE_TEMPLATE/` 与 `.github/PULL_REQUEST_TEMPLATE.md` 是公开的 issue / PR 模板，保留在 `main`；
    - `docs/developer/` 是公开开发者与贡献者文档，**必须保留在 `main`**；
    - 合流使用单次提交完成：从 `dev` 合入 `main` 时剥离内部文件，禁止在公开分支上出现“引入又删除”的冗余提交历史。
 2. **构建与打包必须在 `dev` 上执行**：

@@ -1,0 +1,53 @@
+name: 问题反馈 / Bug report
+description: 某个版本上可以重复遇到的问题。 / A problem you can reproduce on a specific version.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: environment
+    attributes:
+      label: 运行环境 / Environment
+      placeholder: |
+        版本 / Version: 0.3.3
+        系统 / OS: Windows 11 23H2 22631
+        架构 / Architecture: x64
+        安装方式 / Distribution: Windows 便携版
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 具体情况 / What happened
+      placeholder: |
+        实际：双击后窗口没有出现，退出码是 …
+        预期：打开资源库主窗口。
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      placeholder: |
+        1. 使用 Windows 便携版 0.3.3，解压到本地磁盘
+        2. 双击 Serpent.exe
+        3. 进程退出，没有窗口
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / Logs
+      placeholder: |
+        主菜单 > 关于 > 查看诊断日志 > 显示日志文件 可打开日志。
+        Main menu > About > View diagnostics > Show log file opens the log.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充 / Additional context
