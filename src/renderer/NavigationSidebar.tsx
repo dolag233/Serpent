@@ -1276,7 +1276,22 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     };
   }, []);
 
-  const persistedCollapsedFolderIds = new Set(navTreePrefs.collapsedFolderIds);
+  const allFolderIds = [...folders.map((folder) => folder.folderId),
+    ...linkedFolders.map((folder) => folder.folderId)];
+  const persistedCollapsedFolderIds = new Set(
+    navTreePrefs.expandedFolderIds === undefined
+      ? navTreePrefs.collapsedFolderIds
+      : allFolderIds.filter((id) => !navTreePrefs.expandedFolderIds!.includes(id)),
+  );
+  function saveFolderCollapseState(prefs: NavTreePreferences, collapsed: readonly string[]) {
+    if (prefs.expandedFolderIds === undefined) return withCollapsedFolderIds(prefs, collapsed);
+    const closed = new Set(collapsed);
+    const known = new Set(allFolderIds);
+    return { ...prefs, expandedFolderIds: [
+      ...prefs.expandedFolderIds.filter((id) => !known.has(id)),
+      ...allFolderIds.filter((id) => !closed.has(id)),
+    ] };
+  }
   const collapsedFolderIds = new Set(persistedCollapsedFolderIds);
   // Creating under a collapsed parent must reveal the inline create row. Keep
   // this as derived view state: opening or cancelling an editor must not
@@ -1287,9 +1302,9 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
 
   function toggleFolderCollapsed(folderId: string) {
     const nextIds = persistedCollapsedFolderIds.has(folderId)
-      ? navTreePrefs.collapsedFolderIds.filter((id) => id !== folderId)
-      : [...navTreePrefs.collapsedFolderIds, folderId];
-    const next = withCollapsedFolderIds(navTreePrefs, nextIds);
+      ? [...persistedCollapsedFolderIds].filter((id) => id !== folderId)
+      : [...persistedCollapsedFolderIds, folderId];
+    const next = saveFolderCollapseState(navTreePrefs, nextIds);
     setNavTreePrefs(next);
     saveNavTreePreferences(next);
   }
@@ -1307,11 +1322,11 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
       : folderId;
     const subtree = folderIdsInSubtree(unifiedDirectoryEntries, rootId);
     const nextIds = withFolderSubtreeCollapsed(
-      navTreePrefs.collapsedFolderIds,
+      [...persistedCollapsedFolderIds],
       subtree.length > 0 || rootId === null ? subtree : [folderId],
       collapse,
     );
-    const next = withCollapsedFolderIds(navTreePrefs, nextIds);
+    const next = saveFolderCollapseState(navTreePrefs, nextIds);
     setNavTreePrefs(next);
     saveNavTreePreferences(next);
   }
@@ -1354,7 +1369,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     if (!revealTarget) return;
     if (handledRevealRequestRef.current === revealTarget.requestId) return;
     const collapsed = revealTarget.kind === "folder"
-      ? navTreePrefs.collapsedFolderIds
+      ? [...persistedCollapsedFolderIds]
       : (navTreePrefs.collapsedCollectionIds ?? []);
     const ancestors: string[] = [];
     const seen = new Set<string>();
@@ -1388,7 +1403,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     const nextCollapsed = collapsed.filter((id) => !ancestors.includes(id));
     if (nextCollapsed.length !== collapsed.length) {
       const next = revealTarget.kind === "folder"
-        ? withCollapsedFolderIds(navTreePrefs, nextCollapsed)
+        ? saveFolderCollapseState(navTreePrefs, nextCollapsed)
         : withCollapsedCollectionIds(navTreePrefs, nextCollapsed);
       const frame = window.requestAnimationFrame(() => {
         setNavTreePrefs(next);
@@ -1416,11 +1431,11 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
   ) {
     if (!parentId) return;
     setNavTreePrefs((current) => {
-      if (!current.collapsedFolderIds.includes(parentId)) return current;
-      const next = withCollapsedFolderIds(
-        current,
-        current.collapsedFolderIds.filter((id) => id !== parentId),
-      );
+      const collapsed = current.expandedFolderIds === undefined
+        ? current.collapsedFolderIds
+        : allFolderIds.filter((id) => !current.expandedFolderIds!.includes(id));
+      if (!collapsed.includes(parentId)) return current;
+      const next = saveFolderCollapseState(current, collapsed.filter((id) => id !== parentId));
       saveNavTreePreferences(next);
       return next;
     });

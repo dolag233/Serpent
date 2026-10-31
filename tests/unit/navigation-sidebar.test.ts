@@ -3,7 +3,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   NavigationSidebar,
@@ -260,7 +260,30 @@ describe("NavigationSidebar virtual library root", () => {
     )).toBeNull();
   });
 
+  it("restores manually expanded folders after the sidebar is remounted", async () => {
+    const folders = [
+      { folderId: "parent", parentFolderId: null, name: "Parent", relativePath: "Parent", directAssetCount: 0, childFolderCount: 1 },
+      { folderId: "child", parentFolderId: "parent", name: "Child", relativePath: "Parent/Child", directAssetCount: 0, childFolderCount: 0 },
+    ];
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    const render = () => createElement(LocaleProvider, null, createElement(NavigationSidebar, createNavigationProps({ folders })));
+    await act(async () => { root?.render(render()); });
+    expect(container.querySelector('[data-nav-folder-id="child"]')).toBeNull();
+    const parent = container.querySelector('[data-nav-folder-id="parent"]');
+    const disclosure = parent?.parentElement?.querySelector<HTMLButtonElement>(".nav-disclosure");
+    expect(disclosure).not.toBeNull();
+    await act(async () => { disclosure?.click(); });
+    expect(container.querySelector('[data-nav-folder-id="child"]')).not.toBeNull();
+    await act(async () => { root?.unmount(); });
+    root = createRoot(container);
+    await act(async () => { root?.render(render()); });
+    expect(container.querySelector('[data-nav-folder-id="child"]')).not.toBeNull();
+  });
+
   it("keeps nested folder and collection rows aligned with long labels and counts", async () => {
+    localStorage.setItem(NAV_TREE_PREF_KEY, JSON.stringify({ version: 1, collapsedFolderIds: [] }));
     const onChooseFolder = vi.fn();
     const onChooseCollection = vi.fn();
     const parentFolderName = "A very long parent folder name that must stay on one row";
@@ -1292,11 +1315,16 @@ describe("NavigationSidebar folder-section blank area", () => {
   let root: Root | undefined;
   let container: HTMLDivElement | undefined;
 
+  beforeEach(() => {
+    localStorage.setItem(NAV_TREE_PREF_KEY, JSON.stringify({ version: 1, collapsedFolderIds: [] }));
+  });
+
   afterEach(() => {
     root?.unmount();
     root = undefined;
     container?.remove();
     container = undefined;
+    localStorage.removeItem(NAV_TREE_PREF_KEY);
   });
 
   const parentFolder = {

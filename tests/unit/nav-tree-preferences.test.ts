@@ -25,10 +25,11 @@ function memoryStorage(
 }
 
 describe("nav-tree-preferences", () => {
-  it("defaults to fully expanded", () => {
+  it("defaults folders to collapsed", () => {
     expect(loadNavTreePreferences(memoryStorage())).toEqual(
       DEFAULT_NAV_TREE_PREFERENCES,
     );
+    expect(loadNavTreePreferences(memoryStorage()).expandedFolderIds).toEqual([]);
   });
 
   it("round-trips collapsed folder ids", () => {

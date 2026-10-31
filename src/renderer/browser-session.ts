@@ -7,6 +7,7 @@ import {
   resolveSessionStorage,
   type SessionStorage,
 } from "./session-storage";
+import type { WorkspaceNavViewport } from "./workspace-nav-history";
 
 export type StoredBrowserSession = {
   version: 1;
@@ -19,6 +20,7 @@ export type StoredBrowserSession = {
       };
   selectedAssetId: string;
   selectedAssetName: string;
+  viewport?: WorkspaceNavViewport;
 };
 
 export type BrowserSessionStorage = SessionStorage;
@@ -75,6 +77,12 @@ export function readBrowserSession(
       !("id" in session.scope && typeof session.scope.id === "string")
     ) {
       return null;
+    }
+    const viewport = session.viewport;
+    if (viewport && (![viewport.scrollTop, viewport.scrollProgress, viewport.scrollExtent].every(
+      (value) => typeof value === "number" && Number.isFinite(value) && value >= 0,
+    ) || viewport.scrollProgress > 1)) {
+      delete session.viewport;
     }
     return session as StoredBrowserSession;
   } catch {

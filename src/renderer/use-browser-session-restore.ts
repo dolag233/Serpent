@@ -36,7 +36,9 @@ import {
   seedRestoreLeafLocation,
   type WorkspaceNavHistory,
   type WorkspaceNavLocation,
+  type WorkspaceNavViewport,
 } from "./workspace-nav-history";
+import { captureWorkspaceNavViewport, restoreWorkspaceNavViewport } from "./workspace-scroll-position";
 
 export type UseBrowserSessionRestoreArgs = {
   api: SerpentLibraryApi | null;
@@ -72,6 +74,7 @@ export type UseBrowserSessionRestoreArgs = {
    */
   restoreWorkspaceTabs: (libraryId: string) => void;
   pendingRestoredFocusRef: MutableRefObject<string | null>;
+  pendingRestoredViewportRef: MutableRefObject<WorkspaceNavViewport | null>;
   navHistoryRef: MutableRefObject<WorkspaceNavHistory>;
   setNavHistoryUi: Dispatch<
     SetStateAction<{ canBack: boolean; canForward: boolean }>
@@ -126,6 +129,7 @@ export function useBrowserSessionRestore(
     resetImportTargetFolderRef,
     restoreWorkspaceTabs,
     pendingRestoredFocusRef,
+    pendingRestoredViewportRef,
     navHistoryRef,
     setNavHistoryUi,
     setUiState,
@@ -188,11 +192,12 @@ export function useBrowserSessionRestore(
               beginBrowsePage,
             });
             restoredLocation = applied.restoredLocation;
+            if (session.viewport) pendingRestoredViewportRef.current = session.viewport;
             if (applied.restoredAsset) {
               setSelectedAssetId(applied.restoredAsset.assetId);
               setSelectedAssetIds([applied.restoredAsset.assetId]);
               setAssetSelectionAnchor(applied.restoredAsset.assetId);
-              pendingRestoredFocusRef.current = applied.restoredAsset.assetId;
+              if (!session.viewport) pendingRestoredFocusRef.current = applied.restoredAsset.assetId;
             }
           } catch (sessionError) {
             console.warn(
@@ -245,6 +250,7 @@ export function useBrowserSessionRestore(
     locale,
     navHistoryRef,
     pendingRestoredFocusRef,
+    pendingRestoredViewportRef,
     setActiveCollectionId,
     setActiveSmartCollectionId,
     setActiveTagId,
@@ -320,6 +326,10 @@ export function useBrowserSessionPersist(
       selectedAssetId: selectedAsset?.assetId ?? "",
       selectedAssetName: selectedAsset?.displayName ?? "",
     });
+    const previous = readBrowserSession(library.libraryId);
+    if (previous?.viewport && JSON.stringify(previous.scope) === JSON.stringify(session.scope)) {
+      session.viewport = previous.viewport;
+    }
     writeBrowserSession(library.libraryId, session);
   }, [
     activeCollectionId,
@@ -332,6 +342,48 @@ export function useBrowserSessionPersist(
     showTrash,
     tags,
   ]);
+}
+
+/** Save the active canvas position and restore it once startup content mounts. */
+export function useBrowserSessionViewport(args: {
+  libraryId: string | null;
+  ready: boolean;
+  canvasRef: RefObject<HTMLElement | null>;
+  pendingRef: MutableRefObject<WorkspaceNavViewport | null>;
+}): void {
+  const { libraryId, ready, canvasRef, pendingRef } = args;
+  useEffect(() => {
+    if (!libraryId || !ready) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    let restoring = pendingRef.current !== null;
+    let cancelRestore: (() => void) | undefined;
+    if (pendingRef.current) {
+      const viewport = pendingRef.current;
+      cancelRestore = restoreWorkspaceNavViewport(canvas, viewport, () => true, () => {
+        pendingRef.current = null;
+        restoring = false;
+      });
+    }
+    let timer: number | undefined;
+    const save = () => {
+      if (restoring) return;
+      const session = readBrowserSession(libraryId);
+      if (session) writeBrowserSession(libraryId, { ...session, viewport: captureWorkspaceNavViewport(canvas) });
+    };
+    const schedule = () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = window.setTimeout(save, 200);
+    };
+    canvas.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("pagehide", save);
+    return () => {
+      canvas.removeEventListener("scroll", schedule);
+      window.removeEventListener("pagehide", save);
+      if (timer !== undefined) window.clearTimeout(timer);
+      cancelRestore?.();
+    };
+  }, [libraryId, ready, canvasRef, pendingRef]);
 }
 
 export type UsePendingRestoredAssetFocusArgs = {

@@ -389,6 +389,7 @@ import { isBrowseScopeAffectedByFolderTrash } from "./folder-trash-scope";
 import {
   useBrowserSessionPersist,
   useBrowserSessionRestore,
+  useBrowserSessionViewport,
   usePendingRestoredAssetFocus,
 } from "./use-browser-session-restore";
 import { useExtensionActiveContext } from "./use-extension-active-context";
@@ -2674,6 +2675,7 @@ function AppInner() {
   );
   // 筛选与排序面板：外点 / Esc 自动关闭（现代浮层语义），summary 切换不变。
   const pendingRestoredFocusRef = useRef<string | null>(null);
+  const pendingRestoredBrowserViewportRef = useRef<WorkspaceNavViewport | null>(null);
   const pendingRevealRef = useRef<PendingAssetReveal | null>(null);
   const chooseFolderRef = useRef<
     (
@@ -4924,6 +4926,7 @@ function AppInner() {
     resetImportTargetFolderRef: managedImportTargetFolderIdRef,
     restoreWorkspaceTabs: restoreWorkspaceTabsForLibrary,
     pendingRestoredFocusRef,
+    pendingRestoredViewportRef: pendingRestoredBrowserViewportRef,
     navHistoryRef,
     setNavHistoryUi,
     setUiState,
@@ -4948,6 +4951,12 @@ function AppInner() {
     activeCollectionId,
     activeSmartCollectionId,
     assetScope,
+  });
+  useBrowserSessionViewport({
+    libraryId: library?.libraryId ?? null,
+    ready: browserSessionReady,
+    canvasRef: workspaceCanvasRef,
+    pendingRef: pendingRestoredBrowserViewportRef,
   });
   usePendingRestoredAssetFocus({
     pendingRestoredFocusRef,

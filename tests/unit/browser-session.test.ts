@@ -128,6 +128,20 @@ describe("browser-session", () => {
     );
     expect(readBrowserSession("lib-1", store)).toBeNull();
   });
+
+  it("retains the saved viewport and ignores malformed viewport data", () => {
+    const store = memoryStorage();
+    const session: StoredBrowserSession = {
+      version: 1, scope: { kind: "folder", id: "f1" }, selectedAssetId: "", selectedAssetName: "",
+      viewport: { scrollTop: 700, scrollExtent: 2000, scrollProgress: 0.35 },
+    };
+    writeBrowserSession("lib-1", session, store);
+    expect(readBrowserSession("lib-1", store)).toEqual(session);
+    store.setItem(browserSessionKey("lib-1"), JSON.stringify({ ...session, viewport: { scrollTop: -1, scrollExtent: 2000, scrollProgress: 2 } }));
+    expect(readBrowserSession("lib-1", store)).toEqual({
+      version: 1, scope: { kind: "folder", id: "f1" }, selectedAssetId: "", selectedAssetName: "",
+    });
+  });
 });
 
 describe("findSessionSelectedAsset", () => {
