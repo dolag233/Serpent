@@ -2,16 +2,16 @@
 
 This document is for contributors and maintainers participating in Serpent development. It explains the repository's long-lived branching architecture, external contribution workflow, and internal maintainer practices.
 
-## 1. Branch Roles: `main` and `dev`
+## 1. Branch Roles: `main` and `dolag_dev`
 
 | Branch | Purpose | What belongs there | Access and releases |
 | --- | --- | --- | --- |
-| `main` | **Release baseline and public branch** | Stable code, automated tests, runtime resources, public documentation (including `docs/developer/`), and build configuration | Default public branch, release packaging baseline |
-| `dev` | **Daily development integration branch** | Everything in `main`, plus internal tickets (`.beads/`), development logs, and slice designs (`docs/internal/`) | Target branch for feature development and PR integration |
+| `main` | **Latest branch** | Product code, automated tests, runtime resources, public documentation (including `docs/developer/`), and build configuration | Default branch. Every Pull Request merges here |
+| `dolag_dev` | **Maintainer working branch** | May carry internal tickets (`.beads/`) and internal documents (`docs/internal/`) alongside the product tree | Does not receive external Pull Requests |
 
-- `main` is designed to be "ready to release, stable, and transparently public", delivered to users and the open-source community with releases;
-- `dev` supports active development and historical development evidence;
-- **All external Pull Requests must target `dev`**.
+- `main` stays current. Product changes arrive through Pull Requests;
+- `dolag_dev` holds the maintainer's internal records;
+- **External Pull Requests target `main`**.
 
 ---
 
@@ -32,10 +32,10 @@ The recommended workflow for external developers participating in Serpent:
    npm ci --registry=https://registry.npmjs.org
    npm run rebuild:native
    ```
-4. Check out the latest `dev` branch and create your feature or bugfix branch:
+4. Check out the latest `main` and create your feature or bugfix branch:
    ```bash
-   git checkout dev
-   git pull origin dev
+   git checkout main
+   git pull origin main
    git checkout -b feature/my-feature-name
    ```
 
@@ -94,10 +94,11 @@ For detailed step-by-step instructions, quality gate requirements, and environme
    ```bash
    git push origin feature/my-feature-name
    ```
-2. Open a Pull Request on GitHub, **ensuring the Base branch is `dev`**;
-3. Clearly state the purpose of the change, affected scope, and local test evidence in the PR description;
-4. Maintainers will review the PR, request any necessary adjustments, and merge it into `dev`;
-5. Merged contributions will be acknowledged in [`CONTRIBUTORS.md`](https://github.com/dolag233/Serpent/blob/dev/CONTRIBUTORS.md) in the root directory.
+2. Open a Pull Request on GitHub, **ensuring the Base branch is `main`**;
+3. This PR changes one feature, rather than submitting several feature changes at once. A corresponding valid issue was opened before this PR;
+4. Clearly state the purpose of the change, affected scope, and local test evidence in the PR description;
+5. Maintainers review the change and merge it into `main`;
+6. Merged contributions are acknowledged in [`CONTRIBUTORS.md`](https://github.com/dolag233/Serpent/blob/main/CONTRIBUTORS.md) in the root directory.
 
 ---
 
@@ -107,7 +108,7 @@ This section applies to core maintainers and contributors with repository write 
 
 ### 3.1 Internal Ticket Tracking (`.beads/`)
 
-The core team tracks daily tasks on the `dev` branch using lightweight plain-text tickets:
+The core team tracks daily tasks on `dolag_dev` using lightweight plain-text tickets:
 
 ```bash
 # View ready tasks
@@ -122,17 +123,16 @@ node scripts/ticket.mjs status <issue-id> closed --reason "Resolution descriptio
 
 ### 3.2 Internal Slices and Design Docs (`docs/internal/`)
 
-Major vertical slice developments maintain technical specifications, development logs, and code review records in `docs/internal/`. These process artifacts remain on the `dev` branch to trace architectural evolution.
+Major vertical slice developments maintain technical specifications, development logs, and code review records in `docs/internal/`. Those records stay on `dolag_dev` and do not land on `main`.
 
-### 3.3 Release Merging and Public Branch Stripping
+### 3.3 Releases and the public branch
 
-When features on `dev` reach the release milestone and need to be merged into `main`, the following rules apply:
+Product changes enter `main` through Pull Requests. Do not merge `dolag_dev` into `main` as a whole.
 
-1. **Single merge commit stripping internal files**:
-   - Internal development files (including `AGENTS.md`, `CLAUDE.md`, `docs/internal/`, `.beads/`, CI config under `.github/`, and similar) belong only on `dev` and must never pollute the public `main` baseline;
-   - `.github/ISSUE_TEMPLATE/` and `.github/PULL_REQUEST_TEMPLATE.md` are the public issue and pull request templates and stay on `main`;
-   - `docs/developer/` is public developer and contributor documentation and **must remain on `main`**;
-   - Merging is done in a single commit: stripping internal files while merging from `dev` to `main`, preventing "add-then-remove" commit churn on the public branch.
-2. **Packaging and building must be performed on `dev`**:
-   - The packaging pipeline enforces comprehensive verification gates; formal release artifacts are generated on `dev` via `npm run release:local`;
-   - Run `npm run rebuild:native` after packaging to restore the native dev environment.
+1. **Internal development files stay on `dolag_dev`**:
+   - `AGENTS.md`, `CLAUDE.md`, `docs/internal/`, `.beads/`, and CI config under `.github/` do not enter `main`;
+   - `.github/ISSUE_TEMPLATE/` and `.github/PULL_REQUEST_TEMPLATE.md` are the public templates and stay on `main`;
+   - `docs/developer/` is public developer and contributor documentation and **must remain on `main`**.
+2. **Release packaging runs on `main`**:
+   - Maintainers produce the release artifacts from `main` with `npm run release:local`;
+   - Run `npm run rebuild:native` afterward to restore the development native module.

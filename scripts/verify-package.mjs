@@ -136,49 +136,6 @@ if (missingAsarEntries.length > 0) {
   );
 }
 
-const registrySource = readFileSync(
-  path.join(projectRoot, 'src', 'automation', 'command-registry.ts'),
-  'utf8',
-);
-const apiVersionMatch = registrySource.match(
-  /export const AUTOMATION_API_VERSION = (\d+) as const;/u,
-);
-if (!apiVersionMatch) {
-  throw new Error('Could not determine AUTOMATION_API_VERSION from the Registry source.');
-}
-const apiVersion = Number(apiVersionMatch[1]);
-const declarationPath = path.join(
-  projectRoot,
-  'docs',
-  'internal',
-  'skills',
-  'serpent-automation',
-  'automation-api.d.ts',
-);
-if (!existsSync(declarationPath)) {
-  throw new Error(`Workspace is missing generated automation declarations: ${declarationPath}`);
-}
-const declaration = readFileSync(declarationPath, 'utf8');
-const declarationVersion = declaration.match(
-  /AUTOMATION_API_VERSION:\s*(\d+)|AUTOMATION_API_VERSION\s*=\s*(\d+)/u,
-);
-if (!declarationVersion || Number(declarationVersion[1] ?? declarationVersion[2]) !== apiVersion) {
-  throw new Error(
-    `Automation declaration API version does not match Registry (expected ${apiVersion}).`,
-  );
-}
-const commandIds = [
-  ...registrySource.matchAll(/^\s*commandId:\s*'([^']+)'/gmu),
-].map((match) => match[1]);
-const missingDeclarationCommands = commandIds.filter(
-  (commandId) => !declaration.includes(`'${commandId}'`),
-);
-if (missingDeclarationCommands.length > 0) {
-  throw new Error(
-    `Automation declaration is missing Registry commands:\n${missingDeclarationCommands.join('\n')}`,
-  );
-}
-
 const mainEntry = asarFiles.find((entry) => {
   const normalized = String(entry).replaceAll('\\', '/').replace(/^\.\//u, '');
   return normalized.endsWith('/main.js') || normalized === 'main.js';
