@@ -3,9 +3,9 @@ import type { BrowseSelectionAnchor } from './browse-selection-order';
 /**
  * Resolve the anchor for Shift+click range selection.
  *
- * `browseSelectionAnchorRef` is only updated on canvas clicks, but import
- * reveal, select-all, invert, preview navigation, and session restore update
- * `selectionAnchorRef` alone — without this fallback Shift feels random.
+ * Programmatic restore/reveal/select-all writes the unified browse anchor
+ * through `setAssetSelectionAnchor`; this fallback preserves compatibility
+ * for call sites that still update only one of the typed anchor refs.
  */
 export function resolveShiftBrowseAnchor(input: {
   readonly browseAnchor: BrowseSelectionAnchor | null;

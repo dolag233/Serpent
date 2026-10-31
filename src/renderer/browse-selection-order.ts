@@ -19,8 +19,8 @@ export function buildBrowseSelectionOrder(
   assetIds: readonly string[],
 ): BrowseSelectionItem[] {
   return [
-    ...folderIds.map((id) => ({ kind: 'folder' as const, id })),
-    ...assetIds.map((id) => ({ kind: 'asset' as const, id })),
+    ...[...new Set(folderIds)].map((id) => ({ kind: 'folder' as const, id })),
+    ...[...new Set(assetIds)].map((id) => ({ kind: 'asset' as const, id })),
   ];
 }
 

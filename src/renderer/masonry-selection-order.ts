@@ -1,7 +1,6 @@
 /**
- * Browse order for Shift-range selection (Serpent-1jnp).
- * The masonry columns are balanced independently, but selection remains in
- * asset-array order so sorting and keyboard navigation stay deterministic.
+ * Stable masonry keyboard-focus order. Pointer Shift ranges use the live
+ * published card rectangles in `masonry-shift-selection.ts`.
  */
 
 import type { AssetSummary } from '../shared/asset-types';

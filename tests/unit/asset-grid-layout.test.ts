@@ -107,7 +107,7 @@ describe("distributed masonry", () => {
     ]);
   });
 
-  it("keeps Shift selection identical to asset array order (Serpent-1jnp)", () => {
+  it("keeps masonry keyboard focus ids in asset-array order (SELECT-015)", () => {
     const heights: Record<string, number> = {
       a: 300,
       b: 100,
@@ -124,16 +124,6 @@ describe("distributed masonry", () => {
       ),
     ).toEqual(["a", "b", "c", "d", "e"]);
 
-    const order = masonryVisualReadingOrderIds(
-      ["a", "b", "c", "d", "e"],
-      3,
-      (item) => heights[item]!,
-      (item) => item,
-    );
-    const b = order.indexOf("b");
-    const e = order.indexOf("e");
-    const range = order.slice(Math.min(b, e), Math.max(b, e) + 1);
-    expect(range).toEqual(["b", "c", "d", "e"]);
   });
 
   it("normalizes invalid column counts and ignores invalid height estimates", () => {

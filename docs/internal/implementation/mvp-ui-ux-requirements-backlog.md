@@ -685,7 +685,7 @@ FolderBrowseEntry
 | BUG-DISK-DELETE-CONFIRM-001 | 从硬盘删除资产或文件夹必须显示不可恢复确认；设置中的“不再提示”仍可关闭并重新开启；Windows 支持 Shift+Delete（macOS 使用平台对应快捷键）。 | P1 | `Serpent-wuma` |
 | BUG-TAG-SUBMENU-HOVER-001 | 资产右键添加标签改为 hover 立即打开二级可搜索菜单，定位使用统一 viewport clamp/flip，键盘导航保持可用。 | P1 | `Serpent-hn9u` |
 | BUG-NOTICE-ACTION-STYLE-001 | 通知面板的撤销等操作按钮与周围 UI 统一 token、尺寸、圆角、边框、hover/focus 状态，亮暗主题一致。 | P2 | `Serpent-agyz` |
-| BUG-MASONRY-KEYBOARD-SELECTION-001 | 原需求曾要求瀑布流 Tab 改变选中项、Shift 连续选择；2026-08-01 用户撤回该交互变更，恢复 Tab/Shift+Tab 只移动焦点、Shift+点击按几何范围选择，并单独收口行优先布局。 | P1 | `Serpent-xzmz` / `Serpent-6b3i` |
+| BUG-MASONRY-KEYBOARD-SELECTION-001 | 原需求曾要求瀑布流 Tab 改变选中项、Shift 连续选择；2026-08-01 用户撤回该交互变更，恢复 Tab/Shift+Tab 只移动焦点、Shift+点击按几何范围选择，并单独收口行优先布局。 | P1 | `Serpent-xzmz` / `Serpent-6b3i` 2026-10-31 更新：Shift 点击改为按真实卡片上沿 y、同高 x 的连续阅读区间；此前几何矩形规则撤回，布局与 Tab 保持原语义，见 `Serpent-9d3244` / `SELECT-MASONRY-RANGE-001`。 |
 
 ### 2026-08-01 验收复验反馈
 
@@ -695,7 +695,7 @@ FolderBrowseEntry
 | BUG-DISK-DELETE-CONFIRM-002 | **Windows 硬盘删除真实故障**：任何包含资产的文件夹以及资产本身执行强制删除时都高概率提示“Serpent 无法写入所选位置。原因：当前用户没有读取源文件或写入目标位置的权限”。不能把问题改写为仅关闭查看器；需覆盖右键、单选、多选、Shift+Delete，保证磁盘与数据库一致。 | P1 | `Serpent-cwor`（2026-08-01 用户验收通过：媒体句柄释放与 Windows 硬盘删除路径通过） |
 | BUG-CONTEXT-SUBMENU-LIFECYCLE-001 | hover 切换两个二级菜单时旧菜单短暂残留；移除标签选择器返回按钮，并保持 hover 菜单实时互斥。 | P2 | `Serpent-4joy` |
 | BUG-DELETE-UNDO-NOTICE-001 | 删除资产后通知面板提供无边框回撤图标（可访问名称为“撤销”，不使用“撤销删除”长文案）；点击后必须刷新当前浏览范围，不能只恢复数据库而让画面看起来未变化。 | P1 | `Serpent-mxxc`（2026-08-01 用户验收通过） |
-| BUG-MASONRY-ORDER-002 | 用户拒绝 CSS Grid 重做导致的瀑布流视觉变化。必须用 `git diff` 恢复原有显式列分配/自然高度布局，同时保留 Tab 只移动焦点、Shift+点击几何范围连续选择；不得以另一种布局替代原效果。 | P1 | `Serpent-6b3i`（2026-08-01 用户验收通过） |
+| BUG-MASONRY-ORDER-002 | 用户拒绝 CSS Grid 重做导致的瀑布流视觉变化。必须用 `git diff` 恢复原有显式列分配/自然高度布局，同时保留 Tab 只移动焦点、Shift+点击几何范围连续选择；不得以另一种布局替代原效果。 | P1 | `Serpent-6b3i`（2026-08-01 用户验收通过） 2026-10-31 更新：Shift 点击改为按真实卡片上沿 y、同高 x 的连续阅读区间；此前几何矩形规则撤回，布局与 Tab 保持原语义，见 `Serpent-9d3244` / `SELECT-MASONRY-RANGE-001`。 |
 
 ### 2026-08-01 Windows 主菜单反馈
 
