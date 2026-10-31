@@ -15,6 +15,7 @@ import {
   SUPPORTED_SCHEMA_VERSION,
 } from '../../src/worker/library-service';
 import { removePathWithSyncRetry } from '../../src/worker/windows-fs-retry';
+import { removeLinkedDirectoryIndexFixture } from './remove-linked-directory-index';
 
 const temporaryRoots: string[] = [];
 const services: LibraryService[] = [];
@@ -327,6 +328,7 @@ describe('sync-first v37/v38 migration fork (Serpent-e0dw)', () => {
 
     // 模拟 v38 分叉库：先把新建库回退到 v38，再交换 v37/v38 校验和。
     const db = new Database(libraryFilePath(created.libraryPath));
+    removeLinkedDirectoryIndexFixture(db);
     db.exec('DROP INDEX IF EXISTS revisions_size_fingerprint_idx');
     db.prepare('DELETE FROM schema_migrations WHERE version >= 39').run();
     db.pragma('user_version = 38');
@@ -366,6 +368,7 @@ describe('sync-first v37/v38 migration fork (Serpent-e0dw)', () => {
     creating.closeAll();
 
     const db = new Database(libraryFilePath(created.libraryPath));
+    removeLinkedDirectoryIndexFixture(db);
     db.exec('DROP INDEX IF EXISTS revisions_size_fingerprint_idx');
     db.exec('DROP TABLE IF EXISTS asset_auto_analysis_suppression');
     db.prepare('DELETE FROM schema_migrations WHERE version >= 37').run();

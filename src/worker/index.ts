@@ -2311,7 +2311,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
   });
   if (semanticResult) return semanticResult;
 
-  const automationResult = dispatchAutomationReadOnlyRequest(libraryService, request);
+  const automationResult = await dispatchAutomationReadOnlyRequest(libraryService, request);
   if (automationResult) return automationResult;
 
   const destructiveLibraryId = destructiveBackupLibraryId(request.command);

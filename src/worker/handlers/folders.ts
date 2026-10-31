@@ -166,7 +166,7 @@ export async function executeFolderWorkerCommand(
         }),
       };
     case 'folder.browse-entries': {
-      const entries = libraryService.listFolderBrowseEntries({
+      const entries = await libraryService.listFolderBrowseEntriesAsync({
         libraryId: request.command.libraryId,
         parentFolderId: request.command.parentFolderId,
         showIgnored: request.command.showIgnored === true,
@@ -201,7 +201,7 @@ export async function executeFolderWorkerCommand(
         }),
       };
     case 'folder.entries': {
-      const entries = libraryService.folderEntriesByRefs({
+      const entries = await libraryService.folderEntriesByRefsAsync({
         libraryId: request.command.libraryId,
         refs: request.command.refs,
       });

@@ -116,7 +116,6 @@ export interface RawMetadataBackfillAdmissionState {
 }
 import {
   countLinkedDirectoryAssets,
-  countLinkedDirectoryChildren,
   collectLinkedDirectoryPrefixes,
   directChildLinkedDirectories,
   encodeLinkedVirtualFolderId,
@@ -944,6 +943,13 @@ import {
   RemoteMediaMagicProbe,
 } from './remote-media-validation';
 import { requeueRetryableFailedArtifacts } from './derived-artifact-repair';
+import { literalOiioArgs, oiioFailureCode, OIIO_LITERAL_PATHS_MARK, requeueLegacyOiioPathFailures } from './oiio-invocation';
+import { LinkedDirectoryIndex, LINKED_DIRECTORY_INDEX_SQL } from './linked-directory-index';
+import { SingleFlightRead } from './single-flight-read';
+import { linkedDirectoryIgnored } from './linked-directory-visibility';
+import { compileLinkedFolderRules } from './linked-folder-rule-matcher';
+import { NavigationReadMetrics } from './navigation-read-metrics';
+import { collectLinkedAssetPaths } from './linked-asset-path-projection';
 import {
   SQLITE_IN_BIND_LIMIT,
   sqliteAllInChunks,
@@ -3820,6 +3826,11 @@ export const MIGRATIONS = [
     sql: REVISION_SIZE_FINGERPRINT_INDEX_SCHEMA_SQL,
     checksum: REVISION_SIZE_FINGERPRINT_INDEX_SCHEMA_CHECKSUM,
   },
+  {
+    version: 60,
+    sql: LINKED_DIRECTORY_INDEX_SQL,
+    checksum: createHash('sha256').update(LINKED_DIRECTORY_INDEX_SQL).digest('hex'),
+  },
 ] as const;
 export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -5055,6 +5066,8 @@ export interface LibraryServiceOptions {
   onDiagnostic?: (diagnostic: LibraryServiceDiagnostic) => void;
   onProgress?: (event: ExportProgressEvent | ImportProgressEvent | DeleteProgressEvent) => void;
   observerFactory?: AssetObserverFactory;
+  /** Deterministic slow/unavailable source-directory seam for Worker tests. */
+  sourceDirectoryOpener?: typeof opendirAsync;
   scheduler?: DebounceScheduler;
   /** Injectable Sharp-compatible decoder for deterministic concurrency tests. */
   sharpFn?: SharpModule;
@@ -7062,6 +7075,41 @@ export class LibraryService {
    */
   private suppressWatcherNotifyUntilMs = 0;
   private artifactsDirReady = new WeakSet<OpenLibrary>();
+  private readonly linkedDirectoryIndexes = new WeakMap<OpenLibrary, LinkedDirectoryIndex>();
+  private readonly navigationBuilds = new WeakMap<OpenLibrary, SingleFlightRead<LibraryNavigationSummary>>();
+  private readonly linkedAssetPaths = new WeakMap<OpenLibrary, Map<string, { key: string; paths: string[] }>>();
+  private readonly linkedAssetCounts = new WeakMap<string[], ReturnType<typeof countLinkedDirectoryAssets>>();
+  private readonly linkedRuleMatchers = new WeakMap<LinkedFolderRule[], (relativePath: string) => boolean>();
+
+  private linkedDirectoryIndex(openLibrary: OpenLibrary): LinkedDirectoryIndex {
+    let index = this.linkedDirectoryIndexes.get(openLibrary);
+    if (!index) {
+      index = new LinkedDirectoryIndex(() => openLibrary.connection);
+      this.linkedDirectoryIndexes.set(openLibrary, index);
+    }
+    return index;
+  }
+
+  private countLinkedAssets(paths: string[]): ReturnType<typeof countLinkedDirectoryAssets> {
+    let counts = this.linkedAssetCounts.get(paths);
+    if (!counts) {
+      counts = countLinkedDirectoryAssets(paths);
+      this.linkedAssetCounts.set(paths, counts);
+    }
+    return counts;
+  }
+
+  private linkedFolderIgnored(openLibrary: OpenLibrary, rootId: string): (relativePath: string) => boolean {
+    const rows = hasTable(openLibrary.connection, 'explicit_ignored_paths')
+      ? openLibrary.connection.prepare(`
+          SELECT relative_path FROM explicit_ignored_paths
+           WHERE location_kind = 'linked' AND linked_folder_id = ? AND path_kind = 'folder'
+        `).all(rootId) as Array<{ relative_path: string }>
+      : [];
+    return linkedDirectoryIgnored(rows.map((row) => row.relative_path), (relativePath) =>
+      gitignoreMatchesPath(openLibrary.gitignoreMatcher, relativePath, 'folder', 'linked'),
+    );
+  }
 
   constructor(private readonly options: LibraryServiceOptions = {}) {
     this.networkMetadataCache = new NetworkMetadataCache(
@@ -7901,7 +7949,7 @@ export class LibraryService {
         spawnOptions.signal,
         async () => {
           try {
-            const result = await this.spawnFn(command, args, spawnOptions);
+            const result = await this.spawnFn(command, literalOiioArgs(args), spawnOptions);
             if (mediaResourceFailureFromSpawnResult(result)) {
               throw asMediaResourceExhaustedError(result, 'oiio')
                 ?? new Error('OpenImageIO reported native resource pressure.');
@@ -14826,6 +14874,7 @@ export class LibraryService {
   ): Promise<{ removedAssetCount: number }> {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     this.assertLibraryWritable(openLibrary);
+    this.cancelReconciliationForClientMutation(input.libraryId);
     const linked = openLibrary.connection
       .prepare(
         'SELECT folder_id FROM linked_folders WHERE folder_id = ? AND library_id = ?',
@@ -14896,6 +14945,9 @@ export class LibraryService {
       }
     })();
 
+    this.linkedDirectoryIndex(openLibrary).forget(input.folderId);
+    this.linkedAssetPaths.get(openLibrary)?.delete(`${input.folderId}:true`);
+    this.linkedAssetPaths.get(openLibrary)?.delete(`${input.folderId}:false`);
     this.stopLinkedWatcher(input.libraryId, input.folderId);
     if (!silent) {
       this.emitDeleteProgress({
@@ -14929,6 +14981,7 @@ export class LibraryService {
   }): Promise<{ deletedAssetCount: number; failedCount: number }> {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     this.assertLibraryWritable(openLibrary);
+    this.cancelReconciliationForClientMutation(input.libraryId);
     const isLinkedRoot = input.relativePath === '';
     let relativePath: string;
     if (isLinkedRoot) {
@@ -15013,6 +15066,8 @@ export class LibraryService {
           },
           { progress: 'silent' },
         );
+      } else {
+        this.linkedDirectoryIndex(openLibrary).remove(input.linkedFolderId, relativePath);
       }
       return {
         deletedAssetCount: result.deletedCount,
@@ -15201,6 +15256,7 @@ export class LibraryService {
       input.relativePath,
     );
     const targetPath = this.assertLinkedDirectorySiblingAvailable(parent.absolutePath, name);
+    this.cancelReconciliationForClientMutation(input.libraryId);
     try {
       mkdirSync(targetPath);
     } catch (error) {
@@ -15212,6 +15268,7 @@ export class LibraryService {
     const relativePath = parent.relativePath === ''
       ? name
       : path.posix.join(parent.relativePath, name);
+    this.linkedDirectoryIndex(openLibrary).add(parent.linkedFolderId, relativePath);
     this.noteClientFilesystemMutation();
     return this.linkedDirectoryMutationSummary({
       linkedFolderId: parent.linkedFolderId,
@@ -15257,6 +15314,7 @@ export class LibraryService {
       });
     }
 
+    this.cancelReconciliationForClientMutation(input.libraryId);
     let renamed = false;
     try {
       renamePathWithRetry(target.absolutePath, destinationPath);
@@ -15356,6 +15414,8 @@ export class LibraryService {
             insert.run(ignored.location_kind, ignored.linked_folder_id, rewritten, ignored.path_kind, ignored.ignored_at);
           }
         }
+        this.linkedDirectoryIndex(openLibrary).rename(target.linkedFolderId, target.relativePath, newRelativePath);
+        this.linkedDirectoryIndex(openLibrary).add(target.linkedFolderId, newRelativePath);
       })();
       this.noteClientFilesystemMutation();
       return this.linkedDirectoryMutationSummary({
@@ -16479,14 +16539,20 @@ export class LibraryService {
   }): number {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const connection = openLibrary.connection;
+    const hasExplicitIgnores = this.catalogTableHasRows(connection, 'explicit_ignored_paths')
+      || this.catalogTableHasRows(connection, 'gitignore_ignored_paths');
     return countCatalogNavigationAssets(connection, {
       scope: input.scope,
       showIgnored: input.showIgnored,
       showMissingLinked: this.#showMissingLinkedFiles,
-      explicitIgnoreSql: this.explicitIgnoreSql(connection, 'a', input.showIgnored),
-      hasLinkedIgnoredAssets: hasTable(connection, 'linked_ignored_assets'),
-      hasSequenceFrames: hasTable(connection, 'asset_sequence_frames'),
+      explicitIgnoreSql: hasExplicitIgnores ? this.explicitIgnoreSql(connection, 'a', input.showIgnored) : '1 = 1',
+      hasLinkedIgnoredAssets: this.catalogTableHasRows(connection, 'linked_ignored_assets'),
+      hasSequenceFrames: this.catalogTableHasRows(connection, 'asset_sequence_frames'),
     });
+  }
+
+  private catalogTableHasRows(connection: DatabaseConnection, table: 'explicit_ignored_paths' | 'gitignore_ignored_paths' | 'linked_ignored_assets' | 'asset_sequence_frames'): boolean {
+    return hasTable(connection, table) && connection.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get() !== undefined;
   }
 
   /**
@@ -16546,8 +16612,7 @@ export class LibraryService {
       folderCovers: this.listFolderNavigationCovers(openLibrary),
     };
     if (
-      this.getChangeSequence(input.libraryId) === changeSequence
-      && this.getBrowseChangeSequence(input.libraryId) === browseChangeSequence
+      this.getBrowseChangeSequence(input.libraryId) === browseChangeSequence
     ) {
       openLibrary.navigationSummaryCache = { key, value: summary };
     }
@@ -16568,6 +16633,43 @@ export class LibraryService {
     includeTrashedFolders?: boolean;
   }): Promise<LibraryNavigationSummary> {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    let builds = this.navigationBuilds.get(openLibrary);
+    if (!builds) {
+      builds = new SingleFlightRead<LibraryNavigationSummary>();
+      this.navigationBuilds.set(openLibrary, builds);
+    }
+    const key = `${this.getBrowseChangeSequence(input.libraryId)}:${input.showIgnored === true}:${input.includeTrashedFolders === true}:${this.#showMissingLinkedFiles}`;
+    return builds.run(key, () => this.buildLibraryNavigationSummaryAsync(input, openLibrary));
+  }
+
+  private navigationReadCheckpoint(libraryId: string, expectedLibrary: OpenLibrary): () => Promise<void> {
+    let nextYieldAt = performance.now() + 6;
+    let nextPollAt = 0;
+    const checkpoint = async (): Promise<void> => {
+      // Windows timers can cost a full tick. Yield by work slice rather than
+      // paying that floor after every sub-millisecond catalog query.
+      if (performance.now() >= nextYieldAt) {
+        if (performance.now() >= nextPollAt) {
+          await navigationCheckpoint();
+          nextPollAt = performance.now() + 50;
+        } else {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        }
+        nextYieldAt = performance.now() + 6;
+      }
+      if (this.openById.get(libraryId) !== expectedLibrary) throw this.reconciliationAbortError();
+    };
+    return checkpoint;
+  }
+
+  private async buildLibraryNavigationSummaryAsync(input: {
+    libraryId: string;
+    showIgnored?: boolean;
+    includeTrashedFolders?: boolean;
+  }, expectedLibrary: OpenLibrary): Promise<LibraryNavigationSummary> {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (openLibrary !== expectedLibrary) throw this.reconciliationAbortError();
+    const checkpoint = this.navigationReadCheckpoint(input.libraryId, expectedLibrary);
     this.scheduleOrphanFolderCoverSweep(openLibrary);
     const showIgnored = input.showIgnored === true;
     const includeTrashedFolders = input.includeTrashedFolders === true;
@@ -16581,34 +16683,36 @@ export class LibraryService {
         : { ...cached.value, changeSequence };
     }
 
-    const allAssetCount = this.countNavigationAssets({
+    const metrics = new NavigationReadMetrics();
+    const allAssetCount = metrics.measure('all-count', () => this.countNavigationAssets({
       libraryId: input.libraryId,
       scope: 'all',
       showIgnored,
-    });
-    await navigationCheckpoint();
-    const rootAssetCount = this.countNavigationAssets({
+    }));
+    await checkpoint();
+    const rootAssetCount = metrics.measure('root-count', () => this.countNavigationAssets({
       libraryId: input.libraryId,
       scope: 'root',
       showIgnored,
-    });
-    await navigationCheckpoint();
-    const trashedAssetCount = this.countNavigationAssets({
+    }));
+    await checkpoint();
+    const trashedAssetCount = metrics.measure('trash-count', () => this.countNavigationAssets({
       libraryId: input.libraryId,
       scope: 'trash',
       showIgnored,
-    });
-    await navigationCheckpoint();
-    const folders = this.listManagedFolders(input.libraryId, showIgnored);
-    await navigationCheckpoint();
-    const linkedFolders = this.listLinkedFolders(input.libraryId);
-    await navigationCheckpoint();
-    const tags = this.listTags(input.libraryId);
-    await navigationCheckpoint();
-    const collections = this.listCollections(input.libraryId);
-    await navigationCheckpoint();
-    const smartCollections = this.listSmartCollections(input.libraryId);
-    await navigationCheckpoint();
+    }));
+    await checkpoint();
+    const folders = metrics.measure('managed-folders', () => this.listManagedFolders(input.libraryId, showIgnored));
+    await checkpoint();
+    const preparedLinkedPaths = await metrics.measureAsync('linked-asset-projection', () => this.prepareLinkedAssetPaths(openLibrary, false, checkpoint));
+    const linkedFolders = metrics.measure('linked-folders', () => this.listLinkedFolders(input.libraryId, preparedLinkedPaths));
+    await checkpoint();
+    const tags = metrics.measure('tags', () => this.listTags(input.libraryId));
+    await checkpoint();
+    const collections = metrics.measure('collections', () => this.listCollections(input.libraryId));
+    await checkpoint();
+    const smartCollections = metrics.measure('smart-collections', () => this.listSmartCollections(input.libraryId));
+    await checkpoint();
     const trashedFolders = includeTrashedFolders
       ? this.listTrashedFolders(input.libraryId)
       : [];
@@ -16628,10 +16732,13 @@ export class LibraryService {
       folderCovers: this.listFolderNavigationCovers(openLibrary),
     };
     if (
-      this.getChangeSequence(input.libraryId) === changeSequence
-      && this.getBrowseChangeSequence(input.libraryId) === browseChangeSequence
+      this.getBrowseChangeSequence(input.libraryId) === browseChangeSequence
     ) {
       openLibrary.navigationSummaryCache = { key, value: summary };
+    }
+    const timing = metrics.result();
+    if (timing.durationMs >= 250 || process.env.SERPENT_REFRESH_STAGE_LOG === '1') {
+      this.diagnose('navigation.summary', null, { libraryId: input.libraryId, ...timing });
     }
     return summary;
   }
@@ -16874,7 +16981,7 @@ export class LibraryService {
       if (count > 0) folders.push({ folderId, count });
     }
     for (const [linkedFolderId, paths] of linkedPaths) {
-      const counts = countLinkedDirectoryAssets(paths);
+      const counts = this.countLinkedAssets(paths);
       for (const [relativePath, count] of counts) {
         if (count.recursive <= 0) continue;
         folders.push({
@@ -16892,14 +16999,35 @@ export class LibraryService {
    * Direct child folder cards for the browse canvas (REQ-FOLDER-001/002/003).
    * Counts and covers are batched — never N+1 per card.
    */
+  async listFolderBrowseEntriesAsync(input: {
+    libraryId: string; parentFolderId: string | null; showIgnored?: boolean;
+  }): Promise<FolderBrowseEntry[]> {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const scope = input.parentFolderId === null ? null : this.resolveLinkedFolderScope(openLibrary, input.parentFolderId);
+    const prepared = scope ? await this.prepareLinkedAssetPaths(openLibrary, input.showIgnored === true,
+      this.navigationReadCheckpoint(input.libraryId, openLibrary), [scope.linkedFolderId], false) : undefined;
+    return this.listFolderBrowseEntries(input, prepared);
+  }
+
+  async folderEntriesByRefsAsync(input: {
+    libraryId: string; refs: Array<{ locationKind: 'managed' | 'linked'; folderId: string }>;
+  }): Promise<FolderBrowseEntry[]> {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const roots = input.refs.filter((ref) => ref.locationKind === 'linked')
+      .flatMap((ref) => this.resolveLinkedFolderScope(openLibrary, ref.folderId)?.linkedFolderId ?? []);
+    const prepared = roots.length ? await this.prepareLinkedAssetPaths(openLibrary, false,
+      this.navigationReadCheckpoint(input.libraryId, openLibrary), roots, false) : undefined;
+    return this.folderEntriesByRefs(input, prepared);
+  }
+
   listFolderBrowseEntries(input: {
     libraryId: string;
     parentFolderId: string | null;
     showIgnored?: boolean;
-  }): FolderBrowseEntry[] {
+  }, preparedPaths?: ReadonlyMap<string, string[]>): FolderBrowseEntry[] {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (input.parentFolderId !== null) {
-      const linkedEntries = this.listLinkedFolderBrowseEntries(openLibrary, input);
+      const linkedEntries = this.listLinkedFolderBrowseEntries(openLibrary, input, preparedPaths);
       if (linkedEntries !== null) return linkedEntries;
       const parent = openLibrary.connection
         .prepare('SELECT folder_id FROM managed_folders WHERE folder_id = ?')
@@ -16984,7 +17112,7 @@ export class LibraryService {
   folderEntriesByRefs(input: {
     libraryId: string;
     refs: Array<{ locationKind: 'managed' | 'linked'; folderId: string }>;
-  }): FolderBrowseEntry[] {
+  }, preparedPaths?: ReadonlyMap<string, string[]>): FolderBrowseEntry[] {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const results: FolderBrowseEntry[] = [];
 
@@ -17062,13 +17190,13 @@ export class LibraryService {
     for (const ref of linkedRefs) {
       const resolved = this.resolveLinkedFolderScope(openLibrary, ref.folderId);
       if (!resolved) continue;
-      const paths = this.listLinkedAssetRelativePaths(
+      const paths = preparedPaths?.get(resolved.linkedFolderId) ?? this.listLinkedAssetRelativePaths(
         openLibrary,
         resolved.linkedFolderId,
         false,
       );
       const isRoot = resolved.relativePath === '';
-      const assetCounts = countLinkedDirectoryAssets(paths);
+      const assetCounts = this.countLinkedAssets(paths);
       const directoryCounts = assetCounts.get(resolved.relativePath);
       const directAssetCount = directoryCounts?.direct ?? 0;
       const recursiveAssetCount = directoryCounts?.recursive ?? 0;
@@ -17128,47 +17256,40 @@ export class LibraryService {
   private listLinkedFolderBrowseEntries(
     openLibrary: OpenLibrary,
     input: { parentFolderId: string | null; showIgnored?: boolean },
+    preparedPaths?: ReadonlyMap<string, string[]>,
   ): FolderBrowseEntry[] | null {
     if (input.parentFolderId === null) return null;
     const resolved = this.resolveLinkedFolderScope(openLibrary, input.parentFolderId);
     if (!resolved) return null;
 
-    const paths = this.listLinkedAssetRelativePaths(
+    const paths = preparedPaths?.get(resolved.linkedFolderId) ?? this.listLinkedAssetRelativePaths(
       openLibrary,
       resolved.linkedFolderId,
       input.showIgnored === true,
     );
-    const assetCounts = countLinkedDirectoryAssets(paths);
+    const assetCounts = this.countLinkedAssets(paths);
     const assetPrefixes = [...assetCounts.keys()].filter((prefix) => prefix !== '');
-    const diskPrefixes = resolved.status === 'available' && !this.linkedRootIsGone(resolved.absoluteRootPath)
-      ? this.collectLinkedDirectoryPrefixesFromDisk(
-        openLibrary,
-        resolved.linkedFolderId,
-        resolved.absoluteRootPath,
-        this.getLinkedFolderRules({
-          libraryId: openLibrary.summary.libraryId,
-          folderId: resolved.linkedFolderId,
-        }),
-      )
-      : [];
-    const prefixes = [...new Set([...assetPrefixes, ...diskPrefixes])].sort();
-    const children = directChildLinkedDirectories(prefixes, resolved.relativePath)
-      .filter((relativePath) =>
-        input.showIgnored === true
-        || !this.explicitFolderIgnored(openLibrary, 'linked', resolved.linkedFolderId, relativePath),
-      );
+    const rules = this.getLinkedFolderRules({ libraryId: openLibrary.summary.libraryId, folderId: resolved.linkedFolderId });
+    const diskChildren = (parent: string) => this.indexedLinkedDirectoryPrefixes(openLibrary,
+      resolved.linkedFolderId, rules, input.showIgnored === true, parent);
+    const folderIgnored = this.linkedFolderIgnored(openLibrary, resolved.linkedFolderId);
+    const children = [...new Set([...directChildLinkedDirectories(assetPrefixes, resolved.relativePath),
+      ...diskChildren(resolved.relativePath)])].sort()
+      .filter((relativePath) => input.showIgnored === true || !folderIgnored(relativePath));
     if (children.length === 0) return [];
-    const directoryChildCounts = countLinkedDirectoryChildren(prefixes);
+    const diskGrandchildren = this.linkedDirectoryIndex(openLibrary).childrenByParent(resolved.linkedFolderId, children);
+    const childDirectories = new Map(children.map((relativePath) => [relativePath,
+      [...new Set([...directChildLinkedDirectories(assetPrefixes, relativePath), ...(diskGrandchildren.get(relativePath) ?? []).filter((path) => !this.linkedPathIsIgnored(`${path}/__serpent_probe__`, rules)
+        && (input.showIgnored === true || !folderIgnored(path)))])],
+    ]));
 
     return this.withSequenceFolderCovers(openLibrary, children.map((relativePath) => {
       const folderId = encodeLinkedVirtualFolderId(resolved.linkedFolderId, relativePath);
       const directoryAssetCounts = assetCounts.get(relativePath);
       const directAssetCount = directoryAssetCounts?.direct ?? 0;
       const recursiveAssetCount = directoryAssetCounts?.recursive ?? 0;
-      const childFolderCount = directoryChildCounts.get(relativePath) ?? 0;
-      const directChildDirs = childFolderCount === 0
-        ? []
-        : prefixes.filter((prefix) => parentLinkedRelativePath(prefix) === relativePath);
+      const directChildDirs = childDirectories.get(relativePath) ?? [];
+      const childFolderCount = directChildDirs.length;
       const pureChildDirs = directAssetCount === 0 && childFolderCount > 0 ? directChildDirs : [];
       return {
         folderId,
@@ -17237,26 +17358,93 @@ export class LibraryService {
     };
   }
 
+  private linkedAssetPathKey(openLibrary: OpenLibrary, linkedFolderId: string, showIgnored: boolean): string {
+    const membershipVersion = this.linkedDirectoryIndex(openLibrary).membershipVersion(linkedFolderId)
+      ?? this.getBrowseChangeSequence(openLibrary.summary.libraryId);
+    return `${membershipVersion}:${showIgnored}:${this.#showMissingLinkedFiles}`;
+  }
+
+  private async prepareLinkedAssetPaths(
+    openLibrary: OpenLibrary,
+    showIgnored: boolean,
+    checkpoint: () => Promise<void>,
+    rootIds?: readonly string[],
+    prepareDirectories = true,
+  ): Promise<Map<string, string[]>> {
+    const prepared = new Map<string, string[]>();
+    let roots = this.linkedAssetPaths.get(openLibrary);
+    if (!roots) {
+      roots = new Map();
+      this.linkedAssetPaths.set(openLibrary, roots);
+    }
+    const rows = rootIds ? [...new Set(rootIds)].map((folder_id) => ({ folder_id }))
+      : openLibrary.connection.prepare('SELECT folder_id FROM linked_folders').all() as Array<{ folder_id: string }>;
+    for (const row of rows) {
+      if (!rootIds && !showIgnored && this.linkedFolderIgnored(openLibrary, row.folder_id)('')) continue;
+      if (prepareDirectories) await this.linkedDirectoryIndex(openLibrary).prepare(row.folder_id, checkpoint);
+      const key = this.linkedAssetPathKey(openLibrary, row.folder_id, showIgnored);
+      const rootKey = `${row.folder_id}:${showIgnored}`;
+      const cached = roots.get(rootKey);
+      if (cached?.key === key) {
+        prepared.set(row.folder_id, cached.paths);
+        continue;
+      }
+      const projection = await collectLinkedAssetPaths(
+        (after, limit) => this.readLinkedAssetPaths(openLibrary, row.folder_id, showIgnored, { after, limit }),
+        checkpoint,
+      );
+      prepared.set(row.folder_id, projection.paths);
+      this.linkedAssetCounts.set(projection.paths, projection.counts);
+      if (this.linkedAssetPathKey(openLibrary, row.folder_id, showIgnored) === key) {
+        roots.set(rootKey, { key, paths: projection.paths });
+      }
+    }
+    return prepared;
+  }
+
   private listLinkedAssetRelativePaths(
     openLibrary: OpenLibrary,
     linkedFolderId: string,
     showIgnored: boolean,
   ): string[] {
+    const key = this.linkedAssetPathKey(openLibrary, linkedFolderId, showIgnored);
+    let roots = this.linkedAssetPaths.get(openLibrary);
+    if (!roots) {
+      roots = new Map();
+      this.linkedAssetPaths.set(openLibrary, roots);
+    }
+    const rootKey = `${linkedFolderId}:${showIgnored}`;
+    const cached = roots.get(rootKey);
+    if (cached?.key === key) return cached.paths;
+    const paths = this.readLinkedAssetPaths(openLibrary, linkedFolderId, showIgnored);
+    roots.set(rootKey, { key, paths });
+    return paths;
+  }
+
+  private readLinkedAssetPaths(
+    openLibrary: OpenLibrary,
+    linkedFolderId: string,
+    showIgnored: boolean,
+    page?: { after: string | null; limit: number },
+  ): string[] {
     const connection = openLibrary.connection;
-    const hasIgnoreTable = hasTable(connection, 'linked_ignored_assets');
-    const hasSequenceFrames = hasTable(connection, 'asset_sequence_frames');
+    const hasIgnoreTable = this.catalogTableHasRows(connection, 'linked_ignored_assets');
+    const hasSequenceFrames = this.catalogTableHasRows(connection, 'asset_sequence_frames');
+    const hasExplicitIgnores = this.catalogTableHasRows(connection, 'explicit_ignored_paths')
+      || this.catalogTableHasRows(connection, 'gitignore_ignored_paths');
     const rows = connection
       .prepare(
         `SELECT a.relative_file_path
            FROM assets a
           WHERE a.linked_folder_id = ?
+            ${page?.after === null || page === undefined ? '' : 'AND a.relative_file_path > ?'}
             AND a.location_kind = 'linked'
             AND a.deleted_at IS NULL
             ${this.#showMissingLinkedFiles ? '' : "AND a.availability <> 'missing'"}
             ${hasIgnoreTable
               ? 'AND NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id)'
               : ''}
-            AND ${this.explicitIgnoreSql(connection, 'a', showIgnored)}
+            AND ${hasExplicitIgnores ? this.explicitIgnoreSql(connection, 'a', showIgnored) : '1 = 1'}
             ${hasSequenceFrames
               ? `AND NOT EXISTS (
               SELECT 1
@@ -17264,9 +17452,10 @@ export class LibraryService {
                WHERE hidden_sequence_frame.asset_id = a.asset_id
                  AND hidden_sequence_frame.position > 0
             )`
-              : ''}`,
+              : ''}
+            ${page === undefined ? '' : 'ORDER BY a.relative_file_path LIMIT ?'}`,
       )
-      .all(linkedFolderId) as Array<{ relative_file_path: string }>;
+      .all(linkedFolderId, ...(page?.after === null || page === undefined ? [] : [page.after]), ...(page === undefined ? [] : [page.limit])) as Array<{ relative_file_path: string }>;
     return rows.map((row) => row.relative_file_path);
   }
 
@@ -18190,45 +18379,30 @@ export class LibraryService {
    * remain visible after refresh/reopen, so include real directories from the
    * linked root as well.  Symlinks and ignored directories are never followed.
    */
-  private collectLinkedDirectoryPrefixesFromDisk(
+  private indexedLinkedDirectoryPrefixes(
     openLibrary: OpenLibrary,
     linkedFolderId: string,
-    rootPath: string,
     rules: LinkedFolderRule[],
     includeGitignoreHidden = false,
+    parent?: string,
   ): string[] {
-    const prefixes = new Set<string>();
-    const visit = (directoryPath: string, relativeDirectory: string): void => {
-      let entries;
-      try {
-        entries = readdirSync(directoryPath, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const entry of entries) {
-        if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
-        const relativePath = relativeDirectory === ''
-          ? entry.name
-          : path.posix.join(relativeDirectory, entry.name);
-        let normalized: string;
-        try {
-          normalized = normalizeRelativeAssetPath(relativePath);
-        } catch {
-          continue;
-        }
-        // Probe the folder target so folder rules (including default hidden
-        // directories) are applied with the same matcher as asset scans.
-        if (this.linkedPathIsIgnored(`${normalized}/__serpent_probe__`, rules)) continue;
-        if (!includeGitignoreHidden && this.explicitFolderIgnored(openLibrary, 'linked', linkedFolderId, normalized)) continue;
-        prefixes.add(normalized);
-        visit(path.join(directoryPath, entry.name), normalized);
-      }
-    };
-    visit(rootPath, '');
-    return [...prefixes].sort();
+    const folderIgnored = this.linkedFolderIgnored(openLibrary, linkedFolderId);
+    const index = this.linkedDirectoryIndex(openLibrary);
+    const paths = parent === undefined ? index.paths(linkedFolderId) : index.children(linkedFolderId, parent);
+    return paths.filter((relativePath) =>
+      !this.linkedPathIsIgnored(`${relativePath}/__serpent_probe__`, rules)
+      && (includeGitignoreHidden || !folderIgnored(relativePath)),
+    );
   }
 
-  listLinkedFolders(libraryId: string): LinkedFolderSummary[] {
+  async listLinkedFoldersAsync(libraryId: string): Promise<LinkedFolderSummary[]> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const paths = await this.prepareLinkedAssetPaths(openLibrary, false,
+      this.navigationReadCheckpoint(libraryId, openLibrary));
+    return this.listLinkedFolders(libraryId, paths);
+  }
+
+  listLinkedFolders(libraryId: string, preparedPaths?: ReadonlyMap<string, string[]>): LinkedFolderSummary[] {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const rows = openLibrary.connection
       .prepare(
@@ -18250,18 +18424,17 @@ export class LibraryService {
     return rows
       .filter((row) => !this.explicitFolderIgnored(openLibrary, 'linked', row.folder_id, ''))
       .flatMap((row) => {
-        const paths = this.listLinkedAssetRelativePaths(openLibrary, row.folder_id, false);
-        const assetCounts = countLinkedDirectoryAssets(paths);
+        const paths = preparedPaths?.get(row.folder_id)
+          ?? this.listLinkedAssetRelativePaths(openLibrary, row.folder_id, false);
+        const assetCounts = this.countLinkedAssets(paths);
         const assetPrefixes = [...assetCounts.keys()].filter((prefix) => prefix !== '');
-        const diskPrefixes = row.status === 'available' && !this.linkedRootIsGone(row.absolute_root_path)
-          ? this.collectLinkedDirectoryPrefixesFromDisk(
+        const diskPrefixes = this.indexedLinkedDirectoryPrefixes(
             openLibrary,
             row.folder_id,
-            row.absolute_root_path,
             this.getLinkedFolderRules({ libraryId, folderId: row.folder_id }),
-          )
-          : [];
+          );
         const prefixes = [...new Set([...assetPrefixes, ...diskPrefixes])].sort();
+        const folderIgnored = this.linkedFolderIgnored(openLibrary, row.folder_id);
         const root: LinkedFolderSummary = {
           folderId: row.folder_id,
           displayName: row.display_name,
@@ -18280,7 +18453,7 @@ export class LibraryService {
           }),
         };
         const children = prefixes
-          .filter((prefix) => !this.explicitFolderIgnored(openLibrary, 'linked', row.folder_id, prefix))
+          .filter((prefix) => !folderIgnored(prefix))
           .map((relativePath) => {
             const parentPath = parentLinkedRelativePath(relativePath);
             return {
@@ -19556,6 +19729,7 @@ export class LibraryService {
     try {
       emitLinkedProgress('validate', 0, 0, 0, 0, true);
       let scannedBytes = 0;
+      const directories: string[] = [];
       const entries = this.enumerateLinkedSources(
         canonicalRoot,
         folderId,
@@ -19571,6 +19745,7 @@ export class LibraryService {
           scannedBytes += entryBytes;
           emitLinkedProgress('validate', foundCount, 0, scannedBytes, 0);
         },
+        (relativePath) => directories.push(relativePath),
       );
       const totalBytes = scannedBytes;
       emitLinkedProgress('copy', 0, entries.length, 0, totalBytes, true);
@@ -19662,6 +19837,7 @@ export class LibraryService {
             filesProcessed === entries.length,
           );
         }
+        this.linkedDirectoryIndex(openLibrary).replace(folderId, directories);
       })();
       // GitHub #45: emit complete as soon as catalog rows are committed so
       // the renderer can drop “正在导入”. Header probes still run next for
@@ -19704,6 +19880,15 @@ export class LibraryService {
       emitLinkedProgress('failed', 0, 0, 0, 0, true);
       throw error;
     }
+  }
+
+  async relinkMissingFolderAsync(input: {
+    libraryId: string; folderId: string; newRootPath: string;
+  }): Promise<LinkedFolderSummary> {
+    const result = this.relinkMissingFolder(input);
+    // Watcher registration does not deliver an initial event for existing directories.
+    await this.runWatcherReconciliation(input.libraryId, 'watcher', 'linked-folder.relink', [input.folderId]);
+    return result;
   }
 
   relinkMissingFolder(input: {
@@ -19778,6 +19963,7 @@ export class LibraryService {
             WHERE folder_id = ?`,
         )
         .run(canonicalNewRoot, sourceDeviceHintValue, newPathIdentity, now, input.folderId);
+      this.linkedDirectoryIndex(openLibrary).replace(input.folderId, []);
 
       const assets = openLibrary.connection
         .prepare(
@@ -29318,7 +29504,7 @@ export class LibraryService {
 
       if (result.exitCode !== 0) {
         throw new OiioInvocationError(
-          isRawAsset ? 'OIIO_GENERATION_FAILED' : 'OIIO_COLOR_TRANSFORM_FAILED',
+          oiioFailureCode(result.stderr),
           `oiiotool ${isRawAsset ? 'RAW decode' : 'OCIO display transform'} exited with code ${result.exitCode}: ${result.stderr.slice(-8192)}`,
         );
       }
@@ -29338,11 +29524,11 @@ export class LibraryService {
            VALUES (?, ?, ?, 'image/png', ?, ?, ?, 'ready', ?)`,
         )
         .run(artifactId, revisionId, artifactKind, outputStat.size, artifactRelPath,
-          isRawAsset
+          (isRawAsset
             ? `oiio@${OIIO_VERSION};raw-${isViewerImage ? 'viewer-full' : 'default'}-srgb;subimage=${subimage};display-uint8`
             : isIcoAsset
               ? `oiio@${OIIO_VERSION};ico-largest-v1;subimage=${subimage};display-uint8`
-              : `oiio@${OIIO_VERSION};${isViewerImage ? 'viewer-full;' : ''}ocio=studio-v4-aces2;colorspace=${inputColorSpace ?? 'auto'};exposure=${exposureStops};subimage=${subimage};display-uint8`,
+              : `oiio@${OIIO_VERSION};${isViewerImage ? 'viewer-full;' : ''}ocio=studio-v4-aces2;colorspace=${inputColorSpace ?? 'auto'};exposure=${exposureStops};subimage=${subimage};display-uint8`) + `;${OIIO_LITERAL_PATHS_MARK}`,
           new Date().toISOString());
       if (rawMetadata) {
         await this.persistRawImageMetadata(openLibrary, input.assetId, revisionId, assetPath, rawMetadata, {
@@ -29379,11 +29565,11 @@ export class LibraryService {
         )
         .run(
           artifactId, revisionId, artifactKind, artifactRelPath,
-          isRawImageExtension(assetPath)
+          (isRawImageExtension(assetPath)
             ? `oiio@${OIIO_VERSION};raw-${isViewerImage ? 'viewer-full' : 'default'}-srgb;subimage=${subimage}`
             : isIcoAsset
               ? `oiio@${OIIO_VERSION};ico-largest-v1;subimage=${subimage}`
-              : `oiio@${OIIO_VERSION};${isViewerImage ? 'viewer-full;' : ''}ocio=studio-v4-aces2;subimage=${subimage}`,
+              : `oiio@${OIIO_VERSION};${isViewerImage ? 'viewer-full;' : ''}ocio=studio-v4-aces2;subimage=${subimage}`) + `;${OIIO_LITERAL_PATHS_MARK}`,
           errorCode,
           new Date().toISOString(),
         );
@@ -32197,6 +32383,8 @@ export class LibraryService {
         readLibraryIdentity(openLibrary.connection, { skipQuickCheck: true });
         markStage('identity');
         await this.yieldReconciliation(task);
+        await this.linkedDirectoryIndex(openLibrary).recover(() => this.yieldReconciliation(task));
+        markStage('directory-index-recovery');
 
         // The first pass is source reconciliation: it repairs the browse
         // surface before optional maintenance touches old rows. This keeps a
@@ -32864,6 +33052,13 @@ export class LibraryService {
     // while the media bundle lacked a RAW reader. Re-open only those
     // RAW-scoped failures; other decode failures remain terminal until an
     // explicit user retry.
+    const legacyPathRepairEnqueued = options.retryFailed
+      ? requeueLegacyOiioPathFailures(openLibrary.connection, {
+        libraryPath: openLibrary.summary.libraryPath,
+        assetIds: selectedIds,
+        limit,
+      })
+      : 0;
     const legacyRawRepairEnqueued = options.retryFailed
       ? this.requeueLegacyRawColorTransformFailures(openLibrary, {
         assetIds: selectedIds,
@@ -32876,7 +33071,7 @@ export class LibraryService {
         ...(options.assetIds === undefined ? {} : { assetIds: selectedIds }),
         limit,
       });
-    let enqueued = repairEnqueued + legacyRawRepairEnqueued + importedNormalizationEnqueued;
+    let enqueued = repairEnqueued + legacyPathRepairEnqueued + legacyRawRepairEnqueued + importedNormalizationEnqueued;
     // Model extensions join the queue (slice E, Serpent-hnmg): the offscreen
     // GPU renderer in Main produces model thumbnails, stored as the standard
     // `thumbnail` artifact. The dedupe below (terminal artifact / active job)
@@ -33389,6 +33584,7 @@ export class LibraryService {
             AND ra.kind = 'thumbnail'
             AND ra.status = 'failed'
             AND ra.invalidated_at IS NULL
+            AND COALESCE(ra.generator_version, '') NOT LIKE '%${OIIO_LITERAL_PATHS_MARK}%'
             AND (
               (
                 ra.error_code = 'OIIO_COLOR_TRANSFORM_FAILED'
@@ -42619,11 +42815,9 @@ export class LibraryService {
 
     const libraryId = openLibrary.summary.libraryId;
     for (const folder of linkedFolders) {
-      if (folder.status !== 'available' || this.linkedRootIsGone(folder.absolute_root_path)) continue;
-      const prefixes = this.collectLinkedDirectoryPrefixesFromDisk(
+      const prefixes = this.indexedLinkedDirectoryPrefixes(
         openLibrary,
         folder.folder_id,
-        folder.absolute_root_path,
         this.getLinkedFolderRules({ libraryId, folderId: folder.folder_id }),
         true,
       );
@@ -42762,26 +42956,12 @@ export class LibraryService {
   private linkedPathIsIgnored(relativePath: string, rules: LinkedFolderRule[]): boolean {
     const normalizedPath = normalizeRelativeAssetPath(relativePath);
     if (isAlwaysIgnoredAssetPath(normalizedPath)) return true;
-    const segments = normalizedPath.split('/');
-    const filename = segments.at(-1)!;
-    const folders = segments.slice(0, -1);
-    const extension = path.posix.extname(filename).replace(/^\./u, '');
-    const fold = (value: string): string => value.normalize('NFC').toLocaleLowerCase('en-US');
-    let ignored = false;
-    for (const rawRule of rules) {
-      if (!rawRule.enabled) continue;
-      const rule = this.normalizeLinkedFolderRule(rawRule);
-      const pattern = fold(rule.pattern);
-      const matches = rule.target === 'path'
-        ? fold(normalizedPath) === pattern || fold(normalizedPath).startsWith(`${pattern}/`)
-        : rule.target === 'filename'
-          ? fold(filename) === pattern
-          : rule.target === 'extension'
-            ? fold(extension) === pattern
-            : folders.some((folder) => fold(folder) === pattern);
-      if (matches) ignored = rule.action === 'exclude';
+    let matches = this.linkedRuleMatchers.get(rules);
+    if (!matches) {
+      matches = compileLinkedFolderRules(rules.filter((rule) => rule.enabled).map((rule) => this.normalizeLinkedFolderRule(rule)));
+      this.linkedRuleMatchers.set(rules, matches);
     }
-    return ignored;
+    return matches(normalizedPath);
   }
 
   private enumerateLinkedSources(
@@ -42790,6 +42970,7 @@ export class LibraryService {
     suppliedRules?: LinkedFolderRule[],
     explicitlyIgnored?: (relativePath: string, pathKind: 'asset' | 'folder') => boolean,
     onDiscovered?: (foundCount: number, entryBytes: number) => void,
+    onDirectory?: (relativePath: string) => void,
   ): Array<{
     relativePath: string;
     byteSize: number;
@@ -42814,7 +42995,7 @@ export class LibraryService {
           folderId: linkedFolderId,
         })
       : []);
-    const visit = (directoryPath: string, relativeDirectory: string): void => {
+    const visit = (directoryPath: string, relativeDirectory: string, assetsHidden = false): void => {
       let children;
       try {
         children = readdirSync(directoryPath, { withFileTypes: true }).sort((left, right) =>
@@ -42841,14 +43022,16 @@ export class LibraryService {
           continue;
         }
         if (child.isDirectory()) {
-          if (explicitlyIgnored?.(childRelative, 'folder')) continue;
           const canPrune = !rules.some((rule) => rule.enabled && rule.action === 'include')
             && this.linkedPathIsIgnored(path.posix.join(childRelative, '__serpent_probe__'), rules);
           if (canPrune) continue;
-          visit(path.join(directoryPath, child.name), childRelative);
+          const hidden = assetsHidden || explicitlyIgnored?.(childRelative, 'folder') === true;
+          if (hidden && !onDirectory) continue;
+          onDirectory?.(normalizeRelativeAssetPath(childRelative));
+          visit(path.join(directoryPath, child.name), childRelative, hidden);
           continue;
         }
-        if (!child.isFile()) continue;
+        if (!child.isFile() || assetsHidden) continue;
         const childPath = path.join(directoryPath, child.name);
         let stat: BigIntStats | Stats;
         try {
@@ -46506,6 +46689,7 @@ export class LibraryService {
         libraryId,
         folderId: folder.folder_id,
       });
+      const directories: string[] = [];
       linkedEntriesByFolder.set(
         folder.folder_id,
         this.enumerateLinkedSources(
@@ -46519,8 +46703,11 @@ export class LibraryService {
             relativePath,
             pathKind,
           ),
+          undefined,
+          (relativePath) => directories.push(relativePath),
         ),
       );
+      this.linkedDirectoryIndex(openLibrary).replace(folder.folder_id, directories);
     }
 
     return {
@@ -46637,10 +46824,11 @@ export class LibraryService {
     locationKind: 'managed' | 'linked';
     rootPath: string;
     task: OpenReconciliationTask;
+    onDirectory?: (relativePath: string) => void;
   }): Promise<DiscoveredSourceEntry[]> {
     const entries: DiscoveredSourceEntry[] = [];
-    const pendingDirectories: Array<{ absolutePath: string; relativePath: string }> = [
-      { absolutePath: input.rootPath, relativePath: '' },
+    const pendingDirectories: Array<{ absolutePath: string; relativePath: string; assetsHidden: boolean }> = [
+      { absolutePath: input.rootPath, relativePath: '', assetsHidden: false },
     ];
     let sliceStartedAt = performance.now();
 
@@ -46649,7 +46837,7 @@ export class LibraryService {
       const directory = pendingDirectories.pop()!;
       let handle;
       try {
-        handle = await opendirAsync(directory.absolutePath);
+        handle = await (this.options.sourceDirectoryOpener ?? opendirAsync)(directory.absolutePath);
       } catch (error) {
         throw new LibraryServiceError(input.errorCode, { cause: error });
       }
@@ -46683,11 +46871,14 @@ export class LibraryService {
             if (
               !(input.locationKind === 'managed' && isDefaultIgnoredAssetEntry(child.name, 'directory'))
               && !input.isDirectoryIgnored?.(relativePath)
-              && !input.explicitlyIgnored(relativePath, 'folder')
             ) {
-              pendingDirectories.push({ absolutePath, relativePath });
+              const assetsHidden = directory.assetsHidden || input.explicitlyIgnored(relativePath, 'folder');
+              if (!assetsHidden || input.onDirectory) {
+                input.onDirectory?.(normalizeRelativeAssetPath(relativePath));
+                pendingDirectories.push({ absolutePath, relativePath, assetsHidden });
+              }
             }
-          } else if (child.isFile()) {
+          } else if (child.isFile() && !directory.assetsHidden) {
             let stat: Stats | BigIntStats;
             try {
               // Keep the existing synchronous stat seam for deterministic tests;
@@ -46799,6 +46990,9 @@ export class LibraryService {
       }
       existingLinkedAssetIdsByFolder.set(folder.folder_id, existingAssetIdsByIdentity);
       const linkedScanStartedAt = performance.now();
+      const directoryIndex = this.linkedDirectoryIndex(openLibrary);
+      const directoryVersion = directoryIndex.beginScan(folder.folder_id);
+      const directories: string[] = [];
       const entries = await this.enumerateSourcesAsync({
         errorCode: 'INVALID_IMPORT_SOURCE',
         explicitlyIgnored: (relativePath, pathKind) => this.isExplicitlyIgnored(
@@ -46823,7 +47017,9 @@ export class LibraryService {
         locationKind: 'linked',
         rootPath: folder.absolute_root_path,
         task,
+        onDirectory: (relativePath) => directories.push(relativePath),
       });
+      await directoryIndex.publish(folder.folder_id, directories, directoryVersion, () => this.yieldReconciliation(task));
       if (process.env.SERPENT_REFRESH_STAGE_LOG === '1') {
         this.options.onDiagnostic?.({
           scope: 'open.refresh-managed-assets.source-scan',

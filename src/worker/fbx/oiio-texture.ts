@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { resolveOiiotoolPath } from '../binary-resolver';
+import { literalOiioArgs } from '../oiio-invocation';
 import { decodeTgaRgba } from './tga-image';
 
 export interface DecodedTextureRgba {
@@ -69,7 +70,7 @@ function safeExtension(filename: string): string {
 
 function runOiio(args: string[]): Promise<number> {
   return new Promise((resolve) => {
-    execFile(resolveOiiotoolPath(), args, { timeout: 120_000 }, (error) => {
+    execFile(resolveOiiotoolPath(), literalOiioArgs(args), { timeout: 120_000 }, (error) => {
       if (!error) {
         resolve(0);
         return;

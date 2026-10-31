@@ -559,6 +559,51 @@ describe('InteractiveScheduler', () => {
     expect(maintenanceWorkStarted).toBe(true);
   });
 
+  it('admits source paths when status snapshots started first without opening a second primary slot', async () => {
+    const scheduler = new InteractiveScheduler();
+    let releaseMaintenance!: () => void;
+    const maintenance = scheduler.schedule(
+      { requestId: 'reconcile', lane: 'maintenance', libraryId: 'library-1', label: 'reconciliation' },
+      () => new Promise<void>((resolve) => { releaseMaintenance = resolve; }),
+    );
+    let releaseNavigation!: () => void;
+    const navigation = scheduler.schedule(
+      { requestId: 'navigation', lane: 'background-secondary', libraryId: 'library-1', label: 'library.navigation-summary' },
+      () => new Promise<void>((resolve) => { releaseNavigation = resolve; }),
+    );
+    let sourceStarted = false;
+    let releaseSource: (() => void) | undefined;
+    const source = scheduler.schedule(
+      { requestId: 'source', lane: 'background-primary', libraryId: 'library-1', label: 'media.get-source-path' },
+      () => {
+        sourceStarted = true;
+        return new Promise<void>((resolve) => { releaseSource = resolve; });
+      },
+    );
+    let secondStarted = false;
+    const second = scheduler.schedule(
+      { requestId: 'artifact', lane: 'background-primary', libraryId: 'library-1', label: 'media.get-artifact-paths' },
+      () => { secondStarted = true; },
+    );
+    try {
+      expect(sourceStarted).toBe(true);
+      expect(secondStarted).toBe(false);
+      releaseSource!();
+      await source;
+      await second;
+      expect(secondStarted).toBe(true);
+    } finally {
+      releaseNavigation();
+      releaseMaintenance();
+      await navigation;
+      await maintenance;
+      // On an intentional red run the old scheduler starts this only now.
+      await Promise.resolve();
+      releaseSource?.();
+      await Promise.all([source, second]);
+    }
+  });
+
   it('admits status snapshots while maintenance shares the Worker with one thumbnail wave', async () => {
     const scheduler = new InteractiveScheduler();
     let releaseMaintenance!: () => void;

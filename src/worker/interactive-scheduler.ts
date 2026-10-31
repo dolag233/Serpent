@@ -720,7 +720,7 @@ export class InteractiveScheduler {
       .filter((entry) => entry.request.lane === 'background-primary').length;
     // Status snapshots used to require “maintenance plus only status reads”.
     // GitHub #45: thumbnail waves are allowed to share the Worker with
-    // maintenance (`onlyMaintenanceActive` below). That extra primary owner
+    // maintenance (the primary-slot exception below). That extra primary owner
     // disqualified the exception, so history.status / media.list-jobs waited
     // behind a multi-minute missing-file reconciliation.
     const hasMaintenanceWithOptionalPrimaryAndStatusReads = activeMaintenanceCount === 1
@@ -732,8 +732,12 @@ export class InteractiveScheduler {
     // 后台任务」让用户切文件夹后等 34.6 秒才看到 15 张缩略图（schedulerWaitMs
     // 34,897 ms）。只放行一个服务可见内容的 background-primary 与 maintenance
     // 并行；background-secondary（状态轮询）与第二个 background-primary 仍被挡住。
-    const onlyMaintenanceActive = activeBackground === 1
-      && activeBackgroundEntries[0]!.request.lane === 'maintenance';
+    // Admission must not depend on which request arrived first. Status reads
+    // may start after a primary wave; the reverse order must allow that same
+    // one primary slot too, otherwise an async sidebar read blocks source
+    // paths for its whole lifetime despite having yielded the event loop.
+    const maintenanceHasPrimarySlot = hasMaintenanceWithOptionalPrimaryAndStatusReads
+      && activeBackgroundPrimary === 0;
 
     let bestIndex = -1;
     let bestPriority = -1;
@@ -764,7 +768,7 @@ export class InteractiveScheduler {
             : !hasQueuedMutation
               && (
                 activeBackground < 1
-                || (lane === 'background-primary' && onlyMaintenanceActive)
+                || (lane === 'background-primary' && maintenanceHasPrimarySlot)
                 || (
                   lane === 'background-secondary'
                   && MAINTENANCE_STATUS_READ_LABELS.has(this.#queue[index]!.request.label ?? '')

@@ -18,7 +18,7 @@ function hooks() {
 test('linked-folder.list returns the indexed folders', async () => {
   const folders = [{ folderId: 'folder-1', name: 'Source' }];
   const libraryService = {
-    listLinkedFolders: vi.fn(() => folders),
+    listLinkedFoldersAsync: vi.fn(() => folders),
   } as unknown as LibraryService;
 
   await expect(executeLinkedFolderWorkerCommand(
@@ -66,7 +66,7 @@ test('linked-folder.remove records a permanent-delete barrier', async () => {
 test('linked-folder.relink schedules a linked thumbnail scene', async () => {
   const linkedFolder = { folderId: 'folder-1' };
   const libraryService = {
-    relinkMissingFolder: vi.fn(() => linkedFolder),
+    relinkMissingFolderAsync: vi.fn(() => linkedFolder),
   } as unknown as LibraryService;
   const linkedHooks = hooks();
 

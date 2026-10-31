@@ -15,6 +15,7 @@
 // picks the revision up again — no new queue condition needed.
 
 import { columnsFor } from './lenient-columns';
+import { OIIO_LITERAL_PATHS_MARK } from './oiio-invocation';
 
 /** Structural surface: the real OpenLibrary.connection satisfies this. */
 export interface RetryFailedConnection {
@@ -101,6 +102,10 @@ export function requeueRetryableFailedArtifacts(
           AND a.deleted_at IS NULL
           AND a.availability = 'available'
           AND COALESCE(ra.error_code, '') NOT IN (${permanentCodes})
+          AND NOT (
+            COALESCE(ra.generator_version, '') LIKE '%${OIIO_LITERAL_PATHS_MARK}%'
+            AND ra.error_code IN ('OIIO_GENERATION_FAILED', 'OIIO_COLOR_TRANSFORM_FAILED')
+          )
           AND NOT EXISTS (
             SELECT 1 FROM jobs active
              WHERE active.asset_id = a.asset_id

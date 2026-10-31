@@ -11,7 +11,7 @@ import { resolveElectronExecutablePath } from "./electron-test-helpers";
 test.describe.configure({ timeout: 120_000 });
 
 test("opens a TIFF viewer image at the source resolution", async () => {
-  const temporaryRoot = mkdtempSync(path.join(tmpdir(), "serpent-tiff-e2e-"));
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), "serpent-tiff-#-e2e-"));
   const sourcePath = path.join(temporaryRoot, "native-resolution.tiff");
   const libraryName = "TIFF 原生分辨率验收";
   const libraryPath = path.join(temporaryRoot, libraryName);

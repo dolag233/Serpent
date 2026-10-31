@@ -17,6 +17,7 @@ import {
   SUPPORTED_SCHEMA_VERSION,
 } from '../../src/worker/library-service';
 import { MAX_MIGRATION_ATTEMPTS } from '../../src/worker/schema-failure';
+import { removeLinkedDirectoryIndexFixture } from './remove-linked-directory-index';
 
 interface TestDatabase {
   close(): void;
@@ -195,6 +196,7 @@ describe('library availability baseline', () => {
     // tolerate columns that were already created by the newer schema.
     // v59 is intentionally not idempotent, so remove its newly added index
     // before replaying the tail.
+    removeLinkedDirectoryIndexFixture(db);
     db.exec('DROP INDEX IF EXISTS revisions_size_fingerprint_idx');
     db.prepare('DELETE FROM schema_migrations WHERE version >= 39').run();
     db.pragma('user_version = 38');

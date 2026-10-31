@@ -34,7 +34,7 @@ describe('Automation read-only Worker dispatch', () => {
     })).toBe(false);
   });
 
-  it('fails closed at the actual automation dispatch boundary instead of falling through to desktop writes', () => {
+  it('fails closed at the actual automation dispatch boundary instead of falling through to desktop writes', async () => {
     let createTagCalls = 0;
     const service = {
       createTag: () => {
@@ -43,7 +43,7 @@ describe('Automation read-only Worker dispatch', () => {
       },
     } as unknown as LibraryService;
 
-    const result = dispatchAutomationReadOnlyRequest(service, {
+    const result = await dispatchAutomationReadOnlyRequest(service, {
       requestId: 'automation-write-rejected',
       dispatch: 'automation-readonly',
       command: { type: 'tag.create', libraryId: 'library-1', name: 'forbidden' },
@@ -59,7 +59,7 @@ describe('Automation read-only Worker dispatch', () => {
     expect(createTagCalls).toBe(0);
   });
 
-  it('uses the existing LibraryService read path without changing library bytes', () => {
+  it('uses the existing LibraryService read path without changing library bytes', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'serpent-automation-readonly-'));
     roots.push(root);
     const service = new LibraryService();
@@ -71,7 +71,7 @@ describe('Automation read-only Worker dispatch', () => {
     const databasePath = path.join(library.libraryPath, '.serpent', 'library.db');
     const before = digest(databasePath);
 
-    const result = executeAutomationReadOnlyWorkerCommand(service, {
+    const result = await executeAutomationReadOnlyWorkerCommand(service, {
       type: 'tag.list',
       libraryId: library.libraryId,
     });
@@ -80,7 +80,7 @@ describe('Automation read-only Worker dispatch', () => {
     expect(digest(databasePath)).toBe(before);
   });
 
-  it('serves automation file-operation previews only through the readonly dispatcher', () => {
+  it('serves automation file-operation previews only through the readonly dispatcher', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'serpent-automation-plan-'));
     roots.push(root);
     const service = new LibraryService();
@@ -92,7 +92,7 @@ describe('Automation read-only Worker dispatch', () => {
     const databasePath = path.join(library.libraryPath, '.serpent', 'library.db');
     const before = digest(databasePath);
 
-    const result = dispatchAutomationReadOnlyRequest(service, {
+    const result = await dispatchAutomationReadOnlyRequest(service, {
       requestId: 'automation-plan',
       dispatch: 'automation-readonly',
       command: {
@@ -114,7 +114,7 @@ describe('Automation read-only Worker dispatch', () => {
     expect(digest(databasePath)).toBe(before);
   });
 
-  it('admits asset.content.read through the readonly executor', () => {
+  it('admits asset.content.read through the readonly executor', async () => {
     let readCalls = 0;
     const service = {
       readManagedAssetContent: (command: { assetId: string; maxBytes: number }) => {
@@ -143,7 +143,7 @@ describe('Automation read-only Worker dispatch', () => {
       maxBytes: 4,
     })).toBe(true);
 
-    const result = executeAutomationReadOnlyWorkerCommand(service, {
+    const result = await executeAutomationReadOnlyWorkerCommand(service, {
       type: 'asset.content.read',
       libraryId: 'library-1',
       assetId: 'asset-1',
@@ -163,7 +163,7 @@ describe('Automation read-only Worker dispatch', () => {
     expect(readCalls).toBe(1);
   });
 
-  it('reads the current AI layer without mutating the library', () => {
+  it('reads the current AI layer without mutating the library', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'serpent-automation-ai-readonly-'));
     roots.push(root);
     const sourcePath = path.join(root, 'asset.txt');
@@ -196,7 +196,7 @@ describe('Automation read-only Worker dispatch', () => {
 
     const databasePath = path.join(library.libraryPath, '.serpent', 'library.db');
     const before = digest(databasePath);
-    const result = executeAutomationReadOnlyWorkerCommand(service, {
+    const result = await executeAutomationReadOnlyWorkerCommand(service, {
       type: 'ai.content.get',
       libraryId: library.libraryId,
       assetId,

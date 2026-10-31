@@ -52,10 +52,10 @@ export function isAutomationReadOnlyWorkerCommand(
  * start watchers or close a library. The desktop dispatch retains those
  * behaviors; automation reads must not mutate the library as a side effect.
  */
-export function executeAutomationReadOnlyWorkerCommand(
+export async function executeAutomationReadOnlyWorkerCommand(
   libraryService: LibraryService,
   command: WorkerCommand,
-): WorkerResult | undefined {
+): Promise<WorkerResult | undefined> {
   if (!isAutomationReadOnlyWorkerCommand(command)) return undefined;
 
   switch (command.type) {
@@ -78,7 +78,7 @@ export function executeAutomationReadOnlyWorkerCommand(
       return {
         ok: true,
         type: 'linked-folder.list',
-        folders: libraryService.listLinkedFolders(command.libraryId),
+        folders: await libraryService.listLinkedFoldersAsync(command.libraryId),
       };
     case 'asset.list':
       return { ok: true, type: 'asset.list', assets: libraryService.listAssets(command) };

@@ -265,7 +265,7 @@ describe('batch asset rating', () => {
     })).toThrow();
   });
 
-  it('searches through the automation-only read dispatcher then commits its rating through the bounded write fence', () => {
+  it('searches through the automation-only read dispatcher then commits its rating through the bounded write fence', async () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const library = service.createLibrary({ displayName: 'Automation ratings', selectedParentPath: root });
@@ -274,7 +274,7 @@ describe('batch asset rating', () => {
     insertAsset(library.libraryPath, managedFolder, 'not-a-match.png');
     insertSearchIndex(library.libraryPath, matchedAssetId, 'ser-reference.png');
 
-    const searched = executeAutomationReadOnlyWorkerCommand(service, {
+    const searched = await executeAutomationReadOnlyWorkerCommand(service, {
       type: 'asset.search',
       libraryId: library.libraryId,
       query: { clauses: [{ field: null, values: ['Ser'], exclude: false }] },
