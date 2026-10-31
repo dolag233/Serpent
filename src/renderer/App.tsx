@@ -69,6 +69,8 @@ import { LinkedRulesDialog } from "./LinkedRulesDialog";
 import { TagManagementWorkspace } from "./TagManagementWorkspace";
 import { useFolderDeleteActions } from "./use-folder-delete-actions";
 import { canDeleteAssetFromDiskWithShortcut } from "./browse-key-command";
+import { filteredFolderBrowseEntries } from "./filtered-folder-visibility";
+import { useFilteredFolderCounts } from "./use-filtered-folder-counts";
 import { useFolderOrganizeActions } from "./use-folder-organize-actions";
 import { useFolderCommandShortcuts } from "./use-folder-command-shortcuts";
 import { SearchHistoryPopover } from "./SearchHistoryPopover";
@@ -1467,11 +1469,7 @@ function AppInner() {
   const [shuffleSeed, setShuffleSeed] = useState<number | null>(null);
   const [searchOffset, setSearchOffset] = useState(0);
   const [searchTotal, setSearchTotal] = useState<number | null>(null);
-  const [filteredFolderCounts, setFilteredFolderCounts] = useState<{
-    all: number;
-    root: number;
-    byFolderId: ReadonlyMap<string, number>;
-  } | null>(null);
+  const [filteredFolderCountRefreshToken, setFilteredFolderCountRefreshToken] = useState(0);
   const [searchSnippets, setSearchSnippets] = useState<Map<string, string>>(
     new Map(),
   );
@@ -3499,12 +3497,20 @@ function AppInner() {
 
   // CANVAS-022: folders-only (recursive off, zero direct assets) must not
   // mount an empty asset grid — its min-height:100% left a large void.
+  const filteredFolderCounts = useFilteredFolderCounts({
+    api,
+    libraryId: library?.libraryId,
+    filters: currentQueryDefinition({ searchValue: null }).filters,
+    showIgnored: showIgnoredItems,
+    enabled: !showTrash,
+    refreshToken: filteredFolderCountRefreshToken,
+  });
   const canvasFolderBrowseEntries = useMemo(() => {
-    if (!showTrash) return folderBrowseEntries;
+    if (!showTrash) return filteredFolderBrowseEntries(folderBrowseEntries, filteredFolderCounts);
     return trashedFoldersToBrowseEntries(
       filterTrashedFoldersAtTombstone(trashedFolders, trashBrowseTombstoneId),
     );
-  }, [folderBrowseEntries, showTrash, trashBrowseTombstoneId, trashedFolders]);
+  }, [folderBrowseEntries, filteredFolderCounts, showTrash, trashBrowseTombstoneId, trashedFolders]);
   const trashBreadcrumbHops = useMemo(
     () =>
       showTrash
@@ -5507,6 +5513,7 @@ function AppInner() {
     });
     const unsubscribeCleared = api.onAiCleared((event) => {
       if (event.libraryId !== library.libraryId) return;
+      setFilteredFolderCountRefreshToken((token) => token + 1);
       jobStatusCoordinatorRef.current?.noteActivity("ai");
       setAiContent(null);
       setNotice(t("toast.aiContentCleared", { count: event.affectedAssetCount }));
@@ -8103,6 +8110,7 @@ function AppInner() {
     blockingNavigation?: boolean;
   }) {
     if (!library) return;
+    if (!showTrash) setFilteredFolderCountRefreshToken((token) => token + 1);
     if (activeSmartCollectionId) {
       await chooseSmartCollection(activeSmartCollectionId);
       return;
@@ -8477,6 +8485,9 @@ function AppInner() {
 
   function syncBrowseFilterMembership(change: BrowseMembershipChange): void {
     if (change.kind === "dimensions" && showTrash) return;
+    if (!showTrash && (visibleBrowseFilters()?.length ?? 0) > 0) {
+      setFilteredFolderCountRefreshToken((token) => token + 1);
+    }
     const visible = showTrash ? trashedAssets : assets;
     const next = assetsRemainingAfterMembership(visible, visibleBrowseFilters(), change);
     if (next.assets.length < visible.length) {
@@ -9613,71 +9624,6 @@ function AppInner() {
     longEdgeRange,
     sortField,
     sortOrder,
-  ]);
-
-  useEffect(() => {
-    if (!api || !library || showTrash) {
-      setFilteredFolderCounts(null);
-      return;
-    }
-    const filters: FilterClause[] | undefined = currentQueryDefinition().filters;
-    if (!filters || filters.length === 0) {
-      setFilteredFolderCounts(null);
-      return;
-    }
-    let cancelled = false;
-    const libraryId = library.libraryId;
-    void api.listFilteredFolderCounts({
-      libraryId,
-      filters,
-      showIgnored: showIgnoredItems,
-    }).then((result) => {
-      if (cancelled) return;
-      if (!result.ok) {
-        setFilteredFolderCounts(null);
-        return;
-      }
-      setFilteredFolderCounts({
-        all: result.value.all,
-        root: result.value.root,
-        byFolderId: new Map(
-          result.value.folders.map((folder) => [folder.folderId, folder.count]),
-        ),
-      });
-    });
-    return () => {
-      cancelled = true;
-    };
-    // Folder badges follow the same discovery filters as the grid.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    api,
-    library,
-    showTrash,
-    showIgnoredItems,
-    colorFilter,
-    excludeColorFilter,
-    colorSimilarity,
-    formatFilter,
-    excludeFormatFilter,
-    tagFilter,
-    excludeTagFilter,
-    excludedTagFilter,
-    includeAiTagFilter,
-    tagFilterMatch,
-    ratingFilter,
-    excludeRatingFilter,
-    includeAiRatingFilter,
-    favoriteFilter,
-    sourceUrlFilter,
-    availabilityFilter,
-    excludeAvailabilityFilter,
-    widthRange,
-    heightRange,
-    aspectRatioRange,
-    aspectRatioRanges,
-    durationRange,
-    longEdgeRange,
   ]);
 
   async function chooseSmartCollection(
@@ -13940,10 +13886,12 @@ function AppInner() {
   const searchActive = searchValue.trim() !== "";
   const folderRowEntries =
     !showTrash && searchActive && searchFolderResults.length > 0
-      ? searchFolderRealKey === searchFolderMatchKey &&
-        searchFolderRealEntries.length > 0
-        ? searchFolderRealEntries
-        : searchFolderResults
+      ? filteredFolderBrowseEntries(
+          searchFolderRealKey === searchFolderMatchKey && searchFolderRealEntries.length > 0
+            ? searchFolderRealEntries
+            : searchFolderResults,
+          filteredFolderCounts,
+        )
       : canvasFolderBrowseEntries;
   const folderCardRowVisible =
     library !== null && folderRowEntries.length > 0;
