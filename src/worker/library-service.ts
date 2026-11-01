@@ -4904,7 +4904,7 @@ function yieldBetweenMediaClaims(): Promise<void> {
 
 interface MediaExecutionContext {
   signal?: AbortSignal;
-  /** Queue-owned video metadata is a separate durable job. */
+  /** Video metadata has a durable queue job and may share a poster probe. */
   includeVideoMetadata?: boolean;
   /** Queue-owned RAW metadata is a separate low-priority durable job. */
   includeRawMetadata?: boolean;
@@ -4916,27 +4916,34 @@ interface MediaExecutionContext {
   sourceHeight?: number | null;
 }
 
+interface VideoProbeResult {
+  durationSec: number;
+  width: number | null;
+  height: number | null;
+  hasAttachedPicture: boolean;
+}
+
 function throwIfMediaExecutionAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
     throw signal.reason instanceof Error ? signal.reason : new Error('Media operation aborted.');
   }
 }
 
-async function waitForSharedMediaOperation(
+async function waitForSharedMediaOperation<T>(
   entry: {
     controller: AbortController;
-    promise: Promise<boolean>;
+    promise: Promise<T>;
     waiters: number;
   },
   signal: AbortSignal | undefined,
-): Promise<boolean> {
+): Promise<T> {
   entry.waiters += 1;
   try {
     if (!signal) return await entry.promise;
     if (signal.aborted) {
       throw signal.reason instanceof Error ? signal.reason : new Error('Media operation aborted.');
     }
-    return await new Promise<boolean>((resolve, reject) => {
+    return await new Promise<T>((resolve, reject) => {
       const onAbort = (): void => {
         cleanup();
         reject(signal.reason instanceof Error ? signal.reason : new Error('Media operation aborted.'));
@@ -7006,6 +7013,13 @@ export class LibraryService {
     controller: AbortController;
     promise: Promise<boolean>;
     waiters: number;
+  }>();
+  /** Coalesce full ffprobe metadata extraction by library and source revision. */
+  private readonly videoMetadataProbeInFlight = new Map<string, {
+    controller: AbortController;
+    promise: Promise<VideoProbeResult>;
+    waiters: number;
+    identity: object;
   }>();
   /** Avoid synchronously probing missing tools on every visible-range request. */
   private readonly autoRepairProbeFailedAtByLibrary = new Map<
@@ -19788,7 +19802,7 @@ export class LibraryService {
            (asset_id, location_kind, managed_folder_id, linked_folder_id, relative_file_path,
             path_identity, current_revision_id, availability, source_device, source_inode,
             created_at, updated_at)
-         VALUES (?, 'linked', NULL, ?, ?, ?, NULL, 'available', ?, ?, ?, ?)`,
+         VALUES (?, 'linked', NULL, ?, ?, ?, ?, 'available', ?, ?, ?, ?)`,
         );
         const insertRevision = openLibrary.connection.prepare(
           `INSERT INTO revisions
@@ -19796,8 +19810,13 @@ export class LibraryService {
             original_filename, origin, accepted_at)
          VALUES (?, ?, NULL, ?, ?, ?, 'import', ?)`,
         );
-        const setCurrentRevision = openLibrary.connection.prepare(
-          'UPDATE assets SET current_revision_id = ?, updated_at = ? WHERE asset_id = ?',
+        // These assets have just been created and cannot have tags, metadata,
+        // or a prior search row. Build their initial FTS content from the
+        // import snapshot instead of rereading four tables for every file.
+        const insertInitialSearch = openLibrary.connection.prepare(
+          `INSERT INTO asset_search_index
+           (asset_id, filename, tags, description, source_url, author, folder_path, metadata_text)
+           VALUES (?, ?, '', '', '', '', ?, ?)`,
         );
         let filesProcessed = 0;
         let bytesProcessed = 0;
@@ -19810,6 +19829,7 @@ export class LibraryService {
             folderId,
             entry.relativePath,
             assetPathIdentity,
+            revisionId,
             entry.sourceDevice,
             entry.sourceInode,
             now,
@@ -19823,8 +19843,16 @@ export class LibraryService {
             entry.originalFilename,
             now,
           );
-          setCurrentRevision.run(revisionId, now, assetId);
-          this.syncAssetSearchContent(openLibrary.connection, assetId);
+          insertInitialSearch.run(
+            assetId,
+            normalizeSearchText(buildFileName(entry.relativePath)),
+            normalizeSearchText(buildFolderPath(entry.relativePath)),
+            normalizeSearchText(buildMetadataText({
+              availability: 'available',
+              byteSize: entry.byteSize,
+              relativeFilePath: entry.relativePath,
+            })),
+          );
           importedAssetIds.push(assetId);
           filesProcessed += 1;
           bytesProcessed += entry.byteSize;
@@ -27173,10 +27201,10 @@ export class LibraryService {
 
     let hasAttachedPicture = false;
     try {
-      const probe = await this.probeVideoAsset(
+      const probe = await this.probeVideoMetadataForRevision(
         input, openLibrary, assetPath, revisionId, ffprobePath, execution,
       );
-      hasAttachedPicture = probe.hasAttachedPicture;
+      hasAttachedPicture = probe?.hasAttachedPicture ?? false;
     } catch (error) {
       const resourceError = asMediaResourceExhaustedError(error, 'ffmpeg-audio');
       if (resourceError) throw resourceError;
@@ -27493,9 +27521,10 @@ export class LibraryService {
   // ── Video artifacts (ffprobe + ffmpeg) ─────────────────────────────
 
   /**
-   * Generate a video poster, and (for direct requests) metadata. Queue-owned
-   * imports set `includeMetadata` false: durable metadata and contact-sheet
-   * jobs then run independently of the browsing poster.
+   * Generate a video poster and its revision's full metadata from one ffprobe.
+   * The durable metadata job reuses the same in-flight or persisted result;
+   * the poster falls back to a duration-only probe only when full metadata is
+   * unavailable or has no usable duration.
    * Returns the poster artifact ID (the primary visual thumbnail).
    */
   private async generateVideoArtifacts(
@@ -27514,21 +27543,25 @@ export class LibraryService {
     let posterArtifactId: string | null = null;
     let durationSec: number | null = null;
 
-    if (includeMetadata) {
-      // Direct callers retain the historical all-in-one behavior. The queue
-      // deliberately keeps this out of the poster job so AI can proceed
-      // without waiting for the card preview.
-      try {
-        const probed = await this.probeVideoAsset(
-          input, openLibrary, assetPath, revisionId, ffprobePath, execution,
-        );
-        durationSec = probed.durationSec > 0 ? probed.durationSec : null;
-      } catch (error) {
-        const resourceError = asMediaResourceExhaustedError(error, 'ffprobe');
-        if (resourceError) throw resourceError;
-        this.diagnose('video-probe', error, { libraryId: input.libraryId, assetId: input.assetId });
-        // Continue with the poster even if probing fails.
-      }
+    try {
+      // Queue poster jobs used to run a duration-only ffprobe while the
+      // separate metadata job ran a full ffprobe for the same revision. A
+      // shared full probe supplies both the poster seek point and Inspector
+      // metadata without waiting for another queue job.
+      const probed = await this.probeVideoMetadataForRevision(
+        input, openLibrary, assetPath, revisionId, ffprobePath, execution,
+      );
+      durationSec = probed && probed.durationSec > 0 ? probed.durationSec : null;
+    } catch (error) {
+      const resourceError = asMediaResourceExhaustedError(error, 'ffprobe');
+      if (resourceError) throw resourceError;
+      this.diagnose(
+        includeMetadata ? 'video-probe' : 'video-poster-metadata-probe',
+        error,
+        { libraryId: input.libraryId, assetId: input.assetId },
+      );
+      // Continue with the poster even if full metadata probing fails. The
+      // poster helper can still make a duration-only attempt.
     }
 
     // 2. Video poster
@@ -28439,7 +28472,11 @@ export class LibraryService {
     // UNIQUE(revision_id, kind) and mask the real outcome.
     const inFlightKey = `${libraryId}\u0000${revisionId}`;
     const inFlight = this.videoContactSheetInFlight.get(inFlightKey);
-    if (inFlight) return await waitForSharedMediaOperation(inFlight, execution.signal);
+    // The last waiter can abort a producer before its promise settles. A new
+    // request must start fresh instead of joining that abandoned generation.
+    if (inFlight && !inFlight.controller.signal.aborted) {
+      return await waitForSharedMediaOperation(inFlight, execution.signal);
+    }
     if (existing) {
       // Explicit retry: clear the previous terminal row so either outcome —
       // a fresh ready sheet or a renewed failed marker — can register without
@@ -28586,7 +28623,7 @@ export class LibraryService {
     ).get(assetId) as { current_revision_id: string | null } | undefined;
     if (!asset?.current_revision_id) throw new LibraryServiceError('ASSET_NOT_FOUND');
     if (asset.current_revision_id !== queuedRevisionId) return false;
-    await this.probeVideoAsset(
+    const probed = await this.probeVideoMetadataForRevision(
       { libraryId, assetId },
       openLibrary,
       this.resolveAssetPath(libraryId, assetId),
@@ -28594,10 +28631,116 @@ export class LibraryService {
       resolveFfprobePath(),
       execution,
     );
+    if (!probed) return false;
     const currentAfterProbe = openLibrary.connection
       .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ?')
       .get(assetId) as { current_revision_id: string | null } | undefined;
     return currentAfterProbe?.current_revision_id === queuedRevisionId;
+  }
+
+  private readReadyVideoMetadataForRevision(
+    openLibrary: OpenLibrary,
+    revisionId: string,
+  ): VideoProbeResult | null {
+    const artifact = openLibrary.connection.prepare(
+      `SELECT file_path FROM revision_artifacts
+        WHERE revision_id = ?
+          AND kind = 'extracted_metadata'
+          AND status = 'ready'
+          AND invalidated_at IS NULL
+          AND generator_version = ?
+        ORDER BY generated_at DESC, artifact_id DESC
+        LIMIT 1`,
+    ).get(revisionId, FFMPEG_METADATA_GENERATOR) as { file_path: string } | undefined;
+    if (!artifact) return null;
+    try {
+      const metadata = JSON.parse(
+        readFileSync(this.artifactFilePathFromRow(openLibrary, artifact.file_path), 'utf-8'),
+      ) as {
+        durationMs?: unknown;
+        width?: unknown;
+        height?: unknown;
+        hasCoverArt?: unknown;
+      };
+      if (
+        typeof metadata.durationMs !== 'number'
+        || !Number.isFinite(metadata.durationMs)
+        || metadata.durationMs < 0
+      ) return null;
+      return {
+        durationSec: metadata.durationMs / 1000,
+        width: typeof metadata.width === 'number'
+          && Number.isFinite(metadata.width)
+          && metadata.width > 0
+          ? metadata.width
+          : null,
+        height: typeof metadata.height === 'number'
+          && Number.isFinite(metadata.height)
+          && metadata.height > 0
+          ? metadata.height
+          : null,
+        hasAttachedPicture: metadata.hasCoverArt === true,
+      };
+    } catch {
+      // A missing or unreadable artifact is a cache miss. The source revision
+      // remains authoritative and can be probed again without trusting bytes
+      // from a different revision.
+      return null;
+    }
+  }
+
+  private async probeVideoMetadataForRevision(
+    input: { libraryId: string; assetId: string },
+    openLibrary: OpenLibrary,
+    assetPath: string,
+    revisionId: string,
+    ffprobePath: string,
+    execution: MediaExecutionContext,
+  ): Promise<VideoProbeResult | null> {
+    throwIfMediaExecutionAborted(execution.signal);
+    const current = openLibrary.connection.prepare(
+      'SELECT current_revision_id FROM assets WHERE asset_id = ?',
+    ).get(input.assetId) as { current_revision_id: string | null } | undefined;
+    if (!current?.current_revision_id) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    if (current.current_revision_id !== revisionId) return null;
+
+    const cached = this.readReadyVideoMetadataForRevision(openLibrary, revisionId);
+    if (cached) return cached;
+
+    const inFlightKey = `${input.libraryId}\u0000${revisionId}`;
+    let entry = this.videoMetadataProbeInFlight.get(inFlightKey);
+    // An aborted producer may still be unwinding its subprocess. Its finally
+    // guard uses identity, so replacing it cannot remove the new probe.
+    if (entry?.controller.signal.aborted) entry = undefined;
+    if (!entry) {
+      const controller = new AbortController();
+      const identity = {};
+      const promise = (async () => {
+        try {
+          return await this.probeVideoAsset(
+            input,
+            openLibrary,
+            assetPath,
+            revisionId,
+            ffprobePath,
+            { ...execution, signal: controller.signal },
+          );
+        } finally {
+          if (this.videoMetadataProbeInFlight.get(inFlightKey)?.identity === identity) {
+            this.videoMetadataProbeInFlight.delete(inFlightKey);
+          }
+        }
+      })();
+      const createdEntry = { controller, promise, waiters: 0, identity };
+      this.videoMetadataProbeInFlight.set(inFlightKey, createdEntry);
+      entry = createdEntry;
+    }
+
+    const probed = await waitForSharedMediaOperation(entry, execution.signal);
+    const currentAfterProbe = openLibrary.connection.prepare(
+      'SELECT current_revision_id FROM assets WHERE asset_id = ?',
+    ).get(input.assetId) as { current_revision_id: string | null } | undefined;
+    return currentAfterProbe?.current_revision_id === revisionId ? probed : null;
   }
 
   private async generateQueuedRawImageMetadata(
@@ -28695,12 +28838,7 @@ export class LibraryService {
     revisionId: string,
     ffprobePath: string,
     execution: MediaExecutionContext,
-  ): Promise<{
-    durationSec: number;
-    width: number | null;
-    height: number | null;
-    hasAttachedPicture: boolean;
-  }> {
+  ): Promise<VideoProbeResult> {
     const artifactId = randomUUID();
     const artifactsDir = this.artifactsDir(openLibrary);
     mkdirSync(artifactsDir, { recursive: true });
@@ -33740,9 +33878,10 @@ export class LibraryService {
     // for the same revision. This matters even with a single FFmpeg decoder
     // slot: a proxy claimed first can hold that slot while the poster waits
     // forever for a user-visible result (the proxy may be waiting on an
-    // encoder or a slow source). Metadata probes are intentionally excluded;
-    // ffprobe is short-lived and the metadata lane must remain independent of
-    // poster generation. The claim-time guard also covers the second queue
+    // encoder or a slow source). Metadata jobs are intentionally excluded:
+    // either they or poster jobs may start a revision-scoped full ffprobe and
+    // share the result without waiting for the other durable job. The
+    // claim-time guard also covers the second queue
     // worker, which could otherwise see the primary as `running` and still
     // claim the secondary job concurrently. A proxy-only pump keeps its
     // explicit playback request independent of this browse-lane preference.
@@ -34373,6 +34512,44 @@ export class LibraryService {
             previewKind: 'source',
             previewRevisionId: job.revision_id,
           });
+        }
+        if (
+          claimAdmission.reason === 'already-ready'
+          && job.kind === 'extract_metadata'
+          && claimMediaType === 'video'
+          && claimAsset?.current_revision_id === job.revision_id
+        ) {
+          // A poster may have completed the shared ffprobe before this durable
+          // metadata job is claimed. Publish the ready facts before cancelling
+          // the redundant job so Inspector receives the same update as when
+          // the metadata job itself performs the probe.
+          const metadata = openLibrary.connection.prepare(
+            `SELECT width, height, duration_ms
+               FROM revision_artifacts
+              WHERE revision_id = ?
+                AND kind = 'extracted_metadata'
+                AND status = 'ready'
+                AND invalidated_at IS NULL
+                AND generator_version = ?
+              ORDER BY generated_at DESC, artifact_id DESC
+              LIMIT 1`,
+          ).get(job.revision_id, FFMPEG_METADATA_GENERATOR) as {
+            width: number | null;
+            height: number | null;
+            duration_ms: number | null;
+          } | undefined;
+          if (metadata) {
+            options.onDerivedReady?.({
+              assetId: job.asset_id,
+              kind: 'extract_metadata',
+              revisionId: job.revision_id,
+              ...(metadata.width == null ? {} : { width: metadata.width }),
+              ...(metadata.height == null ? {} : { height: metadata.height }),
+              ...(metadata.duration_ms == null ? {} : { durationMs: metadata.duration_ms }),
+              previewKind: null,
+              previewRevisionId: null,
+            });
+          }
         }
         processed += 1;
         continue;

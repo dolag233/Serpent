@@ -2276,6 +2276,10 @@ async function createMainWindow(): Promise<void> {
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
+      // The opt-in performance harness needs frames while remaining hidden.
+      ...(process.env.SERPENT_E2E === "1" && process.env.SERPENT_E2E_PERF_OFFSCREEN === "1"
+        ? { offscreen: true, backgroundThrottling: false }
+        : {}),
     },
   });
 

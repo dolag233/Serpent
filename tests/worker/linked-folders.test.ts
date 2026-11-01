@@ -116,10 +116,39 @@ describe('Linked folder import', () => {
         .all() as Array<{ location_kind: string; linked_folder_id: string }>;
       expect(linkedRows).toHaveLength(3);
       expect(linkedRows.every((row) => row.linked_folder_id === linked.folderId)).toBe(true);
+      const searchRows = database.prepare(
+        'SELECT filename, tags, description, source_url, author, folder_path, metadata_text FROM asset_search_index ORDER BY filename',
+      ).all() as Array<{
+        filename: string;
+        tags: string;
+        description: string;
+        source_url: string;
+        author: string;
+        folder_path: string;
+        metadata_text: string;
+      }>;
+      expect(searchRows).toEqual([
+        { filename: 'a.png', tags: '', description: '', source_url: '', author: '', folder_path: '', metadata_text: '.png small available' },
+        { filename: 'b.png', tags: '', description: '', source_url: '', author: '', folder_path: '', metadata_text: '.png small available' },
+        { filename: 'c.png', tags: '', description: '', source_url: '', author: '', folder_path: 'sub', metadata_text: '.png small available' },
+      ]);
     } finally {
       database.close();
     }
+    const found = service.searchAssets({
+      libraryId: created.libraryId,
+      query: { clauses: [{ field: 'filename', values: ['png'], exclude: false }] },
+    });
+    expect(found.items.map((item) => item.relativeFilePath).sort()).toEqual(['a.png', 'b.png', 'sub/c.png']);
     service.closeAll();
+    const reopened = newService();
+    reopened.openLibrary(created.libraryPath);
+    const afterRestart = reopened.searchAssets({
+      libraryId: created.libraryId,
+      query: { clauses: [{ field: 'filename', values: ['png'], exclude: false }] },
+    });
+    expect(afterRestart.items.map((item) => item.relativeFilePath).sort()).toEqual(['a.png', 'b.png', 'sub/c.png']);
+    reopened.closeAll();
   });
 
   it('saves text edits back to the linked source file', () => {

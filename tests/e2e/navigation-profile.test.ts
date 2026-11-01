@@ -772,6 +772,7 @@ test("profile navigation hotspots on a real library", async () => {
     env: electronLaunchEnv({
       SERPENT_E2E: "1",
       SERPENT_E2E_HIDE_WINDOW: "1",
+      SERPENT_E2E_PERF_OFFSCREEN: "1",
       SERPENT_E2E_RESTORE_RECENT: "1",
       SERPENT_E2E_USER_DATA_PATH: userDataPath,
       SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
@@ -1043,17 +1044,38 @@ test("profile navigation hotspots on a real library", async () => {
     const canvas = window.locator(".workspace-canvas");
     let wheelProbe: Awaited<ReturnType<typeof readRendererProbe>> | null = null;
     if (wheelMs > 0) {
-      await resetRendererCounters(window);
-      const box = await canvas.boundingBox();
-      if (box) await window.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-      const wheelStartedAt = Date.now();
-      let direction = 1;
-      while (Date.now() - wheelStartedAt < wheelMs) {
-        await window.mouse.wheel(0, direction * (80 + Math.floor(Math.random() * 260)));
-        await window.waitForTimeout(60 + Math.floor(Math.random() * 90));
-        if (Math.random() < 0.3) direction *= -1;
+      // Scope-switch samples may end in a short collection. Measure wheel churn
+      // over the library-wide canvas instead of timing an idle, unscrollable view.
+      if (switches > 0 && scopes.length > 0) {
+        const libraryRow = window.locator(".navigation-pane button.nav-row").first();
+        const expectedScope = await libraryRow.evaluate((element) => {
+          const button = element as HTMLButtonElement;
+          return [button.dataset.navFolderKind ?? "", button.dataset.navFolderId ?? "", button.dataset.navCollectionId ?? "", button.querySelector(".nav-row-label")?.textContent?.trim() ?? ""].join("\u0000");
+        });
+        const beforeIds = await visibleCardIds(window);
+        await libraryRow.click();
+        const changed = await waitForScopeContentChange(window, expectedScope, beforeIds, 30_000);
+        expect(changed.timedOut, "Wheel profiling must return to the library-wide scope").toBe(false);
       }
-      wheelProbe = await readRendererProbe(window);
+      const canvasIsScrollable = await canvas.evaluate((element) => element.scrollHeight > element.clientHeight + 1);
+      if (!canvasIsScrollable) skipped.wheelNotScrollable = 1;
+      else {
+        await resetRendererCounters(window);
+        const box = await canvas.boundingBox();
+        if (box) await window.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        const wheelStartedAt = Date.now();
+        let direction = 1;
+        while (Date.now() - wheelStartedAt < wheelMs) {
+          await window.mouse.wheel(0, direction * (80 + Math.floor(Math.random() * 260)));
+          await window.waitForTimeout(60 + Math.floor(Math.random() * 90));
+          if (Math.random() < 0.3) direction *= -1;
+        }
+        wheelProbe = await readRendererProbe(window);
+        if (wheelMs >= 1_000) {
+          expect(wheelProbe.frameSamples, "Hidden performance windows must render frames during wheel profiling")
+            .toBeGreaterThan(5);
+        }
+      }
     }
     const jobStatusStats = await window.evaluate(() =>
       (globalThis as typeof globalThis & { __serpentJobStatusStats?: unknown })

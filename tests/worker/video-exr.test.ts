@@ -1,10 +1,10 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, truncateSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   LibraryService,
@@ -280,6 +280,247 @@ function assertDb(
 // ── Tests ──────────────────────────────────────────────────────────
 
 describe('video (ffprobe + ffmpeg)', () => {
+  it('shares one full ffprobe between concurrent poster and metadata jobs for the same revision', async () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    let ffprobeCalls = 0;
+    const baseSpawn = createMockSpawn({ ffprobeStdout: CANNED_FFPROBE_JSON });
+    const service = new LibraryService({
+      spawnFn: async (command, args) => {
+        if (command.includes('ffprobe')) {
+          ffprobeCalls += 1;
+          // A controlled delay keeps concurrent queue workers on the same
+          // probe window so the test also exercises single-flight behavior.
+          await new Promise((resolve) => setTimeout(resolve, 8));
+        }
+        return await baseSpawn(command, args);
+      },
+    });
+    const created = service.createLibrary({
+      displayName: 'VideoProbeQueueReuse',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'video.mp4');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    service.enqueueThumbnailJobs(created.libraryId, { assetIds: [asset.assetId], priority: 300 });
+    const queuedJobs = service.listMediaJobs(created.libraryId).jobs.filter(
+      (job) => job.assetId === asset.assetId,
+    );
+    expect(new Set(queuedJobs.map((job) => job.revisionId))).toEqual(
+      new Set([asset.currentRevisionId]),
+    );
+    expect(queuedJobs.map((job) => job.kind)).toEqual(
+      expect.arrayContaining(['extract_metadata', 'generate_thumbnail']),
+    );
+
+    const derived: Array<{ assetId: string; kind: string; revisionId?: string }> = [];
+    await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 2,
+      onDerivedReady: (event) => derived.push(event),
+    });
+
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'extracted_metadata'))
+      .toMatchObject({ status: 'ready' });
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'video_poster'))
+      .toMatchObject({ status: 'ready' });
+    expect(derived).toContainEqual(expect.objectContaining({
+      assetId: asset.assetId,
+      kind: 'extract_metadata',
+      revisionId: asset.currentRevisionId,
+    }));
+    expect(ffprobeCalls).toBe(1);
+
+    service.closeAll();
+  });
+
+  it('replaces an abandoned probe without letting its finalizer discard the new probe', async () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    const baseSpawn = createMockSpawn({ ffprobeStdout: CANNED_FFPROBE_JSON });
+    let fullProbeCalls = 0;
+    let firstProbeStarted!: () => void;
+    let releaseFirstProbe!: () => void;
+    let releaseSecondProbe!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { firstProbeStarted = resolve; });
+    const firstReleased = new Promise<void>((resolve) => { releaseFirstProbe = resolve; });
+    const secondReleased = new Promise<void>((resolve) => { releaseSecondProbe = resolve; });
+    const service = new LibraryService({
+      availablePhysicalMemoryBytesForTests: () => 8 * 1024 ** 3,
+      spawnFn: async (command, args, options) => {
+        if (command.includes('ffprobe') && args.includes('-show_streams')) {
+          fullProbeCalls += 1;
+          if (fullProbeCalls === 1) {
+            firstProbeStarted();
+            await firstReleased;
+            if (options?.signal?.aborted) throw new DOMException('cancelled', 'AbortError');
+          } else if (fullProbeCalls === 2) {
+            await secondReleased;
+          }
+        }
+        return await baseSpawn(command, args);
+      },
+    });
+    const created = service.createLibrary({
+      displayName: 'AbandonedVideoProbe',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'video.mp4');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    const assetId = asset.assetId;
+    const inFlightKey = [created.libraryId, asset.currentRevisionId].join('\u0000');
+    const probeMap = (service as unknown as {
+      videoMetadataProbeInFlight: Map<string, { promise: Promise<unknown>; waiters: number }>;
+    }).videoMetadataProbeInFlight;
+    service.enqueueThumbnailJobs(created.libraryId, { assetIds: [assetId], priority: 300 });
+    const metadataJobId = service.listMediaJobs(created.libraryId).jobs
+      .find((job) => job.assetId === assetId && job.kind === 'extract_metadata')!.jobId;
+
+    const metadataProcessing = service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['extract_metadata'],
+    });
+    let posterProcessing: Promise<number> | undefined;
+    let contactSheetProcessing: Promise<boolean> | undefined;
+    let abandonedProbe: Promise<unknown> | undefined;
+    try {
+      await firstStarted;
+      abandonedProbe = probeMap.get(inFlightKey)?.promise;
+      expect(abandonedProbe).toBeDefined();
+      expect(service.cancelMediaJobs(created.libraryId, [metadataJobId]))
+        .toEqual({ cancelledCount: 1 });
+      await metadataProcessing;
+      posterProcessing = service.processThumbnailQueue(created.libraryId, {
+        maxJobs: 1,
+        jobKinds: ['generate_thumbnail'],
+      });
+      // The first native process has not settled. The new poster must launch
+      // its own full probe rather than wait on the cancelled producer.
+      await vi.waitFor(() => expect(fullProbeCalls).toBe(2), { timeout: 2_000 });
+      releaseFirstProbe();
+      await expect(abandonedProbe).rejects.toMatchObject({ name: 'AbortError' });
+      // The abandoned producer's finally has now run while the replacement
+      // is still pending. A third consumer must join that replacement.
+      contactSheetProcessing = service.ensureVideoContactSheet(created.libraryId, assetId);
+      await vi.waitFor(() => expect(probeMap.get(inFlightKey)?.waiters).toBe(2), {
+        timeout: 2_000,
+      });
+      expect(fullProbeCalls).toBe(2);
+      releaseSecondProbe();
+      await Promise.all([posterProcessing, contactSheetProcessing]);
+      expect(service.getCurrentArtifact(created.libraryId, assetId, 'video_poster'))
+        .toMatchObject({ status: 'ready' });
+      expect(service.getCurrentArtifact(created.libraryId, assetId, 'contact_sheet'))
+        .toMatchObject({ status: 'ready' });
+    } finally {
+      releaseFirstProbe();
+      releaseSecondProbe();
+      const pending: Promise<unknown>[] = [metadataProcessing];
+      if (posterProcessing) pending.push(posterProcessing);
+      if (contactSheetProcessing) pending.push(contactSheetProcessing);
+      if (abandonedProbe) pending.push(abandonedProbe);
+      await Promise.allSettled(pending);
+      service.closeAll();
+    }
+  });
+
+  it('reuses persisted video metadata for a later poster job only on the matching revision', async () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    let ffprobeCalls = 0;
+    const baseSpawn = createMockSpawn({ ffprobeStdout: CANNED_FFPROBE_JSON });
+    const service = new LibraryService({
+      spawnFn: async (command, args) => {
+        if (command.includes('ffprobe')) ffprobeCalls += 1;
+        return await baseSpawn(command, args);
+      },
+    });
+    const created = service.createLibrary({
+      displayName: 'VideoMetadataRevisionReuse',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'video.mp4');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    service.enqueueThumbnailJobs(created.libraryId, { assetIds: [asset.assetId], priority: 300 });
+    await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['extract_metadata'],
+    });
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'extracted_metadata'))
+      .toMatchObject({ status: 'ready' });
+    await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['generate_thumbnail'],
+    });
+    expect(ffprobeCalls).toBe(1);
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'video_poster'))
+      .toMatchObject({ status: 'ready' });
+
+    writeFileSync(sourcePath, Buffer.alloc(8192, 1));
+    const sourceStat = statSync(sourcePath);
+    const replacementRevision = randomUUID();
+    const db = assertDb(created.libraryPath);
+    db.prepare(
+      `INSERT INTO revisions
+         (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
+          original_filename, origin, accepted_at)
+       VALUES (?, ?, ?, ?, ?, 'video.mp4', 'external_change', ?)`,
+    ).run(
+      replacementRevision,
+      asset.assetId,
+      asset.currentRevisionId,
+      sourceStat.size,
+      sourceStat.mtime.toISOString(),
+      new Date().toISOString(),
+    );
+    db.prepare('UPDATE assets SET current_revision_id = ? WHERE asset_id = ?')
+      .run(replacementRevision, asset.assetId);
+    db.close();
+
+    service.enqueueThumbnailJobs(created.libraryId, { assetIds: [asset.assetId], priority: 300 });
+    expect(service.listMediaJobs(created.libraryId).jobs.filter((job) => job.assetId === asset.assetId))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ revisionId: replacementRevision, kind: 'extract_metadata' }),
+      ]));
+    await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['generate_thumbnail'],
+    });
+    expect(ffprobeCalls).toBe(2);
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'extracted_metadata'))
+      .toMatchObject({ status: 'ready' });
+
+    const derived: Array<{ assetId: string; kind: string; revisionId?: string; durationMs?: number }> = [];
+    await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['extract_metadata'],
+      onDerivedReady: (event) => derived.push(event),
+    });
+
+    expect(ffprobeCalls).toBe(2);
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'extracted_metadata'))
+      .toMatchObject({ status: 'ready' });
+    expect(derived).toContainEqual(expect.objectContaining({
+      assetId: asset.assetId,
+      kind: 'extract_metadata',
+      revisionId: replacementRevision,
+      width: 1920,
+      height: 1080,
+      durationMs: 30050,
+    }));
+    expect(service.listAssets({ libraryId: created.libraryId, recursive: true })[0])
+      .toMatchObject({ currentRevisionId: replacementRevision, durationMs: 30050 });
+
+    service.closeAll();
+  });
+
   it('keeps AI contact-sheet preparation independent from poster work (Serpent-140fe2)', async () => {
     process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
     const root = temporaryRoot();
@@ -3947,10 +4188,10 @@ describe('independent video derivative jobs', () => {
     });
 
     await ready;
-    // The poster is deliberately published before the independent metadata
-    // probe finishes. The callback therefore proves the primary visual is
-    // ready, but must not require dimensions that belong to the secondary
-    // metadata job.
+    // The poster is available before the slow proxy resolves. Metadata may
+    // already be ready because the poster and metadata jobs share one
+    // revision-scoped ffprobe; the primary preview still does not wait for the
+    // proxy lane.
     expect(eventDimensions).toBeDefined();
     expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'video_poster'))
       .toMatchObject({ status: 'ready' });
