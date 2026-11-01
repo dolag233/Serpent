@@ -198,36 +198,20 @@ export function nextDiscreteCardSizeFromPinchDelta(
 
 /**
  * Browse-canvas Ctrl/Cmd+wheel → discrete card size.
- * Mouse notches advance exactly one stop; trackpad pinch keeps the continuous
- * high-gain projection (Serpent-fvpi / Serpent-7ny).
+ * Every nonzero wheel sample advances exactly one slider stop. Wheel delta
+ * magnitude and precision vary by device and must not cause skipped stops.
  */
 export function nextDiscreteCardSizeFromWheelDelta(
   currentSize: number,
   deltaY: number,
   stops: readonly number[],
-  sample: {
-    readonly deltaX: number;
-    readonly deltaY: number;
-    readonly deltaMode: number;
-  },
-  gain: number = BROWSE_CARD_PINCH_GAIN,
-  stepDelta: number = BROWSE_CARD_PINCH_STOP_DELTA,
 ): number {
   if (stops.length === 0 || deltaY === 0) {
     return nearestDiscreteCardSize(currentSize, stops);
   }
-  if (isBrowseCardMouseWheelNotch(sample)) {
-    return stepDiscreteCardSize(
-      nearestDiscreteCardSize(currentSize, stops),
-      deltaY > 0 ? -1 : 1,
-      stops,
-    );
-  }
-  return nextDiscreteCardSizeFromPinchDelta(
-    currentSize,
-    deltaY,
+  return stepDiscreteCardSize(
+    nearestDiscreteCardSize(currentSize, stops),
+    deltaY > 0 ? -1 : 1,
     stops,
-    gain,
-    stepDelta,
   );
 }

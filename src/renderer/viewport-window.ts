@@ -1,3 +1,4 @@
+import { observeCanvasLayoutMeasure } from "./canvas-layout-measure";
 import {
   useLayoutEffect,
   useState,
@@ -84,10 +85,12 @@ export function useCanvasLocalViewport(
 
     update();
     canvas.addEventListener("scroll", update, { passive: true });
+    const stopMeasuring = observeCanvasLayoutMeasure(element, update);
     const observer = new ResizeObserver(update);
     observer.observe(canvas);
     observer.observe(element);
     return () => {
+      stopMeasuring();
       canvas.removeEventListener("scroll", update);
       observer.disconnect();
     };

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { publishCanvasAssetLayoutIndex } from "../../src/renderer/canvas-asset-layout";
 import {
@@ -90,6 +90,27 @@ describe("isCanvasReflowRestorationPending", () => {
 });
 
 describe("scheduleAnchorRestore", () => {
+  it("navigation restores vertical reading context without chasing the sidebar horizontally", () => {
+    const queue: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { queue.push(callback); return queue.length; });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    try {
+      const canvas = {
+        scrollLeft: 0, scrollTop: 1000, scrollWidth: 1400, scrollHeight: 4000,
+        clientWidth: 800, clientHeight: 600, querySelectorAll: () => [card],
+      } as unknown as HTMLElement;
+      const card = {
+        dataset: { assetId: "lead" },
+        getBoundingClientRect: () => ({ left: 264, top: 1500 - canvas.scrollTop, width: 120, height: 100 }),
+      } as unknown as HTMLElement;
+      scheduleAnchorRestore(canvas, {
+        assetId: "lead", ratioX: 0.5, ratioY: 0, clientX: 100, clientY: 80,
+      }, { current: null }, 0, undefined, { left: 0, top: 1000 }, undefined, "vertical");
+      while (queue.length) queue.shift()!(0);
+      expect(canvas.scrollTop).toBe(1420);
+      expect(canvas.scrollLeft).toBe(0);
+    } finally { vi.unstubAllGlobals(); }
+  });
   it("keeps the compensated offset after restoring a captured scroll snapshot", () => {
     const rafQueue: FrameRequestCallback[] = [];
     const originalRaf = globalThis.requestAnimationFrame;

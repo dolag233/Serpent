@@ -11,11 +11,14 @@ import { Icon } from "./Icons";
 import { SequenceFrameCanvas } from "./SequenceFrameCanvas";
 import { resolveSequenceFrameUrl } from "./sequence-frame-preview";
 import { useCardHoverScrub } from "./use-card-hover-scrub";
+import { AdaptiveCardImage, type AdaptiveCardSource } from "./adaptive-card-image";
 
 interface AssetCardMediaProps {
   alt: string;
   /** Static thumbnail; shown whenever live preview is inactive or not ready. */
   coverUrl: string | null;
+  adaptiveSource?: AdaptiveCardSource;
+  suspendUpgrade?: boolean;
   /**
    * Virtual browse windows render only the current viewport and its small
    * overscan band. Those cards can ask Chromium to start decoding immediately
@@ -64,6 +67,8 @@ interface AssetCardMediaProps {
 export function AssetCardMedia({
   alt,
   coverUrl,
+  adaptiveSource,
+  suspendUpgrade = false,
   loadImmediately = false,
   deferUntilVisible = false,
   isActive,
@@ -198,15 +203,8 @@ export function AssetCardMedia({
   return (
     <div className="asset-card-media" ref={mediaHostRef}>
       {visibleCoverUrl && !errored ? (
-        <img
-          alt={alt}
-          className="asset-thumbnail"
-          decoding="async"
-          fetchPriority={loadImmediately ? "high" : "auto"}
-          loading={loadImmediately ? "eager" : "lazy"}
-          onError={retryCover}
-          src={visibleCoverUrl}
-        />
+        <AdaptiveCardImage key={`${visibleCoverUrl}:${adaptiveSource?.revisionId ?? ""}`} alt={alt} coverUrl={visibleCoverUrl} source={adaptiveSource}
+          loadImmediately={loadImmediately} suspendUpgrade={suspendUpgrade} onError={retryCover} />
       ) : (
         fallbackIcon
       )}

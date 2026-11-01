@@ -127,20 +127,23 @@ describe("Ctrl+wheel mouse notch vs trackpad pinch (Serpent-fvpi)", () => {
       current,
       -300,
       stops,
-      { deltaX: 0, deltaY: -300, deltaMode: 0 },
     );
     expect(next).toBe(stops[currentIndex + 1]);
     expect(next).toBeLessThan(CARD_SIZE_MAX);
   });
 
-  it("trackpad pinch can still cross a stop with modest continuous delta", () => {
+  it.each([-300, -120, -30, -12.5, -8, -0.1, 0.1, 8, 12.5, 30, 120, 300])(
+    "wheel delta %s moves exactly one slider stop at every size",
+    (delta) => {
+      for (const [index, current] of stops.entries()) {
+        const nextIndex = Math.max(0, Math.min(stops.length - 1, index + (delta > 0 ? -1 : 1)));
+        expect(nextDiscreteCardSizeFromWheelDelta(current, delta, stops)).toBe(stops[nextIndex]);
+      }
+    },
+  );
+
+  it("zero wheel delta keeps the current stop", () => {
     const current = stops[Math.floor(stops.length / 2)]!;
-    const next = nextDiscreteCardSizeFromWheelDelta(
-      current,
-      30,
-      stops,
-      { deltaX: 0, deltaY: 12.5, deltaMode: 0 },
-    );
-    expect(next).not.toBe(current);
+    expect(nextDiscreteCardSizeFromWheelDelta(current, 0, stops)).toBe(current);
   });
 });

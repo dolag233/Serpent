@@ -1,3 +1,4 @@
+import { observeCanvasLayoutMeasure } from "../canvas-layout-measure";
 import {
   useLayoutEffect,
   useMemo,
@@ -931,9 +932,10 @@ export function VirtualMasonryColumns({
     if (!element) return;
     const updateWidth = () => setAvailableWidth(element.clientWidth);
     updateWidth();
+    const stopMeasuring = observeCanvasLayoutMeasure(element, updateWidth);
     const observer = new ResizeObserver(updateWidth);
     observer.observe(element);
-    return () => observer.disconnect();
+    return () => { stopMeasuring(); observer.disconnect(); };
   }, []);
 
   return (
@@ -1084,9 +1086,10 @@ export function VirtualJustifiedAssetRows({
     if (!element) return;
     const updateWidth = () => setAvailableWidth(element.clientWidth);
     updateWidth();
+    const stopMeasuring = observeCanvasLayoutMeasure(element, updateWidth);
     const observer = new ResizeObserver(updateWidth);
     observer.observe(element);
-    return () => observer.disconnect();
+    return () => { stopMeasuring(); observer.disconnect(); };
   }, []);
 
   const rowWindow = variableWindowForSequence({

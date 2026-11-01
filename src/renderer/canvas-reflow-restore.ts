@@ -126,6 +126,7 @@ function publishedAnchorRect(
 function scrollTowardPublishedAnchor(
   canvas: HTMLElement,
   anchor: CanvasAnchor,
+  axis: "both" | "vertical",
 ): boolean {
   const hosts = canvas.querySelectorAll<HTMLElement>(
     ".justified-rows, .masonry-columns",
@@ -140,7 +141,7 @@ function scrollTowardPublishedAnchor(
       width: rect.width,
       height: rect.height,
     });
-    const nextLeft = clampScrollOffset(
+    const nextLeft = axis === "vertical" ? canvas.scrollLeft : clampScrollOffset(
       canvas.scrollLeft + delta.deltaX,
       canvas.scrollWidth,
       canvas.clientWidth,
@@ -158,6 +159,18 @@ function scrollTowardPublishedAnchor(
     return true;
   }
   return false;
+}
+
+/** Compensate vertically before native snapshots, including virtual anchors. */
+export function restoreVerticalReflowAnchor(canvas: HTMLElement, anchor: CanvasAnchor | null): void {
+  if (!anchor || canvasHasPreviewScrollHold(canvas)) return;
+  const mounted = findMountedAnchor(canvas, anchor.assetId);
+  if (!mounted) {
+    scrollTowardPublishedAnchor(canvas, anchor, "vertical");
+    return;
+  }
+  const delta = computeAnchorScrollDelta(anchor, mounted.getBoundingClientRect());
+  canvas.scrollTop = clampScrollOffset(canvas.scrollTop + delta.deltaY, canvas.scrollHeight, canvas.clientHeight);
 }
 
 /** Keep the first anchor throughout one continuous resize/reflow burst. */
@@ -186,6 +199,8 @@ export function scheduleAnchorRestore(
   frameCount = 3,
   onRestored?: () => void,
   initialScroll?: ScrollOffsetSnapshot,
+  measureCard: (card: HTMLElement) => RectLike = (card) => card.getBoundingClientRect(),
+  axis: "both" | "vertical" = "both",
 ): void {
   if (frameRef.current !== null) {
     globalThis.cancelAnimationFrame(frameRef.current);
@@ -214,7 +229,7 @@ export function scheduleAnchorRestore(
           // A zoom reflow can drop the anchor card out of the virtual
           // window before this settle runs. Keep scrolling toward its
           // published geometry instead of leaving the pre-zoom offset.
-          const nudged = scrollTowardPublishedAnchor(canvas, anchor);
+          const nudged = scrollTowardPublishedAnchor(canvas, anchor, axis);
           if (nudged && passesRemaining > 0) {
             frameRef.current = globalThis.requestAnimationFrame(() =>
               settle(passesRemaining - 1, 0),
@@ -225,9 +240,9 @@ export function scheduleAnchorRestore(
           onRestored?.();
           return;
         }
-        const rect = restored.getBoundingClientRect();
+        const rect = measureCard(restored);
         const delta = computeAnchorScrollDelta(anchor, rect);
-        const nextLeft = clampScrollOffset(
+        const nextLeft = axis === "vertical" ? canvas.scrollLeft : clampScrollOffset(
           canvas.scrollLeft + delta.deltaX,
           canvas.scrollWidth,
           canvas.clientWidth,
@@ -238,7 +253,7 @@ export function scheduleAnchorRestore(
           canvas.clientHeight,
         );
         const aligned =
-          Math.abs(delta.deltaX) < 0.5 && Math.abs(delta.deltaY) < 0.5;
+          (axis === "vertical" || Math.abs(delta.deltaX) < 0.5) && Math.abs(delta.deltaY) < 0.5;
         if (nextLeft !== canvas.scrollLeft || nextTop !== canvas.scrollTop) {
           canvas.scrollLeft = nextLeft;
           canvas.scrollTop = nextTop;
