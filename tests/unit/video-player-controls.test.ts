@@ -9,6 +9,7 @@ import {
   matchVideoPlaybackSeekKey,
   matchVideoPlaybackRateKey,
   nextFrameSeekTime,
+  nextKeyboardSeekBase,
   nextPlaybackIntent,
   parsePlaybackRate,
   resolveFrameStepSeconds,
@@ -21,6 +22,8 @@ import {
   VIDEO_PLAYBACK_RATES,
   VIDEO_SKIP_SECONDS,
   videoSeekDeltaSeconds,
+  videoWheelSeekTime,
+  playbackRateAfterWheelSteps,
   applyMediaAutoplayIntent,
   shouldAutoStartMediaPlayback,
 } from "../../src/renderer/video-player-controls";
@@ -195,14 +198,26 @@ describe("matchVideoPlaybackSeekKey / videoSeekDeltaSeconds (Serpent-sk1)", () =
     ).toBeCloseTo(VIDEO_FRAME_STEP_SECONDS);
   });
 
-  it("ignores auto-repeat for frame and seek actions", () => {
+  it("ignores auto-repeat for frame steps and keeps seeking while Ctrl+Arrow is held", () => {
     expect(matchVideoPlaybackSeekKey({ ...base, key: "d", repeat: true })).toBeNull();
     expect(matchVideoPlaybackSeekKey({
       ...base,
       key: "ArrowLeft",
       ctrlKey: true,
       repeat: true,
-    })).toBeNull();
+    })).toEqual({ kind: "skip", direction: -1 });
+    expect(matchVideoPlaybackSeekKey({
+      ...base,
+      key: "ArrowRight",
+      ctrlKey: true,
+      repeat: true,
+    })).toEqual({ kind: "skip", direction: 1 });
+  });
+
+  it("continues a held Ctrl+Arrow from the last commanded time", () => {
+    expect(nextKeyboardSeekBase(1, { time: 5, at: 1000 }, 1300)).toBe(5);
+    expect(nextKeyboardSeekBase(1, { time: 5, at: 1000 }, 2300)).toBe(1);
+    expect(nextKeyboardSeekBase(1, null, 1300)).toBe(1);
   });
 
   it("matches D/F by physical code even when IME sets key to Process", () => {
@@ -455,5 +470,37 @@ describe("applyMediaAutoplayIntent", () => {
     const media = { paused: false, play, pause: vi.fn() };
     applyMediaAutoplayIntent(media, true);
     expect(play).not.toHaveBeenCalled();
+  });
+});
+
+describe("video seek jump and wheel steps", () => {
+  const percent = { mode: "percent" as const, seconds: 2, percent: 10 };
+
+  it("jumps by a share of the duration in percent mode", () => {
+    expect(videoSeekDeltaSeconds(
+      { kind: "skip", direction: 1 },
+      undefined,
+      percent,
+      80,
+    )).toBe(8);
+    expect(videoSeekDeltaSeconds(
+      { kind: "skip", direction: -1 },
+      undefined,
+      percent,
+      80,
+    )).toBe(-8);
+  });
+
+  it("moves one configured jump per wheel notch", () => {
+    expect(videoWheelSeekTime(10, 80, -1, percent)).toBe(18);
+    expect(videoWheelSeekTime(10, 80, 1, percent)).toBe(2);
+    expect(videoWheelSeekTime(0, 80, 1, percent)).toBe(0);
+  });
+
+  it("steps playback rate one notch at a time and stops at the ends", () => {
+    expect(playbackRateAfterWheelSteps(1, -1)).toBe(1.5);
+    expect(playbackRateAfterWheelSteps(1, 1)).toBe(0.5);
+    expect(playbackRateAfterWheelSteps(4, -2)).toBe(4);
+    expect(playbackRateAfterWheelSteps(0.25, 3)).toBe(0.25);
   });
 });

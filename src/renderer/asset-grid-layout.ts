@@ -52,7 +52,7 @@ export function leftoverWidthPx(
  * than its neighbours; at the bottom of the viewport that appears as a large
  * white slice (Serpent-1s3d). Stable shortest-column packing keeps the
  * columns visually balanced while the original asset array remains the
- * selection/browse order (Serpent-1jnp / SELECT-014).
+ * browse/keyboard-focus order. Pointer Shift ranges read published geometry.
  *
  * `estimateHeightPx` should include the whole card height (preview and
  * optional caption). The fixed inter-card gap is included when comparing
@@ -91,8 +91,8 @@ export function distributeMasonryItems<T>(
 }
 
 /**
- * Shift-range ids for masonry: identical to asset array order (Serpent-1jnp).
- * Kept as a helper so callers/tests stay explicit about the 良序 contract.
+ * Stable asset-array ids for masonry keyboard focus order. Shift-range
+ * selection reads the published card geometry instead (SELECT-MASONRY-RANGE-001).
  */
 export function masonryVisualReadingOrderIds<T>(
   items: readonly T[],
@@ -100,8 +100,8 @@ export function masonryVisualReadingOrderIds<T>(
   estimateHeightPx: (item: T, index: number) => number,
   getId: (item: T) => string,
 ): string[] {
-  // Distribution is round-robin; selection must follow the same array order
-  // as 平铺 — do not re-sort by estimated geometry.
+  // Tab/Shift+Tab keeps the established asset-array order. Do not use this
+  // estimated layout helper to resolve pointer Shift ranges.
   void columnCount;
   void estimateHeightPx;
   return items.map((item) => getId(item));

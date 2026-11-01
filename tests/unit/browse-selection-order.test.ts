@@ -18,6 +18,14 @@ describe('browse-selection-order', () => {
     ]);
   });
 
+  it('deduplicates repeated folder and asset ids without changing their first position', () => {
+    expect(
+      buildBrowseSelectionOrder(['f1', 'f1', 'f2'], ['a1', 'a2', 'a1']).map(
+        (item) => `${item.kind}:${item.id}`,
+      ),
+    ).toEqual(['folder:f1', 'folder:f2', 'asset:a1', 'asset:a2']);
+  });
+
   it('selects a cross-kind Shift range', () => {
     expect(
       resolveShiftBrowseRange({
@@ -50,5 +58,26 @@ describe('browse-selection-order', () => {
       assetIds: ['a1', 'a2', 'a3'],
       anchor: { kind: 'asset', id: 'a1' },
     });
+  });
+
+  it('keeps the same inclusive range when the click direction is reversed', () => {
+    const forward = resolveShiftBrowseRange({
+      items,
+      anchor: { kind: 'asset', id: 'a1' },
+      target: { kind: 'asset', id: 'a3' },
+      currentFolderIds: [],
+      currentAssetIds: [],
+      additive: false,
+    });
+    const reverse = resolveShiftBrowseRange({
+      items,
+      anchor: { kind: 'asset', id: 'a3' },
+      target: { kind: 'asset', id: 'a1' },
+      currentFolderIds: [],
+      currentAssetIds: [],
+      additive: false,
+    });
+
+    expect(reverse?.assetIds).toEqual(forward?.assetIds);
   });
 });

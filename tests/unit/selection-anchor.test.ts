@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildBrowseSelectionOrder, resolveShiftBrowseRange } from '../../src/renderer/browse-selection-order';
-import { computeMasonrySelectionAssetIds } from '../../src/renderer/masonry-selection-order';
+import { orderMasonryShiftAssetIds } from '../../src/renderer/masonry-shift-selection';
 import {
   assetBrowseAnchor,
   resolveShiftBrowseAnchor,
@@ -56,14 +56,21 @@ describe('resolveShiftBrowseAnchor', () => {
   });
 });
 
-describe('masonry shift simulation (Serpent-ph3a)', () => {
+describe('masonry Shift anchor resolution', () => {
   const assets = Array.from({ length: 9 }, (_, index) =>
     asset(`card-${index}`),
   );
 
   it('shift range works after import-style anchor (browse anchor missing)', () => {
-    const masonryOrder = computeMasonrySelectionAssetIds(assets, 600, 160, false);
-    expect(masonryOrder).toEqual(assets.map((item) => item.assetId));
+    const assetIds = assets.map((item) => item.assetId);
+    const geometry = assetIds.map((id, index) => ({
+      id,
+      x: index % 3,
+      y: Math.floor(index / 3),
+      width: 1,
+      height: 1,
+    }));
+    const masonryOrder = orderMasonryShiftAssetIds(assetIds, geometry);
 
     const items = buildBrowseSelectionOrder([], masonryOrder);
     const anchor = resolveShiftBrowseAnchor({
@@ -84,10 +91,20 @@ describe('masonry shift simulation (Serpent-ph3a)', () => {
     ).toEqual(assets.map((item) => item.assetId));
   });
 
-  it('shift range is row-major LTR-TTB, not column DOM order', () => {
-    const masonryOrder = computeMasonrySelectionAssetIds(assets, 600, 160, false);
+  it('uses geometry order rather than asset input order', () => {
+    const masonryOrder = orderMasonryShiftAssetIds(
+      ['card-0', 'card-1', 'card-2', 'card-3', 'card-4', 'card-5'],
+      [
+        { id: 'card-0', x: 0, y: 0, width: 100, height: 300 },
+        { id: 'card-1', x: 0, y: 314, width: 100, height: 100 },
+        { id: 'card-2', x: 114, y: 0, width: 100, height: 100 },
+        { id: 'card-3', x: 114, y: 114, width: 100, height: 100 },
+        { id: 'card-4', x: 228, y: 0, width: 100, height: 200 },
+        { id: 'card-5', x: 228, y: 214, width: 100, height: 100 },
+      ],
+    );
     const items = buildBrowseSelectionOrder([], masonryOrder);
-    const anchor = assetBrowseAnchor('card-1');
+    const anchor = assetBrowseAnchor('card-0');
 
     expect(
       resolveShiftBrowseRange({
@@ -98,6 +115,6 @@ describe('masonry shift simulation (Serpent-ph3a)', () => {
         currentAssetIds: [],
         additive: false,
       })?.assetIds,
-    ).toEqual(['card-1', 'card-2', 'card-3', 'card-4', 'card-5']);
+    ).toEqual(['card-0', 'card-2', 'card-4', 'card-3', 'card-5']);
   });
 });

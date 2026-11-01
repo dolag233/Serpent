@@ -26,6 +26,7 @@ import {
   removeLibraryRootWithRetry,
 } from '../../src/worker/windows-fs-retry';
 import { importNoConflict } from './import-no-conflict';
+import { removeLinkedDirectoryIndexFixture } from './remove-linked-directory-index';
 
 const temporaryRoots: string[] = [];
 
@@ -67,6 +68,7 @@ const TestDatabase = require('better-sqlite3') as new (
 ) => TestDatabaseConnection;
 
 function removeWriteCoordinationSchema(database: TestDatabaseConnection): void {
+  removeLinkedDirectoryIndexFixture(database);
   const triggers = database.prepare(
     `SELECT name FROM sqlite_master
       WHERE type = 'trigger'

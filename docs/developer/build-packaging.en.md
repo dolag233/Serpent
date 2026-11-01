@@ -125,7 +125,7 @@ npm run make:inno
 - Wizard with install-path selection (default `C:\Program Files\Serpent`), Start Menu / desktop shortcuts
 - Per-machine install (UAC elevation), automatic uninstaller `unins000.exe` and Apps & Features entry
 
-> History: Squirrel (no wizard / no path selection / uninstall leftovers) and WiX MSI (MSI language switching requires a custom bootstrapper, confirmed by the community) were both tried and rolled back — see the [Windows packaging development log](https://github.com/dolag233/Serpent/blob/dev/docs/internal/development/2026-08-08-windows-packaging-and-squirrel-installer-development-log.md).
+> History: Squirrel (no wizard / no path selection / uninstall leftovers) and WiX MSI (MSI language switching requires a custom bootstrapper, confirmed by the community) were both tried and rolled back — see the [Windows packaging development log](https://github.com/dolag233/Serpent/blob/dolag_dev/docs/internal/development/2026-08-08-windows-packaging-and-squirrel-installer-development-log.md).
 
 ## Media binary promotion (Serpent-Build)
 
@@ -175,6 +175,6 @@ npm run extension:build   # builds dist/extension
 3. **Signing upgrade**: SignPath application / Apple Developer account
 4. **CI/CD**: local CICD (2026-08-09 decision: main repo dropped GitHub Actions;
    each target platform runs `npm run release:local`; the browser-extension repo keeps
-   Actions for release publishing). See [local CICD](https://github.com/dolag233/Serpent/blob/dev/docs/internal/development/local-cicd.md).
+   Actions for release publishing). See [local CICD](https://github.com/dolag233/Serpent/blob/dolag_dev/docs/internal/development/local-cicd.md).
 
 See the research doc for details.

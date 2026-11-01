@@ -1,6 +1,9 @@
 import { useState } from "react";
 import type { TagSummary } from "../shared/asset-types";
-import { applyDimensionSelectionClick } from "./dimension-filter-selection";
+import {
+  applyTagFilterClick,
+  type TagFilterSelection,
+} from "./dimension-filter-selection";
 import {
   buildTagFilterDefaultSections,
   buildTagFilterSearchResults,
@@ -25,7 +28,9 @@ import { isImeKeyboardEvent } from "./ime-safe-dismiss";
 //
 // REQ-FILTER-025: clicking (or pressing Enter on) a suggestion replaces the
 // tag selection with just that tag by default; Shift+click/Enter
-// OR-accumulates it into the existing selection instead.
+// OR-accumulates it into the include set. Right-click does the same for the
+// exclude set. The two sets stay together, so one tag can be selected while
+// another is excluded.
 //
 // REQ-FILTER-020: the suggestion area renders inline (not as a floating
 // overlay gated behind focus), so it always shows something as soon as the
@@ -39,17 +44,27 @@ import { isImeKeyboardEvent } from "./ime-safe-dismiss";
 function TagOptionList({
   tags,
   className,
+  onContextMenuSelect,
   onSelect,
 }: {
   tags: readonly TagSummary[];
   className?: string;
+  onContextMenuSelect: (name: string, shiftKey: boolean) => void;
   onSelect: (name: string, shiftKey: boolean) => void;
 }) {
   return (
     <ul className={`filter-tag-options${className ? ` ${className}` : ""}`} role="listbox">
       {tags.map((tag) => (
         <li key={tag.tagId} role="option" aria-selected={false}>
-          <button onClick={(event) => onSelect(tag.name, event.shiftKey)} type="button">
+          <button
+            onClick={(event) => onSelect(tag.name, event.shiftKey)}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onContextMenuSelect(tag.name, event.shiftKey);
+            }}
+            type="button"
+          >
             <span>{tag.name}</span>
             <span className="filter-tag-count">{tag.assetCount}</span>
           </button>
@@ -61,16 +76,18 @@ function TagOptionList({
 
 export function FilterTagPicker({
   tags,
-  selectedNames,
+  includedNames,
+  excludedNames,
   recentNames = [],
   onChange,
   disabled,
 }: {
   tags: TagSummary[];
-  selectedNames: string[];
+  includedNames: string[];
+  excludedNames: string[];
   /** Tag names recently applied as a filter, most-recent-first. */
   recentNames?: readonly string[];
-  onChange: (names: string[]) => void;
+  onChange: (next: TagFilterSelection) => void;
   disabled?: boolean;
 }) {
   const t = useT();
@@ -80,16 +97,17 @@ export function FilterTagPicker({
 
   const trimmed = query.trim();
   const isSearching = trimmed.length > 0;
+  const occupiedNames = [...includedNames, ...excludedNames];
   const searchResults = isSearching
     ? sortTags(
-        buildTagFilterSearchResults(tags, selectedNames, trimmed),
+        buildTagFilterSearchResults(tags, occupiedNames, trimmed),
         sortKey,
         sortDirection,
       )
     : [];
   const { all, recent } = isSearching
     ? { all: [], recent: [] }
-    : buildTagFilterDefaultSections(tags, selectedNames, recentNames);
+    : buildTagFilterDefaultSections(tags, occupiedNames, recentNames);
   const sortedAll = sortTags(all, sortKey, sortDirection);
   const sortedRecent = sortTags(recent, sortKey, sortDirection);
   const firstCandidate = isSearching
@@ -105,24 +123,50 @@ export function FilterTagPicker({
     setSortDirection(nextKey === "count" ? "desc" : "asc");
   };
 
-  const add = (name: string, shiftKey: boolean) => {
-    onChange(applyDimensionSelectionClick(selectedNames, name, shiftKey));
+  const choose = (name: string, side: "include" | "exclude", shiftKey: boolean) => {
+    onChange(applyTagFilterClick(
+      { includes: includedNames, excludes: excludedNames },
+      name,
+      side,
+      shiftKey,
+    ));
     setQuery("");
   };
-  const remove = (name: string) =>
-    onChange(selectedNames.filter((candidate) => candidate !== name));
+  const remove = (name: string, side: "include" | "exclude") => {
+    onChange({
+      includes: side === "include"
+        ? includedNames.filter((candidate) => candidate !== name)
+        : includedNames,
+      excludes: side === "exclude"
+        ? excludedNames.filter((candidate) => candidate !== name)
+        : excludedNames,
+    });
+  };
 
   return (
     <div className="filter-tag-picker">
-      {selectedNames.length > 0 && (
+      {(includedNames.length > 0 || excludedNames.length > 0) && (
         <div className="filter-tag-chips">
-          {selectedNames.map((name) => (
-            <span className="filter-tag-chip is-selected" key={name}>
+          {includedNames.map((name) => (
+            <span className="filter-tag-chip is-selected" key={`include:${name}`}>
               <span className="filter-tag-chip-label">{name}</span>
               <button
                 aria-label={t("filter.removeTagFilter", { name })}
                 data-hover-tip={t("filter.removeTagFilter", { name })}
-                onClick={() => remove(name)}
+                onClick={() => remove(name, "include")}
+                type="button"
+              >
+                <Icon name="close" size={11} />
+              </button>
+            </span>
+          ))}
+          {excludedNames.map((name) => (
+            <span className="filter-tag-chip is-selected is-excluding" key={`exclude:${name}`}>
+              <span className="filter-tag-chip-label">{name}</span>
+              <button
+                aria-label={t("filter.removeTagFilter", { name })}
+                data-hover-tip={t("filter.removeTagFilter", { name })}
+                onClick={() => remove(name, "exclude")}
                 type="button"
               >
                 <Icon name="close" size={11} />
@@ -141,7 +185,7 @@ export function FilterTagPicker({
           if (isImeKeyboardEvent(event)) return;
           if (event.key === "Enter") {
             event.preventDefault();
-            if (firstCandidate) add(firstCandidate.name, event.shiftKey);
+            if (firstCandidate) choose(firstCandidate.name, "include", event.shiftKey);
           }
         }}
         placeholder={t("filter.searchAddTag")}
@@ -186,7 +230,11 @@ export function FilterTagPicker({
                     {t("filter.allTags")}
                   </div>
                   <div className="filter-tag-all-scroll">
-                    <TagOptionList tags={searchResults} onSelect={add} />
+                    <TagOptionList
+                    tags={searchResults}
+                    onContextMenuSelect={(name, shiftKey) => choose(name, "exclude", shiftKey)}
+                    onSelect={(name, shiftKey) => choose(name, "include", shiftKey)}
+                  />
                   </div>
                 </div>
               )
@@ -200,7 +248,8 @@ export function FilterTagPicker({
                       <TagOptionList
                         className="filter-tag-recent-options"
                         tags={sortedRecent}
-                        onSelect={add}
+                        onContextMenuSelect={(name, shiftKey) => choose(name, "exclude", shiftKey)}
+                        onSelect={(name, shiftKey) => choose(name, "include", shiftKey)}
                       />
                     </div>
                   )}
@@ -210,7 +259,11 @@ export function FilterTagPicker({
                         {t("filter.allTags")}
                       </div>
                       <div className="filter-tag-all-scroll">
-                        <TagOptionList tags={sortedAll} onSelect={add} />
+                        <TagOptionList
+                          tags={sortedAll}
+                          onContextMenuSelect={(name, shiftKey) => choose(name, "exclude", shiftKey)}
+                          onSelect={(name, shiftKey) => choose(name, "include", shiftKey)}
+                        />
                       </div>
                     </div>
                   )}

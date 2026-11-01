@@ -66,6 +66,12 @@ import {
   ViewerContextMenu,
   type ViewerContextMenuPosition,
 } from "./ViewerContextMenu";
+import { viewerShowsPlaybackMenu } from "./viewer-quick-settings-menu";
+import type { ViewerPlaybackHandle } from "./video-player-controls";
+import {
+  loadVideoSeekJumpPreferences,
+  saveVideoSeekJumpPreferences,
+} from "./video-seek-jump-preferences";
 import {
   applyViewerDisplayTransformAction,
   IDENTITY_VIEWER_DISPLAY_TRANSFORM,
@@ -121,6 +127,8 @@ interface AssetPreviewModalProps {
   navNear?: "prev" | "next" | null;
   /** Video transport appears only when the pointer is near the bottom. Default off. */
   videoTransportOnApproach?: boolean;
+  onToggleNavArrowsOnApproach?: () => void;
+  onToggleVideoTransportOnApproach?: () => void;
   canTrashAsset?: boolean;
   canDiskDeleteAsset?: boolean;
   canRemoveFromCollection?: boolean;
@@ -242,6 +250,9 @@ const AssetPreviewModalContent = forwardRef<
     fullscreenRootRef,
     navArrowsOnApproach = true,
     navNear = null,
+    videoTransportOnApproach = false,
+    onToggleNavArrowsOnApproach,
+    onToggleVideoTransportOnApproach,
     canTrashAsset = false,
     canDiskDeleteAsset = false,
     canRemoveFromCollection = false,
@@ -334,6 +345,7 @@ const AssetPreviewModalContent = forwardRef<
   const directApprovedRef = useRef(false);
   const directGateIdentityRef = useRef<string | null>(null);
   const textViewerRef = useRef<TextViewerControlsHandle>(null);
+  const playbackHandleRef = useRef<ViewerPlaybackHandle | null>(null);
   const {
     volume: viewerVolume,
     muted: viewerMuted,
@@ -976,6 +988,10 @@ const AssetPreviewModalContent = forwardRef<
     asset.mediaType === "video" ||
     illustratorPdfPreview;
   const fitShortcut = viewerTransformable ? "Numpad ." : undefined;
+  const playbackMenu = viewerShowsPlaybackMenu({
+    mediaType: ready ? resolution?.mediaType : null,
+    gif: showImage && isGifDisplayName(asset.displayName) && !preloadOnly,
+  });
   const shortcutPlatform = isMacPlatform(navigator.userAgent) ? "mac" : "windows";
   const copyShortcut = shortcutPlatform === "mac" ? "⌘C" : "Ctrl+C";
   const copyPathShortcut = formatRuntimeShortcut("asset.copy-file-path", shortcutPlatform);
@@ -1242,6 +1258,7 @@ const AssetPreviewModalContent = forwardRef<
           ) : ready && resolution?.mediaType === "video" && resolution.url ? (
             <VideoPlayerControls
               autoPlay={!preloadOnly}
+              playbackHandleRef={playbackHandleRef}
               key={`${asset.assetId}:${resolution.url}:${playbackRetryGeneration}`}
               displayTransform={displayTransform}
               fitRequestToken={fitRequestToken}
@@ -1309,6 +1326,7 @@ const AssetPreviewModalContent = forwardRef<
               onReady={() => setDirectApproved(true)}
               onUserActivity={() => onChromeActivity("pointerdownOrClick")}
               onVolumeChange={setViewerVolume}
+              playbackHandleRef={playbackHandleRef}
               src={resolution.url}
               volume={viewerVolume}
               waveformUrl={resolution.posterUrl}
@@ -1426,6 +1444,7 @@ const AssetPreviewModalContent = forwardRef<
             <GifViewerPlayer
               alt={asset.displayName}
               autoPlay
+              playbackHandleRef={playbackHandleRef}
               colorSpaceOptions={resolution?.colorSpace?.options}
               colorSpaceValue={
                 selectedColorSpace ?? resolution?.colorSpace?.id
@@ -1608,7 +1627,44 @@ const AssetPreviewModalContent = forwardRef<
         </div>
         {viewerContextMenu && viewerContextMenuAvailable ? (
           <ViewerContextMenu
+            chromeSettings={
+              onToggleNavArrowsOnApproach && onToggleVideoTransportOnApproach
+                ? {
+                    arrowsOnApproach: navArrowsOnApproach,
+                    onToggleArrows: onToggleNavArrowsOnApproach,
+                    onToggleToolbar: onToggleVideoTransportOnApproach,
+                    toolbarOnApproach: videoTransportOnApproach,
+                  }
+                : null
+            }
             copyShortcut={copyShortcut}
+            playback={
+              playbackMenu
+                ? {
+                    ...(playbackMenu.rate
+                      ? {
+                          fasterShortcut: formatRuntimeShortcut("viewer.video.rate-faster", shortcutPlatform),
+                          onFaster: () => playbackHandleRef.current?.stepRate("faster"),
+                          onSlower: () => playbackHandleRef.current?.stepRate("slower"),
+                          slowerShortcut: formatRuntimeShortcut("viewer.video.rate-slower", shortcutPlatform),
+                        }
+                      : {}),
+                    mode: loadVideoSeekJumpPreferences().mode,
+                    onSeek: (direction, unit) => playbackHandleRef.current?.seekBy(direction, unit),
+                    onToggleMode: () => {
+                      const current = loadVideoSeekJumpPreferences();
+                      saveVideoSeekJumpPreferences({
+                        ...current,
+                        mode: current.mode === "time" ? "percent" : "time",
+                      });
+                    },
+                    percent: loadVideoSeekJumpPreferences().percent,
+                    seconds: loadVideoSeekJumpPreferences().seconds,
+                    seekBackShortcut: formatRuntimeShortcut("viewer.video.seek-back", shortcutPlatform),
+                    seekForwardShortcut: formatRuntimeShortcut("viewer.video.seek-forward", shortcutPlatform),
+                  }
+                : null
+            }
             copyPathShortcut={copyPathShortcut}
             onCopyFilePath={
               asset.deletedAt || asset.availability !== "available"

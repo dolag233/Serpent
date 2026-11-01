@@ -36,8 +36,8 @@ Serpent 是一款开源（MIT 许可证）、跨平台的数字资产管理软�
 
 ### 3.1 分支机制与协作基线
 
-- **`main`**：公开的稳定发布基线。由维护者在发布新版本时合并。
-- **`dev`**：日常功能开发与缺陷修复的集成分支。**所有外部贡献的 Pull Request 目标分支必须为 `dev`**。
+- **`main`**：最新分支。产品代码、测试和公开文档以这里为准。**所有 Pull Request 都合并到 `main`**。
+- **`dolag_dev`**：维护者个人工作分支。外部贡献不合并到这里。
 
 ### 3.2 步骤指引
 
@@ -58,10 +58,10 @@ Serpent 是一款开源（MIT 许可证）、跨平台的数字资产管理软�
      npm ci --registry=https://registry.npmjs.org
      npm run rebuild:native
      ```
-4. **基于 `dev` 创建分支**：
+4. **基于 `main` 创建分支**：
    ```bash
-   git checkout dev
-   git pull origin dev
+   git checkout main
+   git pull origin main
    git checkout -b feature/your-feature-name
    # 或者针对 Bug 修复：
    git checkout -b fix/your-bugfix-name
@@ -86,8 +86,14 @@ Serpent 是一款开源（MIT 许可证）、跨平台的数字资产管理软�
    - 示例：`fix(viewer): 切换视频资产后连贯自动播放`。
 7. **发起 Pull Request**：
    - 将你的分支推送到个人 Fork 仓库：`git push origin feature/your-feature-name`；
-   - 在 GitHub 上发起 Pull Request，**确认 base 分支为 `dev`**；
+   - 在 GitHub 上发起 Pull Request，**确认 base 分支为 `main`**；
    - 在 PR 描述中清晰说明改动的动机、影响面及测试证据。
+
+### 3.3 Pull Request 规则
+
+- 当前 PR 只修改一个功能，而不是多个功能修改一次性提交。
+- 在发起 PR 之前已经提出相应的有效 Issue。描述里写上对应编号。
+- 仓库里的 Pull Request 模板会要求勾选这两条，以及本机验证、测试覆盖和提交内容不含本机路径或凭据。
 
 ---
 
@@ -110,6 +116,6 @@ Serpent 是一款开源（MIT 许可证）、跨平台的数字资产管理软�
 
 ## 5. 贡献致谢
 
-所有被合并进项目的贡献，维护者均会在根目录的 [`CONTRIBUTORS.md`](https://github.com/dolag233/Serpent/blob/dev/CONTRIBUTORS.md) 中记录致谢并说明贡献内容。
+所有被合并进项目的贡献，维护者均会在根目录的 [`CONTRIBUTORS.md`](https://github.com/dolag233/Serpent/blob/main/CONTRIBUTORS.md) 中记录致谢并说明贡献内容。
 
 感谢你为 Serpent 社区做出的每一份贡献！

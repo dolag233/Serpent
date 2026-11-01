@@ -24,4 +24,11 @@ describe("shouldForwardViewerVideoShortcut", () => {
     expect(shouldForwardViewerVideoShortcut("frame-next", 1000)).toBe(true);
     expect(shouldForwardViewerVideoShortcut("frame-prev", 1005)).toBe(true);
   });
+
+  it("keeps forwarding a held seek even inside the 50ms window", () => {
+    expect(shouldForwardViewerVideoShortcut("seek-back", 1000)).toBe(true);
+    expect(
+      shouldForwardViewerVideoShortcut("seek-back", 1020, { repeat: true }),
+    ).toBe(true);
+  });
 });

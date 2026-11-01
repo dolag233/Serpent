@@ -6,20 +6,19 @@
 ## 1. 版本号
 
 - `package.json` 与 `package-lock.json` 的 `version` 同步修改（两处：顶层 + `packages[""]`），提交消息 `chore(release): 版本号 x.y.z → x.y.z+1`。
-- 版本提交先落在 dev，随发布合并进 main（main 是发布基线，见 §2）。
+- 版本提交落在 `main`。`main` 是最新分支，见 §2。
 
 ## 2. 分支与代码基线
 
-- **main = 发布分支**：只含完整软件代码库（`src` / `tests` / `resources` / `scripts` / `assets`）与**公开文档**（`docs/user-guide`、`docs/developer`、`docs/manual`、`docs/assets`、`docs/product-brief.md`、`docs/glossary.md`、`README`、`website` 等）。`docs/developer/` 是面向贡献者的交付文档（本地搭建、架构、测试、如何参与），**必须随 main 发布**，不得与 `docs/internal/` 一并剥离。历史上 `0b55d64a` 把 `docs/developer` 从 main 删掉，属于分类错误，不得再做。
-- **只存在于 dev 的开发协作文件**：`.beads/`、`.github/`、`.codex/`、`.cursor/`、`AGENTS.md`、`CLAUDE.md`、`CONTEXT.md`、`docs/internal/`、`benchmark.md`。main 剥离动作见历史提交 `3d6474fc`（strip dev-only files）、`0a8984f`（移除 .beads/.github）与对应恢复提交 `b4ca9b98`。
-- **主分支切勿引入内部开发记录（强制）**：`.beads/`（工单数据）、`.github/`（CI 配置）、`docs/internal/`（切片日志/规格/QA）只属于 dev；dev → main 合并前必须从合并结果中剥离这些路径，禁止将工单/CI/内部记录带入 main。2026-08-19 用户要求 main 只保留产品代码与**公开**文档；2026-09-13 补充：公开文档包含 `docs/developer/`。
-- **打包在 dev 分支进行**：`verify-package.mjs` 要求 `docs/internal/skills/serpent-automation/automation-api.d.ts`（从 `src/automation/command-registry.ts` 生成、随 dev 提交），main 剥离该目录后无法通过发布门禁。发布前核对代码一致性：
-  ```bash
-  git diff main dev --stat -- src/ tests/ package.json package-lock.json   # 应为空
-  ```
+- **`main` 是最新分支，也是 Pull Request 的合并目标**。它包含完整软件代码（`src` / `tests` / `resources` / `scripts` / `assets`）与公开文档（`docs/user-guide`、`docs/developer`、`docs/manual`、`docs/assets`、`docs/product-brief.md`、`docs/glossary.md`、`README`、`website` 等）。`docs/developer/` 必须留在 `main`。历史上 `0b55d64a` 把 `docs/developer` 从 main 删掉，属于分类错误，不得再做。
+- **`dolag_dev` 是维护者个人工作分支**（原 `dev`）。内部文件留在这里：`.beads/`、`.github/` 里的 CI 配置、`.codex/`、`.cursor/`、`AGENTS.md`、`CLAUDE.md`、`CONTEXT.md`、`docs/internal/`、`benchmark.md`。`.github/ISSUE_TEMPLATE/` 与 `.github/PULL_REQUEST_TEMPLATE.md` 是公开模板，保留在 `main`。不要把 `dolag_dev` 整支合并进 `main`。需要内部文件和产品代码在同一棵树上时，把 `main` 合入 `dolag_dev`。
+- **`main` 不引入内部开发记录**：`.beads/`、CI 配置、`docs/internal/` 留在 `dolag_dev`。2026-08-19 起 `main` 只保留产品代码与公开文档；2026-09-13 起公开文档包含 `docs/developer/`。
+- **发布打包在 `main` 上执行**。`verify-package.mjs` 不读取 `docs/internal`。
 - 测试必须完整合入 main（`tests/` 是产品证据）。
 
 ## 3. 打包流程
+
+发布同样遵守 [`development-process.md`](development-process.md) 的最小化测试原则。只改界面时不跑 Worker、资源库可用性、搜索性能和全量 E2E。`release:verify` 只有用户明确要求整套门禁时才运行；进入发布流程本身不自动开跑。
 
 优先用发布管线（本机构建，禁止交叉平台打包——`forge.config.ts` 的 `nativeMediaPlatform` 强制 `darwin-arm64` / `win32-x64` / `linux-x64` / `linux-arm64` 本机；Linux AppImage 也必须在同架构的 Linux 本机或 `make:appimage:docker` 内构建）：
 
@@ -37,10 +36,10 @@ npm run release:checksums  # out/make/SHA256SUMS-<platform>.txt
 发布门禁（package/make 阶段自动执行，不可跳过）：
 - `scripts/media-binaries.mjs verify`（媒体二进制哈希，`--platform <target>`）
 - `scripts/build-extension.mjs`（浏览器扩展随包重建）
-- `scripts/verify-package.mjs`（ASAR 内容、`better_sqlite3.node`、ufbx WASM 哈希、自动化声明 `automation-api.d.ts` 版本与 Registry 一致）
+- `scripts/verify-package.mjs`（ASAR 内容、`better_sqlite3.node`、ufbx WASM 哈希）
 - `scripts/verify-ufbx-wasm.mjs`（prepackage/premake 内嵌校验，缺失即失败并给出构建指引）
 
-**打包完成后必须恢复 dev 环境**：
+**打包完成后必须恢复开发用的 native 模块**：
 
 ```bash
 npm run rebuild:native   # 重编 better-sqlite3 并用 Electron ABI 实测 FTS5
@@ -157,17 +156,16 @@ gh release upload v<ver> release-meta.json release-meta-<ver>.json
 
 ## 8. 发布检查清单（逐条对照，禁止凭印象执行）
 
-- [ ] 版本号已改（package.json + lock，提交 `chore(release): 版本号 …`），先落 dev
-- [ ] dev 与 main 的 `src/ tests/ package.json` 一致；main 无内部开发文件（`.beads`/`CLAUDE.md`/`AGENTS.md`/`docs/internal`/`.github` 等），但**保留** `docs/developer/`
-- [ ] main 合流用**单一提交**完成（merge --no-commit → git rm 开发文件 → 一次 commit），禁止「引入又删除」的来回提交
-- [ ] 全部发布门禁通过（media verify / verify-package / ufbx WASM）——**在 dev 分支打包**
+- [ ] 版本号已改（package.json + lock，提交 `chore(release): 版本号 …`），落在 `main`
+- [ ] `main` 无内部开发文件，但保留 `docs/developer/` 与 issue / PR 模板
+- [ ] 产品改动经 Pull Request 进入 `main`。没有把 `dolag_dev` 整支合并进 `main`
+- [ ] 全部发布门禁通过（media verify / verify-package / ufbx WASM）——在 `main` 上打包
 - [ ] 产物按 §4 规范名精确重命名（`win-x86-64` 不是 `win32-x64`；安装包是 `-setup.zip` 不是裸 exe）+ 每个资产同名 `.sha256`（只含哈希）
 - [ ] Changelog 中英双语（中文在前，标题 `**Serpent <版本>** — 一句话 · English one-liner`）、按重要度排序、次要改动概括；已写入 GitHub Release 正文。只保留用户能直接感知的变化；内部实现调整（查看管线、兼容层、同一次更新自己引入又修掉的行为）不出现在正文或 `release-meta.json`（§5）
-- [ ] Release 正文和 `release-meta.json` 不包含上一正式版之后、本版发布前又撤回或重写的中间改动（§5「未对用户发布过的中间改动不进 Release Note」）。对照基准是上一 GitHub 正式 Release，不是 dev 上曾经出现过的开关、内部称呼或未发布的过渡版本号
+- [ ] Release 正文和 `release-meta.json` 不包含上一正式版之后、本版发布前又撤回或重写的中间改动（§5「未对用户发布过的中间改动不进 Release Note」）。对照基准是上一 GitHub 正式 Release，不是工作分支上曾经出现过的开关、内部称呼或未发布的过渡版本号
 - [ ] **`release-meta.json` 与 `release-meta-<ver>.json` 已上传，且 `version` 等于 tag 版本**（§4 强制项）
 - [ ] Release 正文只面向用户：不写构建/打包/平台流程或内部约束（如「本页只含某平台产物」）
 - [ ] `gh release create v<ver> --title "Serpent <ver>" --notes-file <本地临时草稿.md> --target main`（gh 全路径调用；草稿不提交进仓库）
 - [ ] 资产上传齐全（macOS 4 / Windows 4 / Linux x64 2，arm64 媒体包已晋升时再加 2 + release-meta 2），release 页核对标题/notes/资产/`--target main`
 - [ ] tag `v<ver>` 指向 main 发布基线（`git tag v<ver> <main-commit>` + `git push origin v<ver>`）
-- [ ] `npm run rebuild:native` 已恢复 dev 环境（FTS5 probe OK）
-- [ ] 切回 dev 分支
+- [ ] `npm run rebuild:native` 已恢复开发用的 native 模块（FTS5 probe OK）

@@ -17,6 +17,8 @@ export type DiscoveryFilterSnapshot = {
   excludeFormatFilter: boolean;
   tagFilter: string;
   excludeTagFilter: boolean;
+  /** Separate exclude list. When set, include and exclude apply together. */
+  excludedTagFilter?: string;
   /** AI tags are included in the query by default; this switch has no chip. */
   includeAiTagFilter: boolean;
   ratingFilter: string;
@@ -95,11 +97,22 @@ export function buildActiveFilterChips(
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
-  if (tags.length > 0) {
+  const excludedTags = (snapshot.excludedTagFilter ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const legacyExclude = snapshot.excludeTagFilter && excludedTags.length === 0;
+  const includedDetail = legacyExclude ? [] : tags;
+  const excludedDetail = legacyExclude ? tags : excludedTags;
+  const tagDetail = [
+    ...includedDetail,
+    ...excludedDetail.map((name) => `−${name}`),
+  ].join(", ");
+  if (tagDetail.length > 0) {
     chips.push({
       id: "tag",
       labelKey: "filter.tagField",
-      detail: `${snapshot.excludeTagFilter ? "−" : ""}${tags.join(", ")}`,
+      detail: tagDetail,
     });
   }
 

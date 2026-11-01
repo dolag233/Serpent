@@ -12,6 +12,7 @@ export interface WorkspaceTabBrowseFilters {
   colorSimilarity: number;
   tagFilter: string;
   excludeTagFilter: boolean;
+  excludedTagFilter: string;
   includeAiTagFilter: boolean;
   tagFilterMatch: "any" | "all";
   ratingFilter: string;
@@ -109,6 +110,7 @@ export function createDefaultWorkspaceTabBrowseState(
       colorSimilarity: DEFAULT_COLOR_SIMILARITY,
       tagFilter: "",
       excludeTagFilter: false,
+      excludedTagFilter: "",
       includeAiTagFilter: true,
       tagFilterMatch: "any",
       ratingFilter: "",

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject, type SyntheticEvent } from "react";
 
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
@@ -12,6 +12,7 @@ import {
   matchVideoPlaybackRateKey,
   nextFrameSeekTime,
   applyMediaAutoplayIntent,
+  nextKeyboardSeekBase,
   nextPlaybackIntent,
   resolveFrameStepSeconds,
   shouldAutoStartMediaPlayback,
@@ -21,13 +22,17 @@ import {
   shouldHandleVideoSpaceKey,
   stepVideoPlaybackRate,
   videoSeekDeltaSeconds,
+  videoWheelSeekTime,
   isTypingKeyboardTarget,
   type VideoPlaybackRate,
+  type ViewerPlaybackHandle,
 } from "./video-player-controls";
 import { VideoPlaybackRateSelect } from "./VideoPlaybackRateSelect";
 import { ViewerVolumeControls } from "./ViewerVolumeControls";
 import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
 import { applyViewerVolumeToMedia } from "./viewer-volume-preferences";
+import { loadVideoSeekJumpPreferences } from "./video-seek-jump-preferences";
+import { bindVerticalWheelSteps } from "./viewer-wheel-intent";
 import type { SerpentShellApi } from "../shared/external-url";
 import type { ViewerVideoShortcutAction } from "../shared/viewer-video-shortcuts";
 import {
@@ -72,6 +77,7 @@ export interface VideoPlayerControlsProps {
   src: string;
   volume: number;
   displayTransform?: ViewerDisplayTransform;
+  playbackHandleRef?: RefObject<ViewerPlaybackHandle | null>;
 }
 
 const SCRUB_STEP_SECONDS = 5;
@@ -125,6 +131,7 @@ export function VideoPlayerControls({
   onRotateCounterClockwise,
   fitRequestToken,
   displayTransform = IDENTITY_VIEWER_DISPLAY_TRANSFORM,
+  playbackHandleRef,
 }: VideoPlayerControlsProps) {
   const t = useT();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -143,6 +150,9 @@ export function VideoPlayerControls({
     onSwipePrevious,
   });
   const scrubbingPointerId = useRef<number | null>(null);
+  const wheelTargetRef = useRef<number | null>(null);
+  const wheelHoldUntilRef = useRef(0);
+  const keyboardSeekRef = useRef<{ time: number; at: number } | null>(null);
   // Create the seek session in an effect (not render) so react-hooks/refs
   // doesn't flag the ref-reading closures. createMediaSeekSession stores
   // them and only calls them during seek events; all session access here is
@@ -243,6 +253,30 @@ export function VideoPlayerControls({
     setCurrentTime(video.currentTime);
   }, []);
 
+  const seekByConfiguredJump = useCallback((direction: 1 | -1) => {
+    const video = videoRef.current;
+    if (!video) return;
+    const mediaDuration = video.duration || durationRef.current;
+    const now = Date.now();
+    const base = nextKeyboardSeekBase(
+      video.currentTime,
+      keyboardSeekRef.current,
+      now,
+    );
+    const nextTime = clampScrubTime(
+      base + videoSeekDeltaSeconds(
+        { kind: "skip", direction },
+        undefined,
+        loadVideoSeekJumpPreferences(),
+        mediaDuration,
+      ),
+      mediaDuration,
+    );
+    keyboardSeekRef.current = { time: nextTime, at: now };
+    seekSessionRef.current?.commit(nextTime);
+    setCurrentTime(nextTime);
+  }, []);
+
   useEffect(() => {
     if (keyboardShortcutsDisabled) return;
     const onShortcutInput = (shortcutInput: ShortcutEventLike, event: KeyboardEvent | MouseEvent) => {
@@ -270,13 +304,7 @@ export function VideoPlayerControls({
           void stepFrame(action.direction);
           return;
         }
-        const mediaDuration = video.duration || durationRef.current;
-        const nextTime = clampScrubTime(
-          video.currentTime + videoSeekDeltaSeconds(action),
-          mediaDuration,
-        );
-        seekSessionRef.current?.commit(nextTime);
-        setCurrentTime(nextTime);
+        seekByConfiguredJump(action.direction);
         return;
       }
       const rateStep = matchVideoPlaybackRateKey(input);
@@ -292,12 +320,13 @@ export function VideoPlayerControls({
     applyPlaybackRate,
     fitToWindow,
     keyboardShortcutsDisabled,
+    seekByConfiguredJump,
     stepFrame,
     togglePlayback,
   ]);
 
-  // Main path: Windows Menu accelerators + IMM32 IME suspend while armed;
-  // before-input remains a fallback. Ctrl+Arrow still arrives via the listener above.
+  // Main path: Windows Menu accelerators + IMM32 IME suspend while armed.
+  // Ctrl+Arrow is included so Chromium does not consume it as history navigation.
   useEffect(() => {
     if (keyboardShortcutsDisabled) return;
     const shell = (window as RendererWindow).serpent?.shell;
@@ -338,6 +367,10 @@ export function VideoPlayerControls({
         void stepFrame(1);
         return;
       }
+      if (action === "seek-back" || action === "seek-forward") {
+        seekByConfiguredJump(action === "seek-back" ? -1 : 1);
+        return;
+      }
       applyPlaybackRate(
         stepVideoPlaybackRate(
           playbackRateRef.current,
@@ -359,6 +392,7 @@ export function VideoPlayerControls({
     fitToWindow,
     keyboardShortcutsDisabled,
     onUserActivity,
+    seekByConfiguredJump,
     stepFrame,
     togglePlayback,
   ]);
@@ -391,6 +425,73 @@ export function VideoPlayerControls({
     seekSessionRef.current?.cancel();
     return () => seekSessionRef.current?.cancel();
   }, [src]);
+
+  useEffect(() => {
+    const slot = playbackHandleRef;
+    if (!slot) return;
+    slot.current = {
+      stepRate(direction) {
+        applyPlaybackRate(stepVideoPlaybackRate(playbackRateRef.current, direction));
+      },
+      seekBy(direction, unit) {
+        const video = videoRef.current;
+        if (!video) return;
+        const duration = Number.isFinite(video.duration) && video.duration > 0
+          ? video.duration
+          : durationRef.current;
+        const stored = loadVideoSeekJumpPreferences();
+        const next = clampScrubTime(
+          video.currentTime + videoSeekDeltaSeconds(
+            { kind: "skip", direction },
+            undefined,
+            { ...stored, mode: unit },
+            duration,
+          ),
+          duration,
+        );
+        wheelTargetRef.current = null;
+        wheelHoldUntilRef.current = 0;
+        seekSessionRef.current?.commit(next);
+        setCurrentTime(next);
+      },
+    };
+    return () => {
+      slot.current = null;
+    };
+  }, [applyPlaybackRate, playbackHandleRef]);
+
+  useEffect(() => {
+    const track = trackRef.current;
+    if (!track) return;
+    let holdTimer = 0;
+    const unbind = bindVerticalWheelSteps(track, (steps) => {
+      onUserActivity?.();
+      const video = videoRef.current;
+      if (!video) return;
+      const duration = Number.isFinite(video.duration) && video.duration > 0
+        ? video.duration
+        : durationRef.current;
+      const base = wheelTargetRef.current ?? video.currentTime;
+      const next = videoWheelSeekTime(
+        base,
+        duration,
+        steps,
+        loadVideoSeekJumpPreferences(),
+      );
+      wheelTargetRef.current = next;
+      wheelHoldUntilRef.current = Date.now() + 400;
+      window.clearTimeout(holdTimer);
+      holdTimer = window.setTimeout(() => {
+        wheelTargetRef.current = null;
+      }, 400);
+      setCurrentTime(next);
+      seekSessionRef.current?.request(next);
+    });
+    return () => {
+      window.clearTimeout(holdTimer);
+      unbind();
+    };
+  }, [onUserActivity]);
 
   const seekToRatio = useCallback((ratio: number, mode: "coalesce" | "commit") => {
     const video = videoRef.current;
@@ -516,12 +617,13 @@ export function VideoPlayerControls({
           }}
           onSeeked={() => {
             seekSessionRef.current?.onSeeked();
-            if (scrubbingPointerId.current === null && videoRef.current) {
-              setCurrentTime(videoRef.current.currentTime);
-            }
+            if (scrubbingPointerId.current !== null) return;
+            if (Date.now() < wheelHoldUntilRef.current) return;
+            if (videoRef.current) setCurrentTime(videoRef.current.currentTime);
           }}
           onTimeUpdate={(event) => {
             if (scrubbingPointerId.current !== null) return;
+            if (Date.now() < wheelHoldUntilRef.current) return;
             setCurrentTime(event.currentTarget.currentTime);
           }}
           poster={posterUrl}
@@ -587,6 +689,9 @@ export function VideoPlayerControls({
           }}
           onPointerDown={(event) => {
             event.preventDefault();
+            wheelTargetRef.current = null;
+            wheelHoldUntilRef.current = 0;
+            keyboardSeekRef.current = null;
             // preventDefault suppresses the browser's implicit mousedown
             // focus, so focus explicitly to keep arrow-key seeking working.
             event.currentTarget.focus();

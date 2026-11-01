@@ -2617,6 +2617,17 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   color: var(--accent-soft-fg);
 }
 
+.filter-tag-chip.is-excluding {
+  border-color: var(--filter-exclude-border);
+  background: var(--filter-exclude-soft);
+  color: var(--filter-exclude-fg);
+}
+
+.filter-tag-chip.is-excluding button,
+.filter-tag-chip.is-excluding button:hover {
+  color: var(--filter-exclude-fg);
+}
+
 .filter-tag-chip button {
   display: inline-flex;
   padding: 2px;
@@ -10021,6 +10032,19 @@ select.ai-config-input.ai-config-languages {
 .settings-number-input,
 .settings-select {
   min-width: 112px;
+}
+
+.video-seek-jump-amount {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--secondary);
+  font-size: calc(12px * var(--ui-font-scale));
+}
+
+.video-seek-jump-amount .text-field {
+  width: 96px;
+  flex: 0 0 auto;
 }
 
 .settings-error-message,
@@ -18358,6 +18382,10 @@ html.serpent-window-square {
 .app-shell[data-shell-layout="islands"] .filter-tag-chip.is-selected {
   --tag-fill-solid: color-mix(in oklab, var(--accent) 11%, var(--tag-base));
 }
+.app-shell[data-shell-layout="islands"] .filter-tag-chip.is-excluding {
+  --tag-fill-solid: color-mix(in oklab, var(--filter-exclude) 16%, var(--tag-base));
+  color: var(--filter-exclude-fg);
+}
 :root[data-theme="dark"] .app-shell[data-shell-layout="islands"] .tag-chip,
 :root[data-theme="dark"] .app-shell[data-shell-layout="islands"] .filter-tag-chip {
   --tag-base: var(--island-surface-soft);
@@ -18372,6 +18400,10 @@ html.serpent-window-square {
 }
 :root[data-theme="dark"] .app-shell[data-shell-layout="islands"] .filter-tag-chip.is-selected {
   --tag-fill-solid: color-mix(in oklab, var(--accent) 16%, var(--tag-base));
+}
+:root[data-theme="dark"] .app-shell[data-shell-layout="islands"] .filter-tag-chip.is-excluding {
+  --tag-fill-solid: color-mix(in oklab, var(--filter-exclude) 22%, var(--tag-base));
+  color: var(--filter-exclude-fg);
 }
 .app-shell[data-shell-layout="islands"] .tag-chip::before,
 .app-shell[data-shell-layout="islands"] .filter-tag-chip::before {

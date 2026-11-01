@@ -1,0 +1,25 @@
+name: 需求 / Feature request
+description: 希望增加或改变的使用方式。故障请用「问题反馈」。 / A capability you want added or changed. Use Bug report for defects.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: feature
+    attributes:
+      label: 期望的功能 / Desired feature
+      placeholder: |
+        重启后希望还停在上次打开的文件夹，并保持列表滚动位置。
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 希望的结果 / Desired outcome
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充 / Additional context

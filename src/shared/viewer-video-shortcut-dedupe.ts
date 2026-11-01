@@ -7,8 +7,10 @@ let lastForwarded: { action: string; at: number } | null = null;
 export function shouldForwardViewerVideoShortcut(
   action: string,
   now = Date.now(),
+  options?: { repeat?: boolean },
 ): boolean {
   if (
+    options?.repeat !== true &&
     lastForwarded &&
     lastForwarded.action === action &&
     now - lastForwarded.at < 50

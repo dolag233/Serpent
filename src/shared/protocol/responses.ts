@@ -2879,6 +2879,13 @@ const libraryLifecycleOperationSchema = z.enum([
 ]);
 
 export const rendererLifecycleEventSchema = z.discriminatedUnion('type', [
+  z.strictObject({ type: z.literal('worker.recovering') }),
+  z.strictObject({
+    type: z.literal('worker.recovered'),
+    libraryIds: z.array(nonBlankString),
+    failedLibraryIds: z.array(nonBlankString),
+  }),
+  z.strictObject({ type: z.literal('worker.failed') }),
   z.strictObject({
     type: z.literal('library.opening'),
     operation: libraryLifecycleOperationSchema,

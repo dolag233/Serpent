@@ -23,6 +23,20 @@
 > 记为“人类验收通过”；该授权不自动延伸到后续会话或未实际操作的条目。
 > 2026-08-01：插件/脚本轨道改走自动化验收（见下表），与上条 Computer Use 人类等价授权无关。
 
+## 2026-11-01 Library Worker 退出恢复
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| WORKER-RECOVERY-001 / `Serpent-i78d` | Library Worker 意外退出后恢复已打开资源库与搜索 | 待人类验收 | ① 用当前源码构建打开测试资源库，浏览图片并搜索。② 在隔离测试实例中结束该实例的 Library Worker，观察恢复提示。③ 等待恢复，再搜索一个不存在和一个存在的文件名。④ 完全退出应用并重新启动，打开该库。 | 不重复堆叠“未分类内部错误”；恢复中旧卡片不能操作，恢复后能刷新当前视图并搜索，库仍可打开。连续退出后显示持续的服务停止提示，可重启应用恢复。 | [调查与开发记录](../development/2026-11-01-library-worker-exit-investigation.md)；`tests/e2e/worker-recovery.test.ts`；`tests/unit/worker-client.test.ts` | 隔离 Windows Electron 隐藏窗口双库进程终止/重拉/搜索与画布不可交互 1/1 通过；定向单测 142 项、追加失败库测试后 Worker Client 19 项、资源库可用性 236 项通过。可见窗口、真实用户库、完整重启、packaged 与 macOS 未执行；原生 `0xC0000409` 根因未定位。 |
+
+## 2026-10-31 大库导航与 OIIO 路径
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| MEDIA-OIIO-PATH-001 | 含 `#` 的目录中的图片正常预览，旧失败自动恢复 | 待人类验收 | ① 完全退出并打开当前源码构建。② 打开此前有预览失败的资源库，进入含 `#` 的目录，分别选择 TGA/TIFF/EXR 等图片。③ 查看卡片，再按空格查看原尺寸图片。④ 检查旧失败任务是否逐步恢复。 | 图片可见并能放大查看；旧失败有界恢复，新失败不会无限重试。 | [QA](2026-10-31-issue-75-qa.md)；真实 OIIO Worker 解码及隐藏 Electron TIFF/TGA 解码通过 | Windows 开发态自动化通过；用户真实库恢复、macOS、packaged 与 Computer Use 未执行。 |
+| PERF-LINKED-NAV-001 | 大链接目录后台扫描时，导航与图片查看继续响应 | 待人类验收 | ① 完全退出并打开当前源码构建。② 打开大型链接资源库，后台任务仍在处理时切换几个文件夹。③ 点击 JPG 并按空格查看，关闭后继续浏览。④ 对比热切换和第一次打开。 | 侧栏和卡片渐进出现；查看图片不必等整轮后台扫描结束；重复导航不重复扫描整棵目录。 | [QA](2026-10-31-issue-75-qa.md)；20,000 混合基线、150,000 元数据基准、调度与慢枚举回归 | 自动化通过；原会话 54 秒同环境对比和原 JPG 空白案例未验证。 |
+| LINKED-EMPTY-RESTART-001 | 空目录在重启、源离线和重新链接后保持正确 | 待人类验收 | ① 链接含空子目录的测试文件夹。② 完全退出应用，将源目录临时移到其他位置。③ 重启并打开资源库，查看已记录的空目录。④ 重新链接到包含不同空目录的新位置。 | 离线仍可看到上次完整目录结构；重新链接成功后看到新位置的空目录，无须等待下一次磁盘事件。 | `tests/e2e/linked-navigation-preview.test.ts`；`tests/worker/linked-directory-index.test.ts` | Windows 开发态完整进程重启与重新链接自动化通过；人工、跨平台 watcher、packaged 未执行。 |
+
 ## 2026-10-30 资源库菜单文字
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
@@ -44,6 +58,18 @@
 | VIEW-NAV-REPEAT-001 | 查看器箭头在切换资产后仍可连点 | 人类验收通过 | ① 打开查看器，把指针停在右侧箭头上。② 连续点击，不要移动指针。③ 左侧箭头同样操作。 | 每次点击都切到上一项或下一项。箭头不消失，指针不动也能连续点。 | `src/renderer/AssetPreviewModal.tsx` `navNear` | 2026-10-30 用户确认验收通过。 |
 | VIEW-NAV-END-001 | 查看器到头的一侧箭头变灰 | 待人类验收 | ① 打开当前列表的第一项，把指针移到左侧箭头。② 再移到右侧箭头并点一下。③ 切到最后一项，看右侧箭头，再点左侧。④ 若列表只有一项，两侧都看一次。 | 没有上一项时左箭头是灰色，点击不切换。没有下一项时右箭头是灰色，点击不切换。仍有下一项或上一项的那一侧保持原来的白/深色箭头。只有一项时两侧都是灰色。 | `src/renderer/styles.css` `.preview-nav:disabled` | 真实窗口未执行。 |
 | VIEW-IME-VIDEO-001 | 打开视频后不切换输入法 | 待人类验收 | ① 在 Windows 打开中文输入法并切到中文。② 打开一个视频。③ 看输入法是否仍是进入前的状态。④ 关闭视频后再看一次。 | 进入和离开视频都不改当前输入法。音频查看器仍按原有媒体键需要时处理。 | `src/main/viewer-video-shortcut-capture.ts` / `tests/unit/viewer-video-shortcut-capture.test.ts` | 补充 Main 调用契约回归：viewer-video-shortcut-capture.test.ts 5 tests passed；模拟 IMM32 边界，真实 Windows 输入法未执行。macOS 不走这套切换。 |
+| VIEW-WHEEL-CHROME-001 | 视频进度、音量和倍速上的滚轮不再缩放 | 待人类验收 | ① 打开一个视频，让底部控制条出现。② 指针放在进度条上滚轮。③ 指针放在音量条上滚轮。④ 指针放在倍速按钮上滚轮。⑤ 指针放在画面上滚轮。 | ② 向上滚前进，向下滚后退，画面不缩放。③ 向上滚音量升高，向下滚降低。④ 向上滚倍速加快，向下滚减慢，停在现有档位上。⑤ 画面仍按原来的方式缩放。 | `VideoPlayerControls.tsx` / `ViewerVolumeControls.tsx` / `VideoPlaybackRateSelect.tsx` | 真实窗口未执行。 |
+| VIEW-SEEK-JUMP-001 | 视频 Ctrl+左右按时间或进度跳转 | 人类验收通过 | ① 打开视频，按 Ctrl+右、Ctrl+左。② 按住 Ctrl+右不放，再按住 Ctrl+左不放。③ 设置 → 浏览，「左右跳转」保持「按时间」，把每次跳转改成 4 秒后再按 Ctrl+右。④ 改成「按进度」，每次跳转 10，再按 Ctrl+右。⑤ 把指针放在进度条上滚一次轮。 | ① 默认每次约 2 秒，右是往后，左是往前。② 按住期间按同一步长连续往后或往前，松开后停止。③ 每次约 4 秒。④ 每次约总时长的 10%。⑤ 进度条上的滚轮用同一次设置的步长。画面上的滚轮仍是缩放。 | `video-seek-jump-preferences.ts` / `AppSettingsPages.tsx` 浏览 | 2026-10-31 用户确认验收通过。 |
+| VIEW-QUICK-SETTINGS-001 | 查看器右键可直接改播放和查看设置 | 待人类验收 | ① 打开视频，在画面上右键，打开「播放」。② 看加速、减速、快进、快退是否带快捷键，文字里是否有当前秒数和百分比。③ 点「改为按进度」，再打开菜单看快捷键改标到百分比那两项。④ 点一次「快进」对应项，看画面是否跳了。⑤ 打开「其他」，切换「工具栏在靠近时出现」。⑥ 打开一张图片，右键确认也有「其他」，没有「播放」。 | ② 加速、减速标着当前快捷键。当前是按时间时，秒数那两项标着 Ctrl 加左右方向键。③ 改模式后，快捷键改标到百分比项，秒数项不再标键。④ 点选会按菜单上的秒数或百分比跳一次。⑤ 「其他」两项名称前是「开启」或「关闭」，表示当前状态；切换后与设置 → 浏览里同一项一致。⑥ 图片只有「其他」。 | `viewer-quick-settings-menu.tsx` / `ViewerContextMenu.tsx` | 真实窗口未执行。 |
+| VIEW-AUDIO-MENU-001 | 音频查看右键有「播放」 | 人类验收通过 | ① 打开一个音频，在波形上右键，打开「播放」。② 看菜单里的项。③ 点一次当前模式下的快进。④ 打开一个视频，右键打开「播放」。⑤ 打开一张普通图片，右键。 | ① 有「播放」。② 有按秒和按百分比的快进、快退，以及切换模式。没有加速、减速。当前模式的两项标着 Ctrl 加左右方向键。③ 播放位置按菜单上的步长前进。④ 视频的「播放」仍有加速、减速。⑤ 图片没有「播放」，仍有「其他」。 | `viewer-quick-settings-menu.tsx` / `AudioPlayerControls.tsx` | 2026-10-31 用户确认验收通过。 |
+
+## 2026-10-31 标签筛选右键排除
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| FILTER-TAG-EXCLUDE-001 | 标签筛选右键排除，Shift+右键多选排除 | 人类验收不通过 | ① 打开筛选里的「标签」。② 看面板底部提示。③ 在某个标签上单击右键。④ 按住 Shift，在另一个标签上单击右键。⑤ 按住 Shift，再右键其中一个已排除的标签。⑥ 只剩一个排除标签时，再右键它。 | ② 提示写着按住 Shift 可多选，以及右键表示排除。③ 只排除这一个标签，「排除」勾选打开，已选标签用排除色。④ 两个标签一起排除。⑤ 从排除里去掉这一个，另一个仍排除。⑥ 排除清空。 | `FilterTagPicker.tsx` / `dimension-filter-selection.ts` | 2026-10-31 用户不通过：左键应只表示选择，右键应只表示排除，并且可以同时选中标签 A、排除标签 B。整组切换排除的做法不符合这个语义。见 FILTER-TAG-EXCLUDE-002。 |
+| FILTER-TAG-EXCLUDE-002 | 标签筛选可同时选择和排除 | 待人类验收 | ① 打开筛选里的「标签」，看底部提示。② 左键点标签 A。③ 右键点标签 B。④ 按住 Shift 再右键点标签 C。⑤ 按住 Shift 再左键点标签 D。⑥ 按住 Shift 再右键点 B。 | ① 提示写着左键表示选择、右键表示排除，以及按住 Shift 可多选。② 只选中 A，强调色。③ 仍选中 A，同时排除 B，排除色。结果里有 A、没有 B。④ 选中 A，排除 B 和 C。⑤ 选中 A 和 D，排除仍是 B 和 C。⑥ 选中 A 和 D，排除只剩 C。 | `FilterTagPicker.tsx` / `dimension-filter-selection.ts` | 真实窗口未执行。 |
+| AUDIO-SEEK-001 | 音频进度条和波形可用滚轮与 Ctrl+左右跳转 | 人类验收通过 | ① 打开一个音频。② 指针放在底部进度条上滚轮。③ 指针放在波形上滚轮。④ 播放时按 Ctrl+右、Ctrl+左。⑤ 按住 Ctrl+右不放，再按住 Ctrl+左不放。⑥ 到设置 → 浏览把「左右跳转」改成 4 秒后再按 Ctrl+右。 | ②③ 向上滚前进，向下滚后退，步长与视频进度条相同。④ 默认每次约 2 秒，右是往后，左是往前。⑤ 按住期间按同一步长连续往后或往前，松开后停止。⑥ 每次约 4 秒。画面缩放不发生。 | `AudioPlayerControls.tsx` / `preload/bridge/shell.ts` | 2026-10-31 用户确认验收通过。 |
 
 ## 2026-10-25 链接文件夹文本编辑
 
@@ -1305,8 +1331,9 @@
 | SELECT-011 | 多选 Inspector 堆叠预览与「等 n 个文件」 | 人类验收通过 | 框选 ≥2 项带缩略图的资产，观察右侧 Inspector 顶部 | 预览框以主选图比例定尺寸，其余层同框裁剪（cover）并轻微错开；标题在堆叠下方完整可见，为「主文件名 等N个文件」 | [开发日志](../development/2026-07-18-ue-multi-edit-inspector-development-log.md) / [堆叠单测](../../../tests/unit/inspector-multi-edit.test.ts) | 2026-07-18 实现；同日修正堆叠盖住标题。2026-07-18 用户验收通过（基线 `5104747`）。 |
 | SELECT-012 | 反选 Ctrl+I / ⌘I | 人类验收通过 | ① 打开含多项资产的浏览范围；选中部分；Windows 按 Ctrl+I（macOS 按 ⌘I 或 Edit→反选）；勿在输入框内。② 再按一次使全选/清空。③ 确认输入框内按键不触发反选 | 当前可见资产集合取补集；隐藏项不参与；macOS 系统 Edit 菜单与快捷键一致 | `Serpent-te8p` | 2026-07-22 用户确认通过。 |
 | SELECT-013 | macOS 仅 ⌘ 切换多选（Ctrl 留给右键） | 人类验收通过 | ① macOS：⌘+单击资产/文件夹卡片切换选中。② Ctrl+单击同一卡片：应打开系统右键菜单，**不**切换选中。③ Windows：Ctrl+单击仍切换 | 平台分化与访达一致；框选加性修饰键同步（Mac ⌘，Win Ctrl） | `Serpent-b44c` / [selection-modifiers](../../../tests/unit/selection-modifiers.test.ts) | 2026-07-22 用户确认通过。 |
-| SELECT-014 | Shift 范围跨文件夹与资产 | 人类验收通过 | 在瀑布流中先点资产 A，再按住 Shift 点击资产 B | 恢复原有基于卡片几何范围的 Shift 选择语义；必须保持原有瀑布流视觉布局，不得用 CSS Grid 替换 | `Serpent-1jnp` / `Serpent-oaon` / 工单 `Serpent-6b3i` / [跟进开发记录](../development/2026-08-01-feedback-followup-development-log.md) | 2026-08-01 用户验收通过：瀑布流原有视觉布局已恢复，Shift 几何范围选择保持。 |
+| SELECT-014 | 瀑布流 Shift 旧几何范围规则（历史记录） | 已撤回 | — | 旧规则已由 SELECT-MASONRY-RANGE-001 的卡片上沿阅读顺序替代 | `Serpent-1jnp` / `Serpent-oaon` / 工单 `Serpent-6b3i` / [2026-08-01 跟进记录](../development/2026-08-01-feedback-followup-development-log.md) | 保留历史事实：2026-08-01 用户曾验收旧几何范围规则；2026-10-31 按新产品规则撤回，后续以 SELECT-MASONRY-RANGE-001 验收。 |
 | SELECT-015 | 瀑布流 Tab/Shift+Tab 行优先 | 人类验收通过 | 切到瀑布流；聚焦第一张资产卡片，连续按 Tab，再按 Shift+Tab 返回 | Tab/Shift+Tab 只移动焦点、不改变选中项；视觉布局必须与原实现一致 | [键盘顺序开发记录](../development/2026-08-01-masonry-tab-order-development-log.md) / [顺序单测](../../../tests/unit/asset-grid-layout.test.ts) / 工单 `Serpent-6b3i` / [跟进开发记录](../development/2026-08-01-feedback-followup-development-log.md) | 2026-08-01 用户验收通过：瀑布流原有视觉布局已恢复，Tab/Shift+Tab 行为保持。 |
+| SELECT-MASONRY-RANGE-001 / `Serpent-9d3244` | 瀑布流 Shift 按卡片上沿连续选择 | 人类验收通过 | 在同一文件夹放入多张高矮不同的图片并切到瀑布流；先单击一张起点卡片，再按住 Shift 点击下方终点；检查第二层/后续列中上沿早于终点的卡片；反向重做一次；再从文件夹卡片 Shift 到资产卡片，并用 Ctrl（macOS ⌘）+Shift 扩展选择 | 范围按卡片上沿 y 从上到下、同高按 x 从左到右；起点与终点均包含；上沿早于终点的卡片即使在终点右侧也选中；反向得到同一范围；文件夹排在资产前；Ctrl/⌘+Shift 保留范围外既有选择；平铺与空白拖动框选保持原行为 | [开发日志](../development/2026-10-31-masonry-shift-reading-order.md) / [选择 hook](../../../src/renderer/useAssetSelection.ts) / [几何与范围单测](../../../tests/unit/masonry-shift-selection.test.ts) / [hook 交互单测](../../../tests/unit/use-asset-selection-masonry.test.tsx) | 定向 Renderer 单测 6 files / 45 passed；2026-10-31 用户确认验收通过。Windows 与 packaged 未验证。 |
 | NAV-004 | 目录树高亮仅背景变化 | 待人类验收 | 在左侧目录树选择不同文件夹并悬停其他行 | 选中/悬停只有背景深浅变化，没有强调色竖条或描边 | [Wave 1 开发日志](../development/0015-0019-ux-feedback-wave1-development-log.md) | 2026-07-17 Wave 1 T1 实现；Computer Use 未执行，移交人工 QA。 |
 | NAV-005    | 目录树折叠 disclosure                              | 人类验收通过 | 打开含嵌套子文件夹的资源库；点父文件夹左侧箭头折叠；再展开；完全退出后重开                                                                                 | 折叠后子行隐藏，合集区更易进首屏；展开恢复；重启后折叠状态保持                                                                                                                                                                                | [开发日志](../development/2026-07-18-nav-tree-collapse-development-log.md) / [可见性单测](../../../tests/unit/unified-directory-nav.test.ts) / 工单 Serpent-5n5                                                 | 2026-07-18 用户验收通过（CU-D2：可折叠/展开文件夹树）。                                                                                                                                                                 |
 | NAV-006    | 侧栏长名称单行省略                                 | 人类验收通过 | 在左侧目录树准备深层/很长的文件夹名，以及较长的合集与智能合集名；缩窄左栏；悬停被截断的行                                                                  | 行高保持单行不因名称折行撑高；末尾省略号；悬停 title 显示全名（链接离线行另附状态说明）；左侧展开/折叠箭头仍可点                                                                                                                              | [开发日志](../development/2026-07-18-sidebar-name-ellipsis-development-log.md) / 工单 Serpent-l6v                                                                                                            | 2026-07-18 用户验收通过（CU-D9）。                                                                                                                                                                                      |

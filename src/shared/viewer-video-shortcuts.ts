@@ -22,6 +22,8 @@ const RENDERER_ROUTE_BY_ACTION_ID = {
   "viewer.video.frame-next": { action: "frame-next", label: "Next frame" },
   "viewer.video.rate-slower": { action: "rate-slower", label: "Slower playback" },
   "viewer.video.rate-faster": { action: "rate-faster", label: "Faster playback" },
+  "viewer.video.seek-back": { action: "seek-back", label: "Seek backward" },
+  "viewer.video.seek-forward": { action: "seek-forward", label: "Seek forward" },
 } as const;
 
 export type ViewerVideoShortcutAction =
@@ -103,6 +105,17 @@ function isKeyDown(input: ViewerVideoShortcutInput): boolean {
   // Electron uses "keyDown"; DOM uses "keydown".
   const type = input.type ?? "keyDown";
   return type === "keyDown" || type === "keydown";
+}
+
+export function viewerShortcutRepeatForward(
+  action: ViewerVideoShortcutAction | null,
+  repeatedAction: ViewerVideoShortcutAction | null,
+): { action: ViewerVideoShortcutAction; repeat: boolean } | null {
+  if (action) return { action, repeat: false };
+  if (repeatedAction === "seek-back" || repeatedAction === "seek-forward") {
+    return { action: repeatedAction, repeat: true };
+  }
+  return null;
 }
 
 /** Match a catalog action from Main `before-input-event`, including IME Process events. */

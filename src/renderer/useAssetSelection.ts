@@ -7,7 +7,6 @@ import {
 } from "./browse-selection-order";
 import { resolveFolderCardClickIntent } from "./folder-card-click";
 import {
-  collectPublishedAssetCenters,
   collectPublishedAssetHits,
 } from "./canvas-asset-layout";
 import {
@@ -21,7 +20,8 @@ import {
   viewportRectToContent,
 } from "./marquee-geometry";
 import { computeMarqueeSelection, isMarqueeAdditive } from "./marquee-selection";
-import { resolveMasonryCenterRange } from "./masonry-selection-range";
+import { resolveShiftBrowseAnchor } from "./selection-anchor";
+import { readMasonryShiftAssetOrder } from "./masonry-shift-selection";
 import {
   isToggleSelectionModifier,
   resolveSelectionPlatform,
@@ -50,11 +50,12 @@ export interface UseAssetSelectionParams {
   /** Visible folder-card ids (REQ-FOLDER-010), used for Shift+click range and marquee. */
   folderIds?: string[];
   /**
-   * Optional asset id order for Shift/marquee (Serpent-oz1t). When omitted,
-   * uses `assets` array order. Masonry passes visual reading order here.
+   * Optional stable asset id order for Shift ranges (Serpent-oz1t). When
+   * omitted, uses `assets` array order. Masonry uses it as a fallback and
+   * reads the current published geometry independently when available.
    */
   selectionAssetIds?: string[];
-  /** Use center-point rectangle semantics for Shift+click in masonry. */
+  /** Read current published top-edge geometry for masonry Shift+click. */
   masonryShiftSelection?: boolean;
   /**
    * Changes whenever card layout geometry can change without a canvas resize
@@ -132,13 +133,18 @@ export function useAssetSelection({
   const browseSelectionAnchorRef = useRef<BrowseSelectionAnchor | null>(null);
 
   /**
-   * Single write entry point for the asset selection anchor. Session restore,
-   * import reveal, select-all and invert-selection all update the anchor here
-   * so the browse-order anchor fallback (selection-anchor.ts) can be wired in
-   * one place instead of hunting direct `selectionAnchorRef.current` writes.
+   * Single write entry point for the asset and unified browse anchors. Session
+   * restore, import reveal, select-all and invert-selection use it so a
+   * programmatic anchor replaces any earlier pointer anchor.
    */
   const setAssetSelectionAnchor = useCallback((assetId: string | null) => {
     selectionAnchorRef.current = assetId;
+    if (assetId !== null) {
+      browseSelectionAnchorRef.current = { kind: "asset", id: assetId };
+      folderSelectionAnchorRef.current = null;
+    } else if (browseSelectionAnchorRef.current?.kind === "asset") {
+      browseSelectionAnchorRef.current = null;
+    }
   }, []);
 
   // ── Card click button guard ────────────────────────────────────────────
@@ -224,10 +230,22 @@ export function useAssetSelection({
     target: BrowseSelectionAnchor,
     event: React.MouseEvent,
   ): boolean {
-    if (!event.shiftKey || !browseSelectionAnchorRef.current) return false;
+    if (!event.shiftKey) return false;
+    const anchor = resolveShiftBrowseAnchor({
+      browseAnchor: browseSelectionAnchorRef.current,
+      assetAnchorId: selectionAnchorRef.current,
+      folderAnchorId: folderSelectionAnchorRef.current,
+    });
+    if (!anchor) return false;
+    const items = masonryShiftSelection
+      ? buildBrowseSelectionOrder(
+          folderIds,
+          readMasonryShiftAssetOrder(workspaceCanvasRef.current, assetIds),
+        )
+      : browseSelectionItems;
     const resolution = resolveShiftBrowseRange({
-      items: browseSelectionItems,
-      anchor: browseSelectionAnchorRef.current,
+      items,
+      anchor,
       target,
       currentFolderIds: selectedFolderIds,
       currentAssetIds: selectedAssetIds,
@@ -243,57 +261,11 @@ export function useAssetSelection({
         ? target.id
         : resolution.assetIds.at(-1),
     );
-    if (resolution.folderIds.length > 0) {
-      folderSelectionAnchorRef.current = resolution.folderIds[0]!;
-    }
-    if (resolution.assetIds.length > 0) {
-      selectionAnchorRef.current = resolution.assetIds[0]!;
-    }
+    selectionAnchorRef.current =
+      resolution.anchor.kind === "asset" ? resolution.anchor.id : null;
+    folderSelectionAnchorRef.current =
+      resolution.anchor.kind === "folder" ? resolution.anchor.id : null;
     browseSelectionAnchorRef.current = resolution.anchor;
-    return true;
-  }
-
-  function applyMasonryShiftSelection(
-    assetId: string,
-    event: React.MouseEvent,
-  ): boolean {
-    if (!masonryShiftSelection || !event.shiftKey) return false;
-    const anchorId = selectionAnchorRef.current;
-    const canvas = workspaceCanvasRef.current;
-    if (!anchorId || !canvas) return false;
-    const viewport = canvasViewportFromMetrics(
-      canvas.getBoundingClientRect(),
-      canvas,
-    );
-    const scroll = { left: canvas.scrollLeft, top: canvas.scrollTop };
-    const published = collectPublishedAssetCenters(canvas, viewport, scroll);
-    const items =
-      published ??
-      [
-        ...canvas.querySelectorAll<HTMLElement>(
-          ".asset-card[data-asset-id]",
-        ),
-      ].flatMap((card) => {
-        const id = card.dataset.assetId;
-        if (!id) return [];
-        const rect = card.getBoundingClientRect();
-        return [
-          { id, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
-        ];
-      });
-    const range = resolveMasonryCenterRange({
-      items,
-      browseOrder: assetIds,
-      anchorId,
-      targetId: assetId,
-    });
-    if (range.length === 0) return false;
-    const nextAssetIds = isToggleSelectionModifier(event, selectionPlatform)
-      ? [...new Set([...selectedAssetIds, ...range])]
-      : range;
-    setSelectedAssetIds(nextAssetIds);
-    setSelectedAssetId(assetId);
-    browseSelectionAnchorRef.current = { kind: "asset", id: anchorId };
     return true;
   }
 
@@ -363,9 +335,6 @@ export function useAssetSelection({
       return;
     }
 
-    if (applyMasonryShiftSelection(assetId, event)) {
-      return;
-    }
     if (applyShiftBrowseSelection({ kind: "asset", id: assetId }, event)) {
       return;
     }

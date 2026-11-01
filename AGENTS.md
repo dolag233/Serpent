@@ -19,7 +19,7 @@ Serpent 是一款开源（MIT）、跨平台（Windows + macOS）的数字资产
 ```bash
 git clone https://github.com/dolag233/Serpent.git <本地路径>
 cd <本地路径>
-git checkout codex/slice-002-asset-ingestion  # 当前活跃切片分支，按需切换
+git checkout main
 npm ci --registry=https://registry.npmjs.org
 ```
 
@@ -147,13 +147,14 @@ JSONL 流程操作，禁止重新启用旧数据库同步。
 
 发布全流程按 `docs/internal/development/release-process-and-distribution.md` 逐条执行，禁止凭印象：
 
-- 版本号用 `npm version --no-git-tag-version`，提交 `chore(release): 版本号 x.y.z → x.y.z+1`，先落 dev。
-- **打包只在 dev 分支**（main 剥离 docs/internal 后 verify-package 门禁过不了，设计如此）；main 仅作发布基线。
-- **main 合流纪律**：剥离内部开发文件（`AGENTS.md`/`CLAUDE.md`/`docs/internal/`/`.beads/`/`.github/`），**单一提交完成**（merge --no-commit → git rm → 一次 commit），禁止「引入又删除」来回提交。`docs/developer/` 是公开贡献者文档，**不得**剥离。`scripts/hooks/pre-commit` 守卫 main（`npm run install:git-hooks`）。
+- 版本号用 `npm version --no-git-tag-version`，提交 `chore(release): 版本号 x.y.z → x.y.z+1`，落在 `main`。
+- **`main` 永远是最新分支**，Pull Request 合并到 `main`。`dolag_dev` 是维护者个人工作分支，不是集成分支。
+- **内部开发文件不进入 `main`**：`AGENTS.md`、`CLAUDE.md`、`docs/internal/`、`.beads/`，以及 `.github/` 里的 CI 配置。`docs/developer/`、`.github/ISSUE_TEMPLATE/`、`.github/PULL_REQUEST_TEMPLATE.md` 保留。`scripts/hooks/pre-commit` 守卫 `main`。
+- **Pull Request**：当前 PR 只修改一个功能，而不是多个功能修改一次性提交。在发起 PR 之前已经提出相应的有效 Issue。
 - **产物命名**（自动更新按名字选资产，禁止裸 exe 或 Forge 默认名）：`Serpent-win-x86-64-<ver>-portable.zip` / `-setup.zip`（Inno `SerpentSetup.exe` 打包成 zip）/ macOS `Serpent-darwin-arm64-<ver>-portable.zip` / `-package.dmg`；每个资产配同名 `.sha256`。
 - **Changelog 中英双语**（中文在前），标题 `**Serpent <版本>** — 一句话 · English one-liner`，按重要度排序，次要改动概括；直接写入 GitHub Release 正文（可选 `release-meta.json` 短条目）。只写用户能直接感知的变化；查看管线、兼容层等内部实现调整不写进正文或 `release-meta.json`。不在仓库维护 `release-notes-<ver>.md`；`gh release create --notes-file` 使用本地临时草稿，不要提交进 git。
 - **Release**：`gh release create v<ver> --title "Serpent <ver>" --notes-file <本地临时草稿.md> --target main`（gh 在 `C:\Program Files\GitHub CLI\gh.exe`，PATH 可能缺失用全路径）；tag `v<ver>` 指向 main 发布基线。
-- 打包后必须 `npm run rebuild:native` 恢复 dev 环境（FTS5 probe OK），并切回 dev 分支。
+- 打包后必须 `npm run rebuild:native` 恢复开发用的 native 模块（FTS5 probe OK）。
 
 ## 关键约束
 
@@ -193,7 +194,12 @@ JSONL 流程操作，禁止重新启用旧数据库同步。
 10. **禁止补丁式修复**：修复问题或编写需求时必须发掘深层原因，把整个问题和相关所有代码都纳入考量，不得直接打一个补丁以绕过问题。遇到 bug 先定位根因→理解全部影响范围→设计完整方案→一次修到位。
 11. **编码后交叉审查（分级触发）**：仅在完成**大规模「功能性」编码**后（新功能、行为变更、跨模块重构；不含小修复、文案/文档、纯样式微调）才启动交叉审查，且只启动 **1 个审查 agent**（一次审查同时覆盖 Standards 与 Spec 双轴；可按变更性质侧重 regression/安全等视角）。**每次会话可用的 subagent 模型可能不同，启动审查或测试 subagent 前必须先询问用户本次使用哪个模型。**小规模变更由实现者对照门禁自查即可，不得为每次改动都开审查集群。
 12. **测试后台执行**：自动化测试（尤其会弹出窗口的 Electron E2E）一律以后台任务方式运行，不得抢占用户前台窗口、打断用户正在进行的操作；确需前台观察时先征得用户同意。多个 agent/轨道并行时，由主 agent 集中串行运行 E2E，避免同时弹出多个 Electron 实例。
-13. **测试范围分级（默认从简）**：简单编码、文案/文档、纯样式或非功能性 UI 打磨（圆角、阴影、颜色、间距、图标微调等）**默认不跑**全套 `test` / `test:e2e` / `verify:mainline`；实现者自查或最多跑直接相关的定向单测即可。只有完成**大型功能**、跨进程行为变更，或同一会话内**多次功能性开发累计**后，才考虑扩大测试范围；触及核心体验门禁所列路径时仍按该门禁执行，不得用本条规避。**任何资源库相关修改（打开/关闭/迁移/schema/损坏恢复/切库/library-service/library.db）必须完整跑完 `npm run test:library-availability`，不得用本条从简。**
+13. **最小化测试原则（2026-10-25）**：测试只覆盖本次改动所在的层。没有改到的层，不跑那一层的检查。
+    - 只改界面（样式、文案、渲染层控件，且没有改 Main、Preload、Worker 协议、数据库、资源库或媒体管线）时，最多跑直接相关的渲染层单测。禁止为此运行 Worker 测试、`test:library-availability`、搜索性能、全量 `npm test`、`test:e2e`、`verify:mainline`、`release:verify`。
+    - 只改后端时，不跑与这次改动无关的界面套件。
+    - 改到哪一层，只跑那一层里和这次改动直接相关的测试。
+    - `npm run test:library-availability` 只在本次修改了资源库打开、关闭、迁移、schema、损坏恢复、切库、`library-service` 或 `library.db` 时才完整运行。界面改动不得触发它。
+    - `verify:mainline` 和 `release:verify` 不是日常步骤。只有用户明确要求整套门禁时才运行。多人合流或进入发布流程本身不构成这个要求。
 
 ## 磁盘与工作区洁净纪律（2026-08-26 用户要求，强制生效）
 
@@ -232,12 +238,12 @@ JSONL 流程操作，禁止重新启用旧数据库同步。
 
 ## 核心体验回归门禁
 
-- **资源库可用性是项目最重要的底线。** 库必须能打开、可写、关闭后再打开仍能用；Desktop 不提供只读资源库；损坏自动备份/抢救。任何资源库相关修改（`library-service`、schema/`MIGRATIONS`、打开/关闭/切库、损坏恢复、library Worker 协议）都必须完整跑完 `npm run test:library-availability`，不能只跑局部单测或用「测试范围从简」跳过。该套件也是 `verify:mainline` 的先跑门禁。
-- 浏览、缩略图解码、客户端查看、导入、搜索和删除是核心用户旅程。任何跨 Renderer / Preload / Main / Worker、自定义协议、CSP、媒体二进制或打包资源的修改，都必须重跑真实 Electron E2E。
+- **资源库可用性是项目最重要的底线。** 库必须能打开、可写、关闭后再打开仍能用；Desktop 不提供只读资源库；损坏自动备份/抢救。本次修改了资源库打开、关闭、迁移、schema、损坏恢复、切库、`library-service` 或 library Worker 协议时，完整跑完 `npm run test:library-availability`。只改界面时不跑这套后端检查。
+- 浏览、缩略图解码、客户端查看、导入、搜索和删除的行为有变化时，重跑对应的真实 Electron E2E。只改界面外观、文案或控件样式时不跑这些旅程，也不跑 Worker 或资源库检查。
 - 预览测试必须证明媒体被解码：图片检查 `complete && naturalWidth > 0`；视频至少检查元数据和非零尺寸。只断言 DOM、状态或 job 成功不算通过。
 - 持久化必须以“完整退出应用后重新启动”为测试边界；仅关闭窗口或复用同一 Worker 不算重启恢复。
-- 多 agent 或共享工作树结束后，主 agent 必须在最终合并状态运行 `npm run verify:mainline`。详见 `docs/internal/development-process.md`。
-- **主分支切勿引入内部开发文件（强制）**：`.beads/`（工单数据）与 `.github/`（CI 配置）只属于 dev；dev → main 合并前必须从合并结果中剥离两者，禁止将工单/CI 文件带入 main。`docs/developer/` 随 main 发布（2026-08-19 / 2026-09-13，详见 `docs/internal/development/release-process-and-distribution.md` §2）。
+- 多人合流后只复跑本轮改到的层。不自动运行 `npm run verify:mainline`。详见 `docs/internal/development-process.md` 的最小化测试原则。
+- **`main` 不引入内部开发文件（强制）**：`.beads/` 与 `.github/` 里的 CI 配置留在 `dolag_dev`。产品改动经 Pull Request 进入 `main`，不要整支合并 `dolag_dev`。`docs/developer/` 随 `main` 发布（详见 `docs/internal/development/release-process-and-distribution.md` §2）。
 - 每个较大功能或核心 UX 更新在验收前，主 agent 必须使用 Computer Use 操作真实 Serpent 应用，并用截图检查关键 UI 状态；自动化全绿不能代替 UX/视觉验收。截图证据与发现写入对应开发日志或 QA 报告。
 - 当前环境没有 Computer Use 或等价真实桌面控制能力时，该项必须记为未执行并移交给具备能力的 agent 或人工 QA；不得自行跳过或标记为通过。
 

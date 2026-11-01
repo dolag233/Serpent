@@ -39,7 +39,7 @@ test('folder.browse-entries schedules cover thumbnails for child folder cards', 
     { folderId: 'folder-b', coverAssetIds: ['asset-3'] },
   ];
   const libraryService = {
-    listFolderBrowseEntries: vi.fn(() => entries),
+    listFolderBrowseEntriesAsync: vi.fn(() => entries),
   } as unknown as LibraryService;
   const folderHooks = hooks();
 

@@ -4,6 +4,7 @@ export const PUBLIC_ERROR_MESSAGES = {
   CANCELLED: 'The request was cancelled.',
   INTERNAL_ERROR:
     'Serpent hit an unexpected error and could not finish. Open Diagnostics in the app to inspect this session’s log, then retry. If you were opening a library, copy the whole library folder onto a local disk and open it from there.',
+  WORKER_UNAVAILABLE: 'The library service stopped. Restart Serpent to continue.',
   INVALID_LIBRARY_NAME: 'Choose a library name that is safe on macOS and Windows.',
   INVALID_LIBRARY_PATH:
     'The selected location is not a usable folder for a library. Choose an existing writable folder — not a file, and not a disconnected drive.',
@@ -346,6 +347,9 @@ export function isDecoderMissingInputError(error: unknown): boolean {
 export function classifyUnknownFailure(
   error: unknown,
 ): { code: PublicErrorCode; reason?: PublicErrorReason } | undefined {
+  if (walkErrorCodes(error).some(({ code }) => code === 'WORKER_UNAVAILABLE')) {
+    return { code: 'WORKER_UNAVAILABLE' };
+  }
   if (typeof error === 'object' && error !== null && 'name' in error && error.name === 'DriverUnsupportedError') {
     return { code: 'SYNC_CONNECTION_FAILED', reason: 'SYNC_METHOD_NOT_ALLOWED' };
   }

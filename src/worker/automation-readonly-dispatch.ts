@@ -9,12 +9,12 @@ import type { LibraryService } from './library-service';
  * the automation dispatch, it is always handled here and fails closed rather
  * than falling through to the desktop switch in worker/index.ts.
  */
-export function dispatchAutomationReadOnlyRequest(
+export async function dispatchAutomationReadOnlyRequest(
   libraryService: LibraryService,
   request: WorkerRequest,
-): WorkerResult | undefined {
+): Promise<WorkerResult | undefined> {
   if (request.dispatch !== 'automation-readonly') return undefined;
-  return executeAutomationReadOnlyWorkerCommand(libraryService, request.command) ?? {
+  return await executeAutomationReadOnlyWorkerCommand(libraryService, request.command) ?? {
     ok: false,
     error: createPublicError('INTERNAL_ERROR'),
   };

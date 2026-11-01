@@ -25,6 +25,105 @@ export function applyDimensionSelectionClick<T extends string>(
   return isSoleSelection ? [] : [value];
 }
 
+export type TagFilterSelection = {
+  includes: string[];
+  excludes: string[];
+};
+
+/**
+ * Left click edits only the include set. Right click edits only the exclude
+ * set. The other set stays, except a tag cannot be in both: moving it to one
+ * side removes it from the other. Shift toggles within the side being edited.
+ */
+export function applyTagFilterClick(
+  current: TagFilterSelection,
+  name: string,
+  side: "include" | "exclude",
+  shiftKey: boolean,
+): TagFilterSelection {
+  if (side === "include") {
+    const includes = applyDimensionSelectionClick(current.includes, name, shiftKey);
+    return {
+      includes,
+      excludes: includes.includes(name)
+        ? current.excludes.filter((existing) => existing !== name)
+        : [...current.excludes],
+    };
+  }
+  const excludes = applyDimensionSelectionClick(current.excludes, name, shiftKey);
+  return {
+    includes: excludes.includes(name)
+      ? current.includes.filter((existing) => existing !== name)
+      : [...current.includes],
+    excludes,
+  };
+}
+
+export function splitTagFilterNames(value: string): string[] {
+  return value
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Older sessions stored one tag list plus a single exclude flag. A saved
+ * exclude flag with no separate exclude list still means that whole list is
+ * excluded. New sessions keep includes and excludes at the same time.
+ */
+export function resolveTagFilterSets(input: {
+  tagFilter: string;
+  excludeTagFilter: boolean;
+  excludedTagFilter?: string;
+}): TagFilterSelection {
+  const includes = splitTagFilterNames(input.tagFilter);
+  const excludes = splitTagFilterNames(input.excludedTagFilter ?? "");
+  if (input.excludeTagFilter && excludes.length === 0) {
+    return { includes: [], excludes: includes };
+  }
+  const excluded = new Set(excludes.map((name) => name.toLocaleLowerCase()));
+  return {
+    includes: includes.filter((name) => !excluded.has(name.toLocaleLowerCase())),
+    excludes,
+  };
+}
+
+export function buildTagFilterClauses(
+  selection: TagFilterSelection,
+  match: "any" | "all",
+  includeAi: boolean,
+): Array<{ field: "tag"; values: string[]; exclude: boolean; includeAi: boolean }> {
+  const clauses: Array<{
+    field: "tag";
+    values: string[];
+    exclude: boolean;
+    includeAi: boolean;
+  }> = [];
+  if (selection.includes.length > 0) {
+    if (match === "all" && selection.includes.length > 1) {
+      for (const tag of selection.includes) {
+        clauses.push({ field: "tag", values: [tag], exclude: false, includeAi });
+      }
+    } else {
+      clauses.push({
+        field: "tag",
+        values: selection.includes,
+        exclude: false,
+        includeAi,
+      });
+    }
+  }
+  if (selection.excludes.length > 0) {
+    clauses.push({
+      field: "tag",
+      values: selection.excludes,
+      exclude: true,
+      includeAi,
+    });
+  }
+  return clauses;
+}
+
 /** Case-insensitive membership check for the free-text format token field. */
 export function formatTokensHas(formatFilter: string, ext: string): boolean {
   return formatFilter

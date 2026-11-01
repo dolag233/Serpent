@@ -69,6 +69,8 @@ import { LinkedRulesDialog } from "./LinkedRulesDialog";
 import { TagManagementWorkspace } from "./TagManagementWorkspace";
 import { useFolderDeleteActions } from "./use-folder-delete-actions";
 import { canDeleteAssetFromDiskWithShortcut } from "./browse-key-command";
+import { filteredFolderBrowseEntries } from "./filtered-folder-visibility";
+import { useFilteredFolderCounts } from "./use-filtered-folder-counts";
 import { useFolderOrganizeActions } from "./use-folder-organize-actions";
 import { useFolderCommandShortcuts } from "./use-folder-command-shortcuts";
 import { SearchHistoryPopover } from "./SearchHistoryPopover";
@@ -441,6 +443,7 @@ import { useInlineFolderEdit } from "./use-inline-folder-edit";
 import { useInlineSmartCollectionEdit } from "./use-inline-smart-collection-edit";
 import { usePanelResize } from "./use-panel-resize";
 import { useToastNotifications } from "./useToastNotifications";
+import { Notice } from "./ui/patterns";
 import {
   AI_CONNECTION_HEARTBEAT_MS,
   aiAnalyzeConnectionReady,
@@ -460,6 +463,7 @@ import {
   showAssetDragPreview,
 } from "./asset-drag-preview";
 import { DimensionFilterBar } from "./DimensionFilterBar";
+import { buildTagFilterClauses, resolveTagFilterSets } from "./dimension-filter-selection";
 import {
   buildActiveFilterChips,
   type ClearableFilterId,
@@ -771,6 +775,7 @@ type QueryFilterSnapshot = {
   excludeFormatFilter: boolean;
   tagFilter: string;
   excludeTagFilter: boolean;
+  excludedTagFilter: string;
   includeAiTagFilter: boolean;
   tagFilterMatch: "any" | "all";
   ratingFilter: string;
@@ -1060,6 +1065,8 @@ function AppInner() {
     dismissToast,
     handleToastTransitionEnd,
   } = useToastNotifications();
+  const workerRecoveryStateRef = useRef<'ready' | 'recovering' | 'failed'>('ready');
+  const [workerRecoveryState, setWorkerRecoveryState] = useState<'ready' | 'recovering' | 'failed'>('ready');
   const topVisibleToastId = renderedToastStack.find(
     (entry) => !entry.closing,
   )?.id;
@@ -1405,6 +1412,7 @@ function AppInner() {
   const [excludeColorFilter, setExcludeColorFilter] = useState(false);
   const [tagFilter, setTagFilter] = useState("");
   const [excludeTagFilter, setExcludeTagFilter] = useState(false);
+  const [excludedTagFilter, setExcludedTagFilter] = useState("");
   const [includeAiTagFilter, setIncludeAiTagFilter] = useState(true);
   // Serpent-eaxs: tag-management AND search ("包含 N 个标签") splits the tag
   // names into separate clauses (clauses are ANDed; values within one clause
@@ -1464,11 +1472,7 @@ function AppInner() {
   const [shuffleSeed, setShuffleSeed] = useState<number | null>(null);
   const [searchOffset, setSearchOffset] = useState(0);
   const [searchTotal, setSearchTotal] = useState<number | null>(null);
-  const [filteredFolderCounts, setFilteredFolderCounts] = useState<{
-    all: number;
-    root: number;
-    byFolderId: ReadonlyMap<string, number>;
-  } | null>(null);
+  const [filteredFolderCountRefreshToken, setFilteredFolderCountRefreshToken] = useState(0);
   const [searchSnippets, setSearchSnippets] = useState<Map<string, string>>(
     new Map(),
   );
@@ -3339,6 +3343,7 @@ function AppInner() {
         excludeFormatFilter,
         tagFilter,
         excludeTagFilter,
+        excludedTagFilter,
         tagFilterMatch,
         ratingFilter,
         excludeRatingFilter,
@@ -3368,6 +3373,7 @@ function AppInner() {
       excludeFormatFilter,
       excludeRatingFilter,
       excludeTagFilter,
+      excludedTagFilter,
       favoriteFilter,
       formatFilter,
       heightRange,
@@ -3439,6 +3445,7 @@ function AppInner() {
       excludeFormatFilter,
       tagFilter,
       excludeTagFilter,
+      excludedTagFilter,
       includeAiTagFilter,
       ratingFilter,
       excludeRatingFilter,
@@ -3474,6 +3481,7 @@ function AppInner() {
     excludeFormatFilter,
     tagFilter,
     excludeTagFilter,
+    excludedTagFilter,
     includeAiTagFilter,
     ratingFilter,
     excludeRatingFilter,
@@ -3492,12 +3500,20 @@ function AppInner() {
 
   // CANVAS-022: folders-only (recursive off, zero direct assets) must not
   // mount an empty asset grid — its min-height:100% left a large void.
+  const filteredFolderCounts = useFilteredFolderCounts({
+    api,
+    libraryId: library?.libraryId,
+    filters: currentQueryDefinition({ searchValue: null }).filters,
+    showIgnored: showIgnoredItems,
+    enabled: !showTrash,
+    refreshToken: filteredFolderCountRefreshToken,
+  });
   const canvasFolderBrowseEntries = useMemo(() => {
-    if (!showTrash) return folderBrowseEntries;
+    if (!showTrash) return filteredFolderBrowseEntries(folderBrowseEntries, filteredFolderCounts);
     return trashedFoldersToBrowseEntries(
       filterTrashedFoldersAtTombstone(trashedFolders, trashBrowseTombstoneId),
     );
-  }, [folderBrowseEntries, showTrash, trashBrowseTombstoneId, trashedFolders]);
+  }, [folderBrowseEntries, filteredFolderCounts, showTrash, trashBrowseTombstoneId, trashedFolders]);
   const trashBreadcrumbHops = useMemo(
     () =>
       showTrash
@@ -5038,6 +5054,28 @@ function AppInner() {
   useEffect(() => {
     if (!api) return;
     return api.onLifecycle((event) => {
+      if (event.type === 'worker.recovering') {
+        workerRecoveryStateRef.current = 'recovering';
+        setWorkerRecoveryState('recovering');
+        setWorkspaceNavigationPending(false);
+        return;
+      }
+      if (event.type === 'worker.failed') {
+        workerRecoveryStateRef.current = 'failed';
+        setWorkerRecoveryState('failed');
+        return;
+      }
+      if (event.type === 'worker.recovered') {
+        workerRecoveryStateRef.current = 'ready';
+        setWorkerRecoveryState('ready');
+        if (event.failedLibraryIds.length > 0) setError(t('toast.workerRestoreFailed'));
+        if (libraryRef.current && event.libraryIds.includes(libraryRef.current.libraryId)) {
+          void reloadCurrentContentRef.current().catch((caught) => {
+            setError(toMessage(caught, t('toast.readAssetsFailed'), locale));
+          });
+        }
+        return;
+      }
       if (event.type === "library.opening" && shouldDetachLibraryOnOpening(event)) {
         const applyLibraryOpening = async () => {
           // Clear the active library when the replacement starts. The old
@@ -5500,6 +5538,7 @@ function AppInner() {
     });
     const unsubscribeCleared = api.onAiCleared((event) => {
       if (event.libraryId !== library.libraryId) return;
+      setFilteredFolderCountRefreshToken((token) => token + 1);
       jobStatusCoordinatorRef.current?.noteActivity("ai");
       setAiContent(null);
       setNotice(t("toast.aiContentCleared", { count: event.affectedAssetCount }));
@@ -5554,6 +5593,7 @@ function AppInner() {
         colorSimilarity,
         tagFilter,
         excludeTagFilter,
+        excludedTagFilter,
         includeAiTagFilter,
         tagFilterMatch,
         ratingFilter,
@@ -5765,6 +5805,7 @@ function AppInner() {
     setExcludeColorFilter(state.filters.excludeColorFilter);
     setTagFilter(state.filters.tagFilter);
     setExcludeTagFilter(state.filters.excludeTagFilter);
+    setExcludedTagFilter(state.filters.excludedTagFilter ?? "");
     setIncludeAiTagFilter(state.filters.includeAiTagFilter);
     setTagFilterMatch(state.filters.tagFilterMatch);
     setRatingFilter(state.filters.ratingFilter);
@@ -6484,6 +6525,7 @@ function AppInner() {
     setExcludeColorFilter(false);
     setTagFilter("");
     setExcludeTagFilter(false);
+    setExcludedTagFilter("");
     setIncludeAiTagFilter(true);
     setRatingFilter("");
     setExcludeRatingFilter(false);
@@ -6508,6 +6550,7 @@ function AppInner() {
     setExcludeColorFilter(false);
     setTagFilter("");
     setExcludeTagFilter(false);
+    setExcludedTagFilter("");
     setIncludeAiTagFilter(true);
     setRatingFilter("");
     setExcludeRatingFilter(false);
@@ -6540,6 +6583,7 @@ function AppInner() {
       case "tag":
         setTagFilter("");
         setExcludeTagFilter(false);
+        setExcludedTagFilter("");
         setActiveTagId(null);
         return;
       case "rating":
@@ -6937,6 +6981,8 @@ function AppInner() {
       const definition = currentQueryDefinition({
         tagFilter: joined,
         tagFilterMatch: match,
+        excludeTagFilter: false,
+        excludedTagFilter: "",
       });
       const includeIgnored =
         request.browseState?.showIgnoredItems ?? showIgnoredItems;
@@ -6963,6 +7009,8 @@ function AppInner() {
       setAssetScope("all");
       clearAssetSelection();
       setTagFilter(joined);
+      setExcludeTagFilter(false);
+      setExcludedTagFilter("");
       setTagFilterMatch(match);
       setSearchOffset(0);
       api.setActiveContext(targetLibraryId);
@@ -7015,7 +7063,11 @@ function AppInner() {
     try {
       const definition = request.browseState
         ? queryDefinitionForWorkspaceBrowseState(request.browseState)
-        : currentQueryDefinition({ tagFilter: tag.name });
+        : currentQueryDefinition({
+          tagFilter: tag.name,
+          excludeTagFilter: false,
+          excludedTagFilter: "",
+        });
       const includeIgnored =
         request.browseState?.showIgnoredItems ?? showIgnoredItems;
       const result = await api.openBrowseSession({
@@ -7046,6 +7098,8 @@ function AppInner() {
       clearAssetSelection();
       if (!request.browseState) {
         setTagFilter(tag.name);
+        setExcludeTagFilter(false);
+        setExcludedTagFilter("");
         setTagFilterMatch("any");
       }
       setSearchOffset(0);
@@ -7816,6 +7870,8 @@ function AppInner() {
     overrides: {
       tagFilter?: string;
       tagFilterMatch?: "any" | "all";
+      excludeTagFilter?: boolean;
+      excludedTagFilter?: string;
       searchValue?: string | null;
       colorFilter?: string | null;
       excludeColorFilter?: boolean;
@@ -7830,6 +7886,7 @@ function AppInner() {
       excludeFormatFilter,
       tagFilter,
       excludeTagFilter,
+      excludedTagFilter,
       includeAiTagFilter,
       tagFilterMatch,
       ratingFilter,
@@ -7852,10 +7909,6 @@ function AppInner() {
       .map((value) => value.trim().replace(/^\./, ""))
       .filter(Boolean);
     const formatValues = compactFormatFilterTokens(formatTokens);
-    const selectedTags = (overrides.tagFilter ?? filtersState.tagFilter)
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
     const ratings = filtersState.ratingFilter
       .split(",")
       .map((value) => value.trim())
@@ -7880,30 +7933,15 @@ function AppInner() {
         values: formatValues,
         exclude: filtersState.excludeFormatFilter,
       });
-    if (selectedTags.length > 0) {
-      const matchAll =
-        (overrides.tagFilterMatch ?? filtersState.tagFilterMatch) === "all" &&
-        selectedTags.length > 1;
-      // AND semantics ("包含 N 个标签"): one clause per tag — separate
-      // clauses are ANDed, values within a clause are ORed.
-      if (matchAll) {
-        for (const tag of selectedTags) {
-          filters.push({
-            field: "tag",
-            values: [tag],
-            exclude: filtersState.excludeTagFilter,
-            includeAi: filtersState.includeAiTagFilter,
-          });
-        }
-      } else {
-        filters.push({
-          field: "tag",
-          values: selectedTags,
-          exclude: filtersState.excludeTagFilter,
-          includeAi: filtersState.includeAiTagFilter,
-        });
-      }
-    }
+    filters.push(...buildTagFilterClauses(
+      resolveTagFilterSets({
+        tagFilter: overrides.tagFilter ?? filtersState.tagFilter,
+        excludeTagFilter: overrides.excludeTagFilter ?? filtersState.excludeTagFilter,
+        excludedTagFilter: overrides.excludedTagFilter ?? filtersState.excludedTagFilter,
+      }),
+      overrides.tagFilterMatch ?? filtersState.tagFilterMatch,
+      filtersState.includeAiTagFilter,
+    ));
     if (ratings.length > 0)
       filters.push({
         field: "rating",
@@ -8010,6 +8048,7 @@ function AppInner() {
         excludeFormatFilter: state.filters.excludeFormatFilter,
         tagFilter: state.filters.tagFilter,
         excludeTagFilter: state.filters.excludeTagFilter,
+        excludedTagFilter: state.filters.excludedTagFilter ?? "",
         includeAiTagFilter: state.filters.includeAiTagFilter,
         tagFilterMatch: state.filters.tagFilterMatch,
         ratingFilter: state.filters.ratingFilter,
@@ -8096,6 +8135,7 @@ function AppInner() {
     blockingNavigation?: boolean;
   }) {
     if (!library) return;
+    if (!showTrash) setFilteredFolderCountRefreshToken((token) => token + 1);
     if (activeSmartCollectionId) {
       await chooseSmartCollection(activeSmartCollectionId);
       return;
@@ -8470,6 +8510,9 @@ function AppInner() {
 
   function syncBrowseFilterMembership(change: BrowseMembershipChange): void {
     if (change.kind === "dimensions" && showTrash) return;
+    if (!showTrash && (visibleBrowseFilters()?.length ?? 0) > 0) {
+      setFilteredFolderCountRefreshToken((token) => token + 1);
+    }
     const visible = showTrash ? trashedAssets : assets;
     const next = assetsRemainingAfterMembership(visible, visibleBrowseFilters(), change);
     if (next.assets.length < visible.length) {
@@ -9311,7 +9354,7 @@ function AppInner() {
       setNotice(null);
     } catch (caught) {
       if (request.isCurrent()) {
-        setError(toMessage(caught, t("toast.searchFailed"), locale));
+        if (workerRecoveryStateRef.current === 'ready') setError(toMessage(caught, t("toast.searchFailed"), locale));
         if (!silent) setWorkspaceNavigationPending(false);
       }
     } finally {
@@ -9395,7 +9438,7 @@ function AppInner() {
         onPreparing: () => setNotice(t("settings.semanticSearch.similarPreparing")),
       });
     } catch (caught) {
-      if (polling()) setError(toMessage(caught, t("toast.searchFailed"), locale));
+      if (polling() && workerRecoveryStateRef.current === 'ready') setError(toMessage(caught, t("toast.searchFailed"), locale));
       return;
     }
     if (!page || !polling()) return;
@@ -9445,7 +9488,7 @@ function AppInner() {
       }
     } catch (caught) {
       if (request.isCurrent()) {
-        setError(toMessage(caught, t("toast.searchFailed"), locale));
+        if (workerRecoveryStateRef.current === 'ready') setError(toMessage(caught, t("toast.searchFailed"), locale));
         if (!navigation) setWorkspaceNavigationPending(false);
       }
     } finally {
@@ -9458,6 +9501,7 @@ function AppInner() {
     opts?: { silent?: boolean },
   ) {
     event?.preventDefault();
+    if (workerRecoveryStateRef.current !== 'ready') return;
     if (event) {
       searchHistoryDismissedUntilInputRef.current = true;
       setSearchHistoryOpen(false);
@@ -9481,7 +9525,7 @@ function AppInner() {
           deferReveal: true,
         });
       } catch (caught) {
-        setError(toMessage(caught, t("toast.searchFailed"), locale));
+        if (workerRecoveryStateRef.current === 'ready') setError(toMessage(caught, t("toast.searchFailed"), locale));
       } finally {
         setUiState("ready");
       }
@@ -9507,7 +9551,7 @@ function AppInner() {
       }
     } catch (caught) {
       if (request.isCurrent()) {
-        setError(toMessage(caught, t("toast.searchFailed"), locale));
+        if (workerRecoveryStateRef.current === 'ready') setError(toMessage(caught, t("toast.searchFailed"), locale));
         setWorkspaceNavigationPending(false);
       }
     } finally {
@@ -9589,6 +9633,7 @@ function AppInner() {
     excludeFormatFilter,
     tagFilter,
     excludeTagFilter,
+    excludedTagFilter,
     includeAiTagFilter,
     ratingFilter,
     excludeRatingFilter,
@@ -9605,70 +9650,6 @@ function AppInner() {
     longEdgeRange,
     sortField,
     sortOrder,
-  ]);
-
-  useEffect(() => {
-    if (!api || !library || showTrash) {
-      setFilteredFolderCounts(null);
-      return;
-    }
-    const filters: FilterClause[] | undefined = currentQueryDefinition().filters;
-    if (!filters || filters.length === 0) {
-      setFilteredFolderCounts(null);
-      return;
-    }
-    let cancelled = false;
-    const libraryId = library.libraryId;
-    void api.listFilteredFolderCounts({
-      libraryId,
-      filters,
-      showIgnored: showIgnoredItems,
-    }).then((result) => {
-      if (cancelled) return;
-      if (!result.ok) {
-        setFilteredFolderCounts(null);
-        return;
-      }
-      setFilteredFolderCounts({
-        all: result.value.all,
-        root: result.value.root,
-        byFolderId: new Map(
-          result.value.folders.map((folder) => [folder.folderId, folder.count]),
-        ),
-      });
-    });
-    return () => {
-      cancelled = true;
-    };
-    // Folder badges follow the same discovery filters as the grid.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    api,
-    library,
-    showTrash,
-    showIgnoredItems,
-    colorFilter,
-    excludeColorFilter,
-    colorSimilarity,
-    formatFilter,
-    excludeFormatFilter,
-    tagFilter,
-    excludeTagFilter,
-    includeAiTagFilter,
-    tagFilterMatch,
-    ratingFilter,
-    excludeRatingFilter,
-    includeAiRatingFilter,
-    favoriteFilter,
-    sourceUrlFilter,
-    availabilityFilter,
-    excludeAvailabilityFilter,
-    widthRange,
-    heightRange,
-    aspectRatioRange,
-    aspectRatioRanges,
-    durationRange,
-    longEdgeRange,
   ]);
 
   async function chooseSmartCollection(
@@ -13931,10 +13912,12 @@ function AppInner() {
   const searchActive = searchValue.trim() !== "";
   const folderRowEntries =
     !showTrash && searchActive && searchFolderResults.length > 0
-      ? searchFolderRealKey === searchFolderMatchKey &&
-        searchFolderRealEntries.length > 0
-        ? searchFolderRealEntries
-        : searchFolderResults
+      ? filteredFolderBrowseEntries(
+          searchFolderRealKey === searchFolderMatchKey && searchFolderRealEntries.length > 0
+            ? searchFolderRealEntries
+            : searchFolderResults,
+          filteredFolderCounts,
+        )
       : canvasFolderBrowseEntries;
   const folderCardRowVisible =
     library !== null && folderRowEntries.length > 0;
@@ -14932,6 +14915,7 @@ function AppInner() {
             excludeFormatFilter={excludeFormatFilter}
             excludeRatingFilter={excludeRatingFilter}
             excludeTagFilter={excludeTagFilter}
+            excludedTagFilter={excludedTagFilter}
             includeAiRating={includeAiRatingFilter}
             includeAiTag={includeAiTagFilter}
             favoriteFilter={favoriteFilter}
@@ -14981,6 +14965,7 @@ function AppInner() {
               setTagFilterMatch("any");
               setTagFilter(value);
             }}
+            setExcludedTagFilter={setExcludedTagFilter}
             setWidthRange={setWidthRange}
             shuffleActive={shuffleSeed !== null}
             onShuffle={() => {
@@ -14996,6 +14981,7 @@ function AppInner() {
               excludeFormatFilter,
               tagFilter,
               excludeTagFilter,
+              excludedTagFilter,
               includeAiTagFilter,
               ratingFilter,
               excludeRatingFilter,
@@ -15087,16 +15073,23 @@ function AppInner() {
           />
         )}
         <div
-          aria-busy={workspaceNavigationPending}
+          aria-busy={workspaceNavigationPending || workerRecoveryState === 'recovering'}
           className={`workspace-canvas-host${previewAsset || previewRestoring ? " is-viewing" : ""}${previewRestoring ? " is-restoring" : ""}${workspaceNavigationPending ? " is-navigating" : ""}`}
         >
-          {renderedToastStack.length > 0
+          {renderedToastStack.length > 0 || workerRecoveryState !== 'ready'
             ? createPortal(
                 <div
                   aria-atomic="false"
                   aria-live="polite"
                   className="workspace-notice-stack workspace-notice"
                 >
+                  {workerRecoveryState !== 'ready' ? (
+                    <Notice
+                      className="workspace-notice-item"
+                      message={t(workerRecoveryState === 'recovering' ? 'toast.workerRecovering' : 'toast.workerFailed')}
+                      tone={workerRecoveryState === 'recovering' ? 'warning' : 'error'}
+                    />
+                  ) : null}
                   {renderedToastStack.map((message) => {
                     const isUndoTarget =
                       !message.closing &&
@@ -15142,6 +15135,7 @@ function AppInner() {
           ) : null}
         <div
           className={`workspace-canvas${previewAsset ? " is-viewing" : previewRestoring ? " is-restoring" : ""}${externalDropActive ? " is-external-drop" : ""}`}
+          inert={workerRecoveryState !== 'ready'}
           onDragEnter={handleExternalDragEnter}
           onDragLeave={handleExternalDragLeave}
           onDragOver={handleExternalDragOver}
@@ -16016,6 +16010,18 @@ function AppInner() {
             }
             libraryId={library.libraryId}
             navArrowsOnApproach={viewerChromePrefs.navArrowsOnApproach}
+            onToggleNavArrowsOnApproach={() => {
+              setViewerChromePrefs((current) => ({
+                ...current,
+                navArrowsOnApproach: !current.navArrowsOnApproach,
+              }));
+            }}
+            onToggleVideoTransportOnApproach={() => {
+              setViewerChromePrefs((current) => ({
+                ...current,
+                videoTransportOnApproach: !current.videoTransportOnApproach,
+              }));
+            }}
             onDiskDeleteAsset={() => {
               requestSelectionDiskDelete([previewAsset.assetId], []);
             }}

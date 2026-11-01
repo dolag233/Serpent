@@ -123,7 +123,7 @@ npm run make:inno
 - 安装向导：安装路径选择（默认 `C:\Program Files\Serpent`）、开始菜单/桌面快捷方式
 - per-machine 安装（UAC 提权）、自动生成卸载器 `unins000.exe` 与应用和功能条目
 
-> 历史：早期尝试过 Squirrel（无向导/无路径选择/卸载残留）与 WiX MSI（MSI 语言切换需自定义 bootstrapper，社区确认不可内置）均已回退，见 [Windows 打包开发日志](https://github.com/dolag233/Serpent/blob/dev/docs/internal/development/2026-08-08-windows-packaging-and-squirrel-installer-development-log.md)。
+> 历史：早期尝试过 Squirrel（无向导/无路径选择/卸载残留）与 WiX MSI（MSI 语言切换需自定义 bootstrapper，社区确认不可内置）均已回退，见 [Windows 打包开发日志](https://github.com/dolag233/Serpent/blob/dolag_dev/docs/internal/development/2026-08-08-windows-packaging-and-squirrel-installer-development-log.md)。
 
 ## 媒体二进制晋升（Serpent-Build）
 
@@ -172,6 +172,6 @@ npm run extension:build   # 构建 dist/extension
 3. **签名升级**：SignPath 申请 / Apple Developer 账号
 4. **CI/CD**：本地 CICD（2026-08-09 决策：主仓库放弃 GitHub Actions，
    各目标平台各自跑 `npm run release:local`；浏览器扩展仓库保留 Actions 发布）。
-   详见 [本地 CICD](https://github.com/dolag233/Serpent/blob/dev/docs/internal/development/local-cicd.md)。
+   详见 [本地 CICD](https://github.com/dolag233/Serpent/blob/dolag_dev/docs/internal/development/local-cicd.md)。
 
 详见研究文档。
