@@ -443,6 +443,7 @@ import { useInlineFolderEdit } from "./use-inline-folder-edit";
 import { useInlineSmartCollectionEdit } from "./use-inline-smart-collection-edit";
 import { usePanelResize } from "./use-panel-resize";
 import { useToastNotifications } from "./useToastNotifications";
+import { Notice } from "./ui/patterns";
 import {
   AI_CONNECTION_HEARTBEAT_MS,
   aiAnalyzeConnectionReady,
@@ -1064,6 +1065,8 @@ function AppInner() {
     dismissToast,
     handleToastTransitionEnd,
   } = useToastNotifications();
+  const workerRecoveryStateRef = useRef<'ready' | 'recovering' | 'failed'>('ready');
+  const [workerRecoveryState, setWorkerRecoveryState] = useState<'ready' | 'recovering' | 'failed'>('ready');
   const topVisibleToastId = renderedToastStack.find(
     (entry) => !entry.closing,
   )?.id;
@@ -5051,6 +5054,28 @@ function AppInner() {
   useEffect(() => {
     if (!api) return;
     return api.onLifecycle((event) => {
+      if (event.type === 'worker.recovering') {
+        workerRecoveryStateRef.current = 'recovering';
+        setWorkerRecoveryState('recovering');
+        setWorkspaceNavigationPending(false);
+        return;
+      }
+      if (event.type === 'worker.failed') {
+        workerRecoveryStateRef.current = 'failed';
+        setWorkerRecoveryState('failed');
+        return;
+      }
+      if (event.type === 'worker.recovered') {
+        workerRecoveryStateRef.current = 'ready';
+        setWorkerRecoveryState('ready');
+        if (event.failedLibraryIds.length > 0) setError(t('toast.workerRestoreFailed'));
+        if (libraryRef.current && event.libraryIds.includes(libraryRef.current.libraryId)) {
+          void reloadCurrentContentRef.current().catch((caught) => {
+            setError(toMessage(caught, t('toast.readAssetsFailed'), locale));
+          });
+        }
+        return;
+      }
       if (event.type === "library.opening" && shouldDetachLibraryOnOpening(event)) {
         const applyLibraryOpening = async () => {
           // Clear the active library when the replacement starts. The old
@@ -9329,7 +9354,7 @@ function AppInner() {
       setNotice(null);
     } catch (caught) {
       if (request.isCurrent()) {
-        setError(toMessage(caught, t("toast.searchFailed"), locale));
+        if (workerRecoveryStateRef.current === 'ready') setError(toMessage(caught, t("toast.searchFailed"), locale));
         if (!silent) setWorkspaceNavigationPending(false);
       }
     } finally {
@@ -9413,7 +9438,7 @@ function AppInner() {
         onPreparing: () => setNotice(t("settings.semanticSearch.similarPreparing")),
       });
     } catch (caught) {
-      if (polling()) setError(toMessage(caught, t("toast.searchFailed"), locale));
+      if (polling() && workerRecoveryStateRef.current === 'ready') setError(toMessage(caught, t("toast.searchFailed"), locale));
       return;
     }
     if (!page || !polling()) return;
@@ -9463,7 +9488,7 @@ function AppInner() {
       }
     } catch (caught) {
       if (request.isCurrent()) {
-        setError(toMessage(caught, t("toast.searchFailed"), locale));
+        if (workerRecoveryStateRef.current === 'ready') setError(toMessage(caught, t("toast.searchFailed"), locale));
         if (!navigation) setWorkspaceNavigationPending(false);
       }
     } finally {
@@ -9476,6 +9501,7 @@ function AppInner() {
     opts?: { silent?: boolean },
   ) {
     event?.preventDefault();
+    if (workerRecoveryStateRef.current !== 'ready') return;
     if (event) {
       searchHistoryDismissedUntilInputRef.current = true;
       setSearchHistoryOpen(false);
@@ -9499,7 +9525,7 @@ function AppInner() {
           deferReveal: true,
         });
       } catch (caught) {
-        setError(toMessage(caught, t("toast.searchFailed"), locale));
+        if (workerRecoveryStateRef.current === 'ready') setError(toMessage(caught, t("toast.searchFailed"), locale));
       } finally {
         setUiState("ready");
       }
@@ -9525,7 +9551,7 @@ function AppInner() {
       }
     } catch (caught) {
       if (request.isCurrent()) {
-        setError(toMessage(caught, t("toast.searchFailed"), locale));
+        if (workerRecoveryStateRef.current === 'ready') setError(toMessage(caught, t("toast.searchFailed"), locale));
         setWorkspaceNavigationPending(false);
       }
     } finally {
@@ -15047,16 +15073,23 @@ function AppInner() {
           />
         )}
         <div
-          aria-busy={workspaceNavigationPending}
+          aria-busy={workspaceNavigationPending || workerRecoveryState === 'recovering'}
           className={`workspace-canvas-host${previewAsset || previewRestoring ? " is-viewing" : ""}${previewRestoring ? " is-restoring" : ""}${workspaceNavigationPending ? " is-navigating" : ""}`}
         >
-          {renderedToastStack.length > 0
+          {renderedToastStack.length > 0 || workerRecoveryState !== 'ready'
             ? createPortal(
                 <div
                   aria-atomic="false"
                   aria-live="polite"
                   className="workspace-notice-stack workspace-notice"
                 >
+                  {workerRecoveryState !== 'ready' ? (
+                    <Notice
+                      className="workspace-notice-item"
+                      message={t(workerRecoveryState === 'recovering' ? 'toast.workerRecovering' : 'toast.workerFailed')}
+                      tone={workerRecoveryState === 'recovering' ? 'warning' : 'error'}
+                    />
+                  ) : null}
                   {renderedToastStack.map((message) => {
                     const isUndoTarget =
                       !message.closing &&
@@ -15102,6 +15135,7 @@ function AppInner() {
           ) : null}
         <div
           className={`workspace-canvas${previewAsset ? " is-viewing" : previewRestoring ? " is-restoring" : ""}${externalDropActive ? " is-external-drop" : ""}`}
+          inert={workerRecoveryState !== 'ready'}
           onDragEnter={handleExternalDragEnter}
           onDragLeave={handleExternalDragLeave}
           onDragOver={handleExternalDragOver}

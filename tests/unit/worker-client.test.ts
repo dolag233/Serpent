@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AppLogger } from '../../src/main/app-logger';
+import { createPublicError } from '../../src/shared/protocol/errors';
 
 class FakeUtilityProcess extends EventEmitter {
   readonly pid = 1234;
@@ -17,9 +18,177 @@ vi.mock('electron', () => ({
 
 import {
   LibraryWorkerClient,
+  WorkerUnavailableError,
   WorkerRequestTimeoutError,
   requestTimeoutForCommand,
 } from '../../src/main/worker-client';
+
+it('restores the known library before admitting requests after a Worker exit', async () => {
+  const previousFfmpegPath = process.env.SERPENT_FFMPEG_PATH;
+  const previousOiioPath = process.env.SERPENT_OIIO_PATH;
+  process.env.SERPENT_FFMPEG_PATH = process.execPath;
+  process.env.SERPENT_OIIO_PATH = process.execPath;
+  utilityProcessFork.mockReset();
+  const first = new FakeUtilityProcess();
+  const second = new FakeUtilityProcess();
+  utilityProcessFork.mockReturnValueOnce(first).mockReturnValueOnce(second);
+  const logger = { worker: vi.fn(), error: vi.fn(), info: vi.fn() } as unknown as AppLogger;
+  const client = new LibraryWorkerClient('fixture-worker.js', logger);
+  try {
+    const starting = client.start();
+    first.emit('message', { type: 'worker.ready' });
+    await starting;
+    const listed = client.request({ type: 'library.list' });
+    const listRequest = first.postMessage.mock.calls.at(-1)?.[0] as { requestId: string };
+    first.emit('message', {
+      requestId: listRequest.requestId,
+      result: {
+        ok: true,
+        type: 'library.list',
+        libraries: [{ libraryId: 'fixture-library', libraryPath: 'fixture-library', displayName: 'Fixture' }],
+      },
+    });
+    await listed;
+
+    const states: string[] = [];
+    client.onRecovery((event) => states.push(event.state));
+    first.emit('exit', 1);
+    expect(client.available).toBe(false);
+    const waiting = client.request({ type: 'library.list' });
+    const waitingResult = expect(waiting).resolves.toMatchObject({ ok: true, type: 'library.list' });
+    expect(second.postMessage).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(utilityProcessFork).toHaveBeenCalledTimes(2), { timeout: 2_000 });
+    second.emit('message', { type: 'worker.ready' });
+    await vi.waitFor(() => expect(second.postMessage).toHaveBeenCalled(), { timeout: 1_000 });
+    const reopen = second.postMessage.mock.calls.at(-1)?.[0] as {
+      requestId: string;
+      command: { type: string; selectedLibraryPath?: string };
+    };
+    expect(reopen.command).toEqual({ type: 'library.open', selectedLibraryPath: 'fixture-library' });
+    second.emit('message', {
+      requestId: reopen.requestId,
+      result: {
+        ok: true,
+        type: 'library.opened',
+        library: { libraryId: 'fixture-library', libraryPath: 'fixture-library', displayName: 'Fixture' },
+      },
+    });
+    await vi.waitFor(() => expect(states).toEqual(['recovering', 'recovered']), { timeout: 1_000 });
+    expect(states).toEqual(['recovering', 'recovered']);
+    await vi.waitFor(() => expect(second.postMessage).toHaveBeenCalledTimes(2), { timeout: 1_000 });
+    const postRecovery = second.postMessage.mock.calls.at(-1)?.[0] as { requestId: string; command: { type: string } };
+    expect(postRecovery.command.type).toBe('library.list');
+    second.emit('message', {
+      requestId: postRecovery.requestId,
+      result: { ok: true, type: 'library.list', libraries: [] },
+    });
+    await waitingResult;
+    expect(client.available).toBe(true);
+    first.emit('exit', 2);
+    expect(client.available).toBe(true);
+    expect(utilityProcessFork).toHaveBeenCalledTimes(2);
+  } finally {
+    const stop = client.shutdown();
+    first.emit('message', { type: 'worker.shutdown.ack' });
+    second.emit('message', { type: 'worker.shutdown.ack' });
+    await stop;
+    if (previousFfmpegPath === undefined) delete process.env.SERPENT_FFMPEG_PATH;
+    else process.env.SERPENT_FFMPEG_PATH = previousFfmpegPath;
+    if (previousOiioPath === undefined) delete process.env.SERPENT_OIIO_PATH;
+    else process.env.SERPENT_OIIO_PATH = previousOiioPath;
+  }
+});
+
+it('stops restarting after repeated unexpected Worker exits', async () => {
+  utilityProcessFork.mockReset();
+  const previousFfmpegPath = process.env.SERPENT_FFMPEG_PATH;
+  const previousOiioPath = process.env.SERPENT_OIIO_PATH;
+  process.env.SERPENT_FFMPEG_PATH = process.execPath;
+  process.env.SERPENT_OIIO_PATH = process.execPath;
+  const children = [new FakeUtilityProcess(), new FakeUtilityProcess(), new FakeUtilityProcess()];
+  for (const child of children) utilityProcessFork.mockReturnValueOnce(child);
+  const logger = { worker: vi.fn(), error: vi.fn(), info: vi.fn() } as unknown as AppLogger;
+  const client = new LibraryWorkerClient('fixture-worker.js', logger);
+  try {
+    const starting = client.start();
+    children[0]!.emit('message', { type: 'worker.ready' });
+    await starting;
+    const states: string[] = [];
+    client.onRecovery((event) => states.push(event.state));
+    for (let index = 0; index < 2; index += 1) {
+      children[index]!.emit('exit', 1);
+      await vi.waitFor(() => expect(utilityProcessFork).toHaveBeenCalledTimes(index + 2), { timeout: 2_000 });
+      children[index + 1]!.emit('message', { type: 'worker.ready' });
+      await vi.waitFor(() => expect(client.available).toBe(true), { timeout: 1_000 });
+    }
+    children[2]!.emit('exit', 1);
+    expect(client.available).toBe(false);
+    expect(states).toEqual(['recovering', 'recovered', 'recovering', 'recovered', 'failed']);
+    expect(utilityProcessFork).toHaveBeenCalledTimes(3);
+    await expect(client.request({ type: 'library.list' })).rejects.toMatchObject({
+      code: 'WORKER_UNAVAILABLE',
+    });
+  } finally {
+    await client.shutdown();
+    if (previousFfmpegPath === undefined) delete process.env.SERPENT_FFMPEG_PATH;
+    else process.env.SERPENT_FFMPEG_PATH = previousFfmpegPath;
+    if (previousOiioPath === undefined) delete process.env.SERPENT_OIIO_PATH;
+    else process.env.SERPENT_OIIO_PATH = previousOiioPath;
+  }
+});
+
+it('reports a library that cannot be reopened without discarding a healthy Worker', async () => {
+  utilityProcessFork.mockReset();
+  const previousFfmpegPath = process.env.SERPENT_FFMPEG_PATH;
+  const previousOiioPath = process.env.SERPENT_OIIO_PATH;
+  process.env.SERPENT_FFMPEG_PATH = process.execPath;
+  process.env.SERPENT_OIIO_PATH = process.execPath;
+  const first = new FakeUtilityProcess();
+  const second = new FakeUtilityProcess();
+  utilityProcessFork.mockReturnValueOnce(first).mockReturnValueOnce(second);
+  const logger = { worker: vi.fn(), error: vi.fn(), info: vi.fn() } as unknown as AppLogger;
+  const client = new LibraryWorkerClient('fixture-worker.js', logger);
+  try {
+    const starting = client.start();
+    first.emit('message', { type: 'worker.ready' });
+    await starting;
+    const listed = client.request({ type: 'library.list' });
+    const listing = first.postMessage.mock.calls.at(-1)?.[0] as { requestId: string };
+    first.emit('message', {
+      requestId: listing.requestId,
+      result: { ok: true, type: 'library.list', libraries: [
+        { libraryId: 'missing-library', libraryPath: 'fixture-missing', displayName: 'Missing fixture' },
+      ] },
+    });
+    await listed;
+    const recovered: Array<{ failedLibraryIds: string[] }> = [];
+    client.onRecovery((event) => {
+      if (event.state === 'recovered') recovered.push(event);
+    });
+    first.emit('exit', 1);
+    await vi.waitFor(() => expect(utilityProcessFork).toHaveBeenCalledTimes(2), { timeout: 2_000 });
+    second.emit('message', { type: 'worker.ready' });
+    await vi.waitFor(() => expect(second.postMessage).toHaveBeenCalled(), { timeout: 1_000 });
+    const reopen = second.postMessage.mock.calls.at(-1)?.[0] as { requestId: string };
+    second.emit('message', {
+      requestId: reopen.requestId,
+      result: { ok: false, error: createPublicError('LIBRARY_NOT_FOUND') },
+    });
+    await vi.waitFor(() => expect(recovered).toHaveLength(1), { timeout: 1_000 });
+    expect(recovered[0]?.failedLibraryIds).toEqual(['missing-library']);
+    expect(client.available).toBe(true);
+  } finally {
+    await client.shutdown();
+    if (previousFfmpegPath === undefined) delete process.env.SERPENT_FFMPEG_PATH;
+    else process.env.SERPENT_FFMPEG_PATH = previousFfmpegPath;
+    if (previousOiioPath === undefined) delete process.env.SERPENT_OIIO_PATH;
+    else process.env.SERPENT_OIIO_PATH = previousOiioPath;
+  }
+});
+
+it('names unavailable Worker failures for public error classification', () => {
+  expect(new WorkerUnavailableError().code).toBe('WORKER_UNAVAILABLE');
+});
 
 describe('requestTimeoutForCommand', () => {
   it('allows browser capture to finish its bounded download before Main times out', () => {

@@ -3763,7 +3763,7 @@ async function handleLibraryRequest(
       saveConnectionProfile: saveAiConnectionProfile,
       activateConnectionProfile: activateAiConnectionProfile,
       deleteConnectionProfile: deleteAiConnectionProfile,
-      workerAvailable: () => Boolean(workerClient),
+      workerAvailable: () => workerClient?.available ?? false,
       requestWorker: (command) => {
         if (!workerClient) throw new Error("Library Worker is unavailable.");
         return workerClient.request(command);
@@ -3818,7 +3818,7 @@ async function handleLibraryRequest(
       const ingestion = await tryBuildIngestionCommand(request, {
         isUnpackagedE2e: () => !app.isPackaged && process.env.SERPENT_E2E === "1",
         e2eEnv: (name) => process.env[name],
-        workerAvailable: () => Boolean(workerClient),
+        workerAvailable: () => workerClient?.available ?? false,
         requestWorker: (workerCommand) => {
           if (!workerClient) throw new Error("Library Worker is unavailable.");
           return workerClient.request(workerCommand);
@@ -3875,7 +3875,7 @@ async function handleLibraryRequest(
     if (!command || openCancellation?.cancelled) return cancelled();
     const sequenceProbe = await maybeProbeImportSequences(request, command, {
       isUnpackagedE2e: () => !app.isPackaged && process.env.SERPENT_E2E === "1",
-      workerAvailable: () => Boolean(workerClient),
+      workerAvailable: () => workerClient?.available ?? false,
       requestWorker: (workerCommand) => {
         if (!workerClient) throw new Error("Library Worker is unavailable.");
         return workerClient.request(workerCommand);
@@ -4859,6 +4859,76 @@ async function startApplication(): Promise<void> {
   // during a previous session (deferred-cleanup store, backoff loop).
   retryPendingLibraryCleanups();
   const activeWorkerClient = workerClient;
+  let workerRecoveryEpoch = 0;
+  workerClient.onRecovery((event) => {
+    if (event.state === 'recovering') {
+      workerRecoveryEpoch += 1;
+      publishLifecycle({ type: 'worker.recovering' });
+      return;
+    }
+    if (event.state === 'failed') {
+      workerRecoveryEpoch += 1;
+      publishLifecycle({ type: 'worker.failed' });
+      return;
+    }
+    const recoveryEpoch = ++workerRecoveryEpoch;
+    // Clear generation-bound caches and resend Worker configuration before
+    // the client releases its request gate. Slow plugin/AI work follows below.
+    for (const libraryId of event.failedLibraryIds) {
+      sourcePathCache.clearLibrary(libraryId);
+      clearArtifactPathCache(libraryId);
+      clearNativeAssetDragCache(libraryId);
+    }
+    for (const library of event.libraries) {
+      sourcePathCache.clearLibrary(library.libraryId);
+      clearArtifactPathCache(library.libraryId);
+      clearNativeAssetDragCache(library.libraryId);
+      activeWorkerClient.publishPluginThumbnailExtensions(
+        library.libraryId,
+        pluginThumbnailExtensionsFor(library.libraryId),
+      );
+    }
+    activeWorkerClient.publishShowMissingLinkedFiles(showMissingLinkedFiles);
+    // Plugin activation and AI queue scheduling can call client.request(), so
+    // run them after the gate is released while retaining the epoch guard.
+    setTimeout(() => {
+      void (async () => {
+        if (recoveryEpoch !== workerRecoveryEpoch || !activeWorkerClient.available) return;
+        for (const libraryId of event.failedLibraryIds) {
+          pluginActivationCoordinator?.onLibraryClosed(libraryId);
+          publishLifecycle({ type: 'library.closed', libraryId });
+        }
+        for (const library of event.libraries) {
+          if (recoveryEpoch !== workerRecoveryEpoch || !activeWorkerClient.available) return;
+          try {
+            await notifyLibraryOpenedSideEffects({
+              libraryId: library.libraryId,
+              libraryDirectory: library.libraryPath,
+            });
+          } catch (error) {
+            logger?.error('worker.recovery.library-side-effects', error, {
+              libraryId: library.libraryId,
+            });
+          }
+        }
+        if (recoveryEpoch !== workerRecoveryEpoch || !activeWorkerClient.available) return;
+        publishLifecycle({
+          type: 'worker.recovered',
+          libraryIds: event.libraries.map((library) => library.libraryId),
+          failedLibraryIds: event.failedLibraryIds,
+        });
+      })().catch((error) => {
+        logger?.error('worker.recovery.main-state', error);
+        if (recoveryEpoch === workerRecoveryEpoch && activeWorkerClient.available) {
+          publishLifecycle({
+            type: 'worker.recovered',
+            libraryIds: event.libraries.map((library) => library.libraryId),
+            failedLibraryIds: event.failedLibraryIds,
+          });
+        }
+      });
+    }, 0);
+  });
   // Slice E (Serpent-hnmg): Main owns the shared offscreen window that renders
   // model thumbnails. The worker enqueues model jobs and asks Main to render;
   // Main replies with PNG bytes (or a typed failure) that the worker persists

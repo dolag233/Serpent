@@ -2502,6 +2502,9 @@ export const en = {
     semanticSearchDone: "Semantic search found {total}.",
     semanticSearchGrant: "Allow this library to send text to the selected service in Settings first.",
     searchFailed: "Search failed.",
+    workerRecovering: "Restoring the library service…",
+    workerFailed: "The library service stopped. Restart Serpent to continue.",
+    workerRestoreFailed: "Some libraries could not be reopened. Check their locations and open them again.",
     aiSearchDone: "AI converted to normal search criteria: {total} results.",
     aiSearchFailed: "AI could not convert this search.",
     aiSearchFallback: "{explanation} Fell back to normal keyword search{fallback}",
@@ -2735,6 +2738,7 @@ export const en = {
     code: {
       CANCELLED: "Cancelled; nothing was changed.",
       INTERNAL_ERROR: "Serpent hit an unexpected error and could not finish. Open Diagnostics to inspect this session’s log, then retry. If you were opening a library, copy the whole library folder onto a local disk and open it from there.",
+      WORKER_UNAVAILABLE: "The library service stopped. Restart Serpent to continue.",
       INVALID_LIBRARY_NAME: "Enter a library name that is safe across platforms.",
       INVALID_LIBRARY_PATH: "The selected location is not a usable folder for a library. Choose an existing writable folder — not a file, and not a disconnected drive.",
       INVALID_FOLDER_NAME: "The name contains unsupported characters.",

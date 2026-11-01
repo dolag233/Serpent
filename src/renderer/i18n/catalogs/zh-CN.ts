@@ -2485,6 +2485,9 @@ export const zhCN = {
     semanticSearchDone: "按语义找到 {total} 项。",
     semanticSearchGrant: "请先在设置中允许此资源库将文本发送到所选服务。",
     searchFailed: "搜索失败。",
+    workerRecovering: "资源库服务正在恢复…",
+    workerFailed: "资源库服务已停止。请重新启动 Serpent。",
+    workerRestoreFailed: "部分资源库未能重新打开。请检查资源库位置后重新打开。",
     aiSearchDone: "AI 已转换为普通搜索条件：找到 {total} 项。",
     aiSearchFailed: "AI 无法转换这次搜索。",
     aiSearchFallback: "{explanation} 已自动改用普通关键词搜索{fallback}",
@@ -2717,6 +2720,7 @@ export const zhCN = {
     code: {
       CANCELLED: "操作已取消，没有做任何改动。",
       INTERNAL_ERROR: "发生了未能分类的内部错误，界面无法给出更具体的原因。请打开「诊断日志」查看本次记录后重试；如果正在打开资源库，请把整个资源库文件夹复制到本机磁盘再打开。",
+      WORKER_UNAVAILABLE: "资源库服务已停止。重新启动 Serpent 后再试。",
       INVALID_LIBRARY_NAME: "请输入可跨平台安全使用的资源库名称。",
       INVALID_LIBRARY_PATH: "所选位置不能作为资源库文件夹。请选择已存在且可写入的文件夹，不要选择文件或已断开的磁盘。",
       INVALID_FOLDER_NAME: "名称包含不支持的字符。",
