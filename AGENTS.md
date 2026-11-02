@@ -243,7 +243,7 @@ JSONL 流程操作，禁止重新启用旧数据库同步。
 - 预览测试必须证明媒体被解码：图片检查 `complete && naturalWidth > 0`；视频至少检查元数据和非零尺寸。只断言 DOM、状态或 job 成功不算通过。
 - 持久化必须以“完整退出应用后重新启动”为测试边界；仅关闭窗口或复用同一 Worker 不算重启恢复。
 - 多人合流后只复跑本轮改到的层。不自动运行 `npm run verify:mainline`。详见 `docs/internal/development-process.md` 的最小化测试原则。
-- **`main` 不引入内部开发文件（强制）**：`.beads/` 与 `.github/` 里的 CI 配置留在 `dolag_dev`。产品改动经 Pull Request 进入 `main`，不要整支合并 `dolag_dev`。`docs/developer/` 随 `main` 发布（详见 `docs/internal/development/release-process-and-distribution.md` §2）。
+- **`main` 不引入内部开发文件（强制）**：`.beads/` 与 `.github/` 里的 CI 配置留在 `dolag_dev`。外部贡献经 Pull Request 进入 `main`。维护者发布时在本地把 `dolag_dev` 直接合并进 `main`，提交前剥离内部文件，不另开 Pull Request；发布后把 `main` 合并回 `dolag_dev`。`docs/developer/` 随 `main` 发布（详见 `docs/internal/development/release-process-and-distribution.md` §2）。
 - 每个较大功能或核心 UX 更新在验收前，主 agent 必须使用 Computer Use 操作真实 Serpent 应用，并用截图检查关键 UI 状态；自动化全绿不能代替 UX/视觉验收。截图证据与发现写入对应开发日志或 QA 报告。
 - 当前环境没有 Computer Use 或等价真实桌面控制能力时，该项必须记为未执行并移交给具备能力的 agent 或人工 QA；不得自行跳过或标记为通过。
 
