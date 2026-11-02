@@ -1460,6 +1460,8 @@ export const en = {
       app: {
         focusSearch: "Focus search",
         refresh: "Refresh assets",
+        newTab: "New workspace tab",
+        closeTab: "Close current tab",
       },
       viewer: {
         playPause: "Play/pause",

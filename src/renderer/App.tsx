@@ -388,6 +388,7 @@ import {
 } from "./canvas-asset-layout";
 import { useSelectionKeyboard } from "./use-selection-keyboard";
 import { useBrowseCommandKeyboard } from "./use-browse-command-keyboard";
+import { useWorkspaceTabShortcuts } from "./use-workspace-tab-shortcuts";
 import { resolveBrowsePasteDestination } from "./browse-paste-target";
 import { useWorkspaceMouseNavigation } from "./use-workspace-mouse-navigation";
 import {
@@ -12445,6 +12446,20 @@ function AppInner() {
     if (next) navigateAssetPreview(next);
     else void closeAssetPreview();
   }
+
+  useWorkspaceTabShortcuts({
+    enabled: Boolean(library),
+    platform: SHORTCUT_PLATFORM,
+    busy,
+    tabCount: workspaceTabsState.tabs.length,
+    previewOpen: Boolean(previewAsset),
+    onNewTab: () => {
+      void addWorkspaceTab();
+    },
+    onCloseTab: () => {
+      void closeWorkspaceTab(workspaceTabsState.activeTabId);
+    },
+  });
 
   useBrowseCommandKeyboard({
     enabled: Boolean(library) && !showTagManagement && !showPluginSidebarView,
