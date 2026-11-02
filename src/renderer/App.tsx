@@ -121,6 +121,7 @@ import {
   type LibraryViewSessionToken,
 } from "./library-view-session";
 import { createTrackedLibraryApi } from "./tracked-library-api";
+import { useNativeDragReadyIds } from "./use-native-drag-readiness";
 import { MainMenu } from "./MainMenu";
 import {
   buildMainMenuSections,
@@ -443,6 +444,7 @@ import { useInlineFolderEdit } from "./use-inline-folder-edit";
 import { useInlineSmartCollectionEdit } from "./use-inline-smart-collection-edit";
 import { usePanelResize } from "./use-panel-resize";
 import { useToastNotifications } from "./useToastNotifications";
+import { Notice } from "./ui/patterns";
 import {
   AI_CONNECTION_HEARTBEAT_MS,
   aiAnalyzeConnectionReady,
@@ -889,6 +891,8 @@ function AppInner() {
   const t = useT();
   const { locale } = useLocale();
   const rawLibraryApi = (window as RendererWindow).serpent?.library;
+  const nativeAssetDragEnabled = !(window as RendererWindow).serpent?.e2e
+    || Boolean((window as RendererWindow).serpent?.e2e?.useNativeAssetDrag);
   const shellApi = (window as RendererWindow).serpent?.shell;
 
   useEffect(() => {
@@ -899,6 +903,7 @@ function AppInner() {
 
   // Library / folder / assets (existing)
   const [library, setLibrary] = useState<RendererLibrarySummary | null>(null);
+  const nativeDragReadyIds = useNativeDragReadyIds(rawLibraryApi, library?.libraryId);
   const libraryRef = useRef<RendererLibrarySummary | null>(null);
   libraryRef.current = library;
   const [recentLibraries, setRecentLibraries] = useState<
@@ -970,6 +975,10 @@ function AppInner() {
   const [rootAssetCount, setRootAssetCount] = useState(0);
   const [selectedAssetId, setSelectedAssetId] = useState<string | undefined>();
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
+  const selectedNativeDragReady = useMemo(
+    () => selectedAssetIds.every((id) => nativeDragReadyIds.has(id)),
+    [nativeDragReadyIds, selectedAssetIds],
+  );
   // Session persistence must wait until the startup restore has applied the
   // saved scope and selection; otherwise the initial empty React state can
   // overwrite the last browsed asset in localStorage.
@@ -1064,6 +1073,8 @@ function AppInner() {
     dismissToast,
     handleToastTransitionEnd,
   } = useToastNotifications();
+  const workerRecoveryStateRef = useRef<'ready' | 'recovering' | 'failed'>('ready');
+  const [workerRecoveryState, setWorkerRecoveryState] = useState<'ready' | 'recovering' | 'failed'>('ready');
   const topVisibleToastId = renderedToastStack.find(
     (entry) => !entry.closing,
   )?.id;
@@ -4650,7 +4661,7 @@ function AppInner() {
         /** Navigation keeps sidebar data; mutations/library open opt in to refresh. */
         refreshSidebar?: boolean;
         /** Library replacement hydrates navigation before the new view is shown. */
-        navigationPriority?: "normal" | "library-switch";
+        navigationPriority?: "normal" | "library-switch" | "mutation";
         /** Keep the workspace covered until the complete navigation snapshot is ready. */
         blockingLibraryLoad?: boolean;
         /** A tab/history transition may be superseded independently of the library. */
@@ -4759,7 +4770,8 @@ function AppInner() {
               if (opts?.blockingLibraryLoad) return loadNavigationSummary();
               return deferNavigationHydration(loadNavigationSummary, {
                 signal: navigationHydrationAbort.signal,
-                immediate: opts?.navigationPriority === "library-switch",
+                immediate: opts?.navigationPriority === "library-switch"
+                  || opts?.navigationPriority === "mutation",
               });
             },
             () => undefined,
@@ -5051,6 +5063,28 @@ function AppInner() {
   useEffect(() => {
     if (!api) return;
     return api.onLifecycle((event) => {
+      if (event.type === 'worker.recovering') {
+        workerRecoveryStateRef.current = 'recovering';
+        setWorkerRecoveryState('recovering');
+        setWorkspaceNavigationPending(false);
+        return;
+      }
+      if (event.type === 'worker.failed') {
+        workerRecoveryStateRef.current = 'failed';
+        setWorkerRecoveryState('failed');
+        return;
+      }
+      if (event.type === 'worker.recovered') {
+        workerRecoveryStateRef.current = 'ready';
+        setWorkerRecoveryState('ready');
+        if (event.failedLibraryIds.length > 0) setError(t('toast.workerRestoreFailed'));
+        if (libraryRef.current && event.libraryIds.includes(libraryRef.current.libraryId)) {
+          void reloadCurrentContentRef.current().catch((caught) => {
+            setError(toMessage(caught, t('toast.readAssetsFailed'), locale));
+          });
+        }
+        return;
+      }
       if (event.type === "library.opening" && shouldDetachLibraryOnOpening(event)) {
         const applyLibraryOpening = async () => {
           // Clear the active library when the replacement starts. The old
@@ -8108,6 +8142,8 @@ function AppInner() {
   async function reloadCurrentContent(options?: {
     /** Wait for the navigation snapshot before resolving the operation. */
     blockingNavigation?: boolean;
+    /** Folder mutations must publish sidebar changes without the browse idle delay. */
+    navigationPriority?: "mutation";
   }) {
     if (!library) return;
     if (!showTrash) setFilteredFolderCountRefreshToken((token) => token + 1);
@@ -8132,6 +8168,7 @@ function AppInner() {
       discovery,
       searchScope: currentSearchScope(discovery.search !== undefined),
       blockingLibraryLoad: options?.blockingNavigation,
+      navigationPriority: options?.navigationPriority,
     });
   }
 
@@ -9329,7 +9366,7 @@ function AppInner() {
       setNotice(null);
     } catch (caught) {
       if (request.isCurrent()) {
-        setError(toMessage(caught, t("toast.searchFailed"), locale));
+        if (workerRecoveryStateRef.current === 'ready') setError(toMessage(caught, t("toast.searchFailed"), locale));
         if (!silent) setWorkspaceNavigationPending(false);
       }
     } finally {
@@ -9413,7 +9450,7 @@ function AppInner() {
         onPreparing: () => setNotice(t("settings.semanticSearch.similarPreparing")),
       });
     } catch (caught) {
-      if (polling()) setError(toMessage(caught, t("toast.searchFailed"), locale));
+      if (polling() && workerRecoveryStateRef.current === 'ready') setError(toMessage(caught, t("toast.searchFailed"), locale));
       return;
     }
     if (!page || !polling()) return;
@@ -9463,7 +9500,7 @@ function AppInner() {
       }
     } catch (caught) {
       if (request.isCurrent()) {
-        setError(toMessage(caught, t("toast.searchFailed"), locale));
+        if (workerRecoveryStateRef.current === 'ready') setError(toMessage(caught, t("toast.searchFailed"), locale));
         if (!navigation) setWorkspaceNavigationPending(false);
       }
     } finally {
@@ -9476,6 +9513,7 @@ function AppInner() {
     opts?: { silent?: boolean },
   ) {
     event?.preventDefault();
+    if (workerRecoveryStateRef.current !== 'ready') return;
     if (event) {
       searchHistoryDismissedUntilInputRef.current = true;
       setSearchHistoryOpen(false);
@@ -9499,7 +9537,7 @@ function AppInner() {
           deferReveal: true,
         });
       } catch (caught) {
-        setError(toMessage(caught, t("toast.searchFailed"), locale));
+        if (workerRecoveryStateRef.current === 'ready') setError(toMessage(caught, t("toast.searchFailed"), locale));
       } finally {
         setUiState("ready");
       }
@@ -9525,7 +9563,7 @@ function AppInner() {
       }
     } catch (caught) {
       if (request.isCurrent()) {
-        setError(toMessage(caught, t("toast.searchFailed"), locale));
+        if (workerRecoveryStateRef.current === 'ready') setError(toMessage(caught, t("toast.searchFailed"), locale));
         setWorkspaceNavigationPending(false);
       }
     } finally {
@@ -15047,16 +15085,23 @@ function AppInner() {
           />
         )}
         <div
-          aria-busy={workspaceNavigationPending}
+          aria-busy={workspaceNavigationPending || workerRecoveryState === 'recovering'}
           className={`workspace-canvas-host${previewAsset || previewRestoring ? " is-viewing" : ""}${previewRestoring ? " is-restoring" : ""}${workspaceNavigationPending ? " is-navigating" : ""}`}
         >
-          {renderedToastStack.length > 0
+          {renderedToastStack.length > 0 || workerRecoveryState !== 'ready'
             ? createPortal(
                 <div
                   aria-atomic="false"
                   aria-live="polite"
                   className="workspace-notice-stack workspace-notice"
                 >
+                  {workerRecoveryState !== 'ready' ? (
+                    <Notice
+                      className="workspace-notice-item"
+                      message={t(workerRecoveryState === 'recovering' ? 'toast.workerRecovering' : 'toast.workerFailed')}
+                      tone={workerRecoveryState === 'recovering' ? 'warning' : 'error'}
+                    />
+                  ) : null}
                   {renderedToastStack.map((message) => {
                     const isUndoTarget =
                       !message.closing &&
@@ -15102,6 +15147,7 @@ function AppInner() {
           ) : null}
         <div
           className={`workspace-canvas${previewAsset ? " is-viewing" : previewRestoring ? " is-restoring" : ""}${externalDropActive ? " is-external-drop" : ""}`}
+          inert={workerRecoveryState !== 'ready'}
           onDragEnter={handleExternalDragEnter}
           onDragLeave={handleExternalDragLeave}
           onDragOver={handleExternalDragOver}
@@ -15275,7 +15321,15 @@ function AppInner() {
                       data-asset-id={asset.assetId}
                       data-asset-name={asset.displayName}
                       data-media-type={asset.mediaType}
-                      draggable={!showTrash && !renamingThisAsset}
+                      draggable={
+                        !showTrash && !renamingThisAsset && (
+                          Boolean(activeCollectionId && !collectionRecursive)
+                          || !nativeAssetDragEnabled
+                          || (selectedIdSet.has(asset.assetId)
+                            ? selectedNativeDragReady
+                            : nativeDragReadyIds.has(asset.assetId))
+                        )
+                      }
                       key={renderOptions?.stableSlot
                         ? undefined
                         : assetCardKey(library?.libraryId, asset.assetId)}
@@ -15359,16 +15413,12 @@ function AppInner() {
                         // explicit diagnostics bridge so E2E HTML5 drops do
                         // not enter Electron's native OS drag loop, while
                         // production still uses startDrag().
-                        const isE2e = Boolean(
-                          (window as RendererWindow).serpent?.e2e,
-                        );
-                        const useNativeAssetDrag =
-                          !isE2e ||
-                          Boolean(
-                            (window as RendererWindow).serpent?.e2e
-                              ?.useNativeAssetDrag,
-                          );
-                        if (useNativeAssetDrag && api && library) {
+                        if (nativeAssetDragEnabled && api && library) {
+                          if (!ids.every((id) => nativeDragReadyIds.has(id))) {
+                            event.preventDefault();
+                            api.primeAssetDrag({ libraryId: library.libraryId, assetIds: ids });
+                            return;
+                          }
                           // Electron's supported path is an asynchronous
                           // one-way IPC from dragstart. A synchronous round
                           // trip deadlocks when this native file drag returns

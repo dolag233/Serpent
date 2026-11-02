@@ -77,26 +77,6 @@ async function waitForFirstCard(window: Page, timeoutMs: number): Promise<number
   return Date.now() - startedAt;
 }
 
-/** Wait until a probe counter grows past `before`, returning the elapsed ms. */
-async function waitForProbeIncrease(
-  window: Page,
-  key: keyof RendererProbe,
-  before: number,
-  timeoutMs: number,
-): Promise<{ elapsedMs: number; timedOut: boolean }> {
-  const startedAt = Date.now();
-  for (;;) {
-    const probe = await readRendererProbe(window);
-    if (Number(probe[key]) > before) {
-      return { elapsedMs: Date.now() - startedAt, timedOut: false };
-    }
-    if (Date.now() - startedAt >= timeoutMs) {
-      return { elapsedMs: Date.now() - startedAt, timedOut: true };
-    }
-    await window.waitForTimeout(40);
-  }
-}
-
 async function activeScopeTitle(window: Page): Promise<string> {
   return window.evaluate(() =>
     document.querySelector<HTMLElement>(".navigation-pane button.nav-row.is-active .nav-row-label")
@@ -127,7 +107,7 @@ type ScopeSwitchResult = {
 
 /**
  * Click a sidebar scope and measure the phases a user feels separately:
- * input → renderer accepted a new browse page (the real navigation latency),
+ * input → the new scope and its card set committed (the navigation latency),
  * → first visible decode, → most of the visible image cards decoded.
  *
  * `ms` is the page arrival, never the decode budget: a library whose assets
@@ -139,11 +119,26 @@ async function measureScopeSwitch(
   scope: NavScope,
   timeoutMs: number,
 ): Promise<ScopeSwitchResult> {
-  const before = await readRendererProbe(window);
+  const beforeIds = await window.locator(".asset-card[data-asset-id]").evaluateAll((cards) =>
+    cards.map((card) => (card as HTMLElement).dataset.assetId ?? "").join("\u0000"));
   const startedAt = Date.now();
   await clickNavScope(window, scope.rowIndex);
-  const page = await waitForProbeIncrease(window, "browsePages", before.browsePages, timeoutMs);
-  const pageMs = page.timedOut ? null : page.elapsedMs;
+  // The browse-page diagnostic event only covers subsequent pages. First-page
+  // session opens must be observed from the active scope and committed cards.
+  let pageMs: number | null = null;
+  while (Date.now() - startedAt < timeoutMs) {
+    const committed = await window.evaluate(({ rowIndex, before }) => {
+      const row = document.querySelectorAll<HTMLElement>(".navigation-pane button.nav-row")[rowIndex];
+      const ids = [...document.querySelectorAll<HTMLElement>(".asset-card[data-asset-id]")]
+        .map((card) => card.dataset.assetId ?? "").join("\u0000");
+      return row?.classList.contains("is-active") === true && ids.length > 0 && ids !== before;
+    }, { rowIndex: scope.rowIndex, before: beforeIds });
+    if (committed) {
+      pageMs = Date.now() - startedAt;
+      break;
+    }
+    await window.waitForTimeout(40);
+  }
   const decode = await waitForVisibleDecoded(window, 0.8, decodeBudgetMs);
   const stats = await visibleImageStats(window);
   return {
@@ -152,7 +147,7 @@ async function measureScopeSwitch(
     coverageMs: decode.timedOut ? null : decode.elapsedMs,
     coverage: Number(stats.coverage.toFixed(3)),
     imageCards: stats.imageCards,
-    timedOut: page.timedOut,
+    timedOut: pageMs === null,
   };
 }
 

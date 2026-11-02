@@ -25,7 +25,6 @@ import {
   viewportRectToContent,
 } from "./marquee-geometry";
 import { estimateMasonryPreviewHeightPx } from "./masonry-preview-frame";
-import type { MasonryCardCenter } from "./masonry-selection-range";
 
 const DEFAULT_JUSTIFIED_CAPTION_BAND_PX = resolveJustifiedCaptionBandPx({
   dimensions: true,
@@ -333,6 +332,38 @@ function eachPublishedGridLayout(
   return published;
 }
 
+/**
+ * Viewport-space rectangles for every masonry card, including unmounted ones.
+ * Returning `null` means that the grid has not published layout geometry yet.
+ */
+export function collectPublishedMasonryAssetRects(
+  canvas: HTMLElement,
+  knownAssetIds?: ReadonlySet<string>,
+): CanvasAssetLayoutRect[] | null {
+  const rects: CanvasAssetLayoutRect[] = [];
+  let published = false;
+  for (const grid of canvas.querySelectorAll<HTMLElement>(".masonry-columns")) {
+    const origin = grid.getBoundingClientRect();
+    const layout = readPublishedCanvasAssetLayout(grid);
+    if (layout !== undefined) {
+      published = true;
+      for (const item of layout) {
+        if (knownAssetIds && !knownAssetIds.has(item.id)) continue;
+        rects.push({ ...item, x: origin.left + item.x, y: origin.top + item.y });
+      }
+      continue;
+    }
+    const layoutIndex = readPublishedCanvasAssetLayoutIndex(grid);
+    if (!layoutIndex) continue;
+    published = true;
+    layoutIndex.forEachAll((item) => {
+      if (knownAssetIds && !knownAssetIds.has(item.id)) return;
+      rects.push({ ...item, x: origin.left + item.x, y: origin.top + item.y });
+    });
+  }
+  return published ? rects : null;
+}
+
 /** Content-space hits for every laid-out card, including unmounted ones. */
 export function collectPublishedAssetHits(
   canvas: HTMLElement,
@@ -353,26 +384,4 @@ export function collectPublishedAssetHits(
     },
   );
   return published ? hits : null;
-}
-
-export function collectPublishedAssetCenters(
-  canvas: HTMLElement,
-  viewport: CanvasViewport,
-  scroll: CanvasScrollOffset,
-): MasonryCardCenter[] | null {
-  const items: MasonryCardCenter[] = [];
-  const published = eachPublishedGridLayout(
-    canvas,
-    viewport,
-    scroll,
-    null,
-    (item, originLeft, originTop) => {
-      items.push({
-        id: item.id,
-        x: originLeft + item.x + item.width / 2,
-        y: originTop + item.y + item.height / 2,
-      });
-    },
-  );
-  return published ? items : null;
 }

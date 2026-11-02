@@ -9,7 +9,7 @@
 | `main` | **最新分支** | 产品代码、自动化测试、运行时资源、公开文档（含 `docs/developer/`）及构建配置 | 默认分支。所有 Pull Request 合并到这里 |
 | `dolag_dev` | **维护者个人工作分支** | 可以在 `main` 的产品代码之外携带内部工单（`.beads/`）和内部文档（`docs/internal/`） | 不接收外部 Pull Request |
 
-- `main` 始终保持最新。产品改动通过 Pull Request 进入这里；
+- `main` 始终保持最新。外部贡献通过 Pull Request 进入这里；维护者发布时按发布手册把 `dolag_dev` 直接合并进来；
 - `dolag_dev` 给维护者存放内部记录；
 - **外部贡献者发起 Pull Request 时，目标分支一律选择 `main`**。
 
@@ -127,7 +127,7 @@ node scripts/ticket.mjs status <issue-id> closed --reason "完成说明，附提
 
 ### 3.3 发布与公开分支
 
-产品改动经 Pull Request 进入 `main`。不要把 `dolag_dev` 整支合并进 `main`。
+外部贡献经 Pull Request 进入 `main`。维护者发布时在本地把 `dolag_dev` 直接合并进 `main`，不另开 Pull Request，并在提交前去掉内部开发文件。发布完成后把 `main` 合并回 `dolag_dev`。
 
 1. **内部开发文件留在 `dolag_dev`**：
    - `AGENTS.md`、`CLAUDE.md`、`docs/internal/`、`.beads/`，以及 `.github/` 里的 CI 配置，不进入 `main`；

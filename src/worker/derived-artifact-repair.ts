@@ -15,6 +15,7 @@
 // picks the revision up again — no new queue condition needed.
 
 import { columnsFor } from './lenient-columns';
+import { OIIO_LITERAL_PATHS_MARK } from './oiio-invocation';
 
 /** Structural surface: the real OpenLibrary.connection satisfies this. */
 export interface RetryFailedConnection {
@@ -42,6 +43,8 @@ export const PERMANENT_DERIVED_FAILURE_CODES: ReadonlySet<string> = new Set([
 export const DERIVED_RETRY_BACKOFF_MS = 30 * 60 * 1000;
 
 export interface RetryFailedOptions {
+  /** When present, retry only these assets (visible-window admission). */
+  assetIds?: readonly string[];
   /** Priority for the jobs that will be enqueued by the caller. */
   priority?: number;
   /** Cap on how many failures one wave may re-open (large-library safety). */
@@ -77,6 +80,11 @@ export function requeueRetryableFailedArtifacts(
   // artifact status columns have no failed artifacts to repair; skip instead
   // of failing to open.
   if (!columnsFor(connection, 'revision_artifacts').has('status')) return 0;
+  const assetIds = [...new Set(options.assetIds ?? [])];
+  if (options.assetIds !== undefined && assetIds.length === 0) return 0;
+  const assetSql = options.assetIds === undefined
+    ? ''
+    : `AND a.asset_id IN (${assetIds.map(() => '?').join(',')})`;
   const now = (options.now ?? new Date()).toISOString();
   const backoffCutoff = new Date(
     (options.now ?? new Date()).getTime() - DERIVED_RETRY_BACKOFF_MS,
@@ -100,7 +108,12 @@ export function requeueRetryableFailedArtifacts(
           AND ra.generated_at <= ?
           AND a.deleted_at IS NULL
           AND a.availability = 'available'
+          ${assetSql}
           AND COALESCE(ra.error_code, '') NOT IN (${permanentCodes})
+          AND NOT (
+            COALESCE(ra.generator_version, '') LIKE '%${OIIO_LITERAL_PATHS_MARK}%'
+            AND ra.error_code IN ('OIIO_GENERATION_FAILED', 'OIIO_COLOR_TRANSFORM_FAILED')
+          )
           AND NOT EXISTS (
             SELECT 1 FROM jobs active
              WHERE active.asset_id = a.asset_id
@@ -117,6 +130,7 @@ export function requeueRetryableFailedArtifacts(
     )
     .all(
       backoffCutoff,
+      ...assetIds,
       ...[...PERMANENT_DERIVED_FAILURE_CODES],
       ...(limit === undefined ? [] : [limit]),
     ) as Array<{

@@ -38,7 +38,7 @@ interface UseFolderDeleteActionsParams {
   setError: (message: string | null) => void;
   setUiState: (state: "loading" | "ready") => void;
   closePreview: () => Promise<void>;
-  reloadCurrentContent: () => Promise<void>;
+  reloadCurrentContent: (options?: { navigationPriority?: "mutation" }) => Promise<void>;
   /** Keep managed-folder navigation rows in sync after a successful mutation. */
   onManagedFoldersTrashed: (deletedFolderIds: readonly string[]) => void;
   /** Navigate away when the current browse scope was deleted. */
@@ -77,7 +77,7 @@ export function useFolderDeleteActions({
         onDeletedCurrentScope(deletedFolderIds);
         return;
       }
-      await reloadCurrentContent();
+      await reloadCurrentContent({ navigationPriority: "mutation" });
     },
     [assetScope, folders, onDeletedCurrentScope, reloadCurrentContent],
   );

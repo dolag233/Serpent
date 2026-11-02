@@ -4,6 +4,7 @@ export const PUBLIC_ERROR_MESSAGES = {
   CANCELLED: 'The request was cancelled.',
   INTERNAL_ERROR:
     'Serpent hit an unexpected error and could not finish. Open Diagnostics in the app to inspect this session’s log, then retry. If you were opening a library, copy the whole library folder onto a local disk and open it from there.',
+  WORKER_UNAVAILABLE: 'The library service stopped. Restart Serpent to continue.',
   INVALID_LIBRARY_NAME: 'Choose a library name that is safe on macOS and Windows.',
   INVALID_LIBRARY_PATH:
     'The selected location is not a usable folder for a library. Choose an existing writable folder — not a file, and not a disconnected drive.',
@@ -59,6 +60,8 @@ export const PUBLIC_ERROR_MESSAGES = {
     'This NAS library contains a linked folder that is unavailable on this computer. The library database is intact. Reconnect the folder or relink it on this computer, then open the library again.',
   LIBRARY_IO_ERROR:
     'Serpent could not complete the library operation because the disk or filesystem reported an I/O error. Check the drive connection, free space, and permissions; if it keeps failing, copy the library to a local disk and inspect Diagnostics.',
+  LIBRARY_BACKUP_FAILED:
+    'Serpent could not make a safety backup, so nothing was deleted. Check free disk space and library permissions, then try again.',
   LIBRARY_BUSY: 'This library is being updated by another Serpent window or a brief database lock. Wait a few seconds and retry; do not open the same library from two computers at once.',
   LIBRARY_CLEANUP_FAILED:
     'Creating the library failed, and leftover temporary files could not be removed automatically. Delete any `.serpent-create-*.partial` folder next to the chosen location, then retry with a writable folder.',
@@ -346,6 +349,9 @@ export function isDecoderMissingInputError(error: unknown): boolean {
 export function classifyUnknownFailure(
   error: unknown,
 ): { code: PublicErrorCode; reason?: PublicErrorReason } | undefined {
+  if (walkErrorCodes(error).some(({ code }) => code === 'WORKER_UNAVAILABLE')) {
+    return { code: 'WORKER_UNAVAILABLE' };
+  }
   if (typeof error === 'object' && error !== null && 'name' in error && error.name === 'DriverUnsupportedError') {
     return { code: 'SYNC_CONNECTION_FAILED', reason: 'SYNC_METHOD_NOT_ALLOWED' };
   }

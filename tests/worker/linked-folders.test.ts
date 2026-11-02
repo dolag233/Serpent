@@ -116,10 +116,39 @@ describe('Linked folder import', () => {
         .all() as Array<{ location_kind: string; linked_folder_id: string }>;
       expect(linkedRows).toHaveLength(3);
       expect(linkedRows.every((row) => row.linked_folder_id === linked.folderId)).toBe(true);
+      const searchRows = database.prepare(
+        'SELECT filename, tags, description, source_url, author, folder_path, metadata_text FROM asset_search_index ORDER BY filename',
+      ).all() as Array<{
+        filename: string;
+        tags: string;
+        description: string;
+        source_url: string;
+        author: string;
+        folder_path: string;
+        metadata_text: string;
+      }>;
+      expect(searchRows).toEqual([
+        { filename: 'a.png', tags: '', description: '', source_url: '', author: '', folder_path: '', metadata_text: '.png small available' },
+        { filename: 'b.png', tags: '', description: '', source_url: '', author: '', folder_path: '', metadata_text: '.png small available' },
+        { filename: 'c.png', tags: '', description: '', source_url: '', author: '', folder_path: 'sub', metadata_text: '.png small available' },
+      ]);
     } finally {
       database.close();
     }
+    const found = service.searchAssets({
+      libraryId: created.libraryId,
+      query: { clauses: [{ field: 'filename', values: ['png'], exclude: false }] },
+    });
+    expect(found.items.map((item) => item.relativeFilePath).sort()).toEqual(['a.png', 'b.png', 'sub/c.png']);
     service.closeAll();
+    const reopened = newService();
+    reopened.openLibrary(created.libraryPath);
+    const afterRestart = reopened.searchAssets({
+      libraryId: created.libraryId,
+      query: { clauses: [{ field: 'filename', values: ['png'], exclude: false }] },
+    });
+    expect(afterRestart.items.map((item) => item.relativeFilePath).sort()).toEqual(['a.png', 'b.png', 'sub/c.png']);
+    reopened.closeAll();
   });
 
   it('saves text edits back to the linked source file', () => {
@@ -238,7 +267,8 @@ describe('Linked folder import', () => {
     writeFileSync(path.join(sourceRoot, 'existing', 'art.png'), 'art');
     writeFileSync(path.join(incomingRoot, 'new.png'), 'new');
 
-    const service = newService();
+    const events: Array<{ nativeDragPathsChanged?: true; changedCount: number }> = [];
+    const service = newService({ onAssetsChanged: (event) => events.push(event) });
     const library = service.createLibrary({ displayName: 'LinkedDirectories', selectedParentPath: root });
     const linked = service.importFolderAsLinked({
       libraryId: library.libraryId,
@@ -271,6 +301,7 @@ describe('Linked folder import', () => {
     expect(imported.importedCount).toBe(1);
     expect(existsSync(path.join(sourceRoot, 'empty', 'new.png'))).toBe(true);
 
+    const eventCountBeforeChildRename = events.length;
     const renamed = service.renameLinkedFolderDirectory({
       libraryId: library.libraryId,
       linkedFolderId: linked.folderId,
@@ -278,6 +309,9 @@ describe('Linked folder import', () => {
       newName: 'renamed',
     });
     expect(renamed.folderId).toBe(`lfv:${linked.folderId}/renamed`);
+    expect(events.slice(eventCountBeforeChildRename)).toContainEqual(
+      expect.objectContaining({ nativeDragPathsChanged: true }),
+    );
     expect(existsSync(path.join(sourceRoot, 'existing'))).toBe(false);
     expect(readFileSync(path.join(sourceRoot, 'renamed', 'art.png'), 'utf8')).toBe('art');
     expect(
@@ -285,6 +319,7 @@ describe('Linked folder import', () => {
         .map((asset) => asset.relativeFilePath),
     ).toEqual(['renamed/art.png']);
 
+    const eventCountBeforeRootRename = events.length;
     const rootRenamed = service.renameLinkedFolderDirectory({
       libraryId: library.libraryId,
       linkedFolderId: linked.folderId,
@@ -293,6 +328,9 @@ describe('Linked folder import', () => {
     });
     expect(rootRenamed.folderId).toBe(linked.folderId);
     expect(rootRenamed.name).toBe('renamed-source');
+    expect(events.slice(eventCountBeforeRootRename)).toContainEqual(
+      expect.objectContaining({ nativeDragPathsChanged: true }),
+    );
     expect(existsSync(path.join(root, 'renamed-source', 'renamed', 'art.png'))).toBe(true);
     expect(service.listLinkedFolders(library.libraryId).find((folder) => folder.folderId === linked.folderId)?.displayName)
       .toBe('renamed-source');
@@ -574,7 +612,8 @@ describe('Linked folder import', () => {
     writeFileSync(path.join(sourceRoot, 'a.png'), 'aaa');
     writeFileSync(path.join(sourceRoot, 'b.png'), 'bbbb');
 
-    const service = newService();
+    const events: Array<{ nativeDragPathsChanged?: true; changedCount: number }> = [];
+    const service = newService({ onAssetsChanged: (event) => events.push(event) });
     const created = service.createLibrary({ displayName: 'Linked', selectedParentPath: root });
     const linked = service.importFolderAsLinked({
       libraryId: created.libraryId,
@@ -593,6 +632,7 @@ describe('Linked folder import', () => {
     mkdirSync(newRoot);
     writeFileSync(path.join(newRoot, 'a.png'), 'aaa-restored');
 
+    const eventCountBeforeRelink = events.length;
     const result = service.relinkMissingFolder({
       libraryId: created.libraryId,
       folderId: linked.folderId,
@@ -600,6 +640,9 @@ describe('Linked folder import', () => {
     });
 
     expect(result.status).toBe('available');
+    expect(events.slice(eventCountBeforeRelink)).toContainEqual(
+      expect.objectContaining({ nativeDragPathsChanged: true }),
+    );
 
     const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
     const aAsset = assets.find((asset) => asset.relativeFilePath === 'a.png')!;
@@ -808,16 +851,21 @@ describe('Linked folder import', () => {
     const linkedRoot = path.join(root, 'source');
     mkdirSync(linkedRoot);
     writeFileSync(path.join(linkedRoot, 'art.png'), 'art bytes');
-    const service = newService();
+    const events: Array<{ nativeDragPathsChanged?: true; changedCount: number }> = [];
+    const service = newService({ onAssetsChanged: (event) => events.push(event) });
     const library = service.createLibrary({ displayName: 'Convert', selectedParentPath: root });
     const linked = service.importFolderAsLinked({ libraryId: library.libraryId, sourceRootPath: linkedRoot });
     const before = service.listAssets({ libraryId: library.libraryId, folderId: linked.folderId, recursive: true })[0]!;
     service.setAssetMetadata({ libraryId: library.libraryId, assetId: before.assetId, expectedVersion: 0, description: 'Stable description', favorite: true });
 
+    const eventCountBeforeConversion = events.length;
     const converted = service.convertLinkedFolderToManaged({ libraryId: library.libraryId, folderId: linked.folderId });
     expect(converted.convertedCount).toBe(1);
     expect(converted.assets[0]!.assetId).toBe(before.assetId);
     expect(converted.assets[0]!.locationKind).toBe('managed');
+    expect(events.slice(eventCountBeforeConversion)).toContainEqual(
+      expect.objectContaining({ nativeDragPathsChanged: true }),
+    );
     expect(service.getAssetMetadata({ libraryId: library.libraryId, assetId: before.assetId })).toMatchObject({ description: 'Stable description', favorite: true });
     expect(readFileSync(path.join(linkedRoot, 'art.png'), 'utf8')).toBe('art bytes');
     expect(readFileSync(path.join(library.libraryPath, 'Assets', converted.assets[0]!.relativeFilePath), 'utf8')).toBe('art bytes');

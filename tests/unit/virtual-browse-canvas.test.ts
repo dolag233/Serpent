@@ -12,6 +12,8 @@ import {
   buildChunkedMasonryGeometry,
   buildJustifiedGeometry,
   buildMasonryGeometry,
+  makeJustifiedLayoutIndex,
+  makeMasonryLayoutIndex,
   variableWindow,
   virtualJustifiedRowStyle,
   virtualJustifiedSlotStyle,
@@ -53,6 +55,54 @@ function sizedEntry(assetId: string, width = 100, height = 100) {
 }
 
 describe("virtual browse canvas geometry", () => {
+  it("finds the first visible waterfall slot by top edge across uneven columns", () => {
+    const columns = buildMasonryGeometry({
+      total: 8,
+      columnCount: 2,
+      columnWidth: 200,
+      showCaption: false,
+      captionBand: 0,
+      entryAt: (index) => index === 0
+        ? entry("tall", 100, 200)
+        : entry(`asset-${index}`, 200, 100),
+    });
+    const index = makeMasonryLayoutIndex({
+      total: 8,
+      columnCount: 2,
+      columnWidth: 200,
+      columns,
+      idAt: (rank) => `asset-${rank}`,
+    });
+    expect(index.firstVisibleIndex(410)).toBe(7);
+    expect(index.rectAtIndex(7)?.top).toBe(columns[1]?.offsetAt(3));
+  });
+
+  it("finds the first visible justified row without walking every asset", () => {
+    const rows = buildJustifiedGeometry({
+      total: 4,
+      itemsPerRow: 2,
+      availableWidth: 500,
+      targetHeight: 200,
+      captionBand: 0,
+      entryAt: (index) => entry(`asset-${index}`, 100, 100),
+    });
+    const geometry = {
+      count: rows.length,
+      totalHeight: rows.at(-1)!.offset + rows.at(-1)!.bodyHeight,
+      rowAt: (row: number) => rows[row]!,
+      heightAt: (row: number) => rows[row]!.bodyHeight,
+      offsetAt: (row: number) => rows[row]?.offset ?? rows.at(-1)!.offset + rows.at(-1)!.bodyHeight,
+    };
+    const index = makeJustifiedLayoutIndex({
+      total: 4,
+      itemsPerRow: 2,
+      geometry,
+      idAt: (rank) => `asset-${rank}`,
+    });
+    expect(index.firstVisibleIndex(rows[1]!.offset)).toBe(2);
+    expect(index.rectAtIndex(2)?.top).toBe(rows[1]!.offset);
+  });
+
   it("uses sparse real dimensions to correct masonry offsets", () => {
     const geometry = buildMasonryGeometry({
       total: 4,

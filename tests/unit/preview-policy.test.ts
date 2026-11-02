@@ -4,6 +4,7 @@ import {
   SOURCE_DIRECT_MAX_LONG_EDGE_PX,
   SOURCE_DIRECT_MAX_PIXELS,
   isSourceDirectPreview,
+  isSourceDirectPreviewCandidate,
 } from "../../src/shared/preview-policy";
 
 const base = {
@@ -15,6 +16,11 @@ const base = {
 };
 
 describe("isSourceDirectPreview", () => {
+  it("identifies only bounded native files for an inexpensive header probe", () => {
+    expect(isSourceDirectPreviewCandidate(base)).toBe(true);
+    expect(isSourceDirectPreviewCandidate({ ...base, byteSize: SOURCE_DIRECT_MAX_BYTES + 1 })).toBe(false);
+    expect(isSourceDirectPreviewCandidate({ ...base, fileName: "paint.tiff" })).toBe(false);
+  });
   it("accepts bounded native raster images", () => {
     expect(isSourceDirectPreview(base)).toBe(true);
     expect(isSourceDirectPreview({ ...base, fileName: "paint.JFIF" })).toBe(true);

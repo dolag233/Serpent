@@ -27,8 +27,8 @@ import {
   type CanvasAssetLayoutIndex,
 } from "../canvas-asset-layout";
 import {
-  canvasViewportIsMeasurable,
   itemIntersectsVisibleRange,
+  readCanvasLocalViewportSnapshot,
   useCanvasLocalViewport,
 } from "../viewport-window";
 import { canvasHasPreviewScrollHold, logBrowseScrollWrite } from "../browse-scroll-debug";
@@ -38,6 +38,15 @@ import {
   virtualLayoutEntryAt,
   virtualLayoutPublishedId,
 } from "./virtual-browse-layout";
+import { registerVirtualScrollAnchorCapture } from "./virtual-scroll-anchor-signal";
+import {
+  captureVirtualScrollAnchor,
+  virtualScrollAnchorDelta,
+  type VirtualScrollAnchor,
+  type VirtualScrollAnchorModel,
+} from "./virtual-scroll-anchor-model";
+
+type VirtualCanvasAssetLayoutIndex = CanvasAssetLayoutIndex & VirtualScrollAnchorModel;
 
 function virtualMasonryCardSlotStyle(input: {
   previewHeightPx: number;
@@ -411,13 +420,13 @@ export function buildChunkedMasonryGeometry(input: {
   });
 }
 
-function makeMasonryLayoutIndex(input: {
+export function makeMasonryLayoutIndex(input: {
   total: number;
   columnCount: number;
   columnWidth: number;
   columns: readonly MasonryColumnGeometry[];
   idAt: (index: number) => string | undefined;
-}): CanvasAssetLayoutIndex {
+}): VirtualCanvasAssetLayoutIndex {
   const total = Math.max(0, Math.trunc(input.total));
   const columns = Math.max(1, Math.trunc(input.columnCount));
   const width = assertFinitePositive(input.columnWidth, 1);
@@ -438,6 +447,30 @@ function makeMasonryLayoutIndex(input: {
   };
   return {
     total,
+    rectAtIndex: (index) => {
+      const rect = rectAt(index);
+      return rect ? { top: rect.y, height: rect.height } : null;
+    },
+    firstVisibleIndex: (top) => {
+      let first: { index: number; top: number; x: number } | null = null;
+      for (let column = 0; column < columns; column += 1) {
+        const geometry = input.columns[column];
+        if (!geometry || geometry.count === 0) continue;
+        const row = variableWindowForSequence({
+          count: geometry.count,
+          heightAt: geometry.heightAt,
+          offsetAt: geometry.offsetAt,
+          totalHeight: geometry.totalHeight,
+        }, top, top + 1).start;
+        const index = row * columns + column;
+        const rect = rectAt(index);
+        if (!rect) continue;
+        if (!first || rect.y < first.top || (rect.y === first.top && rect.x < first.x)) {
+          first = { index, top: rect.y, x: rect.x };
+        }
+      }
+      return first?.index ?? null;
+    },
     forEachIntersecting: (box, visit) => {
       if (total <= 0) return;
       const firstColumn = Math.max(
@@ -694,12 +727,12 @@ export function buildChunkedJustifiedGeometry(input: {
   return { count, totalHeight, rowAt, heightAt, offsetAt };
 }
 
-function makeJustifiedLayoutIndex(input: {
+export function makeJustifiedLayoutIndex(input: {
   total: number;
   itemsPerRow: number;
   geometry: JustifiedGeometryModel;
   idAt: (index: number) => string | undefined;
-}): CanvasAssetLayoutIndex {
+}): VirtualCanvasAssetLayoutIndex {
   const total = Math.max(0, Math.trunc(input.total));
   const itemsPerRow = Math.max(1, Math.trunc(input.itemsPerRow));
   const rectAt = (index: number) => {
@@ -721,6 +754,21 @@ function makeJustifiedLayoutIndex(input: {
   };
   return {
     total,
+    rectAtIndex: (index) => {
+      const rect = rectAt(index);
+      return rect ? { top: rect.y, height: rect.height } : null;
+    },
+    firstVisibleIndex: (top) => {
+      if (input.geometry.count === 0) return null;
+      const row = variableWindowForSequence({
+        count: input.geometry.count,
+        heightAt: input.geometry.heightAt,
+        offsetAt: input.geometry.offsetAt,
+        totalHeight: input.geometry.totalHeight,
+      }, top, top + 1).start;
+      const index = row * itemsPerRow;
+      return rectAt(index) ? index : null;
+    },
     forEachIntersecting: (box, visit) => {
       if (total <= 0) return;
       const window = variableWindowForSequence({
@@ -758,9 +806,12 @@ function makeJustifiedLayoutIndex(input: {
  */
 function useVirtualScrollAnchor(
   containerRef: { current: HTMLDivElement | null },
+  model: VirtualScrollAnchorModel,
   geometryRevision: number,
 ): void {
-  const anchorRef = useRef<{ index: number; localTop: number } | null>(null);
+  const anchorRef = useRef<VirtualScrollAnchor | null>(null);
+  const modelRef = useRef(model);
+  const revisionRef = useRef(geometryRevision);
   const captureRef = useRef<() => void>(() => undefined);
 
   useLayoutEffect(() => {
@@ -768,57 +819,21 @@ function useVirtualScrollAnchor(
     if (!container) return;
     const canvas = container.closest<HTMLElement>(".workspace-canvas");
     if (!canvas) return;
-    const findSlot = (index: number): HTMLElement | undefined => {
-      for (const slot of container.querySelectorAll<HTMLElement>("[data-layout-index]")) {
-        if (Number(slot.dataset.layoutIndex) === index) return slot;
-      }
-      return undefined;
-    };
-    const findFirstVisibleSlot = (canvasRect: DOMRect): {
-      index: number;
-      rect: DOMRect;
-    } | undefined => {
-      let first: { index: number; rect: DOMRect } | undefined;
-      for (const slot of container.querySelectorAll<HTMLElement>("[data-layout-index]")) {
-        const index = Number(slot.dataset.layoutIndex);
-        if (!Number.isSafeInteger(index) || index < 0) continue;
-        const rect = slot.getBoundingClientRect();
-        if (rect.bottom <= canvasRect.top) continue;
-        if (!first || rect.top < first.rect.top) first = { index, rect };
-      }
-      return first;
-    };
     const capture = () => {
-      if (!canvasViewportIsMeasurable(canvas) || canvasHasPreviewScrollHold(canvas)) {
-        return;
-      }
-      const canvasRect = canvas.getBoundingClientRect();
-      const anchor = anchorRef.current;
-      const currentSlot = anchor ? findSlot(anchor.index) : undefined;
-      const currentRect = currentSlot?.getBoundingClientRect();
-      const first = currentSlot && currentRect && currentRect.bottom > canvasRect.top
-        ? { index: anchor!.index, rect: currentRect }
-        : findFirstVisibleSlot(canvasRect);
-      if (!first) return;
-      anchorRef.current = {
-        index: first.index,
-        localTop: first.rect.top - canvasRect.top,
-      };
+      const snapshot = readCanvasLocalViewportSnapshot(container);
+      if (!snapshot || canvasHasPreviewScrollHold(canvas)) return;
+      anchorRef.current = captureVirtualScrollAnchor(
+        modelRef.current,
+        snapshot.scrollTop - snapshot.contentTop,
+        snapshot.scrollTop - snapshot.contentTop + snapshot.height,
+        anchorRef.current,
+      );
     };
     captureRef.current = capture;
     capture();
-    let frame: number | null = null;
-    const scheduleCapture = () => {
-      if (frame !== null) return;
-      frame = window.requestAnimationFrame(() => {
-        frame = null;
-        capture();
-      });
-    };
-    canvas.addEventListener("scroll", scheduleCapture, { passive: true });
+    const unregister = registerVirtualScrollAnchorCapture(() => captureRef.current());
     return () => {
-      canvas.removeEventListener("scroll", scheduleCapture);
-      if (frame !== null) window.cancelAnimationFrame(frame);
+      unregister();
       captureRef.current = () => undefined;
     };
   }, [containerRef]);
@@ -827,33 +842,26 @@ function useVirtualScrollAnchor(
     const container = containerRef.current;
     const canvas = container?.closest<HTMLElement>(".workspace-canvas");
     const anchor = anchorRef.current;
+    const changed = geometryRevision !== revisionRef.current;
+    modelRef.current = model;
+    revisionRef.current = geometryRevision;
+    if (!changed) return;
     if (!container || !canvas || !anchor) return;
-    if (!canvasViewportIsMeasurable(canvas) || canvasHasPreviewScrollHold(canvas)) {
-      return;
-    }
+    if (!readCanvasLocalViewportSnapshot(container) || canvasHasPreviewScrollHold(canvas)) return;
     // Card-size and panel reflow own the scroll offset until their anchor
     // settle finishes. Applying a first-visible-slot delta here drops the
     // pointer card out of the viewport.
     if (isCanvasReflowRestorationPending(canvas)) return;
-    const slot = [...container.querySelectorAll<HTMLElement>("[data-layout-index]")]
-      .find((candidate) => Number(candidate.dataset.layoutIndex) === anchor.index);
-    if (!slot) {
-      captureRef.current();
-      return;
-    }
-    const canvasRect = canvas.getBoundingClientRect();
-    const nextLocalTop = slot.getBoundingClientRect().top - canvasRect.top;
-    const delta = nextLocalTop - anchor.localTop;
-    if (Math.abs(delta) > 0.5) {
+    const delta = virtualScrollAnchorDelta(model, anchor);
+    if (delta !== null && Math.abs(delta) > 0.5) {
       logBrowseScrollWrite("virtualScrollAnchor.delta", canvas, {
         index: anchor.index,
         delta: Math.round(delta),
       });
-      const maxScroll = Math.max(0, canvas.scrollHeight - canvas.clientHeight);
-      canvas.scrollTop = Math.min(maxScroll, Math.max(0, canvas.scrollTop + delta));
+      canvas.scrollTop = Math.max(0, canvas.scrollTop + delta);
     }
     captureRef.current();
-  }, [containerRef, geometryRevision]);
+  }, [containerRef, geometryRevision, model]);
 }
 
 export function VirtualMasonryColumns({
@@ -908,17 +916,18 @@ export function VirtualMasonryColumns({
         }),
     [captionBandForAsset, columnCount, columnWidth, layout.geometryEntries, layout.total, showCaption],
   );
-  useVirtualScrollAnchor(containerRef, layout.geometryRevision);
+  const { total, assetIdsByIndex } = layout;
   const layoutIndex = useMemo(
     () => makeMasonryLayoutIndex({
-      total: layout.total,
+      total,
       columnCount,
       columnWidth,
       columns: geometry,
-      idAt: (index) => virtualLayoutPublishedId(layout, index),
+      idAt: (index) => virtualLayoutPublishedId({ assetIdsByIndex }, index),
     }),
-    [columnCount, columnWidth, geometry, layout.assetIdsByIndex, layout.total],
+    [columnCount, columnWidth, geometry, assetIdsByIndex, total],
   );
+  useVirtualScrollAnchor(containerRef, layoutIndex, layout.geometryRevision);
 
   useLayoutEffect(() => {
     const element = containerRef.current;
@@ -1062,16 +1071,17 @@ export function VirtualJustifiedAssetRows({
         })),
     [availableWidth, captionBandForAsset, cardSize, itemsPerRow, layout.geometryEntries, layout.total],
   );
-  useVirtualScrollAnchor(containerRef, layout.geometryRevision);
+  const { total, assetIdsByIndex } = layout;
   const layoutIndex = useMemo(
     () => makeJustifiedLayoutIndex({
-      total: layout.total,
+      total,
       itemsPerRow,
       geometry,
-      idAt: (index) => virtualLayoutPublishedId(layout, index),
+      idAt: (index) => virtualLayoutPublishedId({ assetIdsByIndex }, index),
     }),
-    [geometry, itemsPerRow, layout.assetIdsByIndex, layout.total],
+    [geometry, itemsPerRow, assetIdsByIndex, total],
   );
+  useVirtualScrollAnchor(containerRef, layoutIndex, layout.geometryRevision);
 
   useLayoutEffect(() => {
     const element = containerRef.current;

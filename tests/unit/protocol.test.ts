@@ -6,6 +6,7 @@ import {
   parseWorkerRequest,
 } from '../../src/shared/protocol/requests';
 import { classifyUnknownFailure, createPublicError, publicReasonFromError, toPublicError, PUBLIC_ERROR_MESSAGES } from '../../src/shared/protocol/errors';
+
 import {
   importConflictPlanSchema,
   parseAssetChangeEvent,
@@ -18,6 +19,24 @@ import {
   parseAiContentClearedEvent,
   parseAiInputReadyEvent,
 } from '../../src/shared/protocol/responses';
+
+it('classifies a stopped Library Worker without exposing internal details', () => {
+  const failure = Object.assign(new Error('private internal detail'), { code: 'WORKER_UNAVAILABLE' });
+  expect(toPublicError(failure)).toEqual({
+    code: 'WORKER_UNAVAILABLE',
+    message: PUBLIC_ERROR_MESSAGES.WORKER_UNAVAILABLE,
+  });
+});
+
+it('validates Worker recovery lifecycle events without a library path', () => {
+  expect(parseRendererLifecycleEvent({ type: 'worker.recovering' })).toEqual({ type: 'worker.recovering' });
+  expect(parseRendererLifecycleEvent({ type: 'worker.recovered', libraryIds: ['library-1'], failedLibraryIds: [] })).toEqual({
+    type: 'worker.recovered',
+    libraryIds: ['library-1'],
+    failedLibraryIds: [],
+  });
+  expect(parseRendererLifecycleEvent({ type: 'worker.failed' })).toEqual({ type: 'worker.failed' });
+});
 
 describe('renderer request protocol', () => {
   it('accepts the library-open cancellation request and acknowledgement', () => {
@@ -2706,6 +2725,20 @@ describe('background asset change events', () => {
       missingCount: 0,
       source: 'sync',
     });
+    expect(parseAssetChangeEvent({
+      type: 'asset.changed',
+      libraryId: 'library-01',
+      changedCount: 1,
+      missingCount: 0,
+      nativeDragPathsChanged: true,
+    })).toMatchObject({ nativeDragPathsChanged: true });
+    expect(() => parseAssetChangeEvent({
+      type: 'asset.changed',
+      libraryId: 'library-01',
+      changedCount: 1,
+      missingCount: 0,
+      nativeDragPathsChanged: false,
+    })).toThrow();
     expect(() => parseAssetChangeEvent({
       type: 'asset.changed',
       libraryId: 'library-01',

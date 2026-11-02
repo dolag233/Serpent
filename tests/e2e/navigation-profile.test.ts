@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -48,6 +48,7 @@ const navTarget = process.env.SERPENT_PROFILE_NAV_TARGET;
 const contended = process.env.SERPENT_PROFILE_CONTENDED === "1";
 const switches = Number(process.env.SERPENT_PROFILE_SWITCHES ?? 4);
 const includeJumps = process.env.SERPENT_PROFILE_INCLUDE_JUMPS !== "0";
+const percentJump = process.env.SERPENT_PROFILE_PERCENT_JUMP === "1";
 const idleMs = Number(process.env.SERPENT_PROFILE_IDLE_MS ?? 0);
 const pauseQueueBeforeNavigation = process.env.SERPENT_PROFILE_PAUSE_QUEUE_BEFORE_NAV === "1";
 const pauseQueueConfirmation = process.env.SERPENT_PROFILE_PAUSE_QUEUE_CONFIRM;
@@ -63,6 +64,9 @@ const repeatSwitchesForWarmCache = process.env.SERPENT_PROFILE_REPEAT_SWITCHES !
  */
 const statusSamples = Math.max(0, Number(process.env.SERPENT_PROFILE_STATUS_SAMPLES ?? 0));
 const statusSampleIntervalMs = Math.max(0, Number(process.env.SERPENT_PROFILE_STATUS_INTERVAL_MS ?? 200));
+const traceWheel = process.env.SERPENT_PROFILE_TRACE_WHEEL === "1";
+const styleAblation = process.env.SERPENT_PROFILE_STYLE_ABLATION ?? "";
+const suppressWheelInput = process.env.SERPENT_PROFILE_SUPPRESS_WHEEL_INPUT === "1";
 type PersistedJobGroup = {
   kind: string;
   status: string;
@@ -772,6 +776,7 @@ test("profile navigation hotspots on a real library", async () => {
     env: electronLaunchEnv({
       SERPENT_E2E: "1",
       SERPENT_E2E_HIDE_WINDOW: "1",
+      SERPENT_E2E_PERF_OFFSCREEN: "1",
       SERPENT_E2E_RESTORE_RECENT: "1",
       SERPENT_E2E_USER_DATA_PATH: userDataPath,
       SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
@@ -1043,17 +1048,95 @@ test("profile navigation hotspots on a real library", async () => {
     const canvas = window.locator(".workspace-canvas");
     let wheelProbe: Awaited<ReturnType<typeof readRendererProbe>> | null = null;
     if (wheelMs > 0) {
-      await resetRendererCounters(window);
-      const box = await canvas.boundingBox();
-      if (box) await window.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-      const wheelStartedAt = Date.now();
-      let direction = 1;
-      while (Date.now() - wheelStartedAt < wheelMs) {
-        await window.mouse.wheel(0, direction * (80 + Math.floor(Math.random() * 260)));
-        await window.waitForTimeout(60 + Math.floor(Math.random() * 90));
-        if (Math.random() < 0.3) direction *= -1;
+      // Scope-switch samples may end in a short collection. Measure wheel churn
+      // over the library-wide canvas instead of timing an idle, unscrollable view.
+      if (switches > 0 && scopes.length > 0) {
+        const libraryRow = window.locator(".navigation-pane button.nav-row").first();
+        const expectedScope = await libraryRow.evaluate((element) => {
+          const button = element as HTMLButtonElement;
+          return [button.dataset.navFolderKind ?? "", button.dataset.navFolderId ?? "", button.dataset.navCollectionId ?? "", button.querySelector(".nav-row-label")?.textContent?.trim() ?? ""].join("\u0000");
+        });
+        const beforeIds = await visibleCardIds(window);
+        await libraryRow.click();
+        const changed = await waitForScopeContentChange(window, expectedScope, beforeIds, 30_000);
+        expect(changed.timedOut, "Wheel profiling must return to the library-wide scope").toBe(false);
       }
-      wheelProbe = await readRendererProbe(window);
+      const canvasIsScrollable = await canvas.evaluate((element) => element.scrollHeight > element.clientHeight + 1);
+      if (!canvasIsScrollable) skipped.wheelNotScrollable = 1;
+      else {
+        const ablationRules: Record<string, string> = {
+          "hide-live-video": ".asset-card-media-live:is(video) { display: none !important; }",
+          "remove-isolation": ".asset-preview { isolation: auto !important; }",
+          "remove-rounded-clips": ".asset-preview, .asset-card-media { overflow: visible !important; border-radius: 0 !important; }",
+          "no-card-pointer": ".asset-card { pointer-events: none !important; }",
+          "hide-covers": ".asset-thumbnail { display: none !important; }",
+          "hide-media": ".asset-card-media { display: none !important; }",
+        };
+        if (styleAblation) {
+          const rule = ablationRules[styleAblation];
+          if (!rule) throw new Error(`Unsupported style ablation: ${styleAblation}`);
+          await window.addStyleTag({ content: rule });
+        }
+        await resetRendererCounters(window);
+        const box = await canvas.boundingBox();
+        if (box) await window.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        const wheelTraceEvents: Array<Record<string, unknown>> = [];
+        if (traceWheel) {
+          cdp.on("Tracing.dataCollected", (payload: { value?: unknown }) => {
+            if (Array.isArray(payload.value)) wheelTraceEvents.push(...payload.value);
+          });
+          await cdp.send("Tracing.start", {
+            traceConfig: {
+              includedCategories: [
+                "devtools.timeline",
+                "v8.execute",
+                "blink.user_timing",
+                "disabled-by-default-devtools.timeline.frame",
+              ],
+            },
+          });
+        }
+        const wheelStartedAt = Date.now();
+        let direction = 1;
+        while (Date.now() - wheelStartedAt < wheelMs) {
+          if (!suppressWheelInput) {
+            await window.mouse.wheel(0, direction * (80 + Math.floor(Math.random() * 260)));
+          }
+          await window.waitForTimeout(60 + Math.floor(Math.random() * 90));
+          if (Math.random() < 0.3) direction *= -1;
+        }
+        wheelProbe = await readRendererProbe(window);
+        if (traceWheel) {
+          const complete = new Promise<void>((resolve) => {
+            cdp.once("Tracing.tracingComplete", () => resolve());
+          });
+          await cdp.send("Tracing.end");
+          await complete;
+          mkdirSync(outDir!, { recursive: true });
+          writeFileSync(path.join(outDir!, "wheel-trace.json"), JSON.stringify(wheelTraceEvents));
+        }
+        if (wheelMs >= 1_000) {
+          expect(wheelProbe.frameSamples, "Hidden performance windows must render frames during wheel profiling")
+            .toBeGreaterThan(5);
+        }
+      }
+    }
+    const wheelDom = await window.evaluate(() => {
+      const canvas = document.querySelector<HTMLElement>(".workspace-canvas");
+      const grid = document.querySelector<HTMLElement>(".asset-grid");
+      return {
+        gridClass: grid?.className ?? "",
+        mountedCards: grid?.querySelectorAll(".asset-card").length ?? 0,
+        mountedSlots: grid?.querySelectorAll("[data-layout-asset-id]").length ?? 0,
+        mountedImages: grid?.querySelectorAll("img.asset-thumbnail").length ?? 0,
+        mountedVideos: grid?.querySelectorAll("video.asset-card-media-live").length ?? 0,
+        canvasHeight: canvas?.clientHeight ?? 0,
+        scrollHeight: canvas?.scrollHeight ?? 0,
+      };
+    });
+    if (process.env.SERPENT_PROFILE_SCREENSHOT === "1") {
+      mkdirSync(outDir!, { recursive: true });
+      await window.screenshot({ path: path.join(outDir!, "wheel.png") });
     }
     const jobStatusStats = await window.evaluate(() =>
       (globalThis as typeof globalThis & { __serpentJobStatusStats?: unknown })
@@ -1076,7 +1159,11 @@ test("profile navigation hotspots on a real library", async () => {
       // pointer over a covered region) is not evidence either way, so a
       // `no-scroll` attempt is retried with the next delta instead of being
       // counted as a failed jump.
-      const jumpDeltas = [6_000, -9_000, 12_000, -15_000];
+      const maximumScroll = await canvas.evaluate((element) =>
+        Math.max(0, element.scrollHeight - element.clientHeight));
+      const jumpDeltas = percentJump
+        ? [Math.round(maximumScroll * 0.05), Math.round(maximumScroll * 0.5)]
+        : [6_000, -9_000, 12_000, -15_000];
       for (const deltaPx of jumpDeltas) {
         if (!canvasIsScrollable || jumpMeasured >= 3) break;
         const jump = await measureScrollJump(window, deltaPx, 30_000);
@@ -1084,6 +1171,20 @@ test("profile navigation hotspots on a real library", async () => {
           jumpMeasured += 1;
           record("jump.changedMs", jump.elapsedMs);
           record("jump.scrolledPx", jump.scrolledPx);
+          const thumbnails = await waitForAllVisibleThumbnails(window, 30_000);
+          const decodedBaseMs = jump.elapsedMs;
+          if (thumbnails.firstDecodedMs != null) {
+            record("jump.firstDecodedMs", decodedBaseMs + thumbnails.firstDecodedMs);
+          }
+          if (thumbnails.decoded90Ms != null) {
+            record("jump.decoded90Ms", decodedBaseMs + thumbnails.decoded90Ms);
+          }
+          if (!thumbnails.timedOut) {
+            record("jump.allDecodedMs", decodedBaseMs + thumbnails.elapsedMs);
+          } else {
+            recordTimeout("jump.allDecoded");
+          }
+          record("jump.visibleImageCards", thumbnails.imageCards);
           continue;
         }
         jumpDiagnostics.push({
@@ -1195,6 +1296,7 @@ test("profile navigation hotspots on a real library", async () => {
       timeouts,
       skipped,
       wheelProbe,
+      wheelDom,
       jobStatusStats,
       mediaJobsDialogOpen,
       backgroundObservation,

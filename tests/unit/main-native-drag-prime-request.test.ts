@@ -45,3 +45,13 @@ test("import conflict resolution uses the pending library map", () => {
   );
   expect(primeImmediately).toHaveBeenCalledWith("lib-pending", ["asset-1"], "upsert");
 });
+
+test("browse pages leave native drag priming to the reported viewport", () => {
+  const primeImmediately = vi.fn();
+  maybePrimeNativeDrag(
+    { type: "browse.session.page.request", libraryId: "lib-1", sessionId: "session-1", offset: 100 },
+    { ok: true, type: "browse.session.page", items: [{ assetId: "asset-1" }] },
+    { pendingImportLibraries: new Map(), primeImmediately },
+  );
+  expect(primeImmediately).not.toHaveBeenCalled();
+});

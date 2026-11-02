@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { NativeAssetDragPrimeScheduler } from "../../src/main/native-asset-drag-prime";
+
+afterEach(() => vi.useRealTimers());
 
 /**
  * Serpent-8ee170: the drag-cache preheat must stay bounded when thousands of
@@ -147,6 +149,52 @@ describe("NativeAssetDragPrimeScheduler", () => {
     // An empty replace clears the cache for that library.
     await recorder.scheduler.primeImmediately("library-1", [], "replace");
     expect(recorder.applied.at(-1)).toEqual({ libraryId: "library-1", entries: [], mode: "replace" });
+  });
+
+  it("does not repopulate a closed library from an in-flight immediate primer", async () => {
+    const gate = deferred<readonly unknown[] | null>();
+    const recorder = createScheduler({ gate: gate.promise });
+    const pending = recorder.scheduler.primeImmediately("library-1", ["asset-a"], "upsert");
+    recorder.scheduler.invalidate("library-1");
+    gate.resolve([{ assetId: "asset-a" }]);
+    await pending;
+    expect(recorder.applied).toEqual([]);
+  });
+
+  it("debounces real viewport priming and cancels a stale destination", async () => {
+    vi.useFakeTimers();
+    const recorder = createScheduler();
+    recorder.scheduler.scheduleVisible("library-1", ["old"]);
+    await vi.advanceTimersByTimeAsync(400);
+    recorder.scheduler.scheduleVisible("library-1", ["new", "new"]);
+    await vi.advanceTimersByTimeAsync(599);
+    expect(recorder.requests).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(recorder.requests).toEqual([{ libraryId: "library-1", assetIds: ["new"] }]);
+
+    recorder.scheduler.scheduleVisible("library-1", ["closed"]);
+    recorder.scheduler.invalidate("library-1");
+    await vi.advanceTimersByTimeAsync(600);
+    expect(recorder.requests).toHaveLength(1);
+  });
+
+  it("publishes visible drag paths in bounded chunks and stops after destination changes", async () => {
+    vi.useFakeTimers();
+    const gate = deferred<readonly unknown[] | null>();
+    const recorder = createScheduler({ gate: gate.promise });
+    recorder.scheduler.scheduleVisible(
+      "library-1",
+      Array.from({ length: 20 }, (_, index) => `old-${index}`),
+    );
+    await vi.advanceTimersByTimeAsync(600);
+    expect(recorder.requests).toHaveLength(1);
+    expect(recorder.requests[0]!.assetIds).toHaveLength(8);
+    recorder.scheduler.scheduleVisible("library-1", ["new"]);
+    gate.resolve(recorder.requests[0]!.assetIds.map((assetId) => ({ assetId })));
+    await flush();
+    expect(recorder.requests).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(recorder.requests.at(-1)?.assetIds).toEqual(["new"]);
   });
 
   it("drops queued work for every library on clear", async () => {

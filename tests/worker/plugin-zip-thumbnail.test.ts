@@ -36,6 +36,16 @@ describe('plugin thumbnail extensions', () => {
     service.closeAll();
   });
 
+  it('reports only newly claimed formats for bounded queue admission', () => {
+    const { service, libraryId } = libraryWithZip();
+    expect(service.setPluginThumbnailExtensions(libraryId, [])).toBe(false);
+    expect(service.setPluginThumbnailExtensions(libraryId, ['.zip'])).toBe(true);
+    expect(service.setPluginThumbnailExtensions(libraryId, ['ZIP', '.zip'])).toBe(false);
+    expect(service.setPluginThumbnailExtensions(libraryId, [])).toBe(false);
+    expect(service.setPluginThumbnailExtensions(libraryId, ['.zip'])).toBe(true);
+    service.closeAll();
+  });
+
   it('generates a card image for a zip and opens that image in the viewer', async () => {
     const { service, libraryId, assetId } = libraryWithZip();
     service.setPluginThumbnailExtensions(libraryId, ['.zip']);

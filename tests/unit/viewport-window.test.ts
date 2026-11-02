@@ -1,12 +1,55 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  canvasLocalViewportFromSnapshot,
   canvasViewportIsMeasurable,
   columnWindow,
   itemIntersectsVisibleRange,
+  measureCanvasLocalViewport,
   quantizeCanvasViewportOffsetPx,
   viewportOverscanPx,
 } from "../../src/renderer/viewport-window";
+
+describe("cached canvas-local viewport", () => {
+  it("tracks scrolling without layout measurements when the container origin is stable", () => {
+    let scrollTop = 500;
+    const canvas = {
+      clientHeight: 900,
+      clientWidth: 1200,
+      get scrollTop() { return scrollTop; },
+      getBoundingClientRect: () => ({ top: 100 }),
+    } as unknown as HTMLElement;
+    const container = {
+      getBoundingClientRect: () => ({ top: 230 - scrollTop }),
+    } as unknown as HTMLElement;
+    const snapshot = measureCanvasLocalViewport(container, canvas);
+    expect(snapshot).toEqual({ contentTop: 130, height: 900, scrollTop: 500 });
+    expect(canvasLocalViewportFromSnapshot(snapshot!, scrollTop, 1200))
+      .toEqual({ start: -830, end: 2470 });
+
+    scrollTop = 1820;
+    expect(canvasLocalViewportFromSnapshot(snapshot!, scrollTop, 1200))
+      .toEqual({ start: 490, end: 3790 });
+    expect(canvasLocalViewportFromSnapshot(snapshot!, scrollTop, 0))
+      .toEqual({ start: 1690, end: 2590 });
+  });
+
+  it("remeasures after layout above the canvas content changes", () => {
+    let contentTop = 130;
+    const canvas = {
+      clientHeight: 900,
+      clientWidth: 1200,
+      scrollTop: 500,
+      getBoundingClientRect: () => ({ top: 100 }),
+    } as unknown as HTMLElement;
+    const container = {
+      getBoundingClientRect: () => ({ top: contentTop - 400 }),
+    } as unknown as HTMLElement;
+    expect(measureCanvasLocalViewport(container, canvas)?.contentTop).toBe(130);
+    contentTop = 190;
+    expect(measureCanvasLocalViewport(container, canvas)?.contentTop).toBe(190);
+  });
+});
 
 describe("canvasViewportIsMeasurable", () => {
   it("rejects a collapsed canvas so windowing keeps the last real slice", () => {

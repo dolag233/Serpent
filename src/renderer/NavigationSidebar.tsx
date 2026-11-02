@@ -1286,14 +1286,21 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     };
   }, []);
 
-  const persistedCollapsedFolderIds = new Set(navTreePrefs.collapsedFolderIds);
-  const collapsedFolderIds = new Set(persistedCollapsedFolderIds);
+  const persistedCollapsedFolderIds = useMemo(
+    () => new Set(navTreePrefs.collapsedFolderIds),
+    [navTreePrefs.collapsedFolderIds],
+  );
   // Creating under a collapsed parent must reveal the inline create row. Keep
   // this as derived view state: opening or cancelling an editor must not
   // mutate the user's persisted navigation preference.
-  if (inlineFolderEdit?.kind === "create" && inlineFolderEdit.parentFolderId) {
-    collapsedFolderIds.delete(inlineFolderEdit.parentFolderId);
-  }
+  const collapsedFolderIds = useMemo(() => {
+    if (inlineFolderEdit?.kind !== "create" || !inlineFolderEdit.parentFolderId) {
+      return persistedCollapsedFolderIds;
+    }
+    const next = new Set(persistedCollapsedFolderIds);
+    next.delete(inlineFolderEdit.parentFolderId);
+    return next;
+  }, [persistedCollapsedFolderIds, inlineFolderEdit]);
 
   function toggleFolderCollapsed(folderId: string) {
     const nextIds = persistedCollapsedFolderIds.has(folderId)
@@ -1304,12 +1311,24 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     saveNavTreePreferences(next);
   }
 
-  const unifiedDirectoryEntries = (() => {
+  const unifiedDirectoryEntries = useMemo(() => {
     const entries = buildUnifiedDirectoryNavEntries(folders, linkedFolders);
     return showMissingLinkedFiles
       ? entries
       : hideOfflineLinkedDirectoryEntries(entries);
-  })();
+  }, [folders, linkedFolders, showMissingLinkedFiles]);
+  const sortedDirectoryEntries = useMemo(() => sortManagedTreeEntries(
+    unifiedDirectoryEntries,
+    folderSortPrefs.mode,
+    folderSortPrefs.order,
+    folderCustomOrder,
+  ), [unifiedDirectoryEntries, folderSortPrefs.mode, folderSortPrefs.order, folderCustomOrder]);
+  const sortedCollectionTree = useMemo(() => sortCollectionTree(
+    collectionTree,
+    collectionSortPrefs.mode,
+    collectionSortPrefs.order,
+    collectionCustomOrder,
+  ), [collectionTree, collectionSortPrefs.mode, collectionSortPrefs.order, collectionCustomOrder]);
 
   function applyFolderSubtree(folderId: string, collapse: boolean) {
     const rootId = isLibraryRootFolderId(folderId) || folderId === "root"
@@ -1931,12 +1950,6 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     };
   }
 
-  const sortedDirectoryEntries = sortManagedTreeEntries(
-    unifiedDirectoryEntries,
-    folderSortPrefs.mode,
-    folderSortPrefs.order,
-    folderCustomOrder,
-  );
   const [folderInsertEdge, setFolderInsertEdge] = useState<{
     folderId: string;
     edge: FolderDropEdge;
@@ -2057,17 +2070,13 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     }
   }
   const folderSearchActive = folderSearchQuery.trim().length > 0;
-  const directoryEntries = folderSearchActive
+  const directoryEntries = useMemo(() => folderSearchActive
     ? filterDirectoryEntriesByName(sortedDirectoryEntries, folderSearchQuery)
-    : filterCollapsedDirectoryEntries(sortedDirectoryEntries, collapsedFolderIds);
-  const foldersWithChildren = managedFolderIdsWithChildren(
-    unifiedDirectoryEntries,
-  );
-  const sortedCollectionTree = sortCollectionTree(
-    collectionTree,
-    collectionSortPrefs.mode,
-    collectionSortPrefs.order,
-    collectionCustomOrder,
+    : filterCollapsedDirectoryEntries(sortedDirectoryEntries, collapsedFolderIds),
+  [folderSearchActive, sortedDirectoryEntries, folderSearchQuery, collapsedFolderIds]);
+  const foldersWithChildren = useMemo(
+    () => managedFolderIdsWithChildren(unifiedDirectoryEntries),
+    [unifiedDirectoryEntries],
   );
   const collectionSearchActive = collectionSearchQuery.trim().length > 0;
   const visibleCollectionTree = collectionSearchActive

@@ -7,6 +7,8 @@ import {
 /** Floor for extra pixels above/below the canvas viewport that stay mounted. */
 export const VIEWPORT_OVERSCAN_PX = 1200;
 
+const canvasLocalViewportSnapshots = new WeakMap<HTMLElement, CanvasLocalViewportSnapshot>();
+
 /**
  * Runway for windowed browse columns. A fast trackpad flick can move several
  * screens before the compositor's scroll event reaches React. Keep five
@@ -55,19 +57,17 @@ export function useCanvasLocalViewport(
     const canvas = element.closest<HTMLElement>(".workspace-canvas");
     if (!canvas) return;
 
-    const update = () => {
-      // A collapsed canvas (viewer overlay teardown) reports a top window.
-      // Keep the last measurable slice mounted so close-restore still has
-      // cards and minHeight instead of remounting the first row.
-      if (!canvasViewportIsMeasurable(canvas)) return;
-      // Scroll events can arrive after the compositor has moved the canvas but
-      // before the next paint. Deferring this read to requestAnimationFrame
-      // leaves the previous slice mounted for one more frame; when the user
-      // reverses direction that slice can start below the new viewport and
-      // expose a white band (CANVAS-037). Read and publish in the scroll
-      // handler so React can commit the matching slice before that paint.
-      const next = readCanvasLocalViewport(element, canvas, undefined, cardSizePx);
-      const visible = readCanvasLocalViewport(element, canvas, 0, cardSizePx);
+    let snapshot: CanvasLocalViewportSnapshot | null = null;
+    const publish = () => {
+      if (!snapshot) return;
+      const scrollTop = canvas.scrollTop;
+      snapshot.scrollTop = scrollTop;
+      const next = canvasLocalViewportFromSnapshot(
+        snapshot,
+        scrollTop,
+        viewportOverscanPx(snapshot.height, cardSizePx),
+      );
+      const visible = canvasLocalViewportFromSnapshot(snapshot, scrollTop, 0);
       setViewport((previous) =>
         previous.start === next.start
           && previous.end === next.end
@@ -81,15 +81,61 @@ export function useCanvasLocalViewport(
             },
       );
     };
+    const measure = () => {
+      // A collapsed canvas (viewer overlay teardown) reports a top window.
+      // Keep the last measurable slice mounted so close-restore still has
+      // cards and minHeight instead of remounting the first row.
+      snapshot = measureCanvasLocalViewport(element, canvas);
+      if (!snapshot) return;
+      canvasLocalViewportSnapshots.set(element, snapshot);
+      publish();
+    };
+    const onScroll = () => {
+      // Scroll events can arrive after the compositor has moved the canvas but
+      // before the next paint. Deferring this read to requestAnimationFrame
+      // leaves the previous slice mounted for one more frame; when the user
+      // reverses direction that slice can start below the new viewport and
+      // expose a white band (CANVAS-037). Publish synchronously from scrollTop
+      // and the last measured origin, avoiding layout reads on every wheel tick.
+      publish();
+    };
 
-    update();
-    canvas.addEventListener("scroll", update, { passive: true });
-    const observer = new ResizeObserver(update);
-    observer.observe(canvas);
-    observer.observe(element);
-    return () => {
-      canvas.removeEventListener("scroll", update);
+    measure();
+    canvas.addEventListener("scroll", onScroll, { passive: true });
+    const observer = new ResizeObserver((entries) => {
+      // The virtual grid changes height as page summaries arrive. Its top
+      // stays fixed while it is taller than the viewport, so remeasuring on
+      // each such change repeats layout work during a jump. A short grid can
+      // be centered by the canvas, however; its own resize moves its origin.
+      if (entries.some((entry) =>
+        entry.target !== element || entry.contentRect.height <= canvas.clientHeight)) {
+        measure();
+      }
+    });
+    const observeGeometry = () => {
       observer.disconnect();
+      observer.observe(canvas);
+      observer.observe(element);
+      // Preceding canvas siblings can also move this container's origin.
+      let directChild: HTMLElement = element;
+      while (directChild.parentElement && directChild.parentElement !== canvas) {
+        directChild = directChild.parentElement;
+      }
+      for (let sibling = directChild.previousElementSibling; sibling; sibling = sibling.previousElementSibling) {
+        if (sibling instanceof HTMLElement) observer.observe(sibling);
+      }
+    };
+    observeGeometry();
+    const mutationObserver = new MutationObserver(() => {
+      observeGeometry();
+      measure();
+    });
+    mutationObserver.observe(canvas, { childList: true });
+    return () => {
+      canvas.removeEventListener("scroll", onScroll);
+      observer.disconnect();
+      mutationObserver.disconnect();
+      canvasLocalViewportSnapshots.delete(element);
     };
   }, [containerRef, cardSizePx]);
 
@@ -107,6 +153,46 @@ export function canvasViewportIsMeasurable(
 export function quantizeCanvasViewportOffsetPx(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.round(value);
+}
+
+export type CanvasLocalViewportSnapshot = {
+  /** Container origin in canvas scroll coordinates. */
+  contentTop: number;
+  height: number;
+  /** Last scroll event (or geometry measurement), before later DOM patches. */
+  scrollTop: number;
+};
+
+/** Reuse the measured origin for geometry anchoring without a layout read. */
+export function readCanvasLocalViewportSnapshot(
+  container: HTMLElement,
+): CanvasLocalViewportSnapshot | undefined {
+  return canvasLocalViewportSnapshots.get(container);
+}
+
+export function measureCanvasLocalViewport(
+  container: HTMLElement,
+  canvas: HTMLElement,
+): CanvasLocalViewportSnapshot | null {
+  if (!canvasViewportIsMeasurable(canvas)) return null;
+  const scrollTop = canvas.scrollTop;
+  return {
+    contentTop: container.getBoundingClientRect().top
+      - canvas.getBoundingClientRect().top + scrollTop,
+    height: canvas.clientHeight,
+    scrollTop,
+  };
+}
+
+/** Scroll-window coordinates from a cached origin; no layout measurement. */
+export function canvasLocalViewportFromSnapshot(
+  snapshot: CanvasLocalViewportSnapshot,
+  scrollTop: number,
+  overscanPx: number,
+): { start: number; end: number } {
+  const overscan = Math.max(0, Math.round(overscanPx));
+  const start = quantizeCanvasViewportOffsetPx(scrollTop - snapshot.contentTop) - overscan;
+  return { start, end: start + snapshot.height + overscan * 2 };
 }
 
 export function readCanvasLocalViewport(

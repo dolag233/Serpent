@@ -413,6 +413,8 @@ export const assetChangeEventSchema = z.strictObject({
    * 导航与画布；自动同步调度器必须忽略，避免回放后再 `sync.run`。
    */
   source: z.enum(['watcher', 'text-save', 'client', 'content-replace', 'sync']).optional(),
+  /** Main invalidates native drag paths only for filesystem/drag-icon changes. */
+  nativeDragPathsChanged: z.literal(true).optional(),
 });
 
 export type AssetChangeEvent = z.infer<typeof assetChangeEventSchema>;
@@ -2879,6 +2881,13 @@ const libraryLifecycleOperationSchema = z.enum([
 ]);
 
 export const rendererLifecycleEventSchema = z.discriminatedUnion('type', [
+  z.strictObject({ type: z.literal('worker.recovering') }),
+  z.strictObject({
+    type: z.literal('worker.recovered'),
+    libraryIds: z.array(nonBlankString),
+    failedLibraryIds: z.array(nonBlankString),
+  }),
+  z.strictObject({ type: z.literal('worker.failed') }),
   z.strictObject({
     type: z.literal('library.opening'),
     operation: libraryLifecycleOperationSchema,

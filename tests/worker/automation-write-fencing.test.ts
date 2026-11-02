@@ -59,7 +59,7 @@ async function waitFor(
 }
 
 describe('Automation write fencing integration', () => {
-  it('exposes library.change-sequence as a read-only Worker command without taking the write lease', () => {
+  it('exposes library.change-sequence as a read-only Worker command without taking the write lease', async () => {
     const first = newService();
     const created = first.createLibrary({
       displayName: 'Change sequence command',
@@ -67,7 +67,7 @@ describe('Automation write fencing integration', () => {
     });
     first.createTag({ libraryId: created.libraryId, name: 'sequence-tag' });
 
-    const result = executeAutomationReadOnlyWorkerCommand(first, {
+    const result = await executeAutomationReadOnlyWorkerCommand(first, {
       type: 'library.change-sequence',
       libraryId: created.libraryId,
     });
@@ -79,7 +79,7 @@ describe('Automation write fencing integration', () => {
       changeSequence: 1,
     });
 
-    const dispatched = dispatchAutomationReadOnlyRequest(first, {
+    const dispatched = await dispatchAutomationReadOnlyRequest(first, {
       requestId: 'change-sequence-1',
       dispatch: 'automation-readonly',
       command: {
@@ -112,7 +112,7 @@ describe('Automation write fencing integration', () => {
       changeSequence: 1,
     });
     expect(first.getChangeSequence(created.libraryId)).toBe(1);
-    expect(executeAutomationReadOnlyWorkerCommand(first, {
+    expect(await executeAutomationReadOnlyWorkerCommand(first, {
       type: 'library.change-sequence',
       libraryId: created.libraryId,
     })).toMatchObject({ ok: true, changeSequence: 1 });

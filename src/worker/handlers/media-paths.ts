@@ -174,14 +174,14 @@ export async function executeMediaPathWorkerCommand(
       // waiting: this is a cache primer, so a partial result is safe and the
       // next browse re-primes it.
       const { libraryId, assetIds } = request.command;
-      const entries: ReturnType<typeof libraryService.resolveAssetDragInfos> = [];
-      const subBatchSize = 32;
+      const entries: Awaited<ReturnType<typeof libraryService.resolveAssetDragInfos>> = [];
+      const subBatchSize = 4;
       for (let offset = 0; offset < assetIds.length; offset += subBatchSize) {
         if (offset > 0) {
           await new Promise<void>((resolve) => setImmediate(resolve));
           if (hooks.mutationPendingFor(libraryId)) break;
         }
-        entries.push(...libraryService.resolveAssetDragInfos(
+        entries.push(...await libraryService.resolveAssetDragInfos(
           libraryId,
           assetIds.slice(offset, offset + subBatchSize),
         ));

@@ -83,6 +83,7 @@ export async function launchBenchmarkApp(options: {
     executablePath: resolveElectronExecutablePath(),
     env: electronLaunchEnv({
       SERPENT_E2E: "1",
+      SERPENT_E2E_PERF_OFFSCREEN: "1",
       SERPENT_E2E_RESTORE_RECENT: "1",
       SERPENT_E2E_USER_DATA_PATH: options.userDataPath,
       ...(options.openLibraryPath === undefined
@@ -157,6 +158,7 @@ export type RendererProbe = {
   longTaskTotalMs: number;
   slotCreated: number;
   slotRemoved: number;
+  /** Distinct observed element/src bindings, including initial attachment; not network requests. */
   mediaSrcWrites: number;
   maxSrcWritesOnOneElement: number;
   distinctMediaUrls: number;
@@ -181,6 +183,7 @@ export async function installRendererProbe(window: Page): Promise<void> {
       slotRemoved: number;
       mediaSrcWrites: number;
       srcWritesByElement: WeakMap<Element, number>;
+      lastSrcByElement: WeakMap<Element, string>;
       maxSrcWritesOnOneElement: number;
       srcSet: Set<string>;
       frameDeltas: number[];
@@ -194,6 +197,7 @@ export async function installRendererProbe(window: Page): Promise<void> {
       slotRemoved: 0,
       mediaSrcWrites: 0,
       srcWritesByElement: new WeakMap(),
+      lastSrcByElement: new WeakMap(),
       maxSrcWritesOnOneElement: 0,
       srcSet: new Set(),
       frameDeltas: [],
@@ -220,6 +224,11 @@ export async function installRendererProbe(window: Page): Promise<void> {
     const recordSrc = (image: HTMLImageElement): void => {
       const src = image.getAttribute("src");
       if (!src || !src.startsWith("serpent://")) return;
+      // An inserted image can be reported both by childList and by a src
+      // attribute record in the same observer batch. Count one binding per
+      // element/source pair, not two observer records for one DOM update.
+      if (probe.lastSrcByElement.get(image) === src) return;
+      probe.lastSrcByElement.set(image, src);
       probe.mediaSrcWrites += 1;
       probe.srcSet.add(src);
       const writes = (probe.srcWritesByElement.get(image) ?? 0) + 1;
@@ -322,6 +331,8 @@ export async function resetRendererCounters(window: Page): Promise<void> {
         slotCreated: number;
         slotRemoved: number;
         mediaSrcWrites: number;
+        srcWritesByElement: WeakMap<Element, number>;
+        lastSrcByElement: WeakMap<Element, string>;
         maxSrcWritesOnOneElement: number;
         srcSet: Set<string>;
         frameDeltas: number[];
@@ -334,6 +345,8 @@ export async function resetRendererCounters(window: Page): Promise<void> {
     probe.slotCreated = 0;
     probe.slotRemoved = 0;
     probe.mediaSrcWrites = 0;
+    probe.srcWritesByElement = new WeakMap();
+    probe.lastSrcByElement = new WeakMap();
     probe.maxSrcWritesOnOneElement = 0;
     probe.srcSet = new Set();
     probe.frameDeltas = [];

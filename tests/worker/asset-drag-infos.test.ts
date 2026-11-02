@@ -84,7 +84,7 @@ describe('resolveAssetDragInfos (Serpent-v4jf batched drag priming)', () => {
     const withoutThumbAsset = assets.find((asset) => asset.relativeFilePath.includes('without-thumb'))!;
     await service.generateThumbnail({ libraryId: created.libraryId, assetId: withThumbAsset.assetId });
 
-    const entries = service.resolveAssetDragInfos(created.libraryId, [
+    const entries = await service.resolveAssetDragInfos(created.libraryId, [
       withThumbAsset.assetId,
       withoutThumbAsset.assetId,
       'missing-asset-id',
@@ -108,7 +108,7 @@ describe('resolveAssetDragInfos (Serpent-v4jf batched drag priming)', () => {
     expect(withoutThumbEntry.thumbnailAbsolutePath).toBeUndefined();
   });
 
-  it('prefers a ready video poster for thumbnail entries like getThumbnailArtifact', () => {
+  it('prefers a ready video poster for thumbnail entries like getThumbnailArtifact', async () => {
     const root = temporaryRoot();
     const service = newService();
     const created = service.createLibrary({ displayName: 'DragPoster', selectedParentPath: root });
@@ -135,12 +135,12 @@ describe('resolveAssetDragInfos (Serpent-v4jf batched drag priming)', () => {
     );
     db.close();
 
-    const entries = service.resolveAssetDragInfos(created.libraryId, [asset.assetId]);
+    const entries = await service.resolveAssetDragInfos(created.libraryId, [asset.assetId]);
     expect(entries).toHaveLength(1);
     expect(entries[0]!.thumbnailAbsolutePath).toBe(posterPath);
   });
 
-  it('resolves linked assets to their external absolute paths', () => {
+  it('resolves linked assets to their external absolute paths', async () => {
     const root = temporaryRoot();
     const service = newService();
     const created = service.createLibrary({ displayName: 'DragLinked', selectedParentPath: root });
@@ -160,7 +160,7 @@ describe('resolveAssetDragInfos (Serpent-v4jf batched drag priming)', () => {
     });
     expect(assets).toHaveLength(1);
 
-    const entries = service.resolveAssetDragInfos(created.libraryId, [assets[0]!.assetId]);
+    const entries = await service.resolveAssetDragInfos(created.libraryId, [assets[0]!.assetId]);
     expect(entries).toHaveLength(1);
     expect(entries[0]!.absolutePath).toBe(service.resolveAssetPath(created.libraryId, assets[0]!.assetId));
     expect(entries[0]!.absolutePath).toContain('link-source');

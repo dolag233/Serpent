@@ -30,6 +30,8 @@ export interface ScrollOffsetSnapshot {
   readonly top: number;
 }
 
+const anchorRestoreCleanup = new WeakMap<object, () => void>();
+
 /**
  * The outer canvas owns scroll restoration while a panel/window reflow is in
  * flight. Masonry has a legacy raw-scroll restoration loop of its own; it
@@ -173,11 +175,9 @@ export function retainReflowAnchor(
  * Wait `frameCount` animation frames for layout/React commits to settle, then
  * nudge scroll so `anchor` lands back at its captured client point.
  *
- * Intentionally does **not** bail when scroll drifted during the wait: width
- * reflow often resets scrollTop (content height flicker / remount), and that
- * was the CANVAS-021 failure mode. User scroll during ~3 frames is rare; if
- * it happens, restoring the prior visible set is still the safer product
- * choice than leaving the viewport on unrelated assets.
+ * Layout drift can reset scrollTop during the wait; keep the anchor in that
+ * case. A new user scroll owns the viewport, however, and must cancel this
+ * older reflow snapshot before the delayed frame can overwrite it.
  */
 export function scheduleAnchorRestore(
   canvas: HTMLElement,
@@ -187,12 +187,56 @@ export function scheduleAnchorRestore(
   onRestored?: () => void,
   initialScroll?: ScrollOffsetSnapshot,
 ): void {
-  if (frameRef.current !== null) {
-    globalThis.cancelAnimationFrame(frameRef.current);
-    frameRef.current = null;
-  }
+  cancelScheduledAnchorRestore(frameRef);
   if (!anchor) return;
   if (canvasHasPreviewScrollHold(canvas)) return;
+
+  let finished = false;
+  let lastRestoreTop = canvas.scrollTop;
+  let lastRestoreHeight = canvas.scrollHeight;
+  const cleanup = () => {
+    canvas.removeEventListener?.('wheel', stopForUserInput);
+    canvas.removeEventListener?.('pointerdown', stopForUserInput);
+    canvas.removeEventListener?.('touchstart', stopForUserInput);
+    canvas.removeEventListener?.('scroll', stopForLargeScroll);
+    if (anchorRestoreCleanup.get(frameRef) === cleanup) {
+      anchorRestoreCleanup.delete(frameRef);
+    }
+  };
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    frameRef.current = null;
+    cleanup();
+    onRestored?.();
+  };
+  const stopForUserInput = () => {
+    if (frameRef.current !== null) globalThis.cancelAnimationFrame(frameRef.current);
+    finish();
+  };
+  const stopForLargeScroll = () => {
+    const heightDrifted = Math.abs(canvas.scrollHeight - lastRestoreHeight)
+      > Math.max(canvas.clientHeight, lastRestoreHeight * 0.01);
+    const newMaxScroll = Math.max(0, canvas.scrollHeight - canvas.clientHeight);
+    if (heightDrifted
+      && lastRestoreTop > newMaxScroll + 1
+      && Math.abs(canvas.scrollTop - newMaxScroll) <= 1) {
+      // Only a reduced scroll extent that actually clamps the old offset is
+      // layout drift. Normal virtual-geometry updates can change total height
+      // while a user is dragging the scrollbar to a distant position.
+      lastRestoreHeight = canvas.scrollHeight;
+      lastRestoreTop = canvas.scrollTop;
+      return;
+    }
+    if (Math.abs(canvas.scrollTop - lastRestoreTop) > Math.max(64, canvas.clientHeight * 2)) {
+      stopForUserInput();
+    }
+  };
+  canvas.addEventListener?.('wheel', stopForUserInput, { passive: true });
+  canvas.addEventListener?.('pointerdown', stopForUserInput);
+  canvas.addEventListener?.('touchstart', stopForUserInput, { passive: true });
+  canvas.addEventListener?.('scroll', stopForLargeScroll, { passive: true });
+  anchorRestoreCleanup.set(frameRef, cleanup);
 
   const runAfterFrames = (remaining: number): void => {
     if (remaining <= 0) {
@@ -207,6 +251,8 @@ export function scheduleAnchorRestore(
           canvas.scrollHeight,
           canvas.clientHeight,
         );
+        lastRestoreTop = canvas.scrollTop;
+        lastRestoreHeight = canvas.scrollHeight;
       }
       const settle = (passesRemaining: number, stableFrames = 0): void => {
         const restored = findMountedAnchor(canvas, anchor.assetId);
@@ -215,14 +261,17 @@ export function scheduleAnchorRestore(
           // window before this settle runs. Keep scrolling toward its
           // published geometry instead of leaving the pre-zoom offset.
           const nudged = scrollTowardPublishedAnchor(canvas, anchor);
+          if (nudged) {
+            lastRestoreTop = canvas.scrollTop;
+            lastRestoreHeight = canvas.scrollHeight;
+          }
           if (nudged && passesRemaining > 0) {
             frameRef.current = globalThis.requestAnimationFrame(() =>
               settle(passesRemaining - 1, 0),
             );
             return;
           }
-          frameRef.current = null;
-          onRestored?.();
+          finish();
           return;
         }
         const rect = restored.getBoundingClientRect();
@@ -242,11 +291,12 @@ export function scheduleAnchorRestore(
         if (nextLeft !== canvas.scrollLeft || nextTop !== canvas.scrollTop) {
           canvas.scrollLeft = nextLeft;
           canvas.scrollTop = nextTop;
+          lastRestoreTop = canvas.scrollTop;
+          lastRestoreHeight = canvas.scrollHeight;
         }
         const nextStableFrames = aligned ? stableFrames + 1 : 0;
         if (nextStableFrames >= 2 || passesRemaining <= 0) {
-          frameRef.current = null;
-          onRestored?.();
+          finish();
           return;
         }
         if (passesRemaining > 0) {
@@ -255,8 +305,7 @@ export function scheduleAnchorRestore(
           );
           return;
         }
-        frameRef.current = null;
-        onRestored?.();
+        finish();
       };
       // Apply the raw snapshot once, then converge on the captured client
       // point. Re-applying the snapshot on every pass undid the previous
@@ -278,6 +327,7 @@ export function scheduleAnchorRestore(
 export function cancelScheduledAnchorRestore(
   frameRef: { current: number | null },
 ): void {
+  anchorRestoreCleanup.get(frameRef)?.();
   if (frameRef.current !== null) {
     globalThis.cancelAnimationFrame(frameRef.current);
     frameRef.current = null;

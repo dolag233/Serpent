@@ -249,6 +249,7 @@ import {
 import {
   ASSET_CHANGE_CHANNEL,
   ASSET_NATIVE_DRAG_CHANNEL,
+  ASSET_NATIVE_DRAG_READINESS_CHANNEL,
   ASSET_NATIVE_DRAG_PRIME_CHANNEL,
   EXTENSION_SAVE_COMPLETED_CHANNEL,
   THUMBNAIL_CHANNEL,
@@ -687,7 +688,9 @@ function clearArtifactPathCache(libraryId?: string): void {
 }
 
 function evictArtifactPathCache(libraryId: string): void {
-  artifactPathCache.evictLibrary(libraryId);
+  // An async path batch may have started before this asset change. Fence its
+  // completion as well as evicting existing entries, or stale paths reappear.
+  artifactPathCache.clearLibrary(libraryId);
 }
 
 function cancelArtifactPathBatches(libraryId: string): void {
@@ -777,6 +780,7 @@ function resolveArtifactPathBatched(
   });
 }
 const nativeAssetDragCache = new NativeAssetDragCache();
+const lastVisibleDragAssetIds = new Map<string, string[]>();
 /**
  * Serpent-8ee170: every media completion enqueues here instead of issuing its
  * own Worker request, so a 2,000-job wave cannot become 2,000 background
@@ -807,12 +811,32 @@ const nativeAssetDragPrimer = new NativeAssetDragPrimeScheduler({
     } else {
       nativeAssetDragCache.upsert(libraryId, entries as Parameters<NativeAssetDragCache["upsert"]>[1]);
     }
+    const dragWindow = mainWindow;
+    if (dragWindow && !dragWindow.isDestroyed()) {
+      if (mode === "replace") {
+        dragWindow.webContents.send(ASSET_NATIVE_DRAG_READINESS_CHANNEL, {
+          type: "clear", libraryId,
+        });
+      }
+      dragWindow.webContents.send(ASSET_NATIVE_DRAG_READINESS_CHANNEL, {
+        type: "ready", libraryId,
+        assetIds: (entries as Parameters<NativeAssetDragCache["upsert"]>[1])
+          .map((entry) => entry.assetId),
+      });
+    }
   },
 });
 
 function clearNativeAssetDragCache(libraryId: string): void {
+  lastVisibleDragAssetIds.delete(libraryId);
   nativeAssetDragCache.clear(libraryId);
   nativeAssetDragPrimer.invalidate(libraryId);
+  const dragWindow = mainWindow;
+  if (dragWindow && !dragWindow.isDestroyed()) {
+    dragWindow.webContents.send(ASSET_NATIVE_DRAG_READINESS_CHANNEL, {
+      type: "clear", libraryId,
+    });
+  }
 }
 /**
  * Serpent-1e3d4f: Chromium never persists custom-protocol responses on disk,
@@ -2276,6 +2300,10 @@ async function createMainWindow(): Promise<void> {
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
+      // The opt-in performance harness needs frames while remaining hidden.
+      ...(process.env.SERPENT_E2E === "1" && process.env.SERPENT_E2E_PERF_OFFSCREEN === "1"
+        ? { offscreen: true, backgroundThrottling: false }
+        : {}),
     },
   });
 
@@ -2943,6 +2971,14 @@ function publishAssetChange(event: AssetChangeEvent): void {
   // library.changed channel and do not evict the viewer's hot path.
   sourcePathCache.clearLibrary(parsed.libraryId);
   evictArtifactPathCache(parsed.libraryId);
+  if (parsed.nativeDragPathsChanged === true || parsed.source === "watcher") {
+    const visibleDragIds = lastVisibleDragAssetIds.get(parsed.libraryId);
+    clearNativeAssetDragCache(parsed.libraryId);
+    if (visibleDragIds) {
+      lastVisibleDragAssetIds.set(parsed.libraryId, visibleDragIds);
+      nativeAssetDragPrimer.scheduleVisible(parsed.libraryId, visibleDragIds);
+    }
+  }
   embeddingTestIndex?.catchUp(parsed.libraryId);
   embeddingHttpIndex?.catchUp(parsed.libraryId);
   pluginActivationCoordinator?.fanOutDomainEvent(createPluginDomainEvent({
@@ -3647,6 +3683,14 @@ async function handleLibraryRequest(
   };
   try {
     const request = parseRendererRequest(input);
+    if (request.type === "asset.thumbnail.visible-window.request") {
+      lastVisibleDragAssetIds.set(request.libraryId, [...request.assetIds]);
+      nativeAssetDragPrimer.scheduleVisible(request.libraryId, request.assetIds);
+    } else if (request.type === "browse.session.open.request"
+      || request.type === "browse.session.page.request") {
+      lastVisibleDragAssetIds.delete(request.libraryId);
+      nativeAssetDragPrimer.cancelScheduledVisible(request.libraryId);
+    }
     if (request.type === "browse.session.open.request" && request.navigationId) {
       navigationTrace = {
         navigationId: request.navigationId,
@@ -3763,7 +3807,7 @@ async function handleLibraryRequest(
       saveConnectionProfile: saveAiConnectionProfile,
       activateConnectionProfile: activateAiConnectionProfile,
       deleteConnectionProfile: deleteAiConnectionProfile,
-      workerAvailable: () => Boolean(workerClient),
+      workerAvailable: () => workerClient?.available ?? false,
       requestWorker: (command) => {
         if (!workerClient) throw new Error("Library Worker is unavailable.");
         return workerClient.request(command);
@@ -3818,7 +3862,7 @@ async function handleLibraryRequest(
       const ingestion = await tryBuildIngestionCommand(request, {
         isUnpackagedE2e: () => !app.isPackaged && process.env.SERPENT_E2E === "1",
         e2eEnv: (name) => process.env[name],
-        workerAvailable: () => Boolean(workerClient),
+        workerAvailable: () => workerClient?.available ?? false,
         requestWorker: (workerCommand) => {
           if (!workerClient) throw new Error("Library Worker is unavailable.");
           return workerClient.request(workerCommand);
@@ -3875,7 +3919,7 @@ async function handleLibraryRequest(
     if (!command || openCancellation?.cancelled) return cancelled();
     const sequenceProbe = await maybeProbeImportSequences(request, command, {
       isUnpackagedE2e: () => !app.isPackaged && process.env.SERPENT_E2E === "1",
-      workerAvailable: () => Boolean(workerClient),
+      workerAvailable: () => workerClient?.available ?? false,
       requestWorker: (workerCommand) => {
         if (!workerClient) throw new Error("Library Worker is unavailable.");
         return workerClient.request(workerCommand);
@@ -4859,6 +4903,76 @@ async function startApplication(): Promise<void> {
   // during a previous session (deferred-cleanup store, backoff loop).
   retryPendingLibraryCleanups();
   const activeWorkerClient = workerClient;
+  let workerRecoveryEpoch = 0;
+  workerClient.onRecovery((event) => {
+    if (event.state === 'recovering') {
+      workerRecoveryEpoch += 1;
+      publishLifecycle({ type: 'worker.recovering' });
+      return;
+    }
+    if (event.state === 'failed') {
+      workerRecoveryEpoch += 1;
+      publishLifecycle({ type: 'worker.failed' });
+      return;
+    }
+    const recoveryEpoch = ++workerRecoveryEpoch;
+    // Clear generation-bound caches and resend Worker configuration before
+    // the client releases its request gate. Slow plugin/AI work follows below.
+    for (const libraryId of event.failedLibraryIds) {
+      sourcePathCache.clearLibrary(libraryId);
+      clearArtifactPathCache(libraryId);
+      clearNativeAssetDragCache(libraryId);
+    }
+    for (const library of event.libraries) {
+      sourcePathCache.clearLibrary(library.libraryId);
+      clearArtifactPathCache(library.libraryId);
+      clearNativeAssetDragCache(library.libraryId);
+      activeWorkerClient.publishPluginThumbnailExtensions(
+        library.libraryId,
+        pluginThumbnailExtensionsFor(library.libraryId),
+      );
+    }
+    activeWorkerClient.publishShowMissingLinkedFiles(showMissingLinkedFiles);
+    // Plugin activation and AI queue scheduling can call client.request(), so
+    // run them after the gate is released while retaining the epoch guard.
+    setTimeout(() => {
+      void (async () => {
+        if (recoveryEpoch !== workerRecoveryEpoch || !activeWorkerClient.available) return;
+        for (const libraryId of event.failedLibraryIds) {
+          pluginActivationCoordinator?.onLibraryClosed(libraryId);
+          publishLifecycle({ type: 'library.closed', libraryId });
+        }
+        for (const library of event.libraries) {
+          if (recoveryEpoch !== workerRecoveryEpoch || !activeWorkerClient.available) return;
+          try {
+            await notifyLibraryOpenedSideEffects({
+              libraryId: library.libraryId,
+              libraryDirectory: library.libraryPath,
+            });
+          } catch (error) {
+            logger?.error('worker.recovery.library-side-effects', error, {
+              libraryId: library.libraryId,
+            });
+          }
+        }
+        if (recoveryEpoch !== workerRecoveryEpoch || !activeWorkerClient.available) return;
+        publishLifecycle({
+          type: 'worker.recovered',
+          libraryIds: event.libraries.map((library) => library.libraryId),
+          failedLibraryIds: event.failedLibraryIds,
+        });
+      })().catch((error) => {
+        logger?.error('worker.recovery.main-state', error);
+        if (recoveryEpoch === workerRecoveryEpoch && activeWorkerClient.available) {
+          publishLifecycle({
+            type: 'worker.recovered',
+            libraryIds: event.libraries.map((library) => library.libraryId),
+            failedLibraryIds: event.failedLibraryIds,
+          });
+        }
+      });
+    }, 0);
+  });
   // Slice E (Serpent-hnmg): Main owns the shared offscreen window that renders
   // model thumbnails. The worker enqueues model jobs and asks Main to render;
   // Main replies with PNG bytes (or a typed failure) that the worker persists

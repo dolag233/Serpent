@@ -53,6 +53,11 @@ export function maybePrimeNativeDrag(
   },
   runtime: NativeDragPrimeRuntime,
 ): void {
+  // Browse results include a 100-item page, not the actual viewport. Priming
+  // that page on every jump can hold the Worker's filesystem queue while the
+  // visible covers wait. Viewport reports prime the real cards after idle.
+  if (request.type === "browse.session.open.request"
+    || request.type === "browse.session.page.request") return;
   const nativeDragAssets = nativeDragAssetsForResult(workerResult);
   const nativeDragLibraryId =
     "libraryId" in request && typeof request.libraryId === "string"

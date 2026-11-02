@@ -182,4 +182,62 @@ describe("workspace scroll position", () => {
     expect(frames.cancelled).toHaveLength(1);
     expect(onComplete).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps a native scrollbar jump instead of restoring the prior location", () => {
+    const frames = installAnimationFrameQueue();
+    const element = createScrollElement();
+    const onComplete = vi.fn();
+    restoreWorkspaceNavViewport(
+      element,
+      { scrollTop: 0, scrollProgress: 0, scrollExtent: 1_000 },
+      () => true,
+      onComplete,
+    );
+    frames.flushOne();
+    element.scrollTop = 500;
+    element.emit("scroll");
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(frames.cancelled).toHaveLength(1);
+    expect(element.scrollTop).toBe(500);
+  });
+
+  it("keeps restoring after a temporary extent shrink clamps its own offset", () => {
+    const frames = installAnimationFrameQueue();
+    const element = createScrollElement();
+    const onComplete = vi.fn();
+    restoreWorkspaceNavViewport(
+      element,
+      { scrollTop: 730, scrollProgress: 0.73, scrollExtent: 1_000 },
+      () => true,
+      onComplete,
+    );
+    frames.flushOne();
+    expect(element.scrollTop).toBe(730);
+    Object.defineProperty(element, "scrollHeight", { value: 200, writable: true, configurable: true });
+    element.scrollTop = 100;
+    element.emit("scroll");
+    expect(onComplete).not.toHaveBeenCalled();
+    Object.defineProperty(element, "scrollHeight", { value: 1_100, writable: true, configurable: true });
+    frames.flushOne();
+    expect(element.scrollTop).toBe(730);
+  });
+
+  it("does not cancel restoration for its own scroll event or a small layout shift", () => {
+    const frames = installAnimationFrameQueue();
+    const element = createScrollElement();
+    const onComplete = vi.fn();
+    restoreWorkspaceNavViewport(
+      element,
+      { scrollTop: 730, scrollProgress: 0.73, scrollExtent: 1_000 },
+      () => true,
+      onComplete,
+    );
+    frames.flushOne();
+    element.emit("scroll");
+    element.scrollTop = 780;
+    element.emit("scroll");
+    expect(onComplete).not.toHaveBeenCalled();
+    frames.flushOne();
+    expect(element.scrollTop).toBe(730);
+  });
 });

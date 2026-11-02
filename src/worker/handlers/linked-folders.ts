@@ -86,10 +86,10 @@ export async function executeLinkedFolderWorkerCommand(
       return {
         ok: true,
         type: 'linked-folder.list',
-        folders: libraryService.listLinkedFolders(request.command.libraryId),
+        folders: await libraryService.listLinkedFoldersAsync(request.command.libraryId),
       };
     case 'linked-folder.relink': {
-      const linkedFolder = libraryService.relinkMissingFolder(request.command);
+      const linkedFolder = await libraryService.relinkMissingFolderAsync(request.command);
       hooks.scheduleThumbnails(request.command.libraryId, 'linked');
       return { ok: true, type: 'linked-folder.relinked', linkedFolder };
     }

@@ -13,6 +13,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { LibraryService, SUPPORTED_SCHEMA_VERSION } from '../../src/worker/library-service';
+import { runWithVerifiedDestructiveBackup } from '../../src/worker/destructive-backup';
 
 const roots: string[] = [];
 const services: LibraryService[] = [];
@@ -80,6 +81,41 @@ describe('database damage recovery (Serpent-dw9a)', () => {
       'library.db.2',
     ]);
     expect(existsSync(path.join(backupDirectory, '.library.db.tmp'))).toBe(false);
+  });
+
+  it('does not reuse an in-flight snapshot as a forced destructive backup', async () => {
+    const service = newService();
+    const library = service.createLibrary({
+      displayName: 'Fresh Backup',
+      selectedParentPath: temporaryRoot(),
+    });
+
+    const first = service.createDatabaseBackup(library.libraryId);
+    const second = service.createDatabaseBackup(library.libraryId);
+    expect(await Promise.all([first, second])).toEqual([true, true]);
+    expect(existsSync(backupPath(library.libraryPath, 2))).toBe(true);
+  });
+
+  it('preserves files when the backup location cannot be written', async () => {
+    const service = newService();
+    const library = service.createLibrary({
+      displayName: 'Blocked Backup',
+      selectedParentPath: temporaryRoot(),
+    });
+    const sourcePath = path.join(library.libraryPath, 'Assets', 'keep.txt');
+    writeFileSync(sourcePath, 'keep this file');
+    const backupDirectory = path.join(library.libraryPath, '.serpent', 'backups');
+    rmSync(backupDirectory, { recursive: true, force: true });
+    writeFileSync(backupDirectory, 'occupied by a file');
+
+    let deleted = false;
+    await expect(runWithVerifiedDestructiveBackup(service, library.libraryId, async () => {
+      deleted = true;
+      rmSync(sourcePath);
+    })).rejects.toMatchObject({ code: 'LIBRARY_BACKUP_FAILED' });
+    expect(deleted).toBe(false);
+    expect(readFileSync(sourcePath, 'utf8')).toBe('keep this file');
+    expect(readFileSync(backupDirectory, 'utf8')).toBe('occupied by a file');
   });
 
   it('restores a damaged primary from backup 1 and preserves the damaged file', async () => {

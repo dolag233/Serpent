@@ -425,9 +425,15 @@ test("ordinary browsing continuously appends every asset without page controls",
           await expect(
             textViewer.getByRole("button", { name: "重试生成" }),
           ).toHaveCount(0);
-          await textViewer
-            .getByRole("button", { name: "关闭", exact: true })
-            .click();
+          const closeButton = textViewer.getByRole("button", { name: "关闭", exact: true });
+          // Offscreen Chromium can resolve a pointer click without delivering
+          // its onClick; use the same button's keyboard action in hidden perf
+          // runs. The ordinary visible journey still checks the pointer path.
+          if (process.env.SERPENT_E2E_PERF_OFFSCREEN === "1") {
+            await closeButton.press("Enter");
+          } else {
+            await closeButton.click();
+          }
           await expect(textViewer).toBeHidden();
           await expect(workspaceCanvas).toBeVisible();
           // Reflow may slightly adjust the raw offset after the text viewer

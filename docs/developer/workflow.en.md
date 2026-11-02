@@ -9,7 +9,7 @@ This document is for contributors and maintainers participating in Serpent devel
 | `main` | **Latest branch** | Product code, automated tests, runtime resources, public documentation (including `docs/developer/`), and build configuration | Default branch. Every Pull Request merges here |
 | `dolag_dev` | **Maintainer working branch** | May carry internal tickets (`.beads/`) and internal documents (`docs/internal/`) alongside the product tree | Does not receive external Pull Requests |
 
-- `main` stays current. Product changes arrive through Pull Requests;
+- `main` stays current. External contributions arrive through Pull Requests; a maintainer release merges `dolag_dev` in directly, as the release handbook describes;
 - `dolag_dev` holds the maintainer's internal records;
 - **External Pull Requests target `main`**.
 
@@ -127,7 +127,7 @@ Major vertical slice developments maintain technical specifications, development
 
 ### 3.3 Releases and the public branch
 
-Product changes enter `main` through Pull Requests. Do not merge `dolag_dev` into `main` as a whole.
+External contributions enter `main` through Pull Requests. For a release, the maintainer merges `dolag_dev` into `main` locally, without a Pull Request, and removes internal development files before the merge commit. After the release, merge `main` back into `dolag_dev`.
 
 1. **Internal development files stay on `dolag_dev`**:
    - `AGENTS.md`, `CLAUDE.md`, `docs/internal/`, `.beads/`, and CI config under `.github/` do not enter `main`;

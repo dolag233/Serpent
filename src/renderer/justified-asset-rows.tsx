@@ -94,17 +94,17 @@ type JustifiedAssetRowsBodyProps = Omit<
 
 export function JustifiedAssetRows(props: JustifiedAssetRowsProps) {
   const { preferences } = useFontSize();
-  const captionFields = props.captionFields;
+  const { name, size, date, dimensions } = props.captionFields;
   const snippetLine = props.snippetLine;
   const captionBandForAsset = useMemo(
     () =>
       createCaptionBandResolver({
         mode: "justified",
-        fields: captionFields,
+        fields: { name, size, date, dimensions },
         fontScale: FONT_SIZE_SCALES[preferences.preference],
         snippetLine,
       }),
-    [captionFields, preferences.preference, snippetLine],
+    [name, size, date, dimensions, preferences.preference, snippetLine],
   );
   if (props.virtualLayout) {
     return (

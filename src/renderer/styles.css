@@ -12456,8 +12456,8 @@ select.ai-config-input.ai-config-languages {
 }
 
 
-/* Floating badges on the preview use a frosted chip so they stay legible
-   over any media (Eagle-style format/duration chips).
+/* Solid theme chips keep labels legible without a per-card backdrop blur.
+   Dense video grids otherwise spend most scroll frames rebuilding blur layers.
    Serpent-i07: duration bottom-left; extension bottom-right (non-images). */
 .asset-extension {
   position: absolute;
@@ -12465,8 +12465,7 @@ select.ai-config-input.ai-config-languages {
   right: 6px;
   padding: 2px 6px;
   border-radius: calc(5px * var(--ui-radius-scale, 1));
-  background: rgb(15 17 18 / 62%);
-  backdrop-filter: blur(6px);
+  background: var(--raised-2);
   color: var(--secondary);
   font-family: "IBM Plex Mono", monospace;
   font-size: calc(9px * var(--ui-font-scale));
@@ -12482,8 +12481,7 @@ select.ai-config-input.ai-config-languages {
   left: 6px;
   padding: 2px 6px;
   border-radius: calc(5px * var(--ui-radius-scale, 1));
-  background: rgb(15 17 18 / 68%);
-  backdrop-filter: blur(6px);
+  background: var(--raised-2);
   color: var(--text);
   font-family: "IBM Plex Mono", monospace;
   font-size: calc(9px * var(--ui-font-scale));
@@ -12561,8 +12559,7 @@ select.ai-config-input.ai-config-languages {
   right: 6px;
   padding: 2px 6px;
   border-radius: calc(5px * var(--ui-radius-scale, 1));
-  background: rgb(15 17 18 / 68%);
-  backdrop-filter: blur(6px);
+  background: var(--raised-2);
   color: var(--text);
   font-family: "IBM Plex Mono", monospace;
   font-size: calc(9px * var(--ui-font-scale));
@@ -12663,8 +12660,7 @@ select.ai-config-input.ai-config-languages {
   max-width: calc(100% - 28px);
   padding: 2px 6px;
   border-radius: calc(5px * var(--ui-radius-scale, 1));
-  background: rgb(15 17 18 / 62%);
-  backdrop-filter: blur(6px);
+  background: var(--raised-2);
   color: var(--secondary);
   font-size: calc(9px * var(--ui-font-scale));
   line-height: 1.45;
@@ -12674,20 +12670,15 @@ select.ai-config-input.ai-config-languages {
   pointer-events: none;
 }
 
-/* Light theme: invert chip tint (dark frost + --text is unreadable) but keep
-   the same translucent frosted blur as dark — not opaque white chips. */
+/* Light surfaces need a subtle edge against bright covers. */
 [data-theme="light"] .asset-extension,
 [data-theme="light"] .asset-source-badge {
-  background: rgb(255 255 255 / 58%);
-  backdrop-filter: blur(6px);
-  box-shadow: 0 0 0 1px rgb(0 0 0 / 12%);
+  box-shadow: 0 0 0 1px var(--divider-soft);
   color: var(--secondary);
 }
 [data-theme="light"] .asset-duration-badge,
 [data-theme="light"] .asset-type-badge {
-  background: rgb(255 255 255 / 64%);
-  backdrop-filter: blur(6px);
-  box-shadow: 0 0 0 1px rgb(0 0 0 / 12%);
+  box-shadow: 0 0 0 1px var(--divider-soft);
   color: var(--text);
 }
 

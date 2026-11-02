@@ -36,6 +36,17 @@ export type SourceDirectPreviewInput = Readonly<{
   height: number | null | undefined;
 }>;
 
+/** Cheap eligibility check before a bounded header probe. */
+export function isSourceDirectPreviewCandidate(
+  input: Pick<SourceDirectPreviewInput, "fileName" | "mediaType" | "byteSize">,
+): boolean {
+  return input.mediaType === "image"
+    && SOURCE_DIRECT_EXTENSIONS.has(extensionFor(input.fileName))
+    && Number.isSafeInteger(input.byteSize)
+    && input.byteSize > 0
+    && input.byteSize <= SOURCE_DIRECT_MAX_BYTES;
+}
+
 /**
  * Return true only when the original can be mounted as a bounded card image.
  * Larger sources use the native thumbnail route; they remain valid assets.
@@ -43,10 +54,7 @@ export type SourceDirectPreviewInput = Readonly<{
 export function isSourceDirectPreview(
   input: SourceDirectPreviewInput,
 ): boolean {
-  if (input.mediaType !== "image") return false;
-  if (!SOURCE_DIRECT_EXTENSIONS.has(extensionFor(input.fileName))) return false;
-  if (!Number.isSafeInteger(input.byteSize) || input.byteSize <= 0) return false;
-  if (input.byteSize > SOURCE_DIRECT_MAX_BYTES) return false;
+  if (!isSourceDirectPreviewCandidate(input)) return false;
   if (
     typeof input.width !== "number"
     || typeof input.height !== "number"
