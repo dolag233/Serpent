@@ -14519,6 +14519,7 @@ function AppInner() {
                   setSearchHistoryOpen(true);
                 }}
                 onKeyDown={(event) => {
+                  if (isImeKeyboardEvent(event)) return;
                   const matches = filterSearchHistory(searchHistory, searchValue);
                   const visibleCount = Math.min(
                     matches.length,
@@ -16005,6 +16006,7 @@ function AppInner() {
                                     }}
                                     onKeyDown={(event) => {
                                       event.stopPropagation();
+                                      if (isImeKeyboardEvent(event)) return;
                                       if (event.key === "Enter") {
                                         event.preventDefault();
                                         void submitAssetRename();
