@@ -95,8 +95,8 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 发布全流程按 `docs/internal/development/release-process-and-distribution.md` 逐条执行，**禁止凭印象**。要点：
 
 - **版本号**：`npm version <ver> --no-git-tag-version`（改 package.json + package-lock.json），提交 `chore(release): 版本号 x.y.z → x.y.z+1`，落在 `main`。
-- **`main` 永远是最新分支**，Pull Request 合并到 `main`。`dolag_dev` 是维护者个人工作分支。
-- **发布打包在 `main` 上执行**。
+- **`main` 永远是最新产品分支**。外部 Pull Request 合并到 `main`。维护者发布时把 `dolag_dev` 直接合并进 `main`，不另开 Pull Request；发布后把 `main` 合并回 `dolag_dev`。
+- **发布打包在 `main` 上执行**。版本号、测试和因此产生的修复都在 `main` 上提交并推送，然后再创建 Release、打包上传。
 - **内部开发文件不进入 `main`**：`AGENTS.md`、`CLAUDE.md`、`docs/internal/`、`.beads/`，以及 `.github/` 里的 CI 配置。`docs/developer/` 与 issue / PR 模板保留。`scripts/hooks/pre-commit` 守卫 `main`。
 - **Pull Request**：当前 PR 只修改一个功能，而不是多个功能修改一次性提交。在发起 PR 之前已经提出相应的有效 Issue。
 - **产物命名规范**（自动更新按名字选资产，必须精确，禁止上传裸 exe 或 Forge 默认名）：

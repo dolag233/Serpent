@@ -8,10 +8,21 @@
 - `package.json` 与 `package-lock.json` 的 `version` 同步修改（两处：顶层 + `packages[""]`），提交消息 `chore(release): 版本号 x.y.z → x.y.z+1`。
 - 版本提交落在 `main`。`main` 是最新分支，见 §2。
 
-## 2. 分支与代码基线
+## 2. 分支与发布顺序
 
-- **`main` 是最新分支，也是 Pull Request 的合并目标**。它包含完整软件代码（`src` / `tests` / `resources` / `scripts` / `assets`）与公开文档（`docs/user-guide`、`docs/developer`、`docs/manual`、`docs/assets`、`docs/product-brief.md`、`docs/glossary.md`、`README`、`website` 等）。`docs/developer/` 必须留在 `main`。历史上 `0b55d64a` 把 `docs/developer` 从 main 删掉，属于分类错误，不得再做。
-- **`dolag_dev` 是维护者个人工作分支**（原 `dev`）。内部文件留在这里：`.beads/`、`.github/` 里的 CI 配置、`.codex/`、`.cursor/`、`AGENTS.md`、`CLAUDE.md`、`CONTEXT.md`、`docs/internal/`、`benchmark.md`。`.github/ISSUE_TEMPLATE/` 与 `.github/PULL_REQUEST_TEMPLATE.md` 是公开模板，保留在 `main`。不要把 `dolag_dev` 整支合并进 `main`。需要内部文件和产品代码在同一棵树上时，把 `main` 合入 `dolag_dev`。
+发布不另开 Pull Request。工作分支是 `dolag_dev`（原 `dev`）。按下面的顺序做完一次发布：
+
+1. **把 `dolag_dev` 直接合并进 `main`。** 在本地检出最新 `main`，执行 `git merge dolag_dev`。不要为这次合流开 Pull Request。
+2. **同一合并提交里剥离内部开发文件。** 合并会把工作分支上的内部路径带进索引。提交前从索引移除：`AGENTS.md`、`CLAUDE.md`、`CONTEXT.md`、`benchmark.md`、`.beads/`、`.codex/`、`.cursor/`、`docs/internal/`，以及 `.github/` 里除 `ISSUE_TEMPLATE/` 和 `PULL_REQUEST_TEMPLATE.md` 以外的路径。`docs/developer/` 保留。`scripts/hooks/pre-commit` 在 `main` 上拒绝这些内部路径。
+3. **在 `main` 上改版本号并测试。** 版本提交消息仍是 `chore(release): 版本号 x.y.z → x.y.z+1`。测试覆盖自上一正式版以来、这次要发布的改动所在的层。打包阶段的 media verify、`verify-package`、ufbx WASM 校验不可跳过。`release:verify` 和全量 E2E 仍只在明确要求整套门禁时运行。版本号和因此产生的修复都提交并推送到 `main`。
+4. **创建 GitHub Release。** 按 §5、§6。tag 指向 `main` 上的发布基线。
+5. **在 `main` 上打包并上传。** 按 §3、§4。只构建当前机器的平台。完成后执行 `npm run rebuild:native`。
+6. **把 `main` 合并回 `dolag_dev` 并推送。** 工作分支因此带上版本号和发布提交。内部文件仍只留在 `dolag_dev`。
+
+分支内容：
+
+- **`main` 是最新产品分支，也是外部 Pull Request 的合并目标。** 它包含完整软件代码（`src` / `tests` / `resources` / `scripts` / `assets`）与公开文档（`docs/user-guide`、`docs/developer`、`docs/manual`、`docs/assets`、`docs/product-brief.md`、`docs/glossary.md`、`README`、`website` 等）。`docs/developer/` 必须留在 `main`。历史上 `0b55d64a` 把 `docs/developer` 从 main 删掉，属于分类错误，不得再做。外部贡献仍用 Pull Request 进入 `main`。维护者发布时用上面的直接合并，不另开 Pull Request。
+- **`dolag_dev` 是维护者工作分支**（原 `dev`）。内部文件留在这里：`.beads/`、`.github/` 里的 CI 配置、`.codex/`、`.cursor/`、`AGENTS.md`、`CLAUDE.md`、`CONTEXT.md`、`docs/internal/`、`benchmark.md`。`.github/ISSUE_TEMPLATE/` 与 `.github/PULL_REQUEST_TEMPLATE.md` 是公开模板，保留在 `main`。
 - **`main` 不引入内部开发记录**：`.beads/`、CI 配置、`docs/internal/` 留在 `dolag_dev`。2026-08-19 起 `main` 只保留产品代码与公开文档；2026-09-13 起公开文档包含 `docs/developer/`。
 - **发布打包在 `main` 上执行**。`verify-package.mjs` 不读取 `docs/internal`。
 - 测试必须完整合入 main（`tests/` 是产品证据）。
@@ -156,9 +167,9 @@ gh release upload v<ver> release-meta.json release-meta-<ver>.json
 
 ## 8. 发布检查清单（逐条对照，禁止凭印象执行）
 
-- [ ] 版本号已改（package.json + lock，提交 `chore(release): 版本号 …`），落在 `main`
-- [ ] `main` 无内部开发文件，但保留 `docs/developer/` 与 issue / PR 模板
-- [ ] 产品改动经 Pull Request 进入 `main`。没有把 `dolag_dev` 整支合并进 `main`
+- [ ] `dolag_dev` 已在本地直接合并进 `main`，没有为这次合流另开 Pull Request
+- [ ] 合并提交已剥离内部开发文件。`main` 无内部开发文件，但保留 `docs/developer/` 与 issue / PR 模板
+- [ ] 版本号已改（package.json + lock，提交 `chore(release): 版本号 …`），落在 `main` 并已推送。因此产生的修复也在 `main` 上提交并推送
 - [ ] 全部发布门禁通过（media verify / verify-package / ufbx WASM）——在 `main` 上打包
 - [ ] 产物按 §4 规范名精确重命名（`win-x86-64` 不是 `win32-x64`；安装包是 `-setup.zip` 不是裸 exe）+ 每个资产同名 `.sha256`（只含哈希）
 - [ ] Changelog 中英双语（中文在前，标题 `**Serpent <版本>** — 一句话 · English one-liner`）、按重要度排序、次要改动概括；已写入 GitHub Release 正文。只保留用户能直接感知的变化；内部实现调整（查看管线、兼容层、同一次更新自己引入又修掉的行为）不出现在正文或 `release-meta.json`（§5）
@@ -169,3 +180,4 @@ gh release upload v<ver> release-meta.json release-meta-<ver>.json
 - [ ] 资产上传齐全（macOS 4 / Windows 4 / Linux x64 2，arm64 媒体包已晋升时再加 2 + release-meta 2），release 页核对标题/notes/资产/`--target main`
 - [ ] tag `v<ver>` 指向 main 发布基线（`git tag v<ver> <main-commit>` + `git push origin v<ver>`）
 - [ ] `npm run rebuild:native` 已恢复开发用的 native 模块（FTS5 probe OK）
+- [ ] `main` 已合并回 `dolag_dev`，并且 `dolag_dev` 已推送

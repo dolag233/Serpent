@@ -11,12 +11,12 @@
 
 **磁盘与工作区洁净（2026-08-26 用户要求，强制生效）**：任何代码路径都不得在用户磁盘/工作区留下未清理的内容——删除必须真正删除（失败/旁置/后台路径不得静默残留，无法即时删除须向用户提示并提供清理入口）；临时文件必须有空间预检、生命周期内清理与异常回收兜底；不得在用户选择的数据目录之外静默写大体积内容。详见 AGENTS.md「磁盘与工作区洁净纪律」。
 
-## 分支结构（2026-10-31 起）
+## 分支结构（2026-11-02 起）
 
-- **`main`**：最新分支，也是 Pull Request 的合并目标。产品代码、测试、公开文档和 issue / PR 模板以这里为准。内部开发文件仍然不能进入 `main`：`.beads/`、`.codex/`、`.cursor/`、`AGENTS.md`、`CLAUDE.md`、`CONTEXT.md`、`docs/internal/`，以及 `.github/` 里的 CI 配置。`.github/ISSUE_TEMPLATE/` 与 `.github/PULL_REQUEST_TEMPLATE.md` 保留在 `main`。
-- **`dolag_dev`**：维护者个人工作分支，由原 `dev` 改名而来。它可以携带内部工单和内部文档。它不是最新分支，外部 Pull Request 不合并到这里。
+- **`main`**：最新产品分支，也是外部 Pull Request 的合并目标。产品代码、测试、公开文档和 issue / PR 模板以这里为准。内部开发文件仍然不能进入 `main`：`.beads/`、`.codex/`、`.cursor/`、`AGENTS.md`、`CLAUDE.md`、`CONTEXT.md`、`docs/internal/`，以及 `.github/` 里的 CI 配置。`.github/ISSUE_TEMPLATE/` 与 `.github/PULL_REQUEST_TEMPLATE.md` 保留在 `main`。
+- **`dolag_dev`**：维护者工作分支，由原 `dev` 改名而来。它可以携带内部工单和内部文档。外部 Pull Request 不合并到这里。
 
-功能通过 Pull Request 进入 `main`。不要把 `dolag_dev` 整支合并进 `main`。一次 PR 只包含一个已接受 issue 里的那一项改动。
+外部贡献仍用 Pull Request 进入 `main`，一次 PR 只包含一个已接受 issue 里的那一项改动。维护者发布时不另开 Pull Request：在本地把 `dolag_dev` 直接合并进 `main`，提交前剥离内部开发文件，然后在 `main` 上改版本号、测试、创建 Release、打包上传，再把 `main` 合并回 `dolag_dev`。顺序见 [`release-process-and-distribution.md`](development/release-process-and-distribution.md) §2。
 
 **内部文档仍可在 `dolag_dev` 上跟踪（2026-09-14）：** `.gitignore` 只忽略 `AGENTS.md`、`CLAUDE.md`、`.beads/`、`.github/`。`docs/internal/` 在 `dolag_dev` 上正常提交。`main` 由 `scripts/hooks/pre-commit` 拒绝内部开发文件。
 
