@@ -14,6 +14,7 @@ import type {
 import { Icon } from './Icons';
 import { iconActionAttrs } from './icon-action-attrs';
 import { useT } from './i18n';
+import { isImeKeyboardEvent } from './ime-safe-dismiss';
 import { DialogShell } from './ui/patterns';
 
 type PreviewResult =
@@ -340,6 +341,7 @@ export function ScriptSandboxPreviewDialog({
         className="create-dialog script-sandbox-preview-dialog"
         dialogId="script-sandbox-preview"
         onKeyDown={(event) => {
+          if (isImeKeyboardEvent(event)) return;
           if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
             event.preventDefault();
             void run();

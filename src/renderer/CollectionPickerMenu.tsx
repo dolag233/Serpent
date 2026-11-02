@@ -11,6 +11,7 @@ import { AppearanceGlyph } from "./AppearanceGlyph";
 import { useContextMenu } from "./context-menu";
 import { Icon } from "./Icons";
 import { useT } from "./i18n";
+import { isImeKeyboardEvent } from "./ime-safe-dismiss";
 import { moveTagSuggestionIndex } from "./tag-suggestions";
 
 const RECENT_COLLECTIONS_KEY = "serpent.recentCollectionIds";
@@ -101,6 +102,7 @@ export function CollectionPickerMenu({
   };
 
   const handleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (isImeKeyboardEvent(event)) return;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       event.stopPropagation();
