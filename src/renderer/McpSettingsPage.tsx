@@ -7,6 +7,7 @@ import {
   type SerpentMcpSettingsApi,
 } from "../shared/mcp";
 import { Icon } from "./Icons";
+import { isImeKeyboardEvent } from "./ime-safe-dismiss";
 import { useT } from "./i18n";
 import { formatMcpSettingsFailure } from "./mcp-settings-error";
 import { SettingsCard, SettingsDisclosure } from "./ui/patterns";
@@ -41,6 +42,7 @@ function CredentialLabel({
         else setDraft(label);
       }}
       onKeyDown={(event) => {
+        if (isImeKeyboardEvent(event)) return;
         if (event.key === "Enter") event.currentTarget.blur();
         if (event.key === "Escape") setDraft(label);
       }}
@@ -211,6 +213,7 @@ export function McpSettingsPage({
               }}
               onChange={(event) => setPortDraft(event.target.value)}
               onKeyDown={(event) => {
+                if (isImeKeyboardEvent(event)) return;
                 if (event.key === "Enter") event.currentTarget.blur();
               }}
               type="number"

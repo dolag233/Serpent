@@ -1,3 +1,4 @@
+import { isImeKeyboardEvent } from "./ime-safe-dismiss";
 import { setShellLayout, useShellLayout } from "./ui/use-shell-layout";
 import { useState, type ReactNode } from "react";
 
@@ -846,6 +847,7 @@ export function BrowseSettingsPage({
             onBlur={commitSeekJumpAmount}
             onChange={(event) => setSeekJumpDraft(event.target.value)}
             onKeyDown={(event) => {
+              if (isImeKeyboardEvent(event)) return;
               if (event.key === "Enter") event.currentTarget.blur();
             }}
             step={0.1}

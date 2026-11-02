@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { createShellPortal } from '../ui/ShellStyleScope';
 
+import { isImeKeyboardEvent } from '../ime-safe-dismiss';
 import { DialogShell } from '../ui/patterns';
 import { Button } from '../ui/primitives';
 
@@ -46,7 +47,7 @@ export function ThemeMiniDialog({
   }, [onCancel]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.isComposing) return;
+      if (event.key !== 'Escape' || isImeKeyboardEvent(event)) return;
       event.preventDefault();
       event.stopPropagation();
       cancelRef.current();
@@ -60,6 +61,7 @@ export function ThemeMiniDialog({
       className="dialog-backdrop theme-mini-dialog-backdrop"
       onKeyDown={(event) => {
         event.stopPropagation();
+        if (isImeKeyboardEvent(event)) return;
         if (event.key === 'Enter' && !confirmDisabled) {
           event.preventDefault();
           onConfirm();

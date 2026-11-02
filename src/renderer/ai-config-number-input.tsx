@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
+import { isImeKeyboardEvent } from "./ime-safe-dismiss";
+
 export type AiConfigNumberInputProps = {
   id: string;
   value: number;
@@ -51,6 +53,7 @@ export function AiConfigNumberInput({
         isFocusedRef.current = true;
       }}
       onKeyDown={(e) => {
+        if (isImeKeyboardEvent(e)) return;
         if (e.key === "Enter") {
           e.currentTarget.blur();
         }

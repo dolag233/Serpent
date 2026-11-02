@@ -1648,6 +1648,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   onBlur={handleAuthorSave}
                   onChange={handleAuthorInput}
                   onKeyDown={(e) => {
+                    if (isImeKeyboardEvent(e)) return;
                     if (e.key === "Enter") handleAuthorSave();
                   }}
                   placeholder={t("inspector.authorPlaceholder")}
@@ -1685,6 +1686,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                     onBlur={handleSourceUrlSave}
                     onChange={handleSourceUrlInput}
                     onKeyDown={(e) => {
+                      if (isImeKeyboardEvent(e)) return;
                       if (e.key === "Enter") handleSourceUrlSave();
                     }}
                     placeholder="https://…"
