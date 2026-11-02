@@ -38,7 +38,7 @@ export interface UseInlineFolderEditParams {
   api: SerpentLibraryApi | null;
   library: RendererLibrarySummary | null;
   setNotice: (message: string, historyEntryId?: string) => void;
-  reloadCurrentContent: () => Promise<void>;
+  reloadCurrentContent: (options?: { navigationPriority?: "mutation" }) => Promise<void>;
   /** Linked roots and virtual child ids use a separate physical-directory API. */
   isLinkedFolderId?: (folderId: string) => boolean;
   /** Return true when the caller already navigated to a renamed linked id. */
@@ -210,7 +210,7 @@ export function useInlineFolderEdit({
       // A rename keeps the folderId, so the current selection survives the
       // refresh; a create lands under the already-selected parent. Neither
       // needs a re-select.
-      await reloadCurrentContent();
+      await reloadCurrentContent({ navigationPriority: "mutation" });
     } catch (caught) {
       settleFailure(toMessage(caught, failureFallback, locale));
     }

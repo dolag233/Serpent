@@ -140,6 +140,14 @@ const MAINTENANCE_STATUS_READ_LABELS = new Set([
 ]);
 const MAX_MAINTENANCE_STATUS_READS = 3;
 
+/** Bounded reads needed before a mounted card can fetch its preview bytes. */
+const VISIBLE_MEDIA_PATH_READ_LABELS = new Set([
+  'media.get-artifact-path',
+  'media.get-artifact-paths',
+  'media.get-source-path',
+  'folder.cover.resolve',
+]);
+
 /**
  * A library transition (open/create/close/delete-from-disk) is the one request
  * that must not wait its turn.
@@ -718,6 +726,8 @@ export class InteractiveScheduler {
       .filter((entry) => entry.request.lane === 'maintenance').length;
     const activeBackgroundPrimary = activeBackgroundEntries
       .filter((entry) => entry.request.lane === 'background-primary').length;
+    const activeVisibleMediaPathReads = activeBackgroundEntries.filter((entry) =>
+      VISIBLE_MEDIA_PATH_READ_LABELS.has(entry.request.label ?? '')).length;
     // Status snapshots used to require “maintenance plus only status reads”.
     // GitHub #45: thumbnail waves are allowed to share the Worker with
     // maintenance (the primary-slot exception below). That extra primary owner
@@ -738,6 +748,17 @@ export class InteractiveScheduler {
     // paths for its whole lifetime despite having yielded the event loop.
     const maintenanceHasPrimarySlot = hasMaintenanceWithOptionalPrimaryAndStatusReads
       && activeBackgroundPrimary === 0;
+    // A cold scrollbar jump needs the already-ready artifact's path before its
+    // <img> can start reading. Native-drag priming or a decoder can occupy the
+    // primary background slot for seconds while reconciliation also runs.
+    // Allow one bounded, read-only path request alongside that slot; ordinary
+    // primary work remains serialized. The Worker JS thread still executes
+    // each synchronous SQLite step one at a time.
+    const visiblePathMaySharePrimary = activeBackgroundPrimary === 1
+      && activeVisibleMediaPathReads === 0
+      && activeMaintenanceCount <= 1
+      && activeBackgroundEntries.length
+        === 1 + activeMaintenanceCount + activeMaintenanceStatusReads.length;
 
     let bestIndex = -1;
     let bestPriority = -1;
@@ -769,6 +790,9 @@ export class InteractiveScheduler {
               && (
                 activeBackground < 1
                 || (lane === 'background-primary' && maintenanceHasPrimarySlot)
+                || (lane === 'background-primary'
+                  && VISIBLE_MEDIA_PATH_READ_LABELS.has(this.#queue[index]!.request.label ?? '')
+                  && visiblePathMaySharePrimary)
                 || (
                   lane === 'background-secondary'
                   && MAINTENANCE_STATUS_READ_LABELS.has(this.#queue[index]!.request.label ?? '')

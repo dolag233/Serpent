@@ -87,6 +87,8 @@ export function restoreWorkspaceNavViewport(
   let stableFrames = 0;
   let previousExtent = -1;
   let cancelled = false;
+  let lastAppliedTop: number | null = null;
+  let lastAppliedExtent: number | null = null;
 
   const stop = () => {
     if (cancelled) return;
@@ -95,11 +97,36 @@ export function restoreWorkspaceNavViewport(
     element.removeEventListener("wheel", stop);
     element.removeEventListener("pointerdown", stop);
     element.removeEventListener("touchstart", stop);
+    element.removeEventListener("scroll", stopOnExternalJump);
     onComplete?.();
+  };
+  const stopOnExternalJump = () => {
+    // Native scrollbar-thumb motion does not reliably dispatch pointerdown or
+    // wheel on the scroll element. A large position change after our last
+    // write is user navigation, not a layout-settle adjustment; stop the
+    // restore loop before its next frame can pull the viewport back.
+    if (lastAppliedTop === null) return;
+    const extent = Math.max(0, element.scrollHeight - element.clientHeight);
+    if (
+      lastAppliedExtent !== null
+      && extent < lastAppliedExtent - 1
+      && lastAppliedTop > extent + 1
+      && Math.abs(element.scrollTop - extent) <= 1
+    ) {
+      // Progressive geometry briefly shortened the scroll range, so the
+      // browser clamped our position. Keep restoring when the range returns.
+      lastAppliedTop = element.scrollTop;
+      lastAppliedExtent = extent;
+      return;
+    }
+    if (Math.abs(element.scrollTop - lastAppliedTop) > Math.max(64, element.clientHeight * 2)) {
+      stop();
+    }
   };
   element.addEventListener("wheel", stop, { passive: true });
   element.addEventListener("pointerdown", stop);
   element.addEventListener("touchstart", stop, { passive: true });
+  element.addEventListener("scroll", stopOnExternalJump, { passive: true });
 
   const apply = () => {
     frame = undefined;
@@ -118,6 +145,8 @@ export function restoreWorkspaceNavViewport(
       });
     }
     element.scrollTo({ top: target, left: 0 });
+    lastAppliedTop = element.scrollTop;
+    lastAppliedExtent = extent;
     attempts += 1;
     stableFrames = Math.abs(extent - previousExtent) <= 1 ? stableFrames + 1 : 0;
     previousExtent = extent;

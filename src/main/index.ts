@@ -249,6 +249,7 @@ import {
 import {
   ASSET_CHANGE_CHANNEL,
   ASSET_NATIVE_DRAG_CHANNEL,
+  ASSET_NATIVE_DRAG_READINESS_CHANNEL,
   ASSET_NATIVE_DRAG_PRIME_CHANNEL,
   EXTENSION_SAVE_COMPLETED_CHANNEL,
   THUMBNAIL_CHANNEL,
@@ -687,7 +688,9 @@ function clearArtifactPathCache(libraryId?: string): void {
 }
 
 function evictArtifactPathCache(libraryId: string): void {
-  artifactPathCache.evictLibrary(libraryId);
+  // An async path batch may have started before this asset change. Fence its
+  // completion as well as evicting existing entries, or stale paths reappear.
+  artifactPathCache.clearLibrary(libraryId);
 }
 
 function cancelArtifactPathBatches(libraryId: string): void {
@@ -777,6 +780,7 @@ function resolveArtifactPathBatched(
   });
 }
 const nativeAssetDragCache = new NativeAssetDragCache();
+const lastVisibleDragAssetIds = new Map<string, string[]>();
 /**
  * Serpent-8ee170: every media completion enqueues here instead of issuing its
  * own Worker request, so a 2,000-job wave cannot become 2,000 background
@@ -807,12 +811,32 @@ const nativeAssetDragPrimer = new NativeAssetDragPrimeScheduler({
     } else {
       nativeAssetDragCache.upsert(libraryId, entries as Parameters<NativeAssetDragCache["upsert"]>[1]);
     }
+    const dragWindow = mainWindow;
+    if (dragWindow && !dragWindow.isDestroyed()) {
+      if (mode === "replace") {
+        dragWindow.webContents.send(ASSET_NATIVE_DRAG_READINESS_CHANNEL, {
+          type: "clear", libraryId,
+        });
+      }
+      dragWindow.webContents.send(ASSET_NATIVE_DRAG_READINESS_CHANNEL, {
+        type: "ready", libraryId,
+        assetIds: (entries as Parameters<NativeAssetDragCache["upsert"]>[1])
+          .map((entry) => entry.assetId),
+      });
+    }
   },
 });
 
 function clearNativeAssetDragCache(libraryId: string): void {
+  lastVisibleDragAssetIds.delete(libraryId);
   nativeAssetDragCache.clear(libraryId);
   nativeAssetDragPrimer.invalidate(libraryId);
+  const dragWindow = mainWindow;
+  if (dragWindow && !dragWindow.isDestroyed()) {
+    dragWindow.webContents.send(ASSET_NATIVE_DRAG_READINESS_CHANNEL, {
+      type: "clear", libraryId,
+    });
+  }
 }
 /**
  * Serpent-1e3d4f: Chromium never persists custom-protocol responses on disk,
@@ -2947,6 +2971,14 @@ function publishAssetChange(event: AssetChangeEvent): void {
   // library.changed channel and do not evict the viewer's hot path.
   sourcePathCache.clearLibrary(parsed.libraryId);
   evictArtifactPathCache(parsed.libraryId);
+  if (parsed.nativeDragPathsChanged === true || parsed.source === "watcher") {
+    const visibleDragIds = lastVisibleDragAssetIds.get(parsed.libraryId);
+    clearNativeAssetDragCache(parsed.libraryId);
+    if (visibleDragIds) {
+      lastVisibleDragAssetIds.set(parsed.libraryId, visibleDragIds);
+      nativeAssetDragPrimer.scheduleVisible(parsed.libraryId, visibleDragIds);
+    }
+  }
   embeddingTestIndex?.catchUp(parsed.libraryId);
   embeddingHttpIndex?.catchUp(parsed.libraryId);
   pluginActivationCoordinator?.fanOutDomainEvent(createPluginDomainEvent({
@@ -3651,6 +3683,14 @@ async function handleLibraryRequest(
   };
   try {
     const request = parseRendererRequest(input);
+    if (request.type === "asset.thumbnail.visible-window.request") {
+      lastVisibleDragAssetIds.set(request.libraryId, [...request.assetIds]);
+      nativeAssetDragPrimer.scheduleVisible(request.libraryId, request.assetIds);
+    } else if (request.type === "browse.session.open.request"
+      || request.type === "browse.session.page.request") {
+      lastVisibleDragAssetIds.delete(request.libraryId);
+      nativeAssetDragPrimer.cancelScheduledVisible(request.libraryId);
+    }
     if (request.type === "browse.session.open.request" && request.navigationId) {
       navigationTrace = {
         navigationId: request.navigationId,

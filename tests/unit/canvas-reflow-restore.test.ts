@@ -90,6 +90,66 @@ describe("isCanvasReflowRestorationPending", () => {
 });
 
 describe("scheduleAnchorRestore", () => {
+  it("leaves a later scrollbar jump in control during a pending reflow restore", () => {
+    const callbacks = new Map<number, FrameRequestCallback>();
+    const listeners = new Map<string, Set<() => void>>();
+    const originalRaf = globalThis.requestAnimationFrame;
+    const originalCancel = globalThis.cancelAnimationFrame;
+    let nextFrame = 0;
+    globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+      const id = ++nextFrame;
+      callbacks.set(id, callback);
+      return id;
+    }) as typeof requestAnimationFrame;
+    globalThis.cancelAnimationFrame = ((id: number) => {
+      callbacks.delete(id);
+    }) as typeof cancelAnimationFrame;
+    try {
+      const canvas = {
+        scrollLeft: 0,
+        scrollTop: 1_000,
+        scrollWidth: 800,
+        scrollHeight: 100_000,
+        clientWidth: 800,
+        clientHeight: 600,
+        addEventListener: (type: string, callback: () => void) => {
+          if (!listeners.has(type)) listeners.set(type, new Set());
+          listeners.get(type)!.add(callback);
+        },
+        removeEventListener: (type: string, callback: () => void) => {
+          listeners.get(type)?.delete(callback);
+        },
+        querySelectorAll: () => [],
+      } as unknown as HTMLElement;
+      const frameRef = { current: null as number | null };
+      let restoreCompletions = 0;
+      const onRestored = () => { restoreCompletions += 1; };
+      scheduleAnchorRestore(canvas, {
+        assetId: "lead",
+        ratioX: 0.5,
+        ratioY: 0,
+        clientX: 100,
+        clientY: 80,
+      }, frameRef, 3, onRestored, { left: 0, top: 1_000 });
+
+      canvas.scrollTop = 55_000;
+      for (const callback of listeners.get("scroll") ?? []) callback();
+      while (callbacks.size > 0) {
+        const [id, callback] = callbacks.entries().next().value!;
+        callbacks.delete(id);
+        callback(0);
+      }
+
+      expect(canvas.scrollTop).toBe(55_000);
+      expect(frameRef.current).toBeNull();
+      expect(restoreCompletions).toBe(1);
+      expect([...listeners.values()].every((set) => set.size === 0)).toBe(true);
+    } finally {
+      globalThis.requestAnimationFrame = originalRaf;
+      globalThis.cancelAnimationFrame = originalCancel;
+    }
+  });
+
   it("keeps the compensated offset after restoring a captured scroll snapshot", () => {
     const rafQueue: FrameRequestCallback[] = [];
     const originalRaf = globalThis.requestAnimationFrame;
@@ -159,6 +219,7 @@ describe("scheduleAnchorRestore", () => {
 
   it("restores scroll even when scrollTop drifted during the wait (Serpent-32p)", () => {
     const rafQueue: FrameRequestCallback[] = [];
+    const listeners = new Map<string, Set<() => void>>();
     const originalRaf = globalThis.requestAnimationFrame;
     const originalCancel = globalThis.cancelAnimationFrame;
     globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
@@ -188,17 +249,24 @@ describe("scheduleAnchorRestore", () => {
 
     const canvas = {
       scrollLeft: 0,
-      scrollTop: 0,
+      scrollTop: 1_000,
       scrollWidth: 800,
       scrollHeight: 4000,
       clientWidth: 800,
       clientHeight: 600,
+      addEventListener: (type: string, callback: () => void) => {
+        if (!listeners.has(type)) listeners.set(type, new Set());
+        listeners.get(type)!.add(callback);
+      },
+      removeEventListener: (type: string, callback: () => void) => {
+        listeners.get(type)?.delete(callback);
+      },
       querySelectorAll: () => [card],
-    } as unknown as HTMLElement;
+    };
 
     const frameRef: { current: number | null } = { current: null };
     scheduleAnchorRestore(
-      canvas,
+      canvas as unknown as HTMLElement,
       {
         assetId: "lead",
         ratioX: 0.5,
@@ -210,8 +278,12 @@ describe("scheduleAnchorRestore", () => {
       3,
     );
 
-    // Simulate unintended scroll reset to 0 during reflow (the old bail path).
+    // A temporary content-height collapse clamps scrollTop to zero. The
+    // delayed restore must still run after the height returns.
+    canvas.scrollHeight = 600;
     canvas.scrollTop = 0;
+    for (const callback of listeners.get("scroll") ?? []) callback();
+    canvas.scrollHeight = 4_000;
     while (rafQueue.length > 0) {
       const next = rafQueue.shift();
       next?.(0);
@@ -226,6 +298,7 @@ describe("scheduleAnchorRestore", () => {
 
   it("scrolls toward published geometry when the anchor card is unmounted", () => {
     const rafQueue: FrameRequestCallback[] = [];
+    const scrollListeners: Array<() => void> = [];
     const originalRaf = globalThis.requestAnimationFrame;
     const originalCancel = globalThis.cancelAnimationFrame;
     globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
@@ -243,6 +316,14 @@ describe("scheduleAnchorRestore", () => {
       scrollHeight: 8_000,
       clientWidth: 800,
       clientHeight: 600,
+      addEventListener: (type: string, listener: () => void) => {
+        if (type === 'scroll') scrollListeners.push(listener);
+      },
+      removeEventListener: (type: string, listener: () => void) => {
+        if (type !== 'scroll') return;
+        const index = scrollListeners.indexOf(listener);
+        if (index >= 0) scrollListeners.splice(index, 1);
+      },
       querySelectorAll: (selector: string) => {
         if (selector === ".justified-rows, .masonry-columns") return [host];
         return [];
@@ -285,6 +366,12 @@ describe("scheduleAnchorRestore", () => {
       1,
     );
 
+    // The first frame writes a large internal scroll offset. Its subsequent
+    // scroll event must not cancel the remaining mount/alignment passes.
+    rafQueue.shift()?.(0);
+    expect(canvas.scrollTop).toBeCloseTo(1_920);
+    for (const listener of scrollListeners) listener();
+    expect(frameRef.current).not.toBeNull();
     while (rafQueue.length > 0) {
       const next = rafQueue.shift();
       next?.(0);

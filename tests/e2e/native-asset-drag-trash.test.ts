@@ -129,6 +129,8 @@ test('native asset drag with copy/link source reaches trash and survives restart
     // Trash cards need the persistent thumbnail artifact, so wait for the
     // preview URL and its decode before moving the source file away.
     await expectPersistentThumbnailDecoded(card);
+    // Native drag cannot begin until Main has validated the file paths.
+    await expect(card).toHaveAttribute('draggable', 'true', { timeout: 30_000 });
     await installNativeDragStartSpy(application);
 
     // This synthetic source event invokes the real asset-card native branch.
@@ -193,6 +195,77 @@ test('native asset drag with copy/link source reaches trash and survives restart
     const persistedCard = assetCard(window, ASSET_NAME);
     await expect(persistedCard).toBeVisible();
     await expectDecodedImage(persistedCard);
+  } finally {
+    if (application) {
+      await application.evaluate(({ app }) => app.quit()).catch(() => undefined);
+      await application.close().catch(() => undefined);
+    }
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+test('a renamed source cannot start a native drag until Main refreshes its validated path', async () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-native-drag-rename-e2e-'));
+  const renamedName = 'native-trash-probe-renamed.png';
+  const libraryName = 'Native drag path refresh';
+  const libraryPath = path.join(temporaryRoot, libraryName);
+  const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  await sharp({
+    create: { width: 64, height: 64, channels: 3, background: '#4382bc' },
+  }).png().toFile(path.join(temporaryRoot, ASSET_NAME));
+  let application: ElectronApplication | undefined;
+  try {
+    application = await launchApplication(applicationDirectory, temporaryRoot, libraryPath);
+    const window = await application.firstWindow();
+    await window.getByRole('button', { name: '创建资源库' }).click();
+    await window.getByRole('textbox', { name: '名称' }).fill(libraryName);
+    await window.getByRole('button', { name: '创建', exact: true }).click();
+    await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
+    const originalCard = assetCard(window, ASSET_NAME);
+    await expect(originalCard).toHaveAttribute('draggable', 'true', { timeout: 30_000 });
+    const assetId = await originalCard.getAttribute('data-asset-id');
+    expect(assetId).toBeTruthy();
+    await installNativeDragStartSpy(application);
+    await window.evaluate(() => {
+      const testGlobal = globalThis as typeof globalThis & {
+        __nativeDragReadinessTypes?: string[];
+        serpent: { library: {
+          onNativeDragReadiness(listener: (event: { type: string }) => void): () => void;
+        } };
+      };
+      testGlobal.__nativeDragReadinessTypes = [];
+      testGlobal.serpent.library.onNativeDragReadiness((event) => {
+        testGlobal.__nativeDragReadinessTypes?.push(event.type);
+      });
+    });
+
+    await window.evaluate(async ({ id, newName }) => {
+      const bridge = (globalThis as typeof globalThis & {
+        serpent: { library: {
+          listOpen(): Promise<{ ok: boolean; value?: Array<{ libraryId: string }> }>;
+          renameAssetFile(input: { libraryId: string; assetId: string; newFileName: string }): Promise<{ ok: boolean }>;
+        } };
+      }).serpent.library;
+      const opened = await bridge.listOpen();
+      if (!opened.ok || !opened.value?.[0]) throw new Error('No open test library.');
+      const renamed = await bridge.renameAssetFile({
+        libraryId: opened.value[0].libraryId, assetId: id, newFileName: newName,
+      });
+      if (!renamed.ok) throw new Error('Could not rename the test asset.');
+    }, { id: assetId!, newName: renamedName });
+
+    const renamedCard = assetCard(window, renamedName);
+    await expect(renamedCard).toBeVisible();
+    await expect.poll(() => window.evaluate(() => (
+      globalThis as typeof globalThis & { __nativeDragReadinessTypes?: string[] }
+    ).__nativeDragReadinessTypes ?? [])).toContain('clear');
+    await expect(renamedCard).toHaveAttribute('draggable', 'true', { timeout: 30_000 });
+    await renamedCard.dispatchEvent('dragstart');
+    await expect.poll(() => readNativeDragStartFiles(application!)).toHaveLength(1);
+    const draggedPath = (await readNativeDragStartFiles(application))[0]?.[0];
+    expect(draggedPath).toBeTruthy();
+    expect(path.basename(draggedPath!)).toBe(renamedName);
+    expect(existsSync(draggedPath!)).toBe(true);
   } finally {
     if (application) {
       await application.evaluate(({ app }) => app.quit()).catch(() => undefined);

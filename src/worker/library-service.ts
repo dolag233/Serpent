@@ -843,6 +843,7 @@ import {
 } from '../shared/media-formats';
 import {
   isSourceDirectPreview,
+  isSourceDirectPreviewCandidate,
   SOURCE_DIRECT_IMAGE_EXTENSIONS,
   SOURCE_DIRECT_MAX_BYTES,
   SOURCE_DIRECT_MAX_LONG_EDGE_PX,
@@ -5156,6 +5157,8 @@ export interface AssetsChangedEvent {
   libraryId: string;
   missingCount: number;
   source?: 'watcher' | 'text-save' | 'content-replace' | 'client' | 'sync';
+  /** Filesystem or served drag-icon path may have changed; metadata-only edits omit it. */
+  nativeDragPathsChanged?: true;
   type: 'asset.changed';
 }
 
@@ -7204,8 +7207,8 @@ export class LibraryService {
     }
   }
 
-  private emitClientAssetsChanged(libraryId: string, changedCount: number): void {
-    this.emitAssetsChanged(libraryId, changedCount, 'client');
+  private emitClientAssetsChanged(libraryId: string, changedCount: number, nativeDragPathsChanged = false): void {
+    this.emitAssetsChanged(libraryId, changedCount, 'client', nativeDragPathsChanged);
   }
 
   /**
@@ -7216,6 +7219,7 @@ export class LibraryService {
     libraryId: string,
     changedCount: number,
     source: NonNullable<AssetsChangedEvent['source']>,
+    nativeDragPathsChanged = false,
   ): void {
     if (changedCount <= 0) return;
     this.options.onAssetsChanged?.({
@@ -7224,6 +7228,7 @@ export class LibraryService {
       changedCount,
       missingCount: 0,
       source: this.syncReplayDepth > 0 && source === 'client' ? 'sync' : source,
+      ...(nativeDragPathsChanged ? { nativeDragPathsChanged: true } : {}),
     });
   }
 
@@ -7818,7 +7823,14 @@ export class LibraryService {
   ): Promise<boolean> {
     if (openLibrary.readOnly) return false;
     const existing = this.databaseBackupInFlight.get(openLibrary.summary.libraryId);
-    if (existing) return existing;
+    if (existing) {
+      if (!force) return existing;
+      // A maintenance snapshot may have started before the destructive
+      // command acquired its writer lease. Wait for it, then take a fresh
+      // snapshot under that lease; joining the old task would be stale.
+      await existing;
+      return this.createDatabaseBackupForOpenLibrary(openLibrary, reason, force);
+    }
 
     const backup1 = databaseBackupPath(openLibrary.summary.libraryPath, 1);
     if (!force && realFileExists(backup1)) {
@@ -7841,11 +7853,15 @@ export class LibraryService {
           {
             cancelled: false,
             // Open/periodic snapshots are maintenance work. Keep each native
-            // backup transfer below the event-loop budget; explicit close or
-            // export snapshots retain their existing throughput setting.
+            // backup transfer below the event-loop budget. Destructive
+            // commands must finish a verified snapshot before mutating disk;
+            // use bounded 2 MiB batches to avoid thousands of 100-page turns
+            // on a large library while still yielding between transfers.
             ...(reason === 'open' || reason === 'periodic'
               ? { backupPageBatch: 1 }
-              : {}),
+              : reason === 'destructive'
+                ? { backupPageBatch: 512 }
+                : {}),
           },
         );
 
@@ -14001,7 +14017,7 @@ export class LibraryService {
       throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
     }
 
-    this.emitClientAssetsChanged(input.libraryId, 1);
+    this.emitClientAssetsChanged(input.libraryId, 1, true);
     return this.summarizeManagedFolderRowRecursive(openLibrary, {
       ...row,
       name,
@@ -14369,7 +14385,7 @@ export class LibraryService {
       );
     }
 
-    this.emitClientAssetsChanged(input.libraryId, movedCount);
+    this.emitClientAssetsChanged(input.libraryId, movedCount, true);
     return { movedCount, skippedCount, folders: moved };
   }
 
@@ -15354,6 +15370,10 @@ export class LibraryService {
         this.stopLinkedWatcher(input.libraryId, target.linkedFolderId);
         this.reconcileLinkedWatchers(openLibrary);
         this.noteClientFilesystemMutation();
+        const assetCount = openLibrary.connection
+          .prepare('SELECT COUNT(*) AS count FROM assets WHERE linked_folder_id = ?')
+          .get(target.linkedFolderId) as { count: number };
+        if (assetCount.count > 0) this.emitClientAssetsChanged(input.libraryId, assetCount.count, true);
         return this.linkedDirectoryMutationSummary({
           linkedFolderId: target.linkedFolderId,
           relativePath: '',
@@ -15432,6 +15452,7 @@ export class LibraryService {
         this.linkedDirectoryIndex(openLibrary).add(target.linkedFolderId, newRelativePath);
       })();
       this.noteClientFilesystemMutation();
+      if (linkedAssets.length > 0) this.emitClientAssetsChanged(input.libraryId, linkedAssets.length, true);
       return this.linkedDirectoryMutationSummary({
         linkedFolderId: target.linkedFolderId,
         relativePath: newRelativePath,
@@ -15649,6 +15670,7 @@ export class LibraryService {
       changedCount: assetIds.length,
       missingCount: 0,
       source: 'client',
+      nativeDragPathsChanged: true,
     });
   }
 
@@ -18909,6 +18931,7 @@ export class LibraryService {
       const assetIds = new Set(linkedAssets.map((asset) => asset.asset_id));
       const assets = this.listAssets({ libraryId: input.libraryId, folderId: managedFolderId, recursive: true })
         .filter((asset) => assetIds.has(asset.assetId));
+      if (linkedAssets.length > 0) this.emitClientAssetsChanged(input.libraryId, linkedAssets.length, true);
       return { managedFolderId, convertedCount: entries.length, assets };
     } catch (error) {
       if (error instanceof SimulatedCrashError) {
@@ -19982,6 +20005,7 @@ export class LibraryService {
     );
     const now = new Date().toISOString();
 
+    let linkedAssetCount = 0;
     openLibrary.connection.transaction(() => {
       openLibrary.connection
         .prepare(
@@ -20003,6 +20027,7 @@ export class LibraryService {
           current_revision_id: string;
           availability: 'available' | 'missing';
         }>;
+      linkedAssetCount = assets.length;
       for (const asset of assets) {
         const assetPath = path.join(canonicalNewRoot, ...asset.relative_file_path.split('/'));
         let fileStat;
@@ -20066,6 +20091,7 @@ export class LibraryService {
                         AND hidden_sequence_frame.position > 0
                    )`)
       .get(input.folderId) as { count: number };
+    if (linkedAssetCount > 0) this.emitClientAssetsChanged(input.libraryId, linkedAssetCount, true);
     return {
       folderId: input.folderId,
       displayName: folder.display_name,
@@ -21319,6 +21345,7 @@ export class LibraryService {
       changedCount: 1,
       missingCount: 0,
       source: 'client',
+      nativeDragPathsChanged: true,
     });
     return { assetId: input.assetId, colorSpaceOverride: normalized };
   }
@@ -24008,7 +24035,7 @@ export class LibraryService {
     } catch (error) {
       throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
     }
-    this.emitClientAssetsChanged(libraryId, 1);
+    this.emitClientAssetsChanged(libraryId, 1, true);
     return { baked: true, revisionId };
   }
 
@@ -24257,13 +24284,15 @@ export class LibraryService {
   readonly #pluginThumbnailExtensions = new Map<string, Set<string>>();
 
   /** Extensions a thumbnail provider claimed for this library, without a leading dot. */
-  setPluginThumbnailExtensions(libraryId: string, extensions: readonly string[]): void {
+  setPluginThumbnailExtensions(libraryId: string, extensions: readonly string[]): boolean {
+    const previous = this.#pluginThumbnailExtensions.get(libraryId);
     const normalized = new Set<string>();
     for (const value of extensions) {
       const extension = value.trim().replace(/^\./u, '').toLowerCase();
       if (/^[a-z0-9][a-z0-9+_-]*$/u.test(extension)) normalized.add(extension);
     }
     this.#pluginThumbnailExtensions.set(libraryId, normalized);
+    return [...normalized].some((extension) => !previous?.has(extension));
   }
 
   private claimsPluginThumbnail(libraryId: string, relativePath: string): boolean {
@@ -26413,7 +26442,7 @@ export class LibraryService {
           .run(randomUUID(), libraryId, existing.asset_id, revisionId, now, now);
       }
       this.syncAssetSearchContent(openLibrary.connection, existing.asset_id);
-      this.emitClientAssetsChanged(libraryId, 1);
+      this.emitClientAssetsChanged(libraryId, 1, true);
       return { assetId: existing.asset_id, created: false };
     });
   }
@@ -26473,7 +26502,7 @@ export class LibraryService {
       });
       this.pruneEmptyManagedFoldersAfterSyncRelocate(openLibrary, existing.managed_folder_id);
       this.noteClientFilesystemMutation();
-      this.emitClientAssetsChanged(libraryId, 1);
+      this.emitClientAssetsChanged(libraryId, 1, true);
     });
   }
 
@@ -31343,6 +31372,20 @@ export class LibraryService {
     }
   }
 
+  private async artifactRootPathAsync(openLibrary: OpenLibrary): Promise<string> {
+    const artifactsDir = this.artifactsDir(openLibrary);
+    try {
+      const rootEntry = await lstatAsync(artifactsDir);
+      if (!rootEntry.isDirectory() || rootEntry.isSymbolicLink()) {
+        throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+      }
+      return await realpathAsync(artifactsDir);
+    } catch (error) {
+      if (error instanceof LibraryServiceError) throw error;
+      throw new LibraryServiceError('INVALID_LIBRARY_PATH', { cause: error });
+    }
+  }
+
   private artifactFilePathFromRoot(
     artifactsRoot: string,
     relativeFilePath: string,
@@ -31377,6 +31420,41 @@ export class LibraryService {
     }
   }
 
+  /** Async equivalent for bounded bulk serving; keep the sync point API intact. */
+  private async artifactFilePathFromRootAsync(
+    artifactsRoot: string,
+    relativeFilePath: string,
+  ): Promise<string> {
+    const targetPath = path.resolve(artifactsRoot, ...relativeFilePath.split('/'));
+    const relation = path.relative(artifactsRoot, targetPath);
+    if (
+      relation === '' ||
+      relation.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relation)
+    ) {
+      throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+    }
+    try {
+      const targetEntry = await lstatAsync(targetPath);
+      if (!targetEntry.isFile() || targetEntry.isSymbolicLink()) {
+        throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+      }
+      const realTarget = await realpathAsync(targetPath);
+      const realRelation = path.relative(artifactsRoot, realTarget);
+      if (
+        realRelation === '' ||
+        realRelation.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(realRelation)
+      ) {
+        throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+      }
+      return realTarget;
+    } catch (error) {
+      if (error instanceof LibraryServiceError) throw error;
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { cause: error });
+    }
+  }
+
   /**
    * Batched native-drag priming entries (Serpent-v4jf).
    *
@@ -31391,14 +31469,14 @@ export class LibraryService {
    * exact safety boundary of the single-entry resolvers. Missing entries are
    * skipped like the legacy loop; hard failures still throw.
    */
-  resolveAssetDragInfos(
+  async resolveAssetDragInfos(
     libraryId: string,
     assetIds: readonly string[],
-  ): Array<{
+  ): Promise<Array<{
     assetId: string;
     absolutePath: string;
     thumbnailAbsolutePath?: string;
-  }> {
+  }>> {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const uniqueIds = [...new Set(assetIds)];
     if (uniqueIds.length === 0) return [];
@@ -31472,56 +31550,69 @@ export class LibraryService {
       assetId: string;
       absolutePath: string;
       thumbnailAbsolutePath?: string;
-    }> = [];
-    for (const row of assetRows) {
-      let absolutePath: string;
-      try {
-        absolutePath =
-          row.location_kind === 'managed'
-            ? this.folderPath(openLibrary, row.relative_file_path)
-            : this.linkedAssetPath(
-                openLibrary,
-                row.linked_folder_id,
-                row.relative_file_path,
-              );
-      } catch (error) {
-        if (
-          error instanceof LibraryServiceError &&
-          error.code === 'ASSET_NOT_FOUND'
-        ) {
-          continue;
-        }
-        throw error;
-      }
-      const thumbnail =
-        row.current_revision_id === null
-          ? undefined
-          : thumbnailByRevision.get(row.current_revision_id);
-      let thumbnailAbsolutePath: string | undefined;
-      if (thumbnail) {
+    } | null> = Array.from({ length: assetRows.length }, () => null);
+    const failures: unknown[] = [];
+    let nextIndex = 0;
+    // The SQL reads are short, but synchronous path validation across a drag
+    // primer's page can hold the only Worker event loop for over a second.
+    // Preserve each containment check while letting interactive requests run
+    // between bounded filesystem operations.
+    await Promise.all(Array.from({ length: Math.min(8, assetRows.length) }, async () => {
+      for (;;) {
+        const index = nextIndex++;
+        if (index >= assetRows.length) return;
+        const row = assetRows[index]!;
+        let absolutePath: string;
         try {
-          thumbnailAbsolutePath = this.artifactFilePathFromRow(
-            openLibrary,
-            thumbnail.filePath,
-          );
+          absolutePath =
+            row.location_kind === 'managed'
+              ? await this.folderPathAsync(openLibrary, row.relative_file_path)
+              : await this.linkedAssetPathAsync(
+                  openLibrary,
+                  row.linked_folder_id,
+                  row.relative_file_path,
+                );
         } catch (error) {
           if (
-            !(error instanceof LibraryServiceError) ||
-            error.code !== 'ASSET_NOT_FOUND'
+            error instanceof LibraryServiceError &&
+            error.code === 'ASSET_NOT_FOUND'
           ) {
-            throw error;
+            continue;
+          }
+          failures.push(error);
+          continue;
+        }
+        const thumbnail =
+          row.current_revision_id === null
+            ? undefined
+            : thumbnailByRevision.get(row.current_revision_id);
+        let thumbnailAbsolutePath: string | undefined;
+        if (thumbnail) {
+          try {
+            thumbnailAbsolutePath = await this.artifactFilePathFromRootAsync(
+              await this.artifactRootPathAsync(openLibrary), thumbnail.filePath,
+            );
+          } catch (error) {
+            if (
+              !(error instanceof LibraryServiceError) ||
+              error.code !== 'ASSET_NOT_FOUND'
+            ) {
+              failures.push(error);
+              continue;
+            }
           }
         }
+        entries[index] = {
+          assetId: row.asset_id,
+          absolutePath,
+          ...(thumbnailAbsolutePath === undefined
+            ? {}
+            : { thumbnailAbsolutePath }),
+        };
       }
-      entries.push({
-        assetId: row.asset_id,
-        absolutePath,
-        ...(thumbnailAbsolutePath === undefined
-          ? {}
-          : { thumbnailAbsolutePath }),
-      });
-    }
-    return entries;
+    }));
+    if (failures.length > 0) throw failures[0];
+    return entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null);
   }
 
   getCurrentMediaSource(
@@ -33155,6 +33246,7 @@ export class LibraryService {
       // stay marked failed and are never retried.
       requeueRetryableFailedArtifacts(openLibrary.connection, {
         priority: options.priority ?? 0,
+        ...(options.assetIds === undefined ? {} : { assetIds: selectedIds }),
         ...(limit === undefined ? {} : { limit }),
       });
     }
@@ -34637,6 +34729,68 @@ export class LibraryService {
             processed += 1;
             continue;
           }
+          let probedSourceSize: { width: number; height: number } | null = null;
+          // Fresh linked images often have no dimensions yet. The queue used
+          // to decode and encode a thumbnail before discovering that the
+          // original qualified for source-direct serving. A bounded header
+          // read resolves that policy first, without taking a Sharp slot.
+          if (job.kind === 'generate_thumbnail'
+            && !isImportedThumbnailNormalization
+            && claimAsset
+            && (claimAsset.source_width == null || claimAsset.source_height == null)
+            && isSourceDirectPreviewCandidate({
+              fileName: claimAsset.relative_file_path,
+              mediaType: LibraryService.toSummaryMediaType(claimMediaType),
+              byteSize: claimAsset.source_byte_size ?? 0,
+            })) {
+            try {
+              probedSourceSize = await readImageDimensions(this.resolveAssetPath(libraryId, job.asset_id));
+            } catch {
+              // Preserve the decoder's existing missing/corrupt-source path.
+            }
+            if (controller.signal.aborted || this.mediaJobState(libraryId, job.job_id) !== 'running') {
+              processed += 1;
+              continue;
+            }
+            if (probedSourceSize) {
+              const latest = openLibrary.connection.prepare(
+                'SELECT current_revision_id FROM assets WHERE asset_id = ?',
+              ).get(job.asset_id) as { current_revision_id: string | null } | undefined;
+              if (latest?.current_revision_id !== job.revision_id) {
+                openLibrary.connection.prepare(
+                  "UPDATE jobs SET status = 'cancelled', error_code = 'STALE_REVISION', updated_at = ? WHERE job_id = ? AND status = 'running'",
+                ).run(new Date().toISOString(), job.job_id);
+                processed += 1;
+                continue;
+              }
+              jobLease.assertCurrent();
+              this.persistExtractedImageDimensions(openLibrary, job.revision_id, probedSourceSize);
+              if (isSourceDirectPreview({
+                fileName: claimAsset.relative_file_path,
+                mediaType: LibraryService.toSummaryMediaType(claimMediaType),
+                byteSize: claimAsset.source_byte_size ?? 0,
+                width: probedSourceSize.width,
+                height: probedSourceSize.height,
+              })) {
+                const cancelled = openLibrary.connection.prepare(
+                  "UPDATE jobs SET status = 'cancelled', error_code = 'SOURCE_DIRECT', updated_at = ? WHERE job_id = ? AND status = 'running'",
+                ).run(new Date().toISOString(), job.job_id);
+                if (cancelled.changes > 0) {
+                  options.onResult?.({
+                    assetId: job.asset_id,
+                    errorCode: 'SOURCE_DIRECT',
+                    width: probedSourceSize.width,
+                    height: probedSourceSize.height,
+                    revisionId: job.revision_id,
+                    previewKind: 'source',
+                    previewRevisionId: job.revision_id,
+                  });
+                }
+                processed += 1;
+                continue;
+              }
+            }
+          }
           const pluginArtifactId = !isImportedThumbnailNormalization && options.pluginMediaProvider
             ? await options.pluginMediaProvider({
               assetId: job.asset_id,
@@ -34685,8 +34839,8 @@ export class LibraryService {
                     includeVideoMetadata: false,
                     includeRawMetadata: false,
                     sourceByteSize: claimAsset?.source_byte_size,
-                    sourceWidth: claimAsset?.source_width,
-                    sourceHeight: claimAsset?.source_height,
+                    sourceWidth: claimAsset?.source_width ?? probedSourceSize?.width,
+                    sourceHeight: claimAsset?.source_height ?? probedSourceSize?.height,
                     // Only image jobs use the interactive image lane. The
                     // lane is selected by user intent, never by source size,
                     // dimensions, or detected machine capacity.
@@ -37365,7 +37519,7 @@ export class LibraryService {
     };
     this.applyManagedMoveOperation(openLibrary, operationId, manifest);
     this.noteClientFilesystemMutation();
-    this.emitClientAssetsChanged(input.libraryId, files.length);
+    this.emitClientAssetsChanged(input.libraryId, files.length, true);
     return { movedCount: files.length, skippedCount, operationId,
       assets: this.managedMoveSummaries(openLibrary, files.map((file) => file.assetId)) };
   }
@@ -37444,7 +37598,7 @@ export class LibraryService {
     };
     this.applyManagedMoveOperation(openLibrary, undoOperationId, manifest);
     this.noteClientFilesystemMutation();
-    this.emitClientAssetsChanged(input.libraryId, files.length);
+    this.emitClientAssetsChanged(input.libraryId, files.length, true);
     return { undoneCount: files.length, skippedCount,
       assets: this.managedMoveSummaries(openLibrary, files.map((file) => file.assetId)) };
   }
@@ -38385,6 +38539,7 @@ export class LibraryService {
       changedCount: 1,
       missingCount: 0,
       source: 'text-save',
+      nativeDragPathsChanged: true,
     });
     return {
       asset,
@@ -38703,6 +38858,7 @@ export class LibraryService {
       changedCount: 1,
       missingCount: 0,
       source: 'content-replace',
+      nativeDragPathsChanged: true,
     });
     return {
       assetId: input.assetId,
@@ -39061,6 +39217,7 @@ export class LibraryService {
       changedCount: resultItems.length,
       missingCount: 0,
       source: 'content-replace',
+      nativeDragPathsChanged: true,
     });
     return { operationId, items: resultItems };
   }
@@ -39361,6 +39518,7 @@ export class LibraryService {
       changedCount: 1,
       missingCount: 0,
       source: 'client',
+      nativeDragPathsChanged: true,
     });
     return { asset };
   }
@@ -39667,7 +39825,7 @@ export class LibraryService {
       // Soft-delete is a library mutation, not only a local UI action. Emit
       // after the filesystem move and DB transaction both succeed so other
       // renderer windows, plugins, and automation refresh their trash count.
-      this.emitClientAssetsChanged(input.libraryId, assetIds.length);
+      this.emitClientAssetsChanged(input.libraryId, assetIds.length, true);
 
       this.emitDeleteProgress({
         operationId,
@@ -40419,6 +40577,7 @@ export class LibraryService {
           changedCount: restoredAssets.length,
           missingCount: 0,
           source: 'client',
+          nativeDragPathsChanged: true,
         });
       }
 
@@ -40854,6 +41013,7 @@ export class LibraryService {
         changedCount: deletedAssetIds.length,
         missingCount: 0,
         source: 'client',
+        nativeDragPathsChanged: true,
       });
     }
 
@@ -42079,6 +42239,7 @@ export class LibraryService {
       } | undefined;
     if (!updated) throw new LibraryServiceError('ASSET_NOT_FOUND');
 
+    this.emitClientAssetsChanged(input.libraryId, 1, true);
     return { asset: this.assetSummaryFromRow(updated), batchFollowUpRoot };
   }
 
@@ -42517,6 +42678,7 @@ export class LibraryService {
       }
     }
 
+    if (restoredCount > 0) this.emitClientAssetsChanged(input.libraryId, restoredCount, true);
     return { restoredCount, unchangedMissingCount, assets: restoredAssets };
   }
 
@@ -45141,6 +45303,7 @@ export class LibraryService {
               changedCount: completion.importedCount + completion.replacedCount,
               missingCount: 0,
               source: 'client',
+              nativeDragPathsChanged: true,
             });
           }
         }
@@ -45404,6 +45567,7 @@ export class LibraryService {
               changedCount: completion.importedCount + completion.replacedCount,
               missingCount: 0,
               source: 'client',
+              nativeDragPathsChanged: true,
             });
           }
         }
@@ -46291,7 +46455,7 @@ export class LibraryService {
           }
           if (!bulkCommit) this.noteClientFilesystemMutation();
           if (!pending.suppressAssetChangeEvents) {
-            this.emitClientAssetsChanged(pending.libraryId, 1);
+            this.emitClientAssetsChanged(pending.libraryId, 1, true);
           }
         }
       }

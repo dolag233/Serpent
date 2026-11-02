@@ -15,7 +15,7 @@ describe("ArtifactPathCache", () => {
     expect(cache.get("library-1", "artifact-c", "preview")).toBe("/c");
   });
 
-  it("rejects old-generation writes after a library handle is replaced", () => {
+  it("rejects old-generation writes after a library handle or asset snapshot changes", () => {
     const cache = new ArtifactPathCache();
     const oldGeneration = cache.generation("library-1");
     cache.set("library-1", "artifact-a", "preview", "/old", oldGeneration);

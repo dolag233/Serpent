@@ -86,18 +86,18 @@ type MasonryColumnsBodyProps = Omit<
 export function MasonryColumns(props: MasonryColumnsProps) {
   const { preferences } = useFontSize();
   const fontScale = FONT_SIZE_SCALES[preferences.preference];
-  const captionFields = props.captionFields;
+  const { name, size, date, dimensions } = props.captionFields;
   const snippetLine = props.snippetLine;
-  const showCaption = cardCaptionShowsAnything(captionFields);
+  const showCaption = cardCaptionShowsAnything({ name, size, date, dimensions });
   const captionBandForAsset = useMemo(
     () =>
       createCaptionBandResolver({
         mode: "masonry",
-        fields: captionFields,
+        fields: { name, size, date, dimensions },
         fontScale,
         snippetLine,
       }),
-    [captionFields, fontScale, snippetLine],
+    [name, size, date, dimensions, fontScale, snippetLine],
   );
   if (props.virtualLayout) {
     return (

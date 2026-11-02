@@ -304,6 +304,7 @@ describe('trashAssets (soft delete)', () => {
       changedCount: 1,
       missingCount: 0,
       source: 'client',
+      nativeDragPathsChanged: true,
     });
 
     events.length = 0;
@@ -1933,7 +1934,8 @@ describe('deleteLinkedAssets', () => {
 describe('relinkAsset (single missing asset)', () => {
   it('relinks a missing asset to a new file and creates a relink revision', () => {
     const root = temporaryRoot();
-    const service = newService();
+    const events: Array<{ nativeDragPathsChanged?: true; changedCount: number }> = [];
+    const service = newService({ onAssetsChanged: (event) => events.push(event) });
     const created = service.createLibrary({ displayName: 'Relink', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'orig-relink.jpg'), 'orig');
@@ -1947,11 +1949,15 @@ describe('relinkAsset (single missing asset)', () => {
     expect(before[0]!.availability).toBe('missing');
 
     writeFileSync(path.join(root, 'new-location.jpg'), 'new');
+    const eventCountBeforeRelink = events.length;
     const { asset, batchFollowUpRoot } = service.relinkAsset({ libraryId: created.libraryId, assetId, newAbsolutePath: path.join(root, 'new-location.jpg') });
 
     expect(asset.assetId).toBe(assetId);
     expect(asset.availability).toBe('available');
     expect(batchFollowUpRoot).toBe(root);
+    expect(events.slice(eventCountBeforeRelink)).toEqual([
+      expect.objectContaining({ changedCount: 1, nativeDragPathsChanged: true }),
+    ]);
 
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
     const revisions = db.prepare("SELECT origin FROM revisions WHERE asset_id = ? ORDER BY accepted_at DESC").all(assetId) as Array<{ origin: string }>;
@@ -2322,7 +2328,8 @@ describe('relinkBatchPreview', () => {
 describe('relinkBatchApply', () => {
   it('restores matched assets and leaves unmatched as missing', () => {
     const root = temporaryRoot();
-    const service = newService();
+    const events: Array<{ nativeDragPathsChanged?: true; changedCount: number }> = [];
+    const service = newService({ onAssetsChanged: (event) => events.push(event) });
     const created = service.createLibrary({ displayName: 'Batch Apply', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'match.jpg'), 'data');
@@ -2339,11 +2346,15 @@ describe('relinkBatchApply', () => {
     mkdirSync(newRoot, { recursive: true });
     writeFileSync(path.join(newRoot, 'match.jpg'), 'matched');
 
+    const eventCountBeforeRelink = events.length;
     const result = service.relinkBatchApply({ libraryId: created.libraryId, newRootPath: newRoot, keepMetadata: true });
     expect(result.restoredCount).toBe(1);
     expect(result.unchangedMissingCount).toBe(1);
     expect(result.assets).toHaveLength(1);
     expect(result.assets[0]!.availability).toBe('available');
+    expect(events.slice(eventCountBeforeRelink)).toContainEqual(
+      expect.objectContaining({ changedCount: 1, nativeDragPathsChanged: true }),
+    );
 
     const allAssets = service.listAssets({ libraryId: created.libraryId, recursive: true });
     expect(allAssets.filter((a) => a.availability === 'available')).toHaveLength(1);

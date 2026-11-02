@@ -152,6 +152,9 @@ type NativeAssetDragPrimeQueue = {
 const DEFAULT_DRAG_PRIME_CHUNK_SIZE = 500;
 const DEFAULT_DRAG_PRIME_GAP_MS = 25;
 const DEFAULT_DRAG_PRIME_MAX_PENDING = 20_000;
+const VISIBLE_DRAG_PRIME_IDLE_MS = 600;
+const VISIBLE_DRAG_PRIME_LIMIT = 60;
+const VISIBLE_DRAG_PRIME_CHUNK_SIZE = 8;
 
 /**
  * Serpent-8ee170: Main used to issue one `media.get-asset-drag-infos` request
@@ -167,6 +170,9 @@ export class NativeAssetDragPrimeScheduler {
     applyEntries: NativeAssetDragPrimeSchedulerOptions["applyEntries"];
   };
   readonly #queues = new Map<string, NativeAssetDragPrimeQueue>();
+  readonly #visibleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  readonly #visibleEpochByLibrary = new Map<string, number>();
+  readonly #generationByLibrary = new Map<string, number>();
   readonly #stats: NativeAssetDragPrimeSchedulerStats = {
     requests: 0,
     queuedAssets: 0,
@@ -216,6 +222,47 @@ export class NativeAssetDragPrimeScheduler {
     void this.#drain(libraryId, queue);
   }
 
+  /** Prime only cards reported in the real viewport, after scrolling settles. */
+  scheduleVisible(libraryId: string, assetIds: readonly string[]): void {
+    this.cancelScheduledVisible(libraryId);
+    const unique = [...new Set(assetIds)].slice(0, VISIBLE_DRAG_PRIME_LIMIT);
+    if (unique.length === 0) return;
+    const generation = this.#generationByLibrary.get(libraryId) ?? 0;
+    const visibleEpoch = this.#visibleEpochByLibrary.get(libraryId) ?? 0;
+    const timer = setTimeout(() => {
+      this.#visibleTimers.delete(libraryId);
+      if ((this.#generationByLibrary.get(libraryId) ?? 0) !== generation) return;
+      void this.#primeVisible(libraryId, unique, generation, visibleEpoch);
+    }, VISIBLE_DRAG_PRIME_IDLE_MS);
+    this.#visibleTimers.set(libraryId, timer);
+  }
+
+  async #primeVisible(
+    libraryId: string,
+    assetIds: readonly string[],
+    generation: number,
+    visibleEpoch: number,
+  ): Promise<void> {
+    for (let offset = 0; offset < assetIds.length; offset += VISIBLE_DRAG_PRIME_CHUNK_SIZE) {
+      if ((this.#generationByLibrary.get(libraryId) ?? 0) !== generation
+        || (this.#visibleEpochByLibrary.get(libraryId) ?? 0) !== visibleEpoch) return;
+      await this.primeImmediately(
+        libraryId,
+        assetIds.slice(offset, offset + VISIBLE_DRAG_PRIME_CHUNK_SIZE),
+        "upsert",
+      );
+    }
+  }
+
+  /** A new browse destination makes the previous viewport's timer obsolete. */
+  cancelScheduledVisible(libraryId: string): void {
+    this.#visibleEpochByLibrary.set(libraryId, (this.#visibleEpochByLibrary.get(libraryId) ?? 0) + 1);
+    const timer = this.#visibleTimers.get(libraryId);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    this.#visibleTimers.delete(libraryId);
+  }
+
   /**
    * Resolve a bounded set synchronously, for assets that must be ready before a
    * response reaches the renderer (the visible first screen of a browse page).
@@ -225,6 +272,8 @@ export class NativeAssetDragPrimeScheduler {
     assetIds: readonly string[],
     mode: "replace" | "upsert" = "replace",
   ): Promise<void> {
+    const generation = this.#generationByLibrary.get(libraryId) ?? 0;
+    this.#generationByLibrary.set(libraryId, generation);
     const unique = [...new Set(assetIds)];
     if (unique.length === 0) {
       if (mode === "replace") this.#options.applyEntries(libraryId, [], mode);
@@ -232,12 +281,14 @@ export class NativeAssetDragPrimeScheduler {
     }
     this.#stats.requests += 1;
     const entries = await this.#options.fetchEntries(libraryId, unique);
-    if (entries === null) return;
+    if (entries === null || (this.#generationByLibrary.get(libraryId) ?? 0) !== generation) return;
     this.#options.applyEntries(libraryId, entries, mode);
   }
 
   /** Library closed or switched: drop queued work and ignore in-flight results. */
   invalidate(libraryId: string): void {
+    this.cancelScheduledVisible(libraryId);
+    this.#generationByLibrary.set(libraryId, (this.#generationByLibrary.get(libraryId) ?? 0) + 1);
     const queue = this.#queues.get(libraryId);
     if (!queue) return;
     queue.generation += 1;
@@ -247,7 +298,9 @@ export class NativeAssetDragPrimeScheduler {
 
   /** Window teardown: drop every library's queued work. */
   clear(): void {
-    for (const libraryId of [...this.#queues.keys()]) this.invalidate(libraryId);
+    for (const libraryId of new Set([...this.#queues.keys(), ...this.#generationByLibrary.keys(), ...this.#visibleTimers.keys(), ...this.#visibleEpochByLibrary.keys()])) {
+      this.invalidate(libraryId);
+    }
   }
 
   stats(): NativeAssetDragPrimeSchedulerStats {

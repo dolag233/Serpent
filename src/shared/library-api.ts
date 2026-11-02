@@ -5,6 +5,7 @@ import type { EmbeddingModality } from './embedding/modalities';
 import type { PublicError, PublicErrorReason } from './protocol/errors';
 import type { LibraryNavigationSummary } from './library-navigation';
 import type { MutationReceipt } from './performance-contract';
+import type { NativeDragReadinessEvent } from './native-drag-readiness';
 
 /** Serpent-xffq：WebDAV 服务端能力探测结果。 */
 export interface SyncCapabilities {
@@ -931,6 +932,7 @@ export interface SerpentLibraryApi {
     libraryId: string;
     assetIds: string[];
   }): void;
+  onNativeDragReadiness(listener: (event: NativeDragReadinessEvent) => void): () => void;
   // Folder shell actions (REQ-MENU-006): folder id only crosses the bridge;
   // the absolute path is resolved by the Worker and consumed by Main.
   openFolderInFileManager(input: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>>;

@@ -43,8 +43,8 @@ export class ArtifactPathCache {
 
   /**
    * Drop cached paths for one library without fencing in-flight lookups.
-   * Asset edits do not change other artifacts' ids or files. Bumping the
-   * handle generation here rejects a viewport batch that already resolved.
+   * Use only when the caller knows in-flight lookups remain valid. Asset
+   * changes use clearLibrary so an older async batch cannot repopulate paths.
    */
   evictLibrary(libraryId: string): void {
     const prefix = `${libraryId}\u0000`;

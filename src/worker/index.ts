@@ -83,6 +83,7 @@ import {
   SchedulerCancelledError,
 } from './interactive-scheduler';
 import { executeBrowseSessionWorkerCommand } from './handlers/browse-session';
+import { runWithVerifiedDestructiveBackup } from './destructive-backup';
 import { executeLibraryIdentityWorkerCommand } from './handlers/library-identity';
 import { executeLibraryTransferWorkerCommand } from './handlers/library-transfer';
 import { executeExtensionWorkerCommand } from './handlers/extension';
@@ -2316,17 +2317,18 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
 
   const destructiveLibraryId = destructiveBackupLibraryId(request.command);
   if (destructiveLibraryId) {
-    // Keep a verified online snapshot immediately before an irreversible
-    // command. A failed snapshot is diagnosed by the service, while the
-    // operation itself retains its existing typed error/confirmation path.
-    await libraryService.createDatabaseBackup(destructiveLibraryId);
-  }
-
-  let semanticDeleteCandidates = request.command.type === 'asset.purge-trash'
-    ? []
-    : semanticPermanentDeleteCandidates(libraryService, request.command);
-  if (semanticDeleteCandidates.length > 0 && 'libraryId' in request.command) {
-    reserveSemanticDeleteCleanup(libraryService, request.command.libraryId, semanticDeleteCandidates);
+    return runWithVerifiedDestructiveBackup(
+      libraryService,
+      destructiveLibraryId,
+      async () => {
+        const candidates = semanticPermanentDeleteCandidates(libraryService, request.command);
+        if (candidates.length > 0) {
+          reserveSemanticDeleteCleanup(libraryService, destructiveLibraryId, candidates);
+        }
+        const result = await handleRequestWithoutWriteLease(request);
+        return withSemanticDeleteResult(libraryService, request.command, candidates, result);
+      },
+    );
   }
 
   if (request.command.type === 'history.group.begin' || request.command.type === 'history.group.complete') {
@@ -2387,34 +2389,18 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
 
   const libraryId = boundedWriteLibraryId(request.command);
   if (!libraryId) {
-    const result = await handleRequestWithoutWriteLease(request);
-    return withSemanticDeleteResult(
-      libraryService, request.command, semanticDeleteCandidates, result,
-    );
+    return handleRequestWithoutWriteLease(request);
   }
 
   try {
     const result = await libraryService.runBoundedWrite(
       libraryId,
-      () => {
-        if (request.command.type === 'asset.purge-trash') {
-          // The writer lease is now held. Snapshot and reserve the exact trash
-          // contents this purge can remove, including assets moved to trash
-          // while this request waited in the write queue.
-          semanticDeleteCandidates = semanticPermanentDeleteCandidates(libraryService, request.command);
-          if (semanticDeleteCandidates.length > 0) {
-            reserveSemanticDeleteCleanup(libraryService, request.command.libraryId, semanticDeleteCandidates);
-          }
-        }
-        return executeBoundedWriteWorkerCommand(libraryService, request.command, request.historyContext);
-      },
+      () => executeBoundedWriteWorkerCommand(libraryService, request.command, request.historyContext),
     );
     if (result === undefined) {
       throw new Error(`Bounded write command ${request.command.type} has no executor.`);
     }
-    return withSemanticDeleteResult(
-      libraryService, request.command, semanticDeleteCandidates, result,
-    );
+    return result;
   } catch (error) {
     libraryService.reportDiagnostic('write-lease.execute', error, {
       libraryId,
@@ -3087,13 +3073,19 @@ const handleLibraryWorkerMessage = async (event: { data: unknown }): Promise<voi
 
   const thumbnailExtensions = parsePluginThumbnailExtensionsMessage(input);
   if (thumbnailExtensions) {
-    libraryService.setPluginThumbnailExtensions(
+    const hasNewExtensions = libraryService.setPluginThumbnailExtensions(
       thumbnailExtensions.libraryId,
       thumbnailExtensions.extensions,
     );
-    if (libraryService.hasOpenLibrary(thumbnailExtensions.libraryId)) {
-      libraryService.enqueueThumbnailJobs(thumbnailExtensions.libraryId);
-      scheduleThumbnailQueue(thumbnailExtensions.libraryId);
+    if (hasNewExtensions && libraryService.hasOpenLibrary(thumbnailExtensions.libraryId)) {
+      // Extension synchronization is frequent (including an empty startup
+      // update). Only newly claimed formats need a bounded primary admission;
+      // ordinary startup and explicit refresh own legacy-artifact maintenance.
+      scheduleThumbnailQueue(thumbnailExtensions.libraryId, {
+        limit: 50,
+        priority: 100,
+        skipStaleRepair: true,
+      });
     }
     return;
   }

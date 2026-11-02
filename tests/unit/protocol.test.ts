@@ -2725,6 +2725,20 @@ describe('background asset change events', () => {
       missingCount: 0,
       source: 'sync',
     });
+    expect(parseAssetChangeEvent({
+      type: 'asset.changed',
+      libraryId: 'library-01',
+      changedCount: 1,
+      missingCount: 0,
+      nativeDragPathsChanged: true,
+    })).toMatchObject({ nativeDragPathsChanged: true });
+    expect(() => parseAssetChangeEvent({
+      type: 'asset.changed',
+      libraryId: 'library-01',
+      changedCount: 1,
+      missingCount: 0,
+      nativeDragPathsChanged: false,
+    })).toThrow();
     expect(() => parseAssetChangeEvent({
       type: 'asset.changed',
       libraryId: 'library-01',

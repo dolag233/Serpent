@@ -26,7 +26,7 @@ test('library.open stops outgoing work then opens the selected library', async (
     libraryService,
     lifecycleRequest({
       type: 'library.open',
-      selectedLibraryPath: 'C:\\libraries\\incoming',
+      selectedLibraryPath: 'fixtures/incoming',
       replaceExisting: true,
     }),
     lifecycleHooks,
@@ -36,7 +36,7 @@ test('library.open stops outgoing work then opens the selected library', async (
     library,
   });
   expect(lifecycleHooks.prepareForOpen).toHaveBeenCalledOnce();
-  expect(libraryService.openLibrary).toHaveBeenCalledWith('C:\\libraries\\incoming', {
+  expect(libraryService.openLibrary).toHaveBeenCalledWith('fixtures/incoming', {
     replaceExisting: true,
   });
 });
@@ -63,12 +63,12 @@ test('library.close stops automatic work before awaiting close', async () => {
 test('library.delete-from-disk drains, backups, then deletes after stop', async () => {
   const libraryService = {
     drainLibraryMedia: vi.fn(async () => undefined),
-    createDatabaseBackup: vi.fn(async () => undefined),
+    createDatabaseBackup: vi.fn(async () => true),
     deleteLibraryFromDisk: vi.fn(() => ({
       libraryId: 'lib-1',
       displayName: 'Studio',
-      libraryPath: 'C:\\libraries\\studio',
-      pendingAsidePath: 'C:\\libraries\\studio.del-1',
+      libraryPath: 'fixtures/studio',
+      pendingAsidePath: 'fixtures/studio.del-1',
     })),
   } as unknown as LibraryService;
   const lifecycleHooks = hooks();
@@ -82,12 +82,27 @@ test('library.delete-from-disk drains, backups, then deletes after stop', async 
     type: 'library.deleted',
     libraryId: 'lib-1',
     displayName: 'Studio',
-    libraryPath: 'C:\\libraries\\studio',
-    pendingAsidePath: 'C:\\libraries\\studio.del-1',
+    libraryPath: 'fixtures/studio',
+    pendingAsidePath: 'fixtures/studio.del-1',
   });
   expect(lifecycleHooks.stopAutomaticWork).toHaveBeenCalledWith('lib-1');
   expect(libraryService.drainLibraryMedia).toHaveBeenCalledWith('lib-1');
   expect(libraryService.createDatabaseBackup).toHaveBeenCalledWith('lib-1');
+});
+
+test('library.delete-from-disk leaves the library intact when its safety backup fails', async () => {
+  const libraryService = {
+    drainLibraryMedia: vi.fn(async () => undefined),
+    createDatabaseBackup: vi.fn(async () => false),
+    deleteLibraryFromDisk: vi.fn(),
+  } as unknown as LibraryService;
+
+  await expect(executeLibraryLifecycleWorkerCommand(
+    libraryService,
+    lifecycleRequest({ type: 'library.delete-from-disk', libraryId: 'lib-1' }),
+    hooks(),
+  )).rejects.toMatchObject({ code: 'LIBRARY_BACKUP_FAILED' });
+  expect(libraryService.deleteLibraryFromDisk).not.toHaveBeenCalled();
 });
 
 test('library.rename does not stop automatic work', async () => {

@@ -1,6 +1,7 @@
 import type { WorkerRequest } from '../../shared/protocol/requests';
 import type { WorkerResult } from '../../shared/protocol/responses';
 import type { LibraryService } from '../library-service';
+import { requireVerifiedDestructiveBackup } from '../destructive-backup';
 
 export type LibraryLifecycleHooks = {
   prepareForOpen: () => void;
@@ -62,7 +63,7 @@ export async function executeLibraryLifecycleWorkerCommand(
       // deletion. The delete operation itself remains synchronous for its
       // existing recovery/reopen contract.
       await libraryService.drainLibraryMedia(request.command.libraryId);
-      await libraryService.createDatabaseBackup(request.command.libraryId);
+      await requireVerifiedDestructiveBackup(libraryService, request.command.libraryId);
       const deleted = libraryService.deleteLibraryFromDisk(request.command.libraryId);
       return {
         ok: true,

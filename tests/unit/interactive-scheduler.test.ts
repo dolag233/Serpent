@@ -604,6 +604,44 @@ describe('InteractiveScheduler', () => {
     }
   });
 
+  it('serves a visible artifact path while reconciliation and primary background work are active', async () => {
+    const scheduler = new InteractiveScheduler();
+    const maintenanceHold = deferred();
+    const primaryHold = deferred();
+    const pathHold = deferred();
+    const maintenance = scheduler.schedule(
+      { requestId: 'reconcile', lane: 'maintenance', libraryId: 'library-1', label: 'reconciliation' },
+      () => maintenanceHold.promise,
+    );
+    const primary = scheduler.schedule(
+      { requestId: 'drag-prime', lane: 'background-primary', libraryId: 'library-1', label: 'media.get-asset-drag-infos' },
+      () => primaryHold.promise,
+    );
+    let pathStarted = false;
+    const pathRead = scheduler.schedule(
+      { requestId: 'visible-path', lane: 'background-primary', libraryId: 'library-1', label: 'media.get-artifact-paths' },
+      () => {
+        pathStarted = true;
+        return pathHold.promise;
+      },
+    );
+    let secondPrimaryStarted = false;
+    const secondPrimary = scheduler.schedule(
+      { requestId: 'thumbnail-pump', lane: 'background-primary', libraryId: 'library-1', label: 'media.process-thumbnail-queue' },
+      () => { secondPrimaryStarted = true; },
+    );
+    try {
+      expect(pathStarted).toBe(true);
+      expect(secondPrimaryStarted).toBe(false);
+    } finally {
+      pathHold.resolve();
+      primaryHold.resolve();
+      maintenanceHold.resolve();
+      await Promise.all([pathRead, primary, maintenance, secondPrimary]);
+    }
+    expect(secondPrimaryStarted).toBe(true);
+  });
+
   it('admits status snapshots while maintenance shares the Worker with one thumbnail wave', async () => {
     const scheduler = new InteractiveScheduler();
     let releaseMaintenance!: () => void;

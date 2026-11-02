@@ -60,6 +60,8 @@ export const PUBLIC_ERROR_MESSAGES = {
     'This NAS library contains a linked folder that is unavailable on this computer. The library database is intact. Reconnect the folder or relink it on this computer, then open the library again.',
   LIBRARY_IO_ERROR:
     'Serpent could not complete the library operation because the disk or filesystem reported an I/O error. Check the drive connection, free space, and permissions; if it keeps failing, copy the library to a local disk and inspect Diagnostics.',
+  LIBRARY_BACKUP_FAILED:
+    'Serpent could not make a safety backup, so nothing was deleted. Check free disk space and library permissions, then try again.',
   LIBRARY_BUSY: 'This library is being updated by another Serpent window or a brief database lock. Wait a few seconds and retry; do not open the same library from two computers at once.',
   LIBRARY_CLEANUP_FAILED:
     'Creating the library failed, and leftover temporary files could not be removed automatically. Delete any `.serpent-create-*.partial` folder next to the chosen location, then retry with a writable folder.',

@@ -500,6 +500,7 @@ describe('asset file rename (REQ-MENU-002)', () => {
         changedCount: 1,
         missingCount: 0,
         source: 'client',
+        nativeDragPathsChanged: true,
       }),
     ]);
     service.closeAll();

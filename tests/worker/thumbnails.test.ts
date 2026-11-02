@@ -1249,9 +1249,118 @@ describe('enqueueThumbnailJobs', () => {
     db.close();
     service.closeAll();
   });
+
+  it('limits visible retryable artifact repair to the requested assets', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'ScopedFailedRetry', selectedParentPath: root });
+    for (const name of ['first.png', 'second.png']) {
+      const source = path.join(root, name);
+      createTestImage(source);
+      importNoConflict(service, created.libraryId, source);
+    }
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    expect(assets).toHaveLength(2);
+    const oldFailure = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const databasePath = path.join(created.libraryPath, '.serpent', 'library.db');
+    const db = new TestDatabase(databasePath);
+    const insertFailed = db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          generator_version, status, error_code, generated_at)
+       VALUES (?, ?, 'thumbnail', 'image/jpeg', 0, ?, 'test', 'failed',
+               'MEDIA_PROCESSING_FAILED', ?)`,
+    );
+    for (const [index, asset] of assets.entries()) {
+      insertFailed.run(`scoped-failed-${index}`, asset.currentRevisionId, `scoped-failed-${index}.jpg`, oldFailure);
+    }
+    db.close();
+
+    service.enqueueThumbnailJobs(created.libraryId, {
+      assetIds: [assets[0]!.assetId],
+      retryFailed: true,
+      skipStaleRepair: true,
+    });
+    const afterVisible = new TestDatabase(databasePath);
+    expect(afterVisible.prepare(
+      'SELECT artifact_id, invalidated_at FROM revision_artifacts WHERE artifact_id LIKE ? ORDER BY artifact_id',
+    ).all('scoped-failed-%')).toEqual([
+      { artifact_id: 'scoped-failed-0', invalidated_at: expect.any(String) },
+      { artifact_id: 'scoped-failed-1', invalidated_at: null },
+    ]);
+    afterVisible.close();
+
+    service.enqueueThumbnailJobs(created.libraryId, { retryFailed: true, skipStaleRepair: true, limit: 2 });
+    const afterBackground = new TestDatabase(databasePath);
+    expect(afterBackground.prepare(
+      "SELECT invalidated_at FROM revision_artifacts WHERE artifact_id = 'scoped-failed-1'",
+    ).get()).toEqual({ invalidated_at: expect.any(String) });
+    afterBackground.close();
+    service.closeAll();
+  });
 });
 
 describe('processThumbnailQueue', () => {
+  it.each(['png', 'jpg'])(
+    'probes a queued %s with unknown dimensions and serves the source without encoding',
+    async (extension) => {
+      const root = temporaryRoot();
+      const service = new LibraryService();
+      let db: TestDatabaseConnection | undefined;
+      let verify: TestDatabaseConnection | undefined;
+      try {
+        const created = service.createLibrary({ displayName: 'QueuedSourceDirectProbe', selectedParentPath: root });
+        const sourcePath = path.join(root, `small.${extension}`);
+        writeFileSync(sourcePath, extension === 'png'
+          ? await createPngBytes(480, 480)
+          : await createJpegBytes(480, 480));
+        importNoConflict(service, created.libraryId, sourcePath);
+        const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+        const dbPath = path.join(created.libraryPath, '.serpent', 'library.db');
+        db = new TestDatabase(dbPath);
+        db.prepare('DELETE FROM jobs').run();
+        db.prepare(
+          "DELETE FROM revision_artifacts WHERE revision_id = ? AND kind = 'extracted_metadata'",
+        ).run(asset.currentRevisionId);
+        const now = new Date().toISOString();
+        db.prepare(
+          `INSERT INTO jobs
+             (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+              attempt_count, created_at, updated_at)
+           VALUES ('unknown-dimensions', ?, ?, ?, 'generate_thumbnail', 'queued', 100, 0.0, 0, ?, ?)`,
+        ).run(created.libraryId, asset.assetId, asset.currentRevisionId, now, now);
+        db.close();
+        db = undefined;
+
+        const results: Array<{ errorCode?: string; width?: number; height?: number; previewKind?: 'source' | null }> = [];
+        expect(await service.processThumbnailQueue(created.libraryId, {
+          maxJobs: 1,
+          jobKinds: ['generate_thumbnail'],
+          assetIds: [asset.assetId],
+          onResult: (result) => results.push(result),
+        })).toBe(1);
+        expect(results).toContainEqual(expect.objectContaining({
+          errorCode: 'SOURCE_DIRECT', width: 480, height: 480, previewKind: 'source',
+        }));
+
+        verify = new TestDatabase(dbPath);
+        expect(verify.prepare(
+          "SELECT status, error_code FROM jobs WHERE job_id = 'unknown-dimensions'",
+        ).get()).toEqual({ status: 'cancelled', error_code: 'SOURCE_DIRECT' });
+        expect(verify.prepare(
+          "SELECT width, height FROM revision_artifacts WHERE revision_id = ? AND kind = 'extracted_metadata' AND status = 'ready' AND invalidated_at IS NULL",
+        ).get(asset.currentRevisionId)).toEqual({ width: 480, height: 480 });
+        expect(verify.prepare(
+          "SELECT COUNT(*) AS count FROM revision_artifacts WHERE revision_id = ? AND kind = 'thumbnail'",
+        ).get(asset.currentRevisionId)).toEqual({ count: 0 });
+      } finally {
+        verify?.close();
+        db?.close();
+        service.closeAll();
+      }
+    },
+  );
+
   it('cancels queued metadata jobs for hidden sequence frames', async () => {
     const root = temporaryRoot();
     const service = new LibraryService();
@@ -1389,6 +1498,9 @@ describe('processThumbnailQueue', () => {
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
     db.prepare('DELETE FROM jobs').run();
     db.prepare(
+      "DELETE FROM revision_artifacts WHERE revision_id = ? AND kind = 'extracted_metadata'",
+    ).run(asset.currentRevisionId);
+    db.prepare(
       `INSERT INTO revision_artifacts
          (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
           generator_version, status, generated_at)
@@ -1414,6 +1526,9 @@ describe('processThumbnailQueue', () => {
     expect(verify.prepare(
       'SELECT status, error_code FROM jobs WHERE kind = ? AND asset_id = ? ORDER BY created_at DESC LIMIT 1',
     ).get('generate_thumbnail', asset.assetId)).toEqual({ status: 'succeeded', error_code: null });
+    expect(verify.prepare(
+      "SELECT width, height FROM revision_artifacts WHERE revision_id = ? AND kind = 'extracted_metadata' AND status = 'ready' AND invalidated_at IS NULL",
+    ).get(asset.currentRevisionId)).toEqual({ width: 2048, height: 1024 });
     const artifacts = verify.prepare(
       `SELECT artifact_id, status, generator_version, invalidated_at
          FROM revision_artifacts
@@ -2491,6 +2606,7 @@ describe('getArtifactAbsolutePath', () => {
 
     service.closeAll();
   });
+
 
   it('reuses validated paths and drops them after artifact invalidation', async () => {
     const root = temporaryRoot();

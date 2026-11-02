@@ -74,5 +74,7 @@ test('media.get-asset-drag-infos yields between sub-batches', async () => {
     type: 'media.asset-drag-infos',
     entries: Array.from({ length: 33 }, (_, index) => ({ assetId: `asset-${index + 1}` })),
   });
-  expect(libraryService.resolveAssetDragInfos).toHaveBeenCalledTimes(2);
+  expect(libraryService.resolveAssetDragInfos).toHaveBeenCalledTimes(9);
+  expect(vi.mocked(libraryService.resolveAssetDragInfos).mock.calls.map((call) => call[1].length))
+    .toEqual([4, 4, 4, 4, 4, 4, 4, 4, 1]);
 });

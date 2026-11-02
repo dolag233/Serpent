@@ -24,6 +24,7 @@ import type { ModelCompanionAsset } from '../../shared/model-companions';
 import type { AiSearchPlan, AssetSummary, AssetMetadataResult, ExtractedMetadataResult, CollectionSummary, FilterClause, FolderBrowseEntry, LinkedFolderDirectoryMutation, LinkedFolderRule, LinkedFolderSummary, ManagedFolderSummary, SearchQuery, SearchScope, SmartCollectionSummary, TagCooccurrenceGraph, TagSummary, TrashedFolderSummary } from '../../shared/asset-types';
 import {
   ASSET_CHANGE_CHANNEL,
+  ASSET_NATIVE_DRAG_READINESS_CHANNEL,
   EXTENSION_SAVE_COMPLETED_CHANNEL,
   THUMBNAIL_CHANNEL,
   ACTIVE_CONTEXT_CHANNEL,
@@ -35,6 +36,8 @@ import {
   AI_COMPLETED_CHANNEL,
   AI_CLEARED_CHANNEL,
 } from '../../shared/protocol/channels';
+import { parseNativeDragReadinessEvent } from '../../shared/native-drag-readiness';
+import type { NativeDragReadinessEvent } from '../../shared/native-drag-readiness';
 import { sendNativeAssetDrag, sendNativeAssetDragPrime } from '../native-asset-drag';
 import type { PublicErrorReason } from '../../shared/protocol/errors';
 import {
@@ -2550,6 +2553,18 @@ export const library: SerpentLibraryApi = Object.freeze({
       libraryId,
       assetIds,
     });
+  },
+
+  onNativeDragReadiness(listener: (event: NativeDragReadinessEvent) => void) {
+    const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      try {
+        listener(parseNativeDragReadinessEvent(input));
+      } catch {
+        // A malformed Main event must not reach Renderer.
+      }
+    };
+    ipcRenderer.on(ASSET_NATIVE_DRAG_READINESS_CHANNEL, subscription);
+    return () => ipcRenderer.removeListener(ASSET_NATIVE_DRAG_READINESS_CHANNEL, subscription);
   },
 
   async openFolderInFileManager({ libraryId, folderId }: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>> {

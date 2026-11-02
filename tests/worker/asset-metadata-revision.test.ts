@@ -28,7 +28,8 @@ describe('asset metadata and content revisions', () => {
     const sourcePath = path.join(root, 'asset.txt');
     writeFileSync(sourcePath, 'asset content');
 
-    const service = new LibraryService();
+    const events: Array<{ source?: string; nativeDragPathsChanged?: true }> = [];
+    const service = new LibraryService({ onAssetsChanged: (event) => events.push(event) });
     services.push(service);
     const library = service.createLibrary({
       displayName: 'Metadata revision semantics',
@@ -49,6 +50,7 @@ describe('asset metadata and content revisions', () => {
       assetId: importedAsset.assetId,
     });
 
+    const eventCountBeforeMetadata = events.length;
     const updated = service.setAssetMetadata({
       libraryId: library.libraryId,
       assetId: importedAsset.assetId,
@@ -64,6 +66,10 @@ describe('asset metadata and content revisions', () => {
     expect(updated.entityVersion).toBe(before.entityVersion + 1);
     expect(after.currentRevisionId).toBe(importedAsset.currentRevisionId);
     expect(after.favorite).toBe(true);
+    expect(events.slice(eventCountBeforeMetadata)).toEqual([
+      expect.objectContaining({ source: 'client' }),
+    ]);
+    expect(events.at(-1)).not.toHaveProperty('nativeDragPathsChanged');
 
     const repeated = service.setAssetMetadata({
       libraryId: library.libraryId,
@@ -232,6 +238,7 @@ describe('asset metadata and content revisions', () => {
       changedCount: 2,
       missingCount: 0,
       source: 'content-replace',
+      nativeDragPathsChanged: true,
     }]);
     expect(service.listAssets({ libraryId: library.libraryId, recursive: false })
       .map((asset) => asset.currentRevisionId))
