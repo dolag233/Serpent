@@ -16,6 +16,15 @@ const asar = require('@electron/asar');
 // fileURLToPath（而非 URL.pathname）保证 Windows 上盘符不丢失：
 // file:///E:/repo/scripts/verify-package.mjs → E:\repo\scripts\verify-package.mjs
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const registrySource = readFileSync(
+  path.join(projectRoot, 'src', 'automation', 'command-registry.ts'),
+  'utf8',
+);
+const apiVersionMatch = registrySource.match(/export const AUTOMATION_API_VERSION = (\d+)\b/u);
+if (!apiVersionMatch) {
+  throw new Error('Could not read AUTOMATION_API_VERSION from the command registry.');
+}
+const apiVersion = Number(apiVersionMatch[1]);
 
 const targetPlatform = process.env.SERPENT_PACKAGE_PLATFORM
   ?? path.basename(process.env.SERPENT_PACKAGE_ROOT ?? path.resolve('out', `Serpent-${process.platform}-${process.arch}`))
