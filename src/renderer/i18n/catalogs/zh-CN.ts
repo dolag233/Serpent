@@ -1414,6 +1414,8 @@ export const zhCN = {
       app: {
         focusSearch: "聚焦搜索",
         refresh: "刷新资产",
+        newTab: "新建工作区标签页",
+        closeTab: "关闭当前标签页",
       },
       viewer: {
         playPause: "播放/暂停",

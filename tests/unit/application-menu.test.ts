@@ -12,6 +12,20 @@ import { zhCN } from "../../src/renderer/i18n/catalogs/zh-CN";
 import { en } from "../../src/renderer/i18n/catalogs/en";
 import { setShortcutOverrides, DEFAULT_SHORTCUT_BINDINGS } from "../../src/shared/shortcut-bindings";
 
+function findMenuItem(
+  items: readonly ApplicationMenuItemTemplate[],
+  predicate: (item: ApplicationMenuItemTemplate) => boolean,
+): ApplicationMenuItemTemplate | undefined {
+  for (const item of items) {
+    if (predicate(item)) return item;
+    if (item.submenu) {
+      const nested = findMenuItem(item.submenu, predicate);
+      if (nested) return nested;
+    }
+  }
+  return undefined;
+}
+
 describe("shouldInstallApplicationMenu (Serpent-r7gu)", () => {
   it("keeps the macOS application menu and hides Windows", () => {
     expect(shouldInstallApplicationMenu("darwin")).toBe(true);
@@ -36,6 +50,7 @@ describe("buildApplicationMenuTemplate (Serpent-46i9)", () => {
       // Fullscreen is a custom command so clearing its binding cannot restore
       // Electron's implicit role accelerator.
       expect(roles).not.toContain("togglefullscreen");
+      expect(roles).not.toContain("close");
       expect(roles).toContain("toggleDevTools");
       if (platform === "darwin") {
         expect(roles).not.toContain("editMenu");
@@ -45,6 +60,23 @@ describe("buildApplicationMenuTemplate (Serpent-46i9)", () => {
       } else {
         expect(roles).toContain("editMenu");
       }
+    }
+  });
+
+  it("closes the window from the menu click and leaves ⌘W / Ctrl+W for tabs", () => {
+    for (const platform of ["darwin", "win32", "linux"] as const) {
+      const template = buildApplicationMenuTemplate({
+        platform,
+        showDevTools: false,
+      });
+      const closeItem = findMenuItem(
+        template,
+        (item) => item.labelKey === "shell.mainMenuCloseWindow",
+      );
+      expect(closeItem?.closesWindow).toBe(true);
+      expect(closeItem?.role).toBeUndefined();
+      expect(closeItem?.accelerator).toBeUndefined();
+      expect(closeItem?.command).toBeUndefined();
     }
   });
 
