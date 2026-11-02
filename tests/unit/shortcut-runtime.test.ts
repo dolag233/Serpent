@@ -111,7 +111,7 @@ describe("shortcut runtime", () => {
       window.dispatchEvent(keyboardEvent);
       expect(seen).toHaveLength(1);
       expect(seen[0]?.input).toMatchObject({ ...fields, kind: "keyboard" });
-      expect(seen[0]?.action).toEqual(repeat ? null : { kind: "skip", direction: 1 });
+      expect(seen[0]?.action).toEqual({ kind: "skip", direction: 1 });
       expect(seen[0]?.original).toBe(keyboardEvent);
       expect(keyboardEvent.defaultPrevented).toBe(true);
     } finally {
