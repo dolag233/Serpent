@@ -485,8 +485,10 @@ export function reservedShortcutReason(
       chord.metaKey && !chord.ctrlKey && chord.altKey && chord.shiftKey
       && key === "v"
     ) return "system";
+    // ⌘W is the workspace-tab close shortcut. It is not reserved for the
+    // window-close menu role.
     if (chord.metaKey && !chord.ctrlKey && !chord.altKey && !chord.shiftKey) {
-      if (["q", "w", "tab", "space", "h", "m"].includes(key)) return "system";
+      if (["q", "tab", "space", "h", "m"].includes(key)) return "system";
     }
     if (chord.metaKey && chord.altKey && key === "escape") return "system";
     if (chord.metaKey && chord.shiftKey && ["3", "4", "5"].includes(key)) return "system";

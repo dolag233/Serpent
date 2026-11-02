@@ -131,6 +131,17 @@ function enrichMenuTemplate(
         },
       };
     }
+    if (item.closesWindow === true) {
+      return {
+        label: resolvedLabel ?? item.labelValue ?? item.label,
+        click: (_menuItem, browserWindow) => {
+          const target = (browserWindow as BrowserWindow | undefined)
+            ?? BrowserWindow.getFocusedWindow();
+          if (!target || target.isDestroyed()) return;
+          target.close();
+        },
+      };
+    }
     if (item.submenu) {
       return {
         ...item,
