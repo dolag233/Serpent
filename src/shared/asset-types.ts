@@ -625,6 +625,8 @@ export const searchClauseSchema = z.strictObject({
   ]).nullable(),
   values: z.array(boundedSearchValue).min(1).max(32),
   exclude: z.boolean(),
+  /** Tag formulas match whole tag names instead of the legacy substring search. */
+  exact: z.boolean().optional(),
 });
 
 export type SearchClause = z.infer<typeof searchClauseSchema>;
