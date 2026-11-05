@@ -12915,11 +12915,19 @@ function AppInner() {
       aiAutoConnectAttemptedRef.current = false;
     }
 
+    const previousActiveProfileId = aiActiveProfileId;
     const refreshed = await api.getAiConfig();
     if (refreshed.ok) {
       setAiProfiles(refreshed.value.profiles);
       updateAiActiveProfileId(refreshed.value.activeProfileId);
       setAiHasKey(refreshed.value.hasKey);
+      if (
+        refreshed.value.activeProfileId === savedProfile.value.id
+        && previousActiveProfileId !== savedProfile.value.id
+      ) {
+        setAiConnectionState("idle");
+        aiAutoConnectAttemptedRef.current = false;
+      }
       const saved = refreshed.value.profiles.find((profile) => profile.id === savedProfile.value.id);
       if (saved) setAiDraftHasKey(saved.hasCredential);
     }

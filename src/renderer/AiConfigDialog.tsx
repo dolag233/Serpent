@@ -15,6 +15,7 @@ import {
   AI_API_FORMATS,
   AI_API_FORMAT_LABELS,
   AI_LANGUAGE_OPTIONS,
+  anthropicCustomBaseUrlMissesProtocolPath,
   DEFAULT_AI_BASE_URLS,
   DEFAULT_AI_MODELS,
   type AiApiFormat,
@@ -544,6 +545,9 @@ export function AiConfigDialog({
                 ? t("aiConfig.dashscopeBaseUrlHint")
                 : t("aiConfig.baseUrlHint")}
             </p>
+            {apiFormat === "anthropic" && anthropicCustomBaseUrlMissesProtocolPath(baseUrl) ? (
+              <p className="ai-config-hint">{t("aiConfig.baseUrlAnthropicPathHint")}</p>
+            ) : null}
           </div>
           <div className="editor-field ai-config-field">
             <label className="micro-label" htmlFor="ai-config-api-key">

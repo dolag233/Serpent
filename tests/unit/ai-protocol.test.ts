@@ -413,6 +413,7 @@ describe('DashScopeVendorAdapter', () => {
     expect(requestBody?.parameters).toMatchObject({
       result_format: 'message',
       response_format: { type: 'json_object' },
+      enable_thinking: false,
     });
     const messages = (requestBody?.input as { messages?: Array<{ role: string; content: unknown }> })
       .messages;

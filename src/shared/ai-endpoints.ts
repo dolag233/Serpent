@@ -164,6 +164,26 @@ function effectiveOpenAiResponsesRoot(baseUrl?: string | null): string {
   );
 }
 
+const OFFICIAL_ANTHROPIC_HOSTS = new Set(['api.anthropic.com']);
+
+/**
+ * A custom Anthropic base with no path is requested as `{origin}/v1/messages`.
+ * Third-party Anthropic-compatible roots usually need a prefix such as
+ * `/anthropic`. The official host is the exception: it has no prefix.
+ */
+export function anthropicCustomBaseUrlMissesProtocolPath(baseUrl: string): boolean {
+  const trimmed = normalizeAiBaseUrl(baseUrl);
+  if (!trimmed) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return false;
+  }
+  if (parsed.pathname !== '/' && parsed.pathname !== '') return false;
+  return !OFFICIAL_ANTHROPIC_HOSTS.has(parsed.hostname.toLowerCase());
+}
+
 /** Anthropic / Gemini: host-only custom bases get the vendor version segment. */
 export function ensureVersionedApiRoot(
   baseUrl: string,
@@ -302,6 +322,49 @@ export function resolveDashScopeTextGenerationUrl(
   );
 }
 
+const DASHSCOPE_MODELS_PAGE_SIZE = 100;
+const DASHSCOPE_MODELS_MAX_PAGES = 50;
+
+/**
+ * Model catalog is always `{origin}/api/v1/models`.
+ * Anthropic (`/apps/anthropic`) and OpenAI-compatible (`/compatible-mode/v1`)
+ * prefixes do not serve that route; appending `/models` there returns
+ * InvalidParameter "Not support".
+ */
+export function resolveDashScopeModelsUrl(
+  baseUrl?: string | null,
+  pageNo = 1,
+  pageSize = DASHSCOPE_MODELS_PAGE_SIZE,
+): string {
+  const configured = effectiveAiBaseUrl('dashscope_native', baseUrl);
+  let origin: string;
+  try {
+    origin = new URL(configured).origin;
+  } catch {
+    origin = configured.replace(/\/api\/v1$/iu, '');
+  }
+  const url = new URL(joinAiApiUrl(origin, 'api/v1/models'));
+  url.searchParams.set('page_no', String(pageNo));
+  url.searchParams.set('page_size', String(pageSize));
+  return url.toString();
+}
+
+/** Bailian Anthropic Messages does not implement GET /v1/models. */
+export function usesBailianModelCatalog(baseUrl?: string | null): boolean {
+  const trimmed = normalizeAiBaseUrl(baseUrl);
+  if (!trimmed) return false;
+  try {
+    const host = new URL(trimmed).hostname.toLowerCase();
+    return host === 'dashscope.aliyuncs.com'
+      || host === 'dashscope-intl.aliyuncs.com'
+      || host.endsWith('.dashscope.aliyuncs.com')
+      || host === 'maas.aliyuncs.com'
+      || host.endsWith('.maas.aliyuncs.com');
+  } catch {
+    return false;
+  }
+}
+
 /** Concurrency / limiter key shared by wire formats of the same vendor family. */
 export function apiFormatLimiterKey(
   apiFormat: AiApiFormat,
@@ -376,16 +439,6 @@ function httpStatusToListError(
   return 'invalid_response';
 }
 
-/**
- * DashScope does not expose an OpenAI-style `/models` endpoint for this
- * transport. Keep the picker useful without making a brittle undocumented
- * network call; manual model entry remains available for eligible models.
- */
-export const DASHSCOPE_MULTIMODAL_PRESET_MODELS = [
-  'qwen3-vl-flash',
-  'qwen3-vl-plus',
-] as const;
-
 function parseOpenAiStyleModelIds(body: unknown): string[] {
   if (!body || typeof body !== 'object') return [];
   const data = (body as { data?: unknown }).data;
@@ -397,6 +450,47 @@ function parseOpenAiStyleModelIds(body: unknown): string[] {
     if (typeof id === 'string' && id.trim()) ids.push(id.trim());
   }
   return ids;
+}
+
+function parseDashScopeModelPage(body: unknown): {
+  ids: string[];
+  total: number | null;
+  failedMessage: string | null;
+} {
+  if (!body || typeof body !== 'object') {
+    return { ids: [], total: null, failedMessage: null };
+  }
+  const record = body as {
+    success?: unknown;
+    message?: unknown;
+    code?: unknown;
+    output?: unknown;
+  };
+  if (record.success === false) {
+    const message = typeof record.message === 'string' && record.message.trim()
+      ? record.message.trim()
+      : typeof record.code === 'string' && record.code.trim()
+        ? record.code.trim()
+        : 'DashScope model list failed.';
+    return { ids: [], total: null, failedMessage: message.slice(0, 240) };
+  }
+  const output = record.output;
+  if (!output || typeof output !== 'object') {
+    return { ids: [], total: null, failedMessage: null };
+  }
+  const page = output as { total?: unknown; models?: unknown };
+  const total = typeof page.total === 'number' && Number.isFinite(page.total)
+    ? page.total
+    : null;
+  const ids: string[] = [];
+  if (Array.isArray(page.models)) {
+    for (const row of page.models) {
+      if (!row || typeof row !== 'object') continue;
+      const id = (row as { model?: unknown }).model;
+      if (typeof id === 'string' && id.trim()) ids.push(id.trim());
+    }
+  }
+  return { ids, total, failedMessage: null };
 }
 
 function parseGeminiModelIds(body: unknown): string[] {
@@ -413,6 +507,81 @@ function parseGeminiModelIds(body: unknown): string[] {
   return ids;
 }
 
+async function listDashScopeModels(
+  input: {
+    apiKey: string;
+    baseUrl?: string | null;
+    signal?: AbortSignal;
+  },
+  fetchFn: typeof fetch,
+): Promise<ListAiModelsResult> {
+  const ids: string[] = [];
+  let total: number | null = null;
+  for (let page = 1; page <= DASHSCOPE_MODELS_MAX_PAGES; page += 1) {
+    const response = await fetchFn(
+      resolveDashScopeModelsUrl(input.baseUrl, page),
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${input.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        signal: input.signal,
+      },
+    );
+    if (!response.ok) {
+      let reason = `HTTP ${response.status}`;
+      try {
+        const text = await response.text();
+        if (text.trim()) reason = text.slice(0, 240);
+      } catch {
+        // Status remains sufficient when the body cannot be read.
+      }
+      return {
+        ok: false,
+        errorKind: httpStatusToListError(response.status),
+        reason,
+      };
+    }
+
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      return {
+        ok: false,
+        errorKind: 'invalid_response',
+        reason: 'Model list response was not JSON.',
+      };
+    }
+    const parsed = parseDashScopeModelPage(body);
+    if (parsed.failedMessage) {
+      return {
+        ok: false,
+        errorKind: 'invalid_response',
+        reason: parsed.failedMessage,
+      };
+    }
+    ids.push(...parsed.ids);
+    if (parsed.total !== null) total = parsed.total;
+    if (parsed.ids.length === 0) break;
+    if (total !== null && ids.length >= total) break;
+    if (total === null && parsed.ids.length < DASHSCOPE_MODELS_PAGE_SIZE) break;
+  }
+
+  if (ids.length === 0) {
+    return {
+      ok: false,
+      errorKind: 'invalid_response',
+      reason: 'No models returned by the endpoint.',
+    };
+  }
+  return {
+    ok: true,
+    models: [...new Set(ids)].sort((a, b) => a.localeCompare(b)),
+  };
+}
+
 /**
  * Fetch available model IDs from a compatible provider endpoint.
  */
@@ -423,11 +592,11 @@ export async function listAiModels(input: {
   fetchFn?: typeof fetch;
   signal?: AbortSignal;
 }): Promise<ListAiModelsResult> {
-  if (input.apiFormat === 'dashscope_native') {
-    return { ok: true, models: [...DASHSCOPE_MULTIMODAL_PRESET_MODELS] };
-  }
   const fetchFn = input.fetchFn ?? globalThis.fetch.bind(globalThis);
   try {
+    if (input.apiFormat === 'dashscope_native') {
+      return await listDashScopeModels(input, fetchFn);
+    }
     let response: Response;
     if (
       input.apiFormat === 'openai_chat' ||
@@ -444,6 +613,8 @@ export async function listAiModels(input: {
           signal: input.signal,
         },
       );
+    } else if (input.apiFormat === 'anthropic' && usesBailianModelCatalog(input.baseUrl)) {
+      return await listDashScopeModels(input, fetchFn);
     } else if (input.apiFormat === 'anthropic') {
       response = await fetchFn(resolveAnthropicModelsUrl(input.baseUrl), {
         method: 'GET',

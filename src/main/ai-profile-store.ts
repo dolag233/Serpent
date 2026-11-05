@@ -134,7 +134,9 @@ export function saveAiConnectionProfile(
   };
   return {
     version: 1,
-    activeProfileId: catalog.activeProfileId,
+    // A newly added profile becomes the one AI requests use. Editing an
+    // existing profile leaves the current selection unchanged.
+    activeProfileId: existing ? catalog.activeProfileId : id,
     profiles: existing
       ? catalog.profiles.map((item) => (item.id === id ? profile : item))
       : [...catalog.profiles, profile],
