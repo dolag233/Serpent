@@ -124,6 +124,11 @@ export type ApplicationMenuItemTemplate = {
   readonly payload?: string;
   /** Native enabled state; ignored when a role/command supplies its own. */
   readonly enabled?: boolean;
+  /**
+   * Closes the focused window from the menu click only.
+   * Must not carry an accelerator: ⌘W / Ctrl+W closes the current workspace tab.
+   */
+  readonly closesWindow?: boolean;
 };
 
 export type ApplicationMenuTemplateOptions = {
@@ -237,9 +242,13 @@ export function buildApplicationMenuTemplate(
     ],
   };
 
+  const closeWindowItem: ApplicationMenuItemTemplate = {
+    labelKey: "shell.mainMenuCloseWindow",
+    closesWindow: true,
+  };
   const windowSubmenu: ApplicationMenuItemTemplate[] = isMac
     ? [
-        { role: "close", labelKey: "shell.mainMenuCloseWindow" },
+        closeWindowItem,
         { role: "minimize", labelKey: "shell.mainMenuMinimize" },
         { role: "zoom", labelKey: "shell.mainMenuZoom" },
         { type: "separator" },
@@ -247,7 +256,7 @@ export function buildApplicationMenuTemplate(
       ]
     : [
         { role: "minimize", labelKey: "shell.mainMenuMinimize" },
-        { role: "close", labelKey: "shell.mainMenuCloseWindow" },
+        closeWindowItem,
       ];
 
   const editSubmenu: ApplicationMenuItemTemplate[] = isMac

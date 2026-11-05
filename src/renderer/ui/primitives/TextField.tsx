@@ -12,6 +12,7 @@ import {
   useFieldId,
 } from './Field';
 import { cx } from './cx';
+import { isImeKeyboardEvent } from '../../ime-safe-dismiss';
 
 export type TextFieldProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'size'> & {
   readonly label?: ReactNode;
@@ -35,6 +36,7 @@ export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(function T
   invalid = false,
   label,
   loading = false,
+  onKeyDown,
   required = false,
   startAdornment,
   wrapperClassName,
@@ -58,6 +60,10 @@ export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(function T
       <input
         {...props}
         {...aria}
+        onKeyDown={(event) => {
+          if (isImeKeyboardEvent(event)) return;
+          onKeyDown?.(event);
+        }}
         aria-busy={loading || undefined}
         aria-required={required || undefined}
         className={getFieldControlClassName({ className, invalid: hasError, loading })}

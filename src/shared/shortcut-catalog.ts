@@ -628,6 +628,30 @@ export const SHORTCUT_ACTIONS: readonly ShortcutActionDefinition[] = Object.free
     customizable: true,
     surfaces: rendererMainAndHidden,
   },
+  {
+    id: "workspace.new-tab",
+    labelKey: "shortcuts.action.app.newTab",
+    category: "app",
+    scopes: ["app"],
+    defaults: {
+      mac: [command("t", "mac")],
+      windows: [command("t", "windows")],
+    },
+    customizable: true,
+    surfaces: ["renderer"],
+  },
+  {
+    id: "workspace.close-tab",
+    labelKey: "shortcuts.action.app.closeTab",
+    category: "app",
+    scopes: ["app"],
+    defaults: {
+      mac: [command("w", "mac")],
+      windows: [command("w", "windows")],
+    },
+    customizable: true,
+    surfaces: ["renderer"],
+  },
 ]);
 
 const ACTION_BY_ID = new Map(SHORTCUT_ACTIONS.map((action) => [action.id, action]));

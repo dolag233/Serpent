@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 
+import { isImeKeyboardEvent } from "./ime-safe-dismiss";
 import {
   getDialogDefaultAction,
   shouldActivateDialogDefaultAction,
@@ -50,7 +51,7 @@ export function useDialogFocusTrap(active: boolean, focusKey?: string): void {
       if (
         event.key === "Enter" &&
         !event.defaultPrevented &&
-        !event.isComposing
+        !isImeKeyboardEvent(event)
       ) {
         const modal = getTopmostModal();
         const target = event.target;

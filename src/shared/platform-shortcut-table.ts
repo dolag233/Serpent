@@ -147,6 +147,18 @@ export const PLATFORM_SHORTCUT_TABLE: readonly PlatformShortcutRow[] = [
     mac: { label: "⌃⌘F", key: "f", metaKey: true, ctrlKey: true },
     windows: { label: "F11", key: "F11" },
   },
+  {
+    id: "workspace.new-tab",
+    purpose: "Open a new workspace tab",
+    mac: { label: "⌘T", key: "t", metaKey: true },
+    windows: { label: "Ctrl+T", key: "t", ctrlKey: true },
+  },
+  {
+    id: "workspace.close-tab",
+    purpose: "Close the current workspace tab without closing the window",
+    mac: { label: "⌘W", key: "w", metaKey: true },
+    windows: { label: "Ctrl+W", key: "w", ctrlKey: true },
+  },
 ] as const;
 
 /**

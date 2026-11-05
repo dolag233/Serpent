@@ -381,6 +381,7 @@ import {
 } from "./canvas-asset-layout";
 import { useSelectionKeyboard } from "./use-selection-keyboard";
 import { useBrowseCommandKeyboard } from "./use-browse-command-keyboard";
+import { useWorkspaceTabShortcuts } from "./use-workspace-tab-shortcuts";
 import { resolveBrowsePasteDestination } from "./browse-paste-target";
 import { useWorkspaceMouseNavigation } from "./use-workspace-mouse-navigation";
 import {
@@ -12283,6 +12284,20 @@ function AppInner() {
     else void closeAssetPreview();
   }
 
+  useWorkspaceTabShortcuts({
+    enabled: Boolean(library),
+    platform: SHORTCUT_PLATFORM,
+    busy,
+    tabCount: workspaceTabsState.tabs.length,
+    previewOpen: Boolean(previewAsset),
+    onNewTab: () => {
+      void addWorkspaceTab();
+    },
+    onCloseTab: () => {
+      void closeWorkspaceTab(workspaceTabsState.activeTabId);
+    },
+  });
+
   useBrowseCommandKeyboard({
     enabled: Boolean(library) && !showTagManagement && !showPluginSidebarView,
     platform: SHORTCUT_PLATFORM,
@@ -14342,6 +14357,7 @@ function AppInner() {
                   setSearchHistoryOpen(true);
                 }}
                 onKeyDown={(event) => {
+                  if (isImeKeyboardEvent(event)) return;
                   const matches = filterSearchHistory(searchHistory, searchValue);
                   const visibleCount = Math.min(
                     matches.length,
@@ -15809,6 +15825,7 @@ function AppInner() {
                                     }}
                                     onKeyDown={(event) => {
                                       event.stopPropagation();
+                                      if (isImeKeyboardEvent(event)) return;
                                       if (event.key === "Enter") {
                                         event.preventDefault();
                                         void submitAssetRename();
