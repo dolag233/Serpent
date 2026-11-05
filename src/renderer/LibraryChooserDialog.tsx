@@ -18,6 +18,7 @@ export interface ImportLibraryChooserDialogProps {
   onImportEagle?: () => void;
   onOpenBillfish?: () => void;
   onImportBillfish?: () => void;
+  onImportPixcall?: () => void;
   /**
    * No-library start uses `"open"` (convert and switch). A library already
    * open uses `"import"` (merge into the current library).
@@ -41,16 +42,20 @@ function ExternalLibraryDisclosure({
   label,
   eagleLabel,
   billfishLabel,
+  pixcallLabel,
   onEagle,
   onBillfish,
+  onPixcall,
   onToggle,
 }: {
   expanded: boolean;
   label: string;
   eagleLabel: string;
   billfishLabel: string;
+  pixcallLabel?: string;
   onEagle?: () => void;
   onBillfish?: () => void;
+  onPixcall?: () => void;
   onToggle: () => void;
 }): ReactNode {
   return (
@@ -92,6 +97,16 @@ function ExternalLibraryDisclosure({
             <Icon name="box" size={15} />
             {billfishLabel}
           </button>
+          {onPixcall ? (
+            <button
+              className="secondary-button"
+              onClick={() => onPixcall()}
+              type="button"
+            >
+              <Icon name="box" size={15} />
+              {pixcallLabel}
+            </button>
+          ) : null}
         </>
       ) : null}
     </>
@@ -203,6 +218,7 @@ export function ImportLibraryChooserDialog({
   onImportEagle,
   onOpenBillfish,
   onImportBillfish,
+  onImportPixcall,
   externalKind = "open",
   onCancel,
 }: ImportLibraryChooserDialogProps): ReactNode {
@@ -260,6 +276,7 @@ export function ImportLibraryChooserDialog({
                 ? "shell.importBillfishLibraryEllipsis"
                 : "shell.openBillfishLibraryEllipsis",
             )}
+            pixcallLabel={t("shell.importPixcallLibraryEllipsis")}
             eagleLabel={t(
               importExternal
                 ? "shell.importEagleLibraryEllipsis"
@@ -273,6 +290,7 @@ export function ImportLibraryChooserDialog({
             )}
             onEagle={importExternal ? onImportEagle : onOpenEagle}
             onBillfish={importExternal ? onImportBillfish : onOpenBillfish}
+            onPixcall={importExternal ? onImportPixcall : undefined}
             onToggle={toggle}
           />
           <button

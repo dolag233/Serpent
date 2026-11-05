@@ -3386,6 +3386,7 @@ async function commandFor(
     case "asset.import-folder.request":
     case "asset.import-eagle.request":
     case "asset.import-billfish.request":
+    case "asset.import-pixcall.request":
     case "asset.import-drop.request":
     case "asset.resolve-dropped-paths.request":
     case "asset.import-sequence.confirm":

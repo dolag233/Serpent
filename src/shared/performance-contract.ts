@@ -146,6 +146,7 @@ const MUTATION_COMMANDS = new Set([
   'asset.import.prepare',
   'asset.import-eagle',
   'asset.import-billfish',
+  'asset.import-pixcall',
   'asset.import.resolve',
   'asset.import.skip-source-failure',
   'asset.import.abandon',
