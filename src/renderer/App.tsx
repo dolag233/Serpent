@@ -63,7 +63,8 @@ import { useAssetCardHoverPreview } from "./use-asset-card-hover-preview";
 import { SyncCardStatusBadge } from "./SyncCardStatusBadge";
 import { useSyncCardStatuses } from "./use-sync-card-status";
 import { resolveSearchSnippetCaption } from "./search-snippet-caption";
-import { parseSearchExpression, splitSearchHighlights } from "./search-expression";
+import { parseSearchExpressionDetailed, searchExpressionReasonKey, splitSearchHighlights } from "./search-expression";
+import type { parseSearchExpression } from "./search-expression";
 import { ConvertLinkedDialog } from "./ConvertLinkedDialog";
 import { LinkedRulesDialog } from "./LinkedRulesDialog";
 import { TagManagementWorkspace } from "./TagManagementWorkspace";
@@ -81,6 +82,7 @@ import {
   readSearchHistory,
   readVisibleSearchHistoryCount,
   rememberSearchQuery,
+  searchHistoryNavigationDirection,
 } from "./search-history";
 import { useWindowsBrowseShortcutBridge } from "./use-windows-browse-shortcut-bridge";
 import { useCollectionCommandShortcuts } from "./use-collection-command-shortcuts";
@@ -220,6 +222,7 @@ import type {
 } from "./workspace-render-snapshot-cache";
 import {
   createDefaultWorkspaceTabBrowseState,
+  resolveWorkspaceTagExpression,
   workspaceTabBrowseStateHasDiscoveryInput,
   type WorkspaceTabBrowseState,
   type WorkspaceTabSession,
@@ -776,6 +779,9 @@ type QueryFilterSnapshot = {
   formatFilter: string;
   excludeFormatFilter: boolean;
   tagFilter: string;
+  tagFilterExpression?: string;
+  tagFilterMode?: "selection" | "expression";
+  tagFilterLastValidExpression?: string;
   excludeTagFilter: boolean;
   excludedTagFilter: string;
   includeAiTagFilter: boolean;
@@ -1392,6 +1398,8 @@ function AppInner() {
     string | null
   >(null);
   const [searchValue, setSearchValue] = useState("");
+  const lastValidSearchQueryRef = useRef<{ scope: string; query: ReturnType<typeof parseSearchExpression> } | null>(null);
+  const lastValidFolderSearchQueryRef = useRef<{ scope: string; query: ReturnType<typeof parseSearchExpression> } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [storedSearchHistory, setStoredSearchHistory] = useState<{
     libraryId: string;
@@ -1420,6 +1428,9 @@ function AppInner() {
   const [colorFilterPrefs, setColorFilterPrefs] = useState(loadColorFilterPreferences);
   const [excludeColorFilter, setExcludeColorFilter] = useState(false);
   const [tagFilter, setTagFilter] = useState("");
+  const [tagFilterExpression, setTagFilterExpression] = useState("");
+  const [tagFilterMode, setTagFilterMode] = useState<"selection" | "expression">("expression");
+  const [tagFilterLastValidExpression, setTagFilterLastValidExpression] = useState("");
   const [excludeTagFilter, setExcludeTagFilter] = useState(false);
   const [excludedTagFilter, setExcludedTagFilter] = useState("");
   const [includeAiTagFilter, setIncludeAiTagFilter] = useState(true);
@@ -1485,61 +1496,6 @@ function AppInner() {
   const [searchSnippets, setSearchSnippets] = useState<Map<string, string>>(
     new Map(),
   );
-  // Serpent-f74e48: while a text term is present, surface matching folders
-  // (name or relative path) as a "Folders" section above the asset grid.
-  const searchFolderResults = useMemo(() => {
-    if (searchValue.trim() === "") return [];
-    return resolveSearchFolderResults({
-      query: parseSearchExpression(searchValue),
-      folders,
-      linkedFolders,
-    });
-  }, [searchValue, folders, linkedFolders]);
-  // Serpent-f74e48: fetch the real FolderBrowseEntry (cover previews + counts)
-  // for search-matched folders so the reused asset-browser folder cards show
-  // the same previews as normal browsing. Enrichment is keyed by the matched
-  // ref set so a slow older response never overwrites a newer search.
-  const searchFolderMatchKey = searchFolderResults.length
-    ? searchFolderResults
-        .map((result) => `${result.locationKind}:${result.folderId}`)
-        .join("|")
-    : null;
-  const [searchFolderRealKey, setSearchFolderRealKey] = useState<string | null>(
-    null,
-  );
-  const [searchFolderRealEntries, setSearchFolderRealEntries] = useState<
-    FolderBrowseEntry[]
-  >([]);
-  const searchFolderEntriesKeyRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!api || !library || searchFolderMatchKey === null) return;
-    searchFolderEntriesKeyRef.current = searchFolderMatchKey;
-    let cancelled = false;
-    void api
-      .listFolderEntriesByRefs({
-        libraryId: library.libraryId,
-        refs: searchFolderResults.map((result) => ({
-          locationKind: result.locationKind,
-          folderId: result.folderId,
-        })),
-      })
-      .then((result) => {
-        if (
-          !cancelled &&
-          result.ok &&
-          searchFolderEntriesKeyRef.current === searchFolderMatchKey
-        ) {
-          setSearchFolderRealKey(searchFolderMatchKey);
-          setSearchFolderRealEntries(result.value);
-        }
-      })
-      .catch(() => {
-        // Enrichment is best-effort: fall back to the lightweight entries.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [searchFolderMatchKey, searchFolderResults, library, api]);
   // Serpent-b8a853: one-time hint for the include-subfolders icon. The hint
   // key is per (library, folder scope); the actual flash decision needs the
   // browse canvas mode (folders-only = child-folder cards but zero direct
@@ -2041,6 +1997,69 @@ function AppInner() {
       );
     },
   });
+  // Serpent-f74e48: while a text term is present, surface matching folders
+  // (name or relative path) as a "Folders" section above the asset grid.
+  const searchFolderResults = useMemo(() => {
+    if (searchValue.trim() === "") return [];
+    const scopeKey = `${library?.libraryId ?? "no-library"}:${workspaceTabsState.activeTabId}`;
+    const parsed = parseSearchExpressionDetailed(searchValue);
+    const query = parsed.ok
+      ? { clauses: [], expression: parsed.expression }
+      : lastValidFolderSearchQueryRef.current?.scope === scopeKey
+        ? lastValidFolderSearchQueryRef.current.query
+        : { clauses: [] };
+    if (parsed.ok) lastValidFolderSearchQueryRef.current = { scope: scopeKey, query };
+    return resolveSearchFolderResults({
+      query,
+      folders,
+      linkedFolders,
+    });
+  }, [searchValue, folders, linkedFolders, library?.libraryId, workspaceTabsState.activeTabId]);
+  // Serpent-f74e48: fetch the real FolderBrowseEntry (cover previews + counts)
+  // for search-matched folders so the reused asset-browser folder cards show
+  // the same previews as normal browsing. Enrichment is keyed by the matched
+  // ref set so a slow older response never overwrites a newer search.
+  const searchFolderMatchKey = searchFolderResults.length
+    ? searchFolderResults
+        .map((result) => `${result.locationKind}:${result.folderId}`)
+        .join("|")
+    : null;
+  const [searchFolderRealKey, setSearchFolderRealKey] = useState<string | null>(
+    null,
+  );
+  const [searchFolderRealEntries, setSearchFolderRealEntries] = useState<
+    FolderBrowseEntry[]
+  >([]);
+  const searchFolderEntriesKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!api || !library || searchFolderMatchKey === null) return;
+    searchFolderEntriesKeyRef.current = searchFolderMatchKey;
+    let cancelled = false;
+    void api
+      .listFolderEntriesByRefs({
+        libraryId: library.libraryId,
+        refs: searchFolderResults.map((result) => ({
+          locationKind: result.locationKind,
+          folderId: result.folderId,
+        })),
+      })
+      .then((result) => {
+        if (
+          !cancelled &&
+          result.ok &&
+          searchFolderEntriesKeyRef.current === searchFolderMatchKey
+        ) {
+          setSearchFolderRealKey(searchFolderMatchKey);
+          setSearchFolderRealEntries(result.value);
+        }
+      })
+      .catch(() => {
+        // Enrichment is best-effort: fall back to the lightweight entries.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [searchFolderMatchKey, searchFolderResults, library, api]);
   const beginBrowsePageClearingSimilar = useCallback(
     (...args: Parameters<typeof beginBrowsePage>) => {
       const definition = args[0];
@@ -2380,6 +2399,7 @@ function AppInner() {
   // restoration causes a one-frame flash and can make Chromium paint at the
   // top of the canvas during a rapid open/close.
   const [previewRestoring, setPreviewRestoring] = useState(false);
+  const [previewCanvasReady, setPreviewCanvasReady] = useState(false);
   const previewModalRef = useRef<AssetPreviewModalHandle>(null);
   // REQ-CANVAS-019: read synchronously inside the canvas ResizeObserver
   // callback (which is created once and does not close over fresh state)
@@ -3453,6 +3473,8 @@ function AppInner() {
       formatFilter,
       excludeFormatFilter,
       tagFilter,
+      tagFilterExpression,
+      tagFilterMode,
       excludeTagFilter,
       excludedTagFilter,
       includeAiTagFilter,
@@ -3489,6 +3511,8 @@ function AppInner() {
     formatFilter,
     excludeFormatFilter,
     tagFilter,
+    tagFilterExpression,
+    tagFilterMode,
     excludeTagFilter,
     excludedTagFilter,
     includeAiTagFilter,
@@ -4352,6 +4376,7 @@ function AppInner() {
     previewRestoringRef.current = false;
     pendingViewportRestoreRef.current = null;
     setPreviewRestoring(false);
+    setPreviewCanvasReady(false);
     cancelPreviewViewRestoreRef.current?.();
     cancelPreviewViewRestoreRef.current = null;
     clearPreviewScrollHold();
@@ -4381,6 +4406,7 @@ function AppInner() {
         card?.getBoundingClientRect() ?? null,
         canvas.scrollLeft,
         canvas.scrollTop,
+        Math.max(0, canvas.scrollHeight - canvas.clientHeight),
       );
       logBrowseScrollWrite("openAssetPreview.capture", canvas, {
         snapshotTop: Math.round(canvas.scrollTop),
@@ -4508,8 +4534,14 @@ function AppInner() {
     const closeGeneration = ++previewCloseGenerationRef.current;
     closingPreviewRef.current = closingAsset.assetId;
     previewRestoringRef.current = restoreBrowsePosition;
-    setPreviewRestoring(restoreBrowsePosition);
-    setPreviewAsset(null);
+    // Commit the viewer teardown before measuring the browse extent. Measuring
+    // the still-open viewer restores against stale geometry; its next commit
+    // can then clamp a deep scroll back to zero.
+    flushSync(() => {
+      setPreviewRestoring(restoreBrowsePosition);
+      setPreviewCanvasReady(false);
+      setPreviewAsset(null);
+    });
     cancelWorkspaceViewportRestoreRef.current?.();
     cancelWorkspaceViewportRestoreRef.current = null;
     pendingViewportRestoreRef.current = null;
@@ -4595,12 +4627,18 @@ function AppInner() {
           canvas,
           snapshot: scrollSnapshot,
           isCurrent: () => closeGeneration === previewCloseGenerationRef.current,
+          onPositionReady: () => {
+            if (closeGeneration === previewCloseGenerationRef.current) {
+              setPreviewCanvasReady(true);
+            }
+          },
           onComplete: () => {
             if (closeGeneration !== previewCloseGenerationRef.current) return;
             cancelPreviewViewRestoreRef.current = null;
             armPreviewScrollHold(scrollSnapshot.scrollTop);
             previewRestoringRef.current = false;
             setPreviewRestoring(false);
+            setPreviewCanvasReady(false);
             previewRestoreFrameRef.current = window.requestAnimationFrame(() =>
               settleRestoredFocus(12),
             );
@@ -4609,6 +4647,7 @@ function AppInner() {
       } else {
         previewRestoringRef.current = false;
         setPreviewRestoring(false);
+        setPreviewCanvasReady(false);
         previewRestoreFrameRef.current = window.requestAnimationFrame(() =>
           settleRestoredFocus(12),
         );
@@ -4617,6 +4656,7 @@ function AppInner() {
     if (!restoreBrowsePosition) {
       clearPreviewScrollHold();
       setPreviewRestoring(false);
+      setPreviewCanvasReady(false);
     }
     try {
       if (api && library) {
@@ -5602,6 +5642,9 @@ function AppInner() {
         excludeColorFilter,
         colorSimilarity,
         tagFilter,
+        tagFilterExpression,
+        tagFilterMode,
+        tagFilterLastValidExpression,
         excludeTagFilter,
         excludedTagFilter,
         includeAiTagFilter,
@@ -5813,7 +5856,15 @@ function AppInner() {
     setColorFilter(state.filters.colorFilter);
     setColorSimilarity(state.filters.colorSimilarity ?? DEFAULT_COLOR_SIMILARITY);
     setExcludeColorFilter(state.filters.excludeColorFilter);
+    const restoredTagExpression = resolveWorkspaceTagExpression(state.filters);
     setTagFilter(state.filters.tagFilter);
+    setTagFilterExpression(restoredTagExpression);
+    setTagFilterMode("expression");
+    setTagFilterLastValidExpression(
+      state.filters.tagFilterLastValidExpression?.trim()
+        ? state.filters.tagFilterLastValidExpression
+        : restoredTagExpression,
+    );
     setExcludeTagFilter(state.filters.excludeTagFilter);
     setExcludedTagFilter(state.filters.excludedTagFilter ?? "");
     setIncludeAiTagFilter(state.filters.includeAiTagFilter);
@@ -6534,6 +6585,9 @@ function AppInner() {
     setColorFilter("");
     setExcludeColorFilter(false);
     setTagFilter("");
+    setTagFilterExpression("");
+    setTagFilterLastValidExpression("");
+    setTagFilterMode("expression");
     setExcludeTagFilter(false);
     setExcludedTagFilter("");
     setIncludeAiTagFilter(true);
@@ -6559,6 +6613,9 @@ function AppInner() {
     setColorFilter("");
     setExcludeColorFilter(false);
     setTagFilter("");
+    setTagFilterExpression("");
+    setTagFilterLastValidExpression("");
+    setTagFilterMode("expression");
     setExcludeTagFilter(false);
     setExcludedTagFilter("");
     setIncludeAiTagFilter(true);
@@ -7895,6 +7952,9 @@ function AppInner() {
       formatFilter,
       excludeFormatFilter,
       tagFilter,
+      tagFilterExpression,
+      tagFilterMode,
+      tagFilterLastValidExpression,
       excludeTagFilter,
       excludedTagFilter,
       includeAiTagFilter,
@@ -7943,7 +8003,25 @@ function AppInner() {
         values: formatValues,
         exclude: filtersState.excludeFormatFilter,
       });
-    filters.push(...buildTagFilterClauses(
+    if (filtersState.tagFilterMode === "expression") {
+      const parsedTags = parseSearchExpressionDetailed(filtersState.tagFilterExpression ?? "", "tags");
+      if (!parsedTags.ok && filtersState.tagFilterLastValidExpression) {
+        const lastValidTags = parseSearchExpressionDetailed(filtersState.tagFilterLastValidExpression, "tags");
+        if (lastValidTags.ok && lastValidTags.expression.root) filters.push({
+          field: "tag_expression", exclude: false as const,
+          expression: lastValidTags.expression,
+          expressionSource: filtersState.tagFilterLastValidExpression,
+          includeAi: filtersState.includeAiTagFilter,
+        });
+      }
+      if (parsedTags.ok && parsedTags.expression.root) filters.push({
+        field: "tag_expression",
+        exclude: false as const,
+        expression: parsedTags.expression,
+        expressionSource: filtersState.tagFilterExpression,
+        includeAi: filtersState.includeAiTagFilter,
+      });
+    } else filters.push(...buildTagFilterClauses(
       resolveTagFilterSets({
         tagFilter: overrides.tagFilter ?? filtersState.tagFilter,
         excludeTagFilter: overrides.excludeTagFilter ?? filtersState.excludeTagFilter,
@@ -8023,16 +8101,24 @@ function AppInner() {
       if (range)
         filters.push({ field, ranges: [range], exclude: input.exclude });
     }
+    const requestedSearch = overrides.searchValue === undefined
+      ? searchValue
+      : overrides.searchValue ?? "";
+    const searchParse = parseSearchExpressionDetailed(requestedSearch);
+    const searchScopeKey = `${library?.libraryId ?? "no-library"}:${workspaceTabsState.activeTabId}`;
+    if (searchParse.ok && overrides.searchValue === undefined) {
+      lastValidSearchQueryRef.current = { scope: searchScopeKey, query: { clauses: [], expression: searchParse.expression, expressionSource: requestedSearch } };
+    }
     return {
       ...((overrides.searchValue === undefined
         ? searchValue
         : overrides.searchValue ?? "").trim()
         ? {
-            search: parseSearchExpression(
-              overrides.searchValue === undefined
-                ? searchValue
-                : overrides.searchValue ?? "",
-            ),
+            search: searchParse.ok
+              ? { clauses: [], expression: searchParse.expression, expressionSource: requestedSearch }
+              : lastValidSearchQueryRef.current?.scope === searchScopeKey
+                ? lastValidSearchQueryRef.current.query
+                : { clauses: [] },
           }
         : {}),
       ...(filters.length > 0 ? { filters } : {}),
@@ -8057,6 +8143,9 @@ function AppInner() {
         formatFilter: state.filters.formatFilter,
         excludeFormatFilter: state.filters.excludeFormatFilter,
         tagFilter: state.filters.tagFilter,
+        tagFilterExpression: state.filters.tagFilterExpression,
+        tagFilterMode: state.filters.tagFilterMode,
+        tagFilterLastValidExpression: state.filters.tagFilterLastValidExpression,
         excludeTagFilter: state.filters.excludeTagFilter,
         excludedTagFilter: state.filters.excludedTagFilter ?? "",
         includeAiTagFilter: state.filters.includeAiTagFilter,
@@ -9515,6 +9604,11 @@ function AppInner() {
   ) {
     event?.preventDefault();
     if (workerRecoveryStateRef.current !== 'ready') return;
+    if (
+      (searchValue.trim() && !parseSearchExpressionDetailed(searchValue).ok) ||
+      (tagFilterMode === "expression" && tagFilterExpression.trim()
+        && !parseSearchExpressionDetailed(tagFilterExpression, "tags").ok)
+    ) return;
     if (event) {
       searchHistoryDismissedUntilInputRef.current = true;
       setSearchHistoryOpen(false);
@@ -9573,11 +9667,19 @@ function AppInner() {
   }
 
   useEffect(() => {
+    const searchIsInvalid = Boolean(searchValue.trim()) && !parseSearchExpressionDetailed(searchValue).ok;
+    const tagExpressionIsInvalid = tagFilterMode === "expression"
+      && Boolean(tagFilterExpression.trim())
+      && !parseSearchExpressionDetailed(tagFilterExpression, "tags").ok;
+    // Keep the current cards in place while the user is typing an incomplete
+    // expression. Do not send the last valid AST as a new Worker request.
+    if (searchIsInvalid || tagExpressionIsInvalid) return;
     const hasDiscoveryInput = Boolean(
       searchValue.trim() ||
       colorFilter.trim() ||
       formatFilter.trim() ||
-      tagFilter.trim() ||
+      (tagFilterMode === "selection" && tagFilter.trim()) ||
+      (tagFilterMode === "expression" && tagFilterExpression.trim()) ||
       ratingFilter.trim() ||
       favoriteFilter !== "any" ||
       sourceUrlFilter !== "any" ||
@@ -9645,6 +9747,9 @@ function AppInner() {
     formatFilter,
     excludeFormatFilter,
     tagFilter,
+    tagFilterExpression,
+    tagFilterMode,
+    tagFilterLastValidExpression,
     excludeTagFilter,
     excludedTagFilter,
     includeAiTagFilter,
@@ -12930,11 +13035,19 @@ function AppInner() {
       aiAutoConnectAttemptedRef.current = false;
     }
 
+    const previousActiveProfileId = aiActiveProfileId;
     const refreshed = await api.getAiConfig();
     if (refreshed.ok) {
       setAiProfiles(refreshed.value.profiles);
       updateAiActiveProfileId(refreshed.value.activeProfileId);
       setAiHasKey(refreshed.value.hasKey);
+      if (
+        refreshed.value.activeProfileId === savedProfile.value.id
+        && previousActiveProfileId !== savedProfile.value.id
+      ) {
+        setAiConnectionState("idle");
+        aiAutoConnectAttemptedRef.current = false;
+      }
       const saved = refreshed.value.profiles.find((profile) => profile.id === savedProfile.value.id);
       if (saved) setAiDraftHasKey(saved.hasCredential);
     }
@@ -14356,17 +14469,13 @@ function AppInner() {
                     readVisibleSearchHistoryCount() ?? matches.length,
                   );
                   if (!searchHistoryOpen || visibleCount === 0) return;
-                  if (
-                    event.key === "ArrowDown" ||
-                    event.key === "ArrowUp" ||
-                    event.key === "ArrowRight" ||
-                    event.key === "ArrowLeft"
-                  ) {
+                  if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                    setSearchHistoryActiveIndex(-1);
+                    return;
+                  }
+                  const direction = searchHistoryNavigationDirection(event.key);
+                  if (direction) {
                     event.preventDefault();
-                    const direction =
-                      event.key === "ArrowDown" || event.key === "ArrowRight"
-                        ? "next"
-                        : "previous";
                     setSearchHistoryActiveIndex((current) =>
                       moveSearchHistoryIndex(current, visibleCount, direction),
                     );
@@ -14469,6 +14578,14 @@ function AppInner() {
                   <Icon name="close" size={12} />
                 </button>
               )}
+              {searchValue.trim() !== "" && (() => {
+                const result = parseSearchExpressionDetailed(searchValue);
+                return result.ok ? null : (
+                  <span className="search-expression-error" role="alert">
+                    {t("toolbar.searchExpressionError", { position: result.diagnostic.start + 1, reason: t(`toolbar.searchExpressionReasons.${searchExpressionReasonKey(result.diagnostic.code)}`) })}
+                  </span>
+                );
+              })()}
             </div>
           </form>
         </div>
@@ -14992,7 +15109,18 @@ function AppInner() {
               // Explicit filter-bar edits leave the tag-management AND mode.
               setTagFilterMatch("any");
               setTagFilter(value);
+              setTagFilterExpression("");
             }}
+            tagFilterExpression={tagFilterExpression}
+            tagFilterLastValidExpression={tagFilterLastValidExpression}
+            tagFilterMode={tagFilterMode}
+            setTagFilterExpression={(value) => {
+              setTagFilterExpression(value);
+              if (parseSearchExpressionDetailed(value, "tags").ok) setTagFilterLastValidExpression(value);
+            }}
+            setTagFilterMode={setTagFilterMode}
+            tagFilterMatch={tagFilterMatch}
+            setTagFilterMatch={setTagFilterMatch}
             setExcludedTagFilter={setExcludedTagFilter}
             setWidthRange={setWidthRange}
             shuffleActive={shuffleSeed !== null}
@@ -15008,6 +15136,9 @@ function AppInner() {
               formatFilter,
               excludeFormatFilter,
               tagFilter,
+              tagFilterExpression,
+              tagFilterMode,
+              tagFilterLastValidExpression,
               excludeTagFilter,
               excludedTagFilter,
               includeAiTagFilter,
@@ -15102,7 +15233,7 @@ function AppInner() {
         )}
         <div
           aria-busy={workspaceNavigationPending || workerRecoveryState === 'recovering'}
-          className={`workspace-canvas-host${previewAsset || previewRestoring ? " is-viewing" : ""}${previewRestoring ? " is-restoring" : ""}${workspaceNavigationPending ? " is-navigating" : ""}`}
+          className={`workspace-canvas-host${previewAsset || previewRestoring ? " is-viewing" : ""}${previewRestoring ? " is-restoring" : ""}${previewRestoring && previewCanvasReady ? " is-restore-visible" : ""}${workspaceNavigationPending ? " is-navigating" : ""}`}
         >
           {renderedToastStack.length > 0 || workerRecoveryState !== 'ready'
             ? createPortal(

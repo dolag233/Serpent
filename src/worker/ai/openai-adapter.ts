@@ -6,6 +6,11 @@ import {
   resolveOpenAiResponsesUrl,
 } from '../../shared/ai-endpoints';
 import {
+  applyAiRequestPolicy,
+  fetchAiWithPolicyRetry,
+} from '../../shared/ai-request-policy';
+import type { AiRequestRetryAction } from '../../shared/ai-request-policy';
+import {
   buildAiAnalysisUserTextLines,
   resolveAiAnalysisSettings,
 } from './protocol';
@@ -215,44 +220,28 @@ export class OpenAIVendorAdapter implements VendorAdapter {
   }
 
   async probeConnection(signal?: AbortSignal): Promise<void> {
+    const responses = this.wireFormat === 'openai_responses';
+    const endpoint = responses
+      ? resolveOpenAiResponsesUrl(this.baseUrl)
+      : resolveOpenAiChatCompletionsUrl(this.baseUrl);
+    const seed: Record<string, unknown> = responses
+      ? {
+          model: this.model,
+          input: 'Reply with the single word OK.',
+          max_output_tokens: 16,
+          temperature: 0,
+        }
+      : {
+          model: this.model,
+          messages: [
+            { role: 'user', content: 'Reply with the single word OK.' },
+          ],
+          max_tokens: 16,
+          temperature: 0,
+        };
     let response: Response;
     try {
-      if (this.wireFormat === 'openai_responses') {
-        response = await this._fetch(resolveOpenAiResponsesUrl(this.baseUrl), {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: this.model,
-            input: 'Reply with the single word OK.',
-            max_output_tokens: 16,
-            temperature: 0,
-          }),
-          signal,
-        });
-      } else {
-        response = await this._fetch(
-          resolveOpenAiChatCompletionsUrl(this.baseUrl),
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${this.apiKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              model: this.model,
-              messages: [
-                { role: 'user', content: 'Reply with the single word OK.' },
-              ],
-              max_tokens: 16,
-              temperature: 0,
-            }),
-            signal,
-          },
-        );
-      }
+      ({ response } = await this.#send(endpoint, seed, 'probe', signal));
     } catch (error: unknown) {
       throw this.#mapFetchError(error);
     }
@@ -305,18 +294,16 @@ export class OpenAIVendorAdapter implements VendorAdapter {
             request.language,
           );
         }
+        let attempt: { response: Response; action: AiRequestRetryAction };
         try {
-          response = await this._fetch(endpoint, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${this.apiKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(body),
-            signal,
-          });
+          attempt = await this.#send(endpoint, body, 'analyze', signal);
         } catch (error: unknown) {
           throw this.#mapFetchError(error);
+        }
+        response = attempt.response;
+        const acceptedMode = attempt.action === 'enable-thinking-drop-json' ? 'text' : mode;
+        if (!response.ok && attempt.action !== 'none') {
+          throw await mapOpenAiHttpError(response, acceptedMode);
         }
 
         if (!response.ok) {
@@ -403,7 +390,7 @@ export class OpenAIVendorAdapter implements VendorAdapter {
           throw error;
         }
 
-        successfulMode = mode;
+        successfulMode = acceptedMode;
         // Cache only a mode whose response envelope and domain result both
         // passed validation. HTTP 2xx alone is not a capability proof.
         if (
@@ -411,7 +398,7 @@ export class OpenAIVendorAdapter implements VendorAdapter {
           negotiation.cachedMode !== undefined ||
           (negotiation.probeResult !== undefined && mode !== 'text')
         ) {
-          structuredOutputModeByEndpoint.set(capabilityKey, mode);
+          structuredOutputModeByEndpoint.set(capabilityKey, acceptedMode);
         }
         negotiatedMode = successfulMode;
         return result;
@@ -473,18 +460,16 @@ export class OpenAIVendorAdapter implements VendorAdapter {
           };
         }
 
+        let attempt: { response: Response; action: AiRequestRetryAction };
         try {
-          response = await this._fetch(endpoint, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${this.apiKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(requestBody),
-            signal,
-          });
+          attempt = await this.#send(endpoint, requestBody, 'analyze', signal);
         } catch (error: unknown) {
           throw this.#mapFetchError(error);
+        }
+        response = attempt.response;
+        const acceptedMode = attempt.action === 'enable-thinking-drop-json' ? 'text' : mode;
+        if (!response.ok && attempt.action !== 'none') {
+          throw await mapOpenAiHttpError(response, acceptedMode);
         }
 
         if (!response.ok) {
@@ -568,13 +553,13 @@ export class OpenAIVendorAdapter implements VendorAdapter {
           throw error;
         }
 
-        successfulMode = mode;
+        successfulMode = acceptedMode;
         if (
           negotiation.ownsProbe ||
           negotiation.cachedMode !== undefined ||
           (negotiation.probeResult !== undefined && mode !== 'text')
         ) {
-          structuredOutputModeByEndpoint.set(capabilityKey, mode);
+          structuredOutputModeByEndpoint.set(capabilityKey, acceptedMode);
         }
         negotiatedMode = successfulMode;
         return result;
@@ -595,6 +580,32 @@ export class OpenAIVendorAdapter implements VendorAdapter {
         negotiatedMode,
       );
     }
+  }
+
+  async #send(
+    endpoint: string,
+    body: Record<string, unknown>,
+    purpose: 'probe' | 'analyze',
+    signal?: AbortSignal,
+  ): Promise<{ response: Response; action: AiRequestRetryAction }> {
+    return fetchAiWithPolicyRetry(
+      this._fetch,
+      endpoint,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        signal,
+      },
+      applyAiRequestPolicy(body, {
+        apiFormat: this.wireFormat,
+        baseUrl: this.baseUrl,
+        model: this.model,
+        purpose,
+      }),
+    );
   }
 
   #buildChatMessages(

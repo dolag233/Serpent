@@ -14,7 +14,7 @@ import {
 } from "../../src/main/ai-profile-store";
 
 describe("AI connection profile catalog", () => {
-  it("creates and updates named profiles without changing the selected profile", () => {
+  it("selects a newly created profile and keeps that selection when another profile is edited", () => {
     const first = saveAiConnectionProfile(emptyAiProfileCatalog(), {
       id: "ai_000000000000000000000001",
       name: "Fast model",
@@ -22,8 +22,8 @@ describe("AI connection profile catalog", () => {
       model: "small-model",
       baseUrl: "https://example.invalid/v1",
     });
-    const active = activateAiProfile(first, "ai_000000000000000000000001");
-    const second = saveAiConnectionProfile(active, {
+    expect(first.activeProfileId).toBe("ai_000000000000000000000001");
+    const second = saveAiConnectionProfile(first, {
       id: "ai_000000000000000000000002",
       name: "Strong model",
       apiFormat: "anthropic",
@@ -32,14 +32,16 @@ describe("AI connection profile catalog", () => {
     });
 
     expect(second.profiles.map(({ name }) => name)).toEqual(["Fast model", "Strong model"]);
-    expect(second.activeProfileId).toBe("ai_000000000000000000000001");
-    expect(saveAiConnectionProfile(second, {
+    expect(second.activeProfileId).toBe("ai_000000000000000000000002");
+    const renamed = saveAiConnectionProfile(second, {
       id: "ai_000000000000000000000001",
       name: "Fast model renamed",
       apiFormat: "openai_chat",
       model: "small-model-v2",
       baseUrl: "",
-    }).profiles[0]).toMatchObject({ name: "Fast model renamed", model: "small-model-v2" });
+    });
+    expect(renamed.activeProfileId).toBe("ai_000000000000000000000002");
+    expect(renamed.profiles[0]).toMatchObject({ name: "Fast model renamed", model: "small-model-v2" });
   });
 
   it("clears active selection when that profile is deleted", () => {
@@ -58,14 +60,15 @@ describe("AI connection profile catalog", () => {
     });
   });
 
-  it("saves an incomplete profile without changing the currently active profile", () => {
-    const active = activateAiProfile(saveAiConnectionProfile(emptyAiProfileCatalog(), {
+  it("selects a newly saved profile even when that profile has no credential yet", () => {
+    const active = saveAiConnectionProfile(emptyAiProfileCatalog(), {
       id: "ai_000000000000000000000011",
       name: "Current",
       apiFormat: "openai_chat",
       model: "current-model",
       baseUrl: "",
-    }), "ai_000000000000000000000011");
+    });
+    expect(active.activeProfileId).toBe("ai_000000000000000000000011");
 
     const withIncompleteDraft = saveAiConnectionProfile(active, {
       id: "ai_000000000000000000000012",
@@ -75,7 +78,7 @@ describe("AI connection profile catalog", () => {
       baseUrl: "",
     });
 
-    expect(withIncompleteDraft.activeProfileId).toBe("ai_000000000000000000000011");
+    expect(withIncompleteDraft.activeProfileId).toBe("ai_000000000000000000000012");
     expect(withIncompleteDraft.profiles).toHaveLength(2);
     expect(withIncompleteDraft.profiles[1]).toMatchObject({
       id: "ai_000000000000000000000012",

@@ -1,10 +1,11 @@
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { builtinModules, createRequire } from 'node:module';
 import process from 'node:process';
 
 import { build } from 'vite';
+import { isSerpentDevElectronCommand } from './kill-stale-dev.mjs';
 
 const require = createRequire(import.meta.url);
 const playwrightPackage = require('@playwright/test/package.json');
@@ -32,6 +33,25 @@ const nodeResolve = {
   conditions: ['node'],
   mainFields: ['module', 'jsnext:main', 'jsnext'],
 };
+
+// This build replaces .vite/build and .vite/renderer. Refuse to overwrite the
+// modules of a running npm start session (including a hidden dev window).
+if (process.platform === 'win32') {
+  const output = execFileSync('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-Command',
+    'Get-CimInstance Win32_Process -Filter "Name = \'electron.exe\'" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress',
+  ], { encoding: 'utf8', windowsHide: true });
+  const parsed = JSON.parse(output || 'null');
+  const processes = parsed === null ? [] : Array.isArray(parsed) ? parsed : [parsed];
+  if (processes.some((entry) => isSerpentDevElectronCommand(entry.CommandLine, projectRoot))) {
+    throw new Error('A Serpent development instance is running. Close it before the E2E build replaces .vite.');
+  }
+} else {
+  const output = execFileSync('ps', ['-ax', '-o', 'command='], { encoding: 'utf8' });
+  if (output.split('\n').some((command) => isSerpentDevElectronCommand(command, projectRoot))) {
+    throw new Error('A Serpent development instance is running. Close it before the E2E build replaces .vite.');
+  }
+}
 
 await rm(buildRoot, { force: true, recursive: true });
 

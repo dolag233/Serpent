@@ -387,7 +387,7 @@ export function MainMenu({
       {open && activeSection?.items ? (
         <div
           aria-label={activeSection.label}
-          className="main-menu-submenu"
+          className="ui-menu-surface main-menu-submenu"
           data-main-menu-submenu={activeSection.id}
           role="menu"
           style={submenuPosition}
@@ -410,7 +410,7 @@ export function MainMenu({
       {open && activeItem?.submenu ? (
         <div
           aria-label={activeItem.label}
-          className="main-menu-submenu main-menu-item-submenu"
+          className="ui-menu-surface main-menu-submenu main-menu-item-submenu"
           data-main-menu-item-submenu={activeItem.id}
           role="menu"
           style={itemSubmenuPosition}

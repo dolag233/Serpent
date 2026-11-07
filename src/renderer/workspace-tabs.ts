@@ -3,6 +3,7 @@ import {
   type WorkspaceNavLocation,
   type WorkspaceNavViewport,
 } from "./workspace-nav-history";
+import { resolveTagFilterSets } from "./dimension-filter-selection";
 
 export interface WorkspaceTabBrowseFilters {
   formatFilter: string;
@@ -11,6 +12,9 @@ export interface WorkspaceTabBrowseFilters {
   excludeColorFilter: boolean;
   colorSimilarity: number;
   tagFilter: string;
+  tagFilterExpression?: string;
+  tagFilterMode?: "selection" | "expression";
+  tagFilterLastValidExpression?: string;
   excludeTagFilter: boolean;
   excludedTagFilter: string;
   includeAiTagFilter: boolean;
@@ -28,6 +32,29 @@ export interface WorkspaceTabBrowseFilters {
   aspectRatioRanges: Array<{ min: string; max: string }>;
   longEdgeRange: { min: string; max: string; exclude: boolean };
   durationRange: { min: string; max: string; exclude: boolean };
+}
+
+/** Restore the tag condition while migrating workspaces saved before expressions existed. */
+export function resolveWorkspaceTagExpression(
+  filters: Pick<WorkspaceTabBrowseFilters,
+    "tagFilter" | "tagFilterExpression" | "tagFilterMode" | "excludeTagFilter" | "excludedTagFilter" | "tagFilterMatch">,
+): string {
+  if (filters.tagFilterMode === "expression") return filters.tagFilterExpression ?? "";
+  if (!filters.tagFilterMode && filters.tagFilterExpression?.trim()) return filters.tagFilterExpression;
+
+  const selection = resolveTagFilterSets({
+    tagFilter: filters.tagFilter,
+    excludeTagFilter: filters.excludeTagFilter,
+    excludedTagFilter: filters.excludedTagFilter,
+  });
+  const quote = (name: string) => `"${name.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+  const includes = selection.includes.map(quote);
+  const positive = includes.length === 0
+    ? []
+    : filters.tagFilterMatch === "all" || includes.length === 1
+      ? includes
+      : [`(${includes.join(" | ")})`];
+  return [...positive, ...selection.excludes.map((name) => `-${quote(name)}`)].join(" ");
 }
 
 export interface WorkspaceTabBrowseState {
@@ -109,6 +136,9 @@ export function createDefaultWorkspaceTabBrowseState(
       excludeColorFilter: false,
       colorSimilarity: DEFAULT_COLOR_SIMILARITY,
       tagFilter: "",
+      tagFilterExpression: "",
+      tagFilterMode: "expression",
+      tagFilterLastValidExpression: "",
       excludeTagFilter: false,
       excludedTagFilter: "",
       includeAiTagFilter: true,
@@ -145,6 +175,7 @@ export function workspaceTabBrowseStateHasDiscoveryInput(
     filters.colorFilter.trim() ||
     filters.formatFilter.trim() ||
     filters.tagFilter.trim() ||
+    Boolean(filters.tagFilterExpression?.trim()) ||
     filters.ratingFilter.trim() ||
     filters.favoriteFilter !== "any" ||
     filters.sourceUrlFilter !== "any" ||

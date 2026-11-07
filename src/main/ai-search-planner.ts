@@ -7,6 +7,7 @@ import {
   resolveOpenAiResponsesUrl,
   type AiApiFormat,
 } from '../shared/ai-endpoints';
+import { applyAiRequestPolicy, fetchAiWithPolicyRetry } from '../shared/ai-request-policy';
 import { z } from 'zod';
 
 import { aiSearchPlanSchema, type AiSearchPlan, type FilterClause } from '../shared/asset-types';
@@ -220,8 +221,13 @@ export async function planAiSearch(input: {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), input.timeoutMs ?? 30_000);
   try {
-    const response = await fetchFn(
-      ...providerRequest({ ...input, apiFormat }, controller.signal),
+    const [url, init] = providerRequest({ ...input, apiFormat }, controller.signal);
+    const requestBody = typeof init?.body === 'string' ? init.body : '';
+    const { response } = await fetchAiWithPolicyRetry(
+      fetchFn,
+      String(url),
+      init ?? {},
+      JSON.parse(requestBody) as Record<string, unknown>,
     );
     if (!response.ok) throw await httpFailure(response);
     const body = await readJson(response);
@@ -236,6 +242,18 @@ export async function planAiSearch(input: {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function shapeSearchBody(
+  input: { apiFormat: AiApiFormat; baseUrl?: string; model: string },
+  body: Record<string, unknown>,
+): Record<string, unknown> {
+  return applyAiRequestPolicy(body, {
+    apiFormat: input.apiFormat,
+    baseUrl: input.baseUrl,
+    model: input.model,
+    purpose: 'search',
+  });
 }
 
 function providerRequest(
@@ -254,7 +272,7 @@ function providerRequest(
     return [resolveOpenAiChatCompletionsUrl(input.baseUrl), {
       method: 'POST', signal,
       headers: { Authorization: `Bearer ${input.apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body: JSON.stringify(shapeSearchBody(input, {
         model: input.model,
         temperature: 0,
         messages: [{ role: 'system', content: system }, { role: 'user', content: input.naturalQuery }],
@@ -262,14 +280,14 @@ function providerRequest(
           type: 'json_schema',
           json_schema: { name: 'serpent_search_plan', strict: true, schema: AI_SEARCH_PLAN_JSON_SCHEMA },
         },
-      }),
+      })),
     }];
   }
   if (input.apiFormat === 'openai_responses') {
     return [resolveOpenAiResponsesUrl(input.baseUrl), {
       method: 'POST', signal,
       headers: { Authorization: `Bearer ${input.apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body: JSON.stringify(shapeSearchBody(input, {
         model: input.model,
         temperature: 0,
         instructions: system,
@@ -282,7 +300,7 @@ function providerRequest(
             schema: AI_SEARCH_PLAN_JSON_SCHEMA,
           },
         },
-      }),
+      })),
     }];
   }
   if (input.apiFormat === 'dashscope_native') {
@@ -292,7 +310,7 @@ function providerRequest(
     return [resolveDashScopeMultimodalGenerationUrl(input.baseUrl), {
       method: 'POST', signal,
       headers: { Authorization: `Bearer ${input.apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body: JSON.stringify(shapeSearchBody(input, {
         model: input.model,
         input: {
           messages: [
@@ -305,14 +323,14 @@ function providerRequest(
           response_format: { type: 'json_object' },
           temperature: 0,
         },
-      }),
+      })),
     }];
   }
   if (input.apiFormat === 'gemini_native') {
     return [resolveGeminiGenerateContentUrl(input.model, input.baseUrl), {
       method: 'POST', signal,
       headers: { 'x-goog-api-key': input.apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body: JSON.stringify(shapeSearchBody(input, {
         system_instruction: { parts: [{ text: system }] },
         contents: [{ role: 'user', parts: [{ text: input.naturalQuery }] }],
         generationConfig: {
@@ -320,7 +338,7 @@ function providerRequest(
           responseMimeType: 'application/json',
           responseSchema: GEMINI_AI_SEARCH_PLAN_SCHEMA,
         },
-      }),
+      })),
     }];
   }
   return [resolveAnthropicMessagesUrl(input.baseUrl), {
@@ -330,7 +348,7 @@ function providerRequest(
       'anthropic-version': '2023-06-01',
       'content-type': 'application/json',
     },
-    body: JSON.stringify({
+    body: JSON.stringify(shapeSearchBody(input, {
       model: input.model,
       max_tokens: 1_024,
       temperature: 0,
@@ -342,7 +360,7 @@ function providerRequest(
         input_schema: AI_SEARCH_PLAN_JSON_SCHEMA,
       }],
       tool_choice: { type: 'tool', name: 'serpent_prepare_search' },
-    }),
+    })),
   }];
 }
 

@@ -91,8 +91,10 @@ describe('WebDAVDriver against mock server (Serpent-xffq)', () => {
     const capabilities = await driver.probe();
     expect(capabilities.auth).toBe('none');
     expect(capabilities.supportsDepthInfinity).toBe(true);
-    expect(capabilities.supportsEtagIfMatch).toBe(true);
+    expect(capabilities.supportsContentTransfer).toBe(true);
+    expect(capabilities.supportsEtagIfMatch).toBe(false);
     expect(capabilities.supportsMove).toBe(true);
+    expect(server.files().size).toBe(0);
 
     const limited = await startMockWebDAVServer({ supportsEtag: false, supportsMove: false, supportsDepthInfinity: false });
     servers.push(limited);
@@ -101,6 +103,7 @@ describe('WebDAVDriver against mock server (Serpent-xffq)', () => {
     expect(limitedCapabilities.supportsDepthInfinity).toBe(false);
     expect(limitedCapabilities.supportsEtagIfMatch).toBe(false);
     expect(limitedCapabilities.supportsMove).toBe(false);
+    expect(limited.files().size).toBe(0);
   });
 
   it('detects Basic auth requirement through probe', async () => {
@@ -123,11 +126,39 @@ describe('WebDAVDriver against mock server (Serpent-xffq)', () => {
     await expect(wrong.probe()).rejects.toMatchObject({ code: 'AUTH_FAILED' });
   });
 
+  it('does not treat public reads as proof that configured credentials can use WebDAV', async () => {
+    const server = await startMockWebDAVServer({
+      auth: 'basic', username: 'alice', password: 'secret', publicPropfind: true,
+    });
+    servers.push(server);
+    const wrong = new WebDAVDriver({ baseUrl: server.baseUrl, username: 'alice', password: 'wrong' });
+    await expect(wrong.probe()).rejects.toMatchObject({ code: 'AUTH_FAILED' });
+    expect(server.files().size).toBe(0);
+  });
+
   it('maps transport failures to readable, retryable errors', async () => {
     const driver = new WebDAVDriver({ baseUrl: 'http://127.0.0.1:1/', timeoutMs: 2000 });
     await expect(driver.list('')).rejects.toMatchObject({
       code: 'CONNECTION_REFUSED',
       retryable: true,
     });
+  });
+
+  it('treats collection OPTIONS without PUT as inconclusive and lets the actual write decide', async () => {
+    const writable = await startMockWebDAVServer({ supportsPut: true, advertisePutOnCollection: false });
+    servers.push(writable);
+    const writableDriver = new WebDAVDriver({ baseUrl: writable.baseUrl });
+    const writableCapabilities = await writableDriver.probe();
+    expect(writableCapabilities.supportsContentTransfer).toBe(true);
+    expect(writable.files().size).toBe(0);
+    await expect(writableDriver.write('child.bin', Buffer.from('ok'))).resolves.toBeTruthy();
+
+    const server = await startMockWebDAVServer({ supportsPut: false });
+    servers.push(server);
+    const driver = new WebDAVDriver({ baseUrl: server.baseUrl, timeoutMs: 100 });
+    const capabilities = await driver.probe();
+    expect(capabilities.supportsContentTransfer).toBe(true);
+    expect(server.files().size).toBe(0);
+    await expect(driver.write('child.bin', Buffer.from('blocked'))).rejects.toMatchObject({ code: 'METHOD_NOT_ALLOWED' });
   });
 });

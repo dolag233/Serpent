@@ -1671,6 +1671,22 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
     box-shadow 120ms ease;
 }
 
+.search-expression-error {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 0;
+  z-index: var(--ui-layer-popover, 20);
+  max-width: min(420px, 80vw);
+  padding: 5px 8px;
+  border: 1px solid var(--divider);
+  border-radius: calc(6px * var(--ui-radius-scale, 1));
+  background: var(--raised-2);
+  color: var(--danger);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: normal;
+}
+
 .search-control-wrap > .icon {
   flex: 0 0 auto;
   margin-left: 9px;
@@ -2595,6 +2611,49 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   gap: 6px;
 }
 
+.filter-tag-expression-input {
+  display: flex;
+  align-items: center;
+  height: var(--shell-control-height);
+  padding-right: 4px;
+  border: 1px solid var(--divider);
+  border-radius: calc(6px * var(--ui-radius-scale, 1));
+  background: var(--canvas);
+}
+
+.filter-tag-expression-input:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--divider));
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.filter-tag-expression-input .text-field {
+  height: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 0 8px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  line-height: calc(var(--shell-control-height) - 2px);
+  box-shadow: none;
+  resize: none;
+}
+
+.filter-tag-expression-input .text-field:focus {
+  border: 0;
+  box-shadow: none;
+}
+
+.filter-tag-expression-input .search-syntax-help {
+  position: static;
+  flex: 0 0 auto;
+  transform: none;
+}
+
+.filter-tag-picker > .text-field {
+  height: var(--shell-control-height);
+}
+
 .filter-tag-chips {
   display: flex;
   flex-wrap: wrap;
@@ -2986,7 +3045,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 .main-menu-submenu {
   position: absolute;
   z-index: calc(var(--ui-layer-menu) + 1);
-  display: grid;
+  display: block;
   width: max-content;
   min-width: 180px;
   max-width: min(360px, calc(100vw - 12px));
@@ -8448,7 +8507,6 @@ select.ai-config-input.ai-config-languages {
 .app-settings-nav-plugin-settings-list {
   display: grid;
   gap: 2px;
-  padding-left: 10px;
 }
 
 .app-settings-nav-plugin-settings-empty {
@@ -8523,9 +8581,11 @@ select.ai-config-input.ai-config-languages {
 }
 
 .app-settings-nav-item.app-settings-nav-plugin-settings-item {
-  grid-template-columns: minmax(0, 1fr);
-  font-size: calc(12px * var(--ui-font-scale));
-  font-weight: var(--ui-font-weight-medium);
+  grid-template-columns: 18px minmax(0, 1fr);
+}
+
+.app-settings-nav-plugin-settings-item > span {
+  grid-column: 2;
 }
 
 .app-settings-nav-plugin-settings-toggle > span:not(.app-settings-nav-chevron),
@@ -10689,6 +10749,14 @@ select.ai-config-input.ai-config-languages {
 .workspace-canvas-host.is-viewing > .workspace-canvas {
   visibility: hidden;
   pointer-events: none;
+}
+
+/* Show the restored browse frame as soon as its deep scroll position is
+   reachable; keep the host geometry fixed until the existing two-frame
+   stability check completes. */
+.workspace-canvas-host.is-restoring.is-restore-visible > .workspace-canvas {
+  visibility: visible;
+  pointer-events: auto;
 }
 
 .workspace-canvas-host.is-viewing > .activity-strip {
@@ -17954,6 +18022,7 @@ html.serpent-window-square .window-edge-resize-layer.is-disabled {
   border-color: var(--island-hairline);
 }
 .app-shell[data-shell-layout="islands"] .text-field,
+.app-shell[data-shell-layout="islands"] .filter-tag-expression-input,
 .app-shell[data-shell-layout="islands"] .inspector-input,
 .app-shell[data-shell-layout="islands"] .inspector-textarea,
 .app-shell[data-shell-layout="islands"] .search-control-wrap,
@@ -17964,6 +18033,7 @@ html.serpent-window-square .window-edge-resize-layer.is-disabled {
   border-color: var(--island-hairline);
 }
 .app-shell[data-shell-layout="islands"] .text-field:focus,
+.app-shell[data-shell-layout="islands"] .filter-tag-expression-input:focus-within,
 .app-shell[data-shell-layout="islands"] .inspector-input:focus,
 .app-shell[data-shell-layout="islands"] .inspector-textarea:focus,
 .app-shell[data-shell-layout="islands"] .search-control-wrap:focus-within {

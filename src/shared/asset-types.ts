@@ -5,6 +5,37 @@ import { entityAppearanceSchema } from './entity-appearance';
 const nonBlankString = z.string().min(1).refine((value) => value.trim().length > 0);
 const boundedSearchValue = nonBlankString.max(512);
 
+export type SearchExpressionNode =
+  | { kind: 'TERM'; field: 'filename' | 'tags' | 'description' | 'source_url' | 'author' | 'folder_path' | 'metadata_text' | null; match: 'contains' | 'exact_tag'; value: string; quoted?: boolean }
+  | { kind: 'AND'; children: SearchExpressionNode[] }
+  | { kind: 'OR'; children: SearchExpressionNode[] }
+  | { kind: 'NOT'; child: SearchExpressionNode };
+
+const searchExpressionNodeSchema: z.ZodType<SearchExpressionNode> = z.lazy(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('TERM'), field: z.enum(['filename', 'tags', 'description', 'source_url', 'author', 'folder_path', 'metadata_text']).nullable(), match: z.enum(['contains', 'exact_tag']), value: boundedSearchValue, quoted: z.boolean().optional() }),
+  z.strictObject({ kind: z.literal('AND'), children: z.array(searchExpressionNodeSchema).min(2).max(63) }),
+  z.strictObject({ kind: z.literal('OR'), children: z.array(searchExpressionNodeSchema).min(2).max(63) }),
+  z.strictObject({ kind: z.literal('NOT'), child: searchExpressionNodeSchema }),
+]));
+
+export const searchExpressionSchema = z.strictObject({ version: z.literal(1), root: searchExpressionNodeSchema.nullable() })
+  .superRefine((expression, context) => {
+    let nodes = 0;
+    const visit = (node: SearchExpressionNode, depth: number) => {
+      nodes += 1;
+      if (nodes > 63 || depth > 16) {
+        context.addIssue({ code: 'custom', message: 'Expression exceeds its structural budget.', path: ['root'] });
+        return;
+      }
+      if (node.kind === 'TERM' && node.match === 'exact_tag' && node.field !== 'tags') {
+        context.addIssue({ code: 'custom', message: 'Exact tag match requires the tags field.', path: ['root'] });
+      }
+      if (node.kind === 'NOT') visit(node.child, depth + 1);
+      else if (node.kind === 'AND' || node.kind === 'OR') node.children.forEach((child) => visit(child, depth + 1));
+    };
+    if (expression.root) visit(expression.root, 0);
+  });
+
 /**
  * Canonical path form that is safe to expose across the Renderer boundary.
  *
@@ -583,6 +614,17 @@ const numericFilterClauseSchema = z.strictObject({
  */
 export const filterClauseSchema = z.union([
   categoricalFilterClauseSchema,
+  z.strictObject({ field: z.literal('tag_expression'), exclude: z.literal(false), expression: searchExpressionSchema, expressionSource: z.string().max(512).optional(), includeAi: z.boolean().optional() })
+    .superRefine((filter, context) => {
+      const visit = (node: SearchExpressionNode | null) => {
+        if (!node) return;
+        if (node.kind === 'TERM') {
+          if (node.field !== 'tags') context.addIssue({ code: 'custom', message: 'Tag expressions only support tag terms.', path: ['expression', 'root'] });
+        } else if (node.kind === 'NOT') visit(node.child);
+        else node.children.forEach(visit);
+      };
+      visit(filter.expression.root);
+    }),
   numericFilterClauseSchema,
 ]);
 
@@ -643,7 +685,17 @@ const searchQueryDefinitionSchema = z.strictObject({
    * the process boundary.
    */
   groups: z.array(z.array(searchClauseSchema).min(1).max(32)).min(1).max(32).optional(),
+  /** Versioned expression tree; stored legacy clauses/groups keep their original meaning. */
+  expression: searchExpressionSchema.optional(),
+  /** Original text for editing saved searches without reconstructing formatting from the AST. */
+  expressionSource: z.string().max(512).optional(),
 }).superRefine((query, context) => {
+  if (query.expressionSource !== undefined && query.expression === undefined) {
+    context.addIssue({ code: 'custom', message: 'Expression source requires an expression.', path: ['expressionSource'] });
+  }
+  if (query.expression !== undefined && (query.groups !== undefined || query.clauses.length > 0)) {
+    context.addIssue({ code: 'custom', message: 'An expression query cannot also use legacy clauses or groups.', path: ['expression'] });
+  }
   if (query.groups !== undefined && query.clauses.length > 0) {
     context.addIssue({
       code: 'custom',

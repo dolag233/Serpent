@@ -3,6 +3,10 @@ import {
   buildAiAnalysisSystemPrompt,
 } from '../../shared/ai-analysis-settings';
 import { resolveGeminiGenerateContentUrl } from '../../shared/ai-endpoints';
+import {
+  applyAiRequestPolicy,
+  collapseProviderMessage,
+} from '../../shared/ai-request-policy';
 import { buildAiAnalysisUserTextLines, parseAiAnalysisResult, resolveAiAnalysisSettings } from './protocol';
 import type { AiAnalysisRequest, AiAnalysisResult } from './protocol';
 import { isAiAbortOrTimeoutError, VendorAdapterError } from './vendor-adapter';
@@ -118,7 +122,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
           // strategy) prefer x-goog-api-key. Send both for compatibility.
           'x-goog-api-key': this.apiKey,
         },
-        body: JSON.stringify({
+        body: JSON.stringify(applyAiRequestPolicy({
           system_instruction: systemInstruction,
           contents,
           generationConfig: {
@@ -126,7 +130,12 @@ export class GeminiVendorAdapter implements VendorAdapter {
             responseMimeType: 'application/json',
             responseSchema: buildGeminiResponseSchema(request.language),
           },
-        }),
+        }, {
+          apiFormat: 'gemini_native',
+          baseUrl: this.baseUrl,
+          model: this.model,
+          purpose: 'analyze',
+        })),
         signal,
       });
     } catch (error: unknown) {
@@ -163,7 +172,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
           'Content-Type': 'application/json',
           'x-goog-api-key': this.apiKey,
         },
-        body: JSON.stringify({
+        body: JSON.stringify(applyAiRequestPolicy({
           contents: [
             {
               role: 'user',
@@ -174,7 +183,12 @@ export class GeminiVendorAdapter implements VendorAdapter {
             temperature: 0,
             maxOutputTokens: 16,
           },
-        }),
+        }, {
+          apiFormat: 'gemini_native',
+          baseUrl: this.baseUrl,
+          model: this.model,
+          purpose: 'probe',
+        })),
         signal,
       });
     } catch (error: unknown) {
@@ -276,8 +290,12 @@ export class GeminiVendorAdapter implements VendorAdapter {
     const kind = httpStatusToErrorKind(response.status, bodyText);
     const message = `AI service returned HTTP ${response.status}`;
 
+    const providerMessage = collapseProviderMessage(bodyText);
     return new VendorAdapterError(kind, message, {
-      details: { httpStatus: response.status },
+      details: {
+        httpStatus: response.status,
+        ...(providerMessage ? { providerMessage } : {}),
+      },
     });
   }
 

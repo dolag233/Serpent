@@ -28,6 +28,12 @@ const empty: DiscoveryFilterSnapshot = {
 };
 
 describe("buildActiveFilterChips", () => {
+  it("does not expose stale selection chips after an expression is cleared", () => {
+    const chips = buildActiveFilterChips({
+      ...empty, tagFilterMode: "expression", tagFilter: "old-tag", tagFilterExpression: "",
+    });
+    expect(chips).toEqual([]);
+  });
   it("returns no chips when discovery filters are idle", () => {
     expect(buildActiveFilterChips(empty)).toEqual([]);
   });

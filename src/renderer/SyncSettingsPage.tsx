@@ -6,7 +6,7 @@ import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import { SettingsCard } from "./ui/patterns";
 import { Switch } from "./ui/primitives";
-import type { SyncServerSummary } from "./sync-settings-types";
+import { syncUnavailableMessageKey, type SyncServerSummary } from "./sync-settings-types";
 
 export interface SyncServerSettingsCallbacks {
   syncListServers(): Promise<{ ok: true; value: SyncServerSummary[] } | { ok: false; message: string }>;
@@ -57,7 +57,7 @@ export function SyncSettingsPage({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const probeServer = async (serverId: string) => {
+  const probeServer = async (serverId: string, hasPassword: boolean) => {
     setConnections((current) => ({ ...current, [serverId]: { state: "checking" } }));
     const probe = await callbacks.syncProbe({ serverId });
     if (!probe.ok) {
@@ -67,7 +67,10 @@ export function SyncSettingsPage({
     if (!probe.value.supportsContentTransfer) {
       setConnections((current) => ({
         ...current,
-        [serverId]: { state: "failed", message: t("settings.sync.contentTransferUnsupported") },
+        [serverId]: {
+          state: "failed",
+          message: t(syncUnavailableMessageKey(probe.value.auth, hasPassword)),
+        },
       }));
       return;
     }
@@ -79,7 +82,7 @@ export function SyncSettingsPage({
     if (listed.ok) {
       setServers(listed.value);
       for (const server of listed.value) {
-        void probeServer(server.id);
+        void probeServer(server.id, server.hasPassword);
       }
     }
   };
@@ -90,7 +93,7 @@ export function SyncSettingsPage({
       if (!listed.ok) return;
       setServers(listed.value);
       for (const server of listed.value) {
-        void probeServer(server.id);
+        void probeServer(server.id, server.hasPassword);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -137,7 +140,6 @@ export function SyncSettingsPage({
       setNotice(t("settings.sync.saved"));
       resetForm();
       await reload();
-      void probeServer(saved.value.id);
     } finally {
       setBusy(null);
     }

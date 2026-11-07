@@ -255,6 +255,30 @@ describe('AnthropicVendorAdapter', () => {
     model: 'claude-sonnet-4-20250514',
   };
 
+  it('disables thinking when forcing the classification tool', async () => {
+    let sent: Record<string, unknown> | undefined;
+    const mockFetch = async (_input: unknown, init?: RequestInit) => {
+      sent = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify(anthropicSuccessBody), { status: 200 });
+    };
+    const adapter = new AnthropicVendorAdapter(
+      'test-key',
+      'deepseek-flash',
+      mockFetch as typeof fetch,
+      'https://api.deepseek.com/anthropic',
+    );
+    await adapter.analyze({
+      displayName: 'test.png',
+      filename: 'test.png',
+      mime: 'image/png',
+      language: 'en',
+      enabledFields: { description: true, tags: true, rating: false },
+      existingTagNames: [],
+    });
+    expect(sent?.tool_choice).toEqual({ type: 'tool', name: 'serpent_classify_asset' });
+    expect(sent?.thinking).toEqual({ type: 'disabled' });
+  });
+
   it('parses a valid Anthropic tool-use response', async () => {
     const mockFetch = async () =>
       new Response(JSON.stringify(anthropicSuccessBody), { status: 200 });

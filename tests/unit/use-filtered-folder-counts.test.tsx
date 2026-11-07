@@ -95,7 +95,7 @@ describe("useFilteredFolderCounts", () => {
     expect(displayedCounts()).toBeNull();
   });
 
-  const filterCases: FilterClause[] = [
+  const filterCases: Exclude<FilterClause, { field: "tag_expression" }>[] = [
     { field: "color", values: ["red"], exclude: false, similarity: 75, swatches: { red: "#ff0000" } },
     { field: "format", values: ["png", "jpg"], exclude: false },
     { field: "tag", values: ["中文", "A"], exclude: false, includeAi: false },

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { RendererLibrarySummary, SyncProgressEvent } from "../shared/protocol/responses";
 import type { SyncCapabilities, SyncReport } from "../shared/library-api";
 import type { GitignorePreview } from "../shared/asset-types";
@@ -9,7 +9,7 @@ import { DialogShell } from "./ui/patterns";
 import { Select, Switch } from "./ui/primitives";
 import { formatBytes } from "./format-file-meta";
 import { GitignorePreviewPanel } from "./GitignorePreviewPanel";
-import type { SyncServerSummary } from "./sync-settings-types";
+import { syncUnavailableMessageKey, type SyncServerSummary } from "./sync-settings-types";
 import { LibraryEmbeddingSettings, type LibraryEmbeddingCallbacks } from "./LibraryEmbeddingSettings";
 import type { EmbeddingIndexSnapshot } from "../shared/embedding/profile";
 
@@ -68,18 +68,38 @@ function SyncSettingsSection({
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const activeSync = busy === "run"
+    || (syncProgress?.libraryId === library.libraryId && syncProgress.phase === "run");
+  const activeSyncRef = useRef(activeSync);
+  const wasActiveSyncRef = useRef(false);
+  const probeDeferredRef = useRef(false);
+  useLayoutEffect(() => {
+    activeSyncRef.current = activeSync;
+  }, [activeSync]);
 
-  const probeSelected = async (id: string) => {
+  const probeSelected = async (id: string, hasPassword: boolean) => {
     if (!id) return;
     setConnection({ serverId: id, state: "checking" });
+    if (activeSyncRef.current) {
+      probeDeferredRef.current = true;
+      return;
+    }
     setError(null);
     const probe = await callbacks.syncProbe({ serverId: id });
+    if (activeSyncRef.current) {
+      probeDeferredRef.current = true;
+      return;
+    }
     if (!probe.ok) {
       setConnection({ serverId: id, state: "failed", message: probe.message });
       return;
     }
     if (!probe.value.supportsContentTransfer) {
-      setConnection({ serverId: id, state: "failed", message: t("settings.sync.contentTransferUnsupported") });
+      setConnection({
+        serverId: id,
+        state: "failed",
+        message: t(syncUnavailableMessageKey(probe.value.auth, hasPassword)),
+      });
       return;
     }
     setConnection({ serverId: id, state: "connected" });
@@ -97,15 +117,24 @@ function SyncSettingsSection({
         setLastSyncedAt(binding.value.lastSyncedAt ?? null);
         setEnabled(binding.value.enabled ?? false);
         setPollIntervalSeconds(String(Math.round((binding.value.pollIntervalMs ?? 5_000) / 1_000)));
-        void probeSelected(binding.value.serverId);
+        void probeSelected(binding.value.serverId, listed.value.find((server) => server.id === binding.value?.serverId)?.hasPassword ?? false);
       } else if (listed.value.length > 0) {
         const first = listed.value[0]!.id;
         setServerId(first);
-        void probeSelected(first);
+        void probeSelected(first, listed.value[0]!.hasPassword);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [library.libraryId]);
+
+  useEffect(() => {
+    if (!activeSync && wasActiveSyncRef.current && probeDeferredRef.current && serverId) {
+      probeDeferredRef.current = false;
+      void probeSelected(serverId, servers.find((server) => server.id === serverId)?.hasPassword ?? false);
+    }
+    wasActiveSyncRef.current = activeSync;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSync, serverId]);
 
   const runPreview = async () => {
     setBusy("preview");
@@ -168,8 +197,12 @@ function SyncSettingsSection({
     }
   };
 
-  const connectionState: ConnectionState | "idle" = connection?.serverId === serverId && connection ? connection.state : "idle";
-  const connectionLabel = connectionState === "checking"
+  const connectionState: ConnectionState | "idle" = activeSync
+    ? "checking"
+    : connection?.serverId === serverId && connection ? connection.state : "idle";
+  const connectionLabel = activeSync
+    ? t("settings.sync.statusSyncing")
+    : connectionState === "checking"
     ? t("settings.sync.connectionChecking")
     : connectionState === "connected"
       ? t("settings.sync.connectionConnected")
@@ -177,7 +210,7 @@ function SyncSettingsSection({
         ? t("settings.sync.connectionFailed")
         : t("settings.sync.connectionUnknown");
 
-  const syncState = busy === "run" ? "syncing" : lastSyncedAt ? "synced" : "unsynced";
+  const syncState = activeSync ? "syncing" : lastSyncedAt ? "synced" : "unsynced";
   const syncLabel = syncState === "syncing"
     ? t("settings.sync.statusSyncing")
     : syncState === "synced"
@@ -216,7 +249,7 @@ function SyncSettingsSection({
               className="text-field"
               onValueChange={(next) => {
                 setServerId(next);
-                void probeSelected(next);
+                void probeSelected(next, servers.find((server) => server.id === next)?.hasPassword ?? false);
               }}
               options={servers.map((server) => ({
                 value: server.id,
@@ -269,7 +302,7 @@ function SyncSettingsSection({
           <div className="app-settings-row-copy">
             <strong>{t("settings.sync.server")}</strong>
             <span>
-              {connectionState === "failed" && connection?.message ? connection.message : ""}
+              {!activeSync && connectionState === "failed" && connection?.message ? connection.message : ""}
             </span>
           </div>
           <SyncStatusDot state={connectionState} label={connectionLabel} />

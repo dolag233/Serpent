@@ -9,12 +9,14 @@ import {
   buildCatalogCollectionScope,
   buildCatalogContextualSearchRank,
   buildCatalogContextualSearchWhere,
+  buildCatalogExpressionFtsCandidate,
   buildCatalogExplicitIgnoreSql,
   buildCatalogFilterWhere,
   buildCatalogFolderScopeClause,
   buildCatalogFtsQuery,
   buildCatalogSortOrder,
   catalogAssetSummaryFromRow,
+  catalogExpressionRankGroups,
   catalogBrowseLayoutEntryFromRow,
   countCatalogNavigationAssets,
   foldCatalogImageSequenceSummaries,
@@ -22,6 +24,31 @@ import {
   readCatalogThumbnailArtifacts,
   type CatalogReadConnection,
 } from '../../src/worker/catalog-read';
+
+describe('expression search candidate and rank', () => {
+  const term = (value: string) => ({ kind: 'TERM' as const, field: null, match: 'contains' as const, value });
+
+  it('uses safe positive atoms without distributing nested Boolean groups', () => {
+    expect(buildCatalogExpressionFtsCandidate({ kind: 'AND', children: [
+      { kind: 'OR', children: [term('forest'), { kind: 'TERM', field: 'tags', match: 'exact_tag', value: 'Blue' }] },
+      term('texture'),
+    ] })).toContain('texture');
+    expect(buildCatalogExpressionFtsCandidate({ kind: 'OR', children: [
+      term('forest'), { kind: 'TERM', field: 'tags', match: 'exact_tag', value: 'Blue' },
+    ] })).toBeNull();
+    expect(buildCatalogExpressionFtsCandidate({ kind: 'AND', children: [
+      term('forest'), { kind: 'NOT', child: term('draft') },
+    ] })).toContain('forest');
+  });
+
+  it('ranks positive text atoms while skipping exclusions and exact tags', () => {
+    expect(catalogExpressionRankGroups({ kind: 'AND', children: [
+      term('forest'),
+      { kind: 'NOT', child: term('draft') },
+      { kind: 'TERM', field: 'tags', match: 'exact_tag', value: 'Blue' },
+    ] })).toEqual([[{ field: null, values: ['forest'], exclude: false }]]);
+  });
+});
 
 interface ReadCall {
   sql: string;

@@ -15,6 +15,7 @@ import type {
   LinkedFolderSummary,
   ManagedFolderSummary,
   SearchQuery,
+  SearchExpressionNode,
 } from "../shared/asset-types";
 
 export type FolderSearchResult = FolderBrowseEntry;
@@ -34,11 +35,29 @@ function pushNormalized(terms: string[], values: readonly string[]): void {
 
 /**
  * Positive plain-text / name / path terms that narrow the folder-name search.
- * Tag/description/author clauses and negations are ignored: searching a tag
- * name should not surface a coincidentally-matching folder.
+ * Non-folder fields are ignored as candidates: they act like true inside AND
+ * (so `name:hero tag:red` still suggests Hero), false inside OR (so
+ * `name:maps | tag:red` does not surface every folder), and stay inapplicable
+ * through NOT rather than becoming a positive folder match.
  */
 export function folderSearchTerms(query: SearchQuery): string[] {
   const terms: string[] = [];
+  const expression = query.expression?.root;
+  const collectExpression = (node: SearchExpressionNode | null, negated = false): void => {
+    if (!node) return;
+    if (node.kind === "NOT") return collectExpression(node.child, !negated);
+    if (node.kind === "TERM") {
+      if (!negated && (node.field === null || node.field === "filename" || node.field === "folder_path")) {
+        pushNormalized(terms, [node.value]);
+      }
+      return;
+    }
+    node.children.forEach((child) => collectExpression(child, negated));
+  };
+  if (expression) {
+    collectExpression(expression);
+    return [...new Set(terms)];
+  }
   const clauseLists = query.groups ?? [query.clauses];
   for (const clauses of clauseLists) {
     for (const clause of clauses) {
@@ -53,6 +72,35 @@ export function folderSearchTerms(query: SearchQuery): string[] {
     }
   }
   return [...new Set(terms)];
+}
+
+function matchesFolderExpression(
+  node: SearchExpressionNode | null,
+  name: string,
+  path: string,
+): boolean | null {
+  if (!node) return null;
+  if (node.kind === "NOT") {
+    const child = matchesFolderExpression(node.child, name, path);
+    return child === null ? null : !child;
+  }
+  if (node.kind === "TERM") {
+    const term = normalize(node.value).trim();
+    const supported = node.field === null || node.field === "filename" || node.field === "folder_path";
+    if (!supported) return null;
+    return node.field === "folder_path"
+      ? normalize(path).includes(term)
+      : node.field === "filename"
+        ? normalize(name).includes(term)
+        : normalize(name).includes(term) || normalize(path).includes(term);
+  }
+  const applicable = node.children
+    .map((child) => matchesFolderExpression(child, name, path))
+    .filter((value): value is boolean => value !== null);
+  if (applicable.length === 0) return null;
+  return node.kind === "AND"
+    ? applicable.every(Boolean)
+    : applicable.some(Boolean);
 }
 
 function matchesAnyTerm(
@@ -82,6 +130,10 @@ export function resolveSearchFolderResults(
   const limit = options.limit ?? MAX_SEARCH_FOLDER_RESULTS;
   const terms = folderSearchTerms(options.query);
   if (terms.length === 0) return [];
+  const expressionRoot = options.query.expression?.root ?? null;
+  const matches = (name: string, relativePath: string) => expressionRoot
+    ? matchesFolderExpression(expressionRoot, name, relativePath) === true
+    : matchesAnyTerm(terms, name, relativePath);
 
   // Direct child folders of a linked folder are derived (virtual subdirs);
   // count them so the search card shows a plausible child-folder count.
@@ -102,7 +154,7 @@ export function resolveSearchFolderResults(
   };
 
   for (const folder of options.folders) {
-    if (matchesAnyTerm(terms, folder.name, folder.relativePath)) {
+    if (matches(folder.name, folder.relativePath)) {
       push({
         folderId: folder.folderId,
         parentFolderId: folder.parentFolderId,
@@ -121,7 +173,7 @@ export function resolveSearchFolderResults(
   }
 
   for (const folder of options.linkedFolders) {
-    if (matchesAnyTerm(terms, folder.displayName, folder.relativePath ?? "")) {
+    if (matches(folder.displayName, folder.relativePath ?? "")) {
       const assetCount = folder.assetCount;
       push({
         folderId: folder.folderId,

@@ -109,6 +109,13 @@ export type DimensionFilterBarProps = {
   excludeFormatFilter: boolean;
   setExcludeFormatFilter: (value: boolean) => void;
   tagFilter: string;
+  tagFilterExpression?: string;
+  tagFilterLastValidExpression?: string;
+  setTagFilterExpression?: (value: string) => void;
+  tagFilterMode?: "selection" | "expression";
+  setTagFilterMode?: (value: "selection" | "expression") => void;
+  tagFilterMatch?: "any" | "all";
+  setTagFilterMatch?: (value: "any" | "all") => void;
   setTagFilter: (value: string) => void;
   excludeTagFilter: boolean;
   setExcludeTagFilter: (value: boolean) => void;
@@ -241,6 +248,13 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     excludeFormatFilter,
     setExcludeFormatFilter,
     tagFilter,
+    tagFilterExpression = "",
+    tagFilterLastValidExpression = "",
+    setTagFilterExpression,
+    tagFilterMode = "expression",
+    setTagFilterMode,
+    tagFilterMatch = "any",
+    setTagFilterMatch,
     excludeTagFilter,
     setExcludeTagFilter,
     excludedTagFilter,
@@ -471,7 +485,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     new DimensionEnableToggle<{ colorFilter: string; exclude: boolean }>(),
   );
   const tagsToggleRef = useRef(
-    new DimensionEnableToggle<{ includes: string[]; excludes: string[] }>(),
+    new DimensionEnableToggle<{ includes: string[]; excludes: string[]; expression: string }>(),
   );
   const shapeToggleRef = useRef(
     new DimensionEnableToggle<{
@@ -516,7 +530,9 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
   };
 
   const selectedColors = new Set(parseColorFilterValues(colorFilter));
-  const tagActive = includedTagNames.length > 0 || excludedTagNames.length > 0;
+  const tagActive = tagFilterMode === "expression"
+    ? Boolean(tagFilterExpression.trim())
+    : includedTagNames.length > 0 || excludedTagNames.length > 0;
   const colorActive = selectedColors.size > 0;
   const shapeActive =
     aspectRatioRanges.length > 0 ||
@@ -610,12 +626,16 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
   const handleTagsDimensionClick = () => {
     tagsToggleRef.current.toggle(
       tagActive,
-      { includes: includedTagNames, excludes: excludedTagNames },
-      { includes: [], excludes: [] },
+      { includes: includedTagNames, excludes: excludedTagNames, expression: tagFilterExpression },
+      { includes: [], excludes: [], expression: "" },
       (value) => {
-        setExcludeTagFilter(false);
-        onTagNamesChange(value.includes);
-        setExcludedTagFilter(value.excludes.join(", "));
+        if (tagFilterMode === "expression") {
+          setTagFilterExpression?.(value.expression);
+        } else {
+          setExcludeTagFilter(false);
+          onTagNamesChange(value.includes);
+          setExcludedTagFilter(value.excludes.join(", "));
+        }
       },
     );
   };
@@ -748,6 +768,13 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 disabled={controlsDisabled}
                 excludedNames={excludedTagNames}
                 includedNames={includedTagNames}
+                expression={tagFilterExpression}
+                lastValidExpression={tagFilterLastValidExpression}
+                onExpressionChange={setTagFilterExpression ?? (() => {})}
+                expressionMode={tagFilterMode === "expression"}
+                onExpressionModeChange={(value) => setTagFilterMode?.(value ? "expression" : "selection")}
+                tagMatch={tagFilterMatch}
+                onTagMatchChange={(value) => setTagFilterMatch?.(value)}
                 onChange={handleTagSelectionChange}
                 recentNames={tagRecency.names}
                 tags={tags}

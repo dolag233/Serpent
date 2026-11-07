@@ -47,6 +47,15 @@ export function effectiveSyncDirectoryName(
   return binding?.directoryName ?? binding?.subPath;
 }
 
+/** A manual run already covers a same-target save; a rebind needs a follow-up. */
+export function bindingNeedsRunAfterManual(
+  binding: SyncBindingRecord | undefined,
+  manual: { serverId: string; directoryName?: string },
+): boolean {
+  return Boolean(binding?.enabled && (binding.serverId !== manual.serverId
+    || effectiveSyncDirectoryName(binding) !== manual.directoryName));
+}
+
 /**
  * Main-owned sync server and library-binding requests.
  * Undefined means the request is not handled here.
@@ -117,7 +126,9 @@ export async function tryHandleSyncOwnedRequest(
       // 用户不需要等下一个 5s 轮询周期（更不会等不到同步）。
       const savedBinding = bindings[request.libraryId];
       if (savedBinding?.enabled) {
-        runtime.syncNow(request.libraryId);
+        // The local save acknowledgement must not wait for auto-sync startup.
+        // Dispatch on the next turn, after Main has resolved the IPC request.
+        setImmediate(() => runtime.syncNow(request.libraryId));
       }
       return {
         ok: true,
@@ -170,9 +181,14 @@ export function applySyncWorkerBindings(
   if (request.type === "sync.run.request") {
     const syncBindings = runtime.readSyncBindings();
     const previous = syncBindings[request.libraryId];
+    // A binding may be changed while this long transfer is running. Never
+    // stamp an old remote's completion onto the newly selected remote.
+    if (previous && (previous.serverId !== request.serverId
+      || effectiveSyncDirectoryName(previous) !== request.directoryName)) return;
     syncBindings[request.libraryId] = {
+      ...previous,
       serverId: request.serverId,
-      directoryName: request.directoryName ?? effectiveSyncDirectoryName(previous),
+      directoryName: request.directoryName,
       lastSyncedAt: runtime.now().toISOString(),
       enabled: previous?.enabled ?? false,
     };
@@ -183,6 +199,7 @@ export function applySyncWorkerBindings(
     const syncBindings = runtime.readSyncBindings();
     const previous = syncBindings[request.libraryId];
     syncBindings[request.libraryId] = {
+      ...previous,
       serverId: request.serverId,
       directoryName: request.directoryName ?? effectiveSyncDirectoryName(previous),
       lastSyncedAt: runtime.now().toISOString(),

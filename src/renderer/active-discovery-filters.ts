@@ -16,6 +16,9 @@ export type DiscoveryFilterSnapshot = {
   formatFilter: string;
   excludeFormatFilter: boolean;
   tagFilter: string;
+  tagFilterExpression?: string;
+  tagFilterLastValidExpression?: string;
+  tagFilterMode?: "selection" | "expression";
   excludeTagFilter: boolean;
   /** Separate exclude list. When set, include and exclude apply together. */
   excludedTagFilter?: string;
@@ -93,7 +96,7 @@ export function buildActiveFilterChips(
     });
   }
 
-  const tags = snapshot.tagFilter
+  const tags = snapshot.tagFilterMode === "expression" ? [] : snapshot.tagFilter
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
@@ -108,7 +111,9 @@ export function buildActiveFilterChips(
     ...includedDetail,
     ...excludedDetail.map((name) => `−${name}`),
   ].join(", ");
-  if (tagDetail.length > 0) {
+  if (snapshot.tagFilterMode === "expression" && snapshot.tagFilterExpression?.trim()) {
+    chips.push({ id: "tag-expression", labelKey: "filter.tagField", detail: snapshot.tagFilterExpression });
+  } else if (tagDetail.length > 0) {
     chips.push({
       id: "tag",
       labelKey: "filter.tagField",

@@ -12,6 +12,7 @@ import {
   SUPPORTED_SCHEMA_VERSION,
 } from '../../src/worker/library-service';
 import { buildFts5Query, normalizeSearchText, tokenizeForFts } from '../../src/worker/search-query';
+import { parseSearchExpression, parseSearchExpressionDetailed } from '../../src/shared/search-expression';
 
 const temporaryRoots: string[] = [];
 
@@ -135,8 +136,10 @@ function createSecondAsset(
   libraryPath: string,
   description?: string,
   fileName?: string,
+  folderId?: string,
 ): string {
-  const managedFolder = service.listManagedFolders(libraryId)[0]!;
+  const managedFolder = service.listManagedFolders(libraryId).find((folder) => folder.folderId === folderId)
+    ?? service.listManagedFolders(libraryId)[0]!;
   const assetId = randomUUID();
   const assetFileName = fileName ?? `${assetId}.png`;
   const assetsPath = path.join(libraryPath, 'Assets', managedFolder.relativePath);
@@ -249,6 +252,79 @@ describe('schema v5->v6 migration', () => {
     expect(result.items.some((a) => a.assetId === assetId)).toBe(true);
 
     service.closeAll();
+  });
+});
+
+describe('shared Boolean search expressions', () => {
+  it('keeps filename relevance ahead of alphabetic order for expression searches', () => {
+    const { service, libraryId, libraryPath, assetId } = createLibraryWithAssetAndTags();
+    createSecondAsset(service, libraryId, libraryPath, 'a hero note', 'aaa.png');
+    const result = service.searchAssets({ libraryId, query: parseSearchExpression('hero') });
+    expect(result.total).toBe(2);
+    expect(result.items[0]!.assetId).toBe(assetId);
+  });
+
+  it('uses a safe FTS candidate for OR terms while the full predicate keeps exclusions', () => {
+    const { service, libraryId, libraryPath, assetId } = createLibraryWithAssetAndTags();
+    const second = createSecondAsset(service, libraryId, libraryPath, 'masterpiece', 'aaa.png');
+    createSecondAsset(service, libraryId, libraryPath, 'unrelated', 'zzz.png');
+    const result = service.searchAssets({
+      libraryId,
+      query: parseSearchExpression('(hero | masterpiece) -draft'),
+    });
+    expect(new Set(result.items.map((item) => item.assetId))).toEqual(new Set([assetId, second]));
+  });
+
+  it('normalizes tag substring matching the same way in search and the tag filter', () => {
+    const { service, libraryId, assetId } = createLibraryWithAssetAndTags();
+    const tag = service.createTag({ libraryId, name: 'Ａ' });
+    service.assignTags({ libraryId, assetIds: [assetId], tagIds: [tag.tagId] });
+    const search = service.searchAssets({ libraryId, query: parseSearchExpression('tag:A') });
+    const filterExpression = parseSearchExpressionDetailed('tag:A', 'tags');
+    expect(filterExpression.ok).toBe(true);
+    const filtered = service.searchAssets({ libraryId, filters: [{
+      field: 'tag_expression', exclude: false, expression: filterExpression.expression!,
+    }] });
+    expect(search.items.map((item) => item.assetId)).toContain(assetId);
+    expect(filtered.items.map((item) => item.assetId)).toContain(assetId);
+  });
+
+  it('matches complete tag membership with nested boolean operators inside the active folder', () => {
+    const { service, libraryId, libraryPath, assetId: aAndC } = createLibraryWithAssetAndTags();
+    const folders = service.listManagedFolders(libraryId);
+    const inScopeFolderId = folders[0]!.folderId;
+    const outOfScopeFolderId = service.createManagedFolder({ libraryId, name: 'OutsideScope' }).folderId;
+    const bAndC = createSecondAsset(service, libraryId, libraryPath, undefined, undefined, inScopeFolderId);
+    const aAndCAndD = createSecondAsset(service, libraryId, libraryPath, undefined, undefined, inScopeFolderId);
+    const onlyA = createSecondAsset(service, libraryId, libraryPath, undefined, undefined, inScopeFolderId);
+    const aaAndC = createSecondAsset(service, libraryId, libraryPath, undefined, undefined, inScopeFolderId);
+    const outside = createSecondAsset(service, libraryId, libraryPath, undefined, undefined, outOfScopeFolderId);
+    const tagIds = new Map(['A', 'B', 'C', 'D', 'AA'].map((name) => [name, service.createTag({ libraryId, name }).tagId]));
+    const assign = (assetId: string, names: string[]) => service.assignTags({
+      libraryId, assetIds: [assetId], tagIds: names.map((name) => tagIds.get(name)!),
+    });
+    assign(aAndC, ['A', 'C']);
+    assign(bAndC, ['B', 'C']);
+    assign(aAndCAndD, ['A', 'C', 'D']);
+    assign(onlyA, ['A']);
+    assign(aaAndC, ['AA', 'C']);
+    assign(outside, ['A', 'C']);
+    const query = parseSearchExpression('(tag=A | tag=B) tag=C -tag=D');
+    const result = service.searchAssets({
+      libraryId, query,
+      scope: { kind: 'folder', folderId: inScopeFolderId, recursive: true },
+      limit: 20,
+    });
+    expect(new Set(result.items.map((asset) => asset.assetId))).toEqual(new Set([aAndC, bAndC]));
+
+    const negativeOnly = service.searchAssets({
+      libraryId,
+      query: parseSearchExpression('-tag=D'),
+      scope: { kind: 'folder', folderId: inScopeFolderId, recursive: true },
+      limit: 20,
+    });
+    expect(negativeOnly.items).toHaveLength(4);
+    expect(negativeOnly.items.some((asset) => asset.assetId === outside)).toBe(false);
   });
 });
 
@@ -1146,6 +1222,35 @@ describe('search filters', () => {
     });
     expect(humanOnly.total).toBe(0);
 
+    service.closeAll();
+  });
+
+  it('evaluates tag-expression filters through membership tables without a search-index join', () => {
+    const { service, libraryId, assetId } = createLibraryWithAssetAndTags();
+    service.writeAiAnalysisResult({
+      libraryId,
+      assetId,
+      tags: ['赛博朋克'],
+      modelId: 'test-model',
+      modelVersion: '1',
+      enabledFields: { description: false, tags: true, rating: false },
+    });
+    const expression = parseSearchExpressionDetailed('tag:朋克', 'tags');
+    expect(expression.ok).toBe(true);
+    if (!expression.ok) throw new Error('Expected a valid tag expression.');
+
+    const withAiTags = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'tag_expression', exclude: false, expression: expression.expression, includeAi: true }],
+    });
+    expect(withAiTags.total).toBe(1);
+    expect(withAiTags.items[0]!.assetId).toBe(assetId);
+
+    const humanTagsOnly = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'tag_expression', exclude: false, expression: expression.expression, includeAi: false }],
+    });
+    expect(humanTagsOnly.total).toBe(0);
     service.closeAll();
   });
 
@@ -2125,6 +2230,29 @@ describe('smart collections v6', () => {
     expect(result.items[0]!.assetId).toBe(assetId);
 
     service.closeAll();
+  });
+
+  it('stores expression source and executes the AST after closing and reopening a smart collection', () => {
+    const { service, libraryId, libraryPath, assetId } = createLibraryWithAssetAndTags('Masterpiece');
+    const tag = service.createTag({ libraryId, name: 'Character' });
+    service.assignTags({ libraryId, assetIds: [assetId], tagIds: [tag.tagId] });
+    const expressionSource = 'Masterpiece tag=Character';
+    const query = { ...parseSearchExpression(expressionSource), expressionSource };
+    const smartCollection = service.createSmartCollection({
+      libraryId,
+      name: 'Expression collection',
+      queryDefinitionJson: JSON.stringify({ search: query }),
+    });
+
+    service.closeAll();
+    const reopened = newService();
+    expect(reopened.openLibrary(libraryPath).libraryId).toBe(libraryId);
+    const saved = reopened.listSmartCollections(libraryId).find((item) => item.collectionId === smartCollection.collectionId);
+    expect(JSON.parse(saved!.queryDefinition).search.expressionSource).toBe(expressionSource);
+    const result = reopened.executeSmartCollection({ libraryId, collectionId: smartCollection.collectionId });
+    expect(result.total).toBe(1);
+    expect(result.items[0]!.assetId).toBe(assetId);
+    reopened.closeAll();
   });
 
   it('updates smart collection partially', () => {

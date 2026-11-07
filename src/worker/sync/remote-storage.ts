@@ -37,10 +37,12 @@ export interface RemoteWriteResult {
 export interface DriverCapabilities {
   /** 探测出的认证模式：匿名、Basic 或 Digest。 */
   auth: 'none' | 'basic' | 'digest';
-  /** 能否上传/下载文件内容（PUT 与 GET 均可用）；false 表示该服务器不能承载同步。 */
+  /** 认证后乐观允许文件传输；集合 OPTIONS 不能证明子文件 PUT 权限。 */
   supportsContentTransfer: boolean;
   supportsDepthInfinity: boolean;
+  /** 只读探测无法验证条件写，WebDAV 驱动保守返回 false。 */
   supportsEtagIfMatch: boolean;
+  /** OPTIONS 声明的 MOVE 支持，实际行为仍以同步操作结果为准。 */
   supportsMove: boolean;
   supportsLock: boolean;
   quotaBytes?: number;

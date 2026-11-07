@@ -20,14 +20,17 @@ export function scheduleBrowseViewRestore(options: {
   canvas: HTMLElement;
   snapshot: BrowseViewSnapshot;
   isCurrent: () => boolean;
+  onPositionReady?: () => void;
   onComplete?: () => void;
 }): () => void {
-  const { canvas, snapshot, isCurrent, onComplete } = options;
+  const { canvas, snapshot, isCurrent, onPositionReady, onComplete } = options;
   let frame: number | undefined;
   let attempts = 0;
   let stableFrames = 0;
   let previousExtent = -1;
   let cancelled = false;
+  let positionRevealed = false;
+  let lastAppliedTop: number | null = null;
 
   const stop = (notify: boolean) => {
     if (cancelled) return;
@@ -36,19 +39,33 @@ export function scheduleBrowseViewRestore(options: {
     canvas.removeEventListener("wheel", onUserInterrupt);
     canvas.removeEventListener("pointerdown", onUserInterrupt);
     canvas.removeEventListener("touchstart", onUserInterrupt);
+    canvas.removeEventListener("scroll", onScroll);
     if (notify) onComplete?.();
   };
   const onUserInterrupt = () => stop(true);
+  const onScroll = () => {
+    if (positionRevealed && userMovedSinceLastApply()) stop(true);
+  };
+  const userMovedSinceLastApply = () => {
+    if (lastAppliedTop === null || Math.abs(canvas.scrollTop - lastAppliedTop) <= 1) return false;
+    const maxTop = Math.max(0, canvas.scrollHeight - canvas.clientHeight);
+    return Math.abs(canvas.scrollTop - maxTop) > 1;
+  };
 
   canvas.addEventListener("wheel", onUserInterrupt, { passive: true });
   canvas.addEventListener("pointerdown", onUserInterrupt);
   canvas.addEventListener("touchstart", onUserInterrupt, { passive: true });
+  canvas.addEventListener("scroll", onScroll, { passive: true });
 
   const apply = () => {
     frame = undefined;
     if (cancelled) return;
     if (!isCurrent()) {
       stop(false);
+      return;
+    }
+    if (positionRevealed && userMovedSinceLastApply()) {
+      stop(true);
       return;
     }
 
@@ -71,10 +88,15 @@ export function scheduleBrowseViewRestore(options: {
       extent,
     );
     canvas.scrollTo({ left: target.left, top: target.top });
+    lastAppliedTop = canvas.scrollTop;
 
     const liveExtent = Math.max(0, extent.scrollHeight - extent.clientHeight);
     attempts += 1;
     if (ready) {
+      if (!positionRevealed) {
+        positionRevealed = true;
+        onPositionReady?.();
+      }
       stableFrames = Math.abs(liveExtent - previousExtent) <= 1 ? stableFrames + 1 : 0;
       previousExtent = liveExtent;
     } else {
@@ -89,6 +111,8 @@ export function scheduleBrowseViewRestore(options: {
     frame = window.requestAnimationFrame(apply);
   };
 
-  frame = window.requestAnimationFrame(apply);
+  // The canvas still has its pre-viewer geometry here. Restore that captured
+  // frame before React's close commit paints, then use RAF only for settling.
+  apply();
   return () => stop(false);
 }

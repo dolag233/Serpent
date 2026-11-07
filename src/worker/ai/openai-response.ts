@@ -1,6 +1,7 @@
 import {
   aiTagsSchemaDescription,
 } from '../../shared/ai-analysis-settings';
+import { collapseProviderMessage } from '../../shared/ai-request-policy';
 import {
   parseAiAnalysisResult,
   parseAiAnalysisResultFromModelText,
@@ -260,11 +261,14 @@ function providerDetails(
   error: OpenAiProviderError | undefined,
   extra: Partial<VendorAdapterErrorDetails> = {},
 ): VendorAdapterErrorDetails {
+  const providerMessage = error?.message
+    ? collapseProviderMessage(error.message)
+    : undefined;
   return {
     ...(error?.code ? { providerCode: error.code } : {}),
     ...(error?.type ? { providerType: error.type } : {}),
     ...(error?.param ? { providerParam: error.param } : {}),
-    ...(error?.message ? { providerMessage: error.message } : {}),
+    ...(providerMessage ? { providerMessage } : {}),
     ...(error?.requestId ? { requestId: error.requestId } : {}),
     ...extra,
   };
@@ -285,6 +289,7 @@ export async function mapOpenAiHttpError(
     bodyText,
     attemptedMode,
   );
+  const providerMessage = collapseProviderMessage(bodyText);
   return new VendorAdapterError(
     classification.kind,
     `AI service returned HTTP ${response.status}`,
@@ -292,6 +297,9 @@ export async function mapOpenAiHttpError(
       details: providerDetails(classification.providerError, {
         httpStatus: response.status,
         formatRejected: classification.formatRejected,
+        ...(!classification.providerError?.message && providerMessage
+          ? { providerMessage }
+          : {}),
       }),
     },
   );

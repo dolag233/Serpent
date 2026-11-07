@@ -7,6 +7,7 @@ import {
   moveSearchHistoryIndex,
   readSearchHistory,
   rememberSearchQuery,
+  searchHistoryNavigationDirection,
   visibleHistoryCountByOffset,
   type SearchHistoryStorage,
 } from "../../src/renderer/search-history";
@@ -46,6 +47,13 @@ describe("search history", () => {
     expect(moveSearchHistoryIndex(2, 3, "next")).toBe(2);
     expect(moveSearchHistoryIndex(0, 3, "previous")).toBe(-1);
     expect(moveSearchHistoryIndex(2, 3, "previous")).toBe(1);
+  });
+
+  it("reserves vertical arrows for history and leaves horizontal arrows for text editing", () => {
+    expect(searchHistoryNavigationDirection("ArrowDown")).toBe("next");
+    expect(searchHistoryNavigationDirection("ArrowUp")).toBe("previous");
+    expect(searchHistoryNavigationDirection("ArrowLeft")).toBeNull();
+    expect(searchHistoryNavigationDirection("ArrowRight")).toBeNull();
   });
 
   it("keeps only the newest queries up to the stored cap", () => {

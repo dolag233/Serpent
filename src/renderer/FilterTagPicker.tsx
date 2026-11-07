@@ -1,5 +1,5 @@
-import { useState } from "react";
-import type { TagSummary } from "../shared/asset-types";
+import { useRef, useState } from "react";
+import type { SearchExpressionNode, TagSummary } from "../shared/asset-types";
 import {
   applyTagFilterClick,
   type TagFilterSelection,
@@ -16,6 +16,9 @@ import {
 import { Icon } from "./Icons";
 import { useT } from "./i18n";
 import { isImeKeyboardEvent } from "./ime-safe-dismiss";
+import { parseSearchExpressionDetailed } from "../shared/search-expression";
+import { searchExpressionReasonKey } from "./search-expression";
+import { replaceTagExpressionTerm, tagExpressionTermAt } from "./tag-expression-editor";
 
 // ---------------------------------------------------------------------------
 // FilterTagPicker (REQ-TAG-002)
@@ -81,6 +84,13 @@ export function FilterTagPicker({
   recentNames = [],
   onChange,
   disabled,
+  expression = "",
+  lastValidExpression = "",
+  onExpressionChange = () => {},
+  expressionMode = true,
+  onExpressionModeChange = () => {},
+  tagMatch = "any",
+  onTagMatchChange = () => {},
 }: {
   tags: TagSummary[];
   includedNames: string[];
@@ -89,13 +99,26 @@ export function FilterTagPicker({
   recentNames?: readonly string[];
   onChange: (next: TagFilterSelection) => void;
   disabled?: boolean;
+  expression?: string;
+  lastValidExpression?: string;
+  onExpressionChange?: (value: string) => void;
+  expressionMode?: boolean;
+  onExpressionModeChange?: (value: boolean) => void;
+  tagMatch?: "any" | "all";
+  onTagMatchChange?: (value: "any" | "all") => void;
 }) {
   const t = useT();
   const [query, setQuery] = useState("");
   const [sortKey, setSortKey] = useState<TagSortKey>("count");
   const [sortDirection, setSortDirection] = useState<TagSortDirection>("desc");
+  const [confirmReplace, setConfirmReplace] = useState(false);
+  const expressionInputRef = useRef<HTMLTextAreaElement>(null);
+  const [expressionCaret, setExpressionCaret] = useState(0);
+  const expressionResult = parseSearchExpressionDetailed(expression, "tags");
 
-  const trimmed = query.trim();
+  const expressionTerm = expressionMode ? tagExpressionTermAt(expression, expressionCaret)?.value ?? "" : "";
+  const effectiveQuery = expressionMode ? expressionTerm : query;
+  const trimmed = effectiveQuery.trim();
   const isSearching = trimmed.length > 0;
   const occupiedNames = [...includedNames, ...excludedNames];
   const searchResults = isSearching
@@ -123,7 +146,74 @@ export function FilterTagPicker({
     setSortDirection(nextKey === "count" ? "desc" : "asc");
   };
 
+  const switchToExpression = () => {
+    const quote = (name: string) => `"${name.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+    const includeTerms = includedNames.map(quote);
+    const excludeTerms = excludedNames.map((name) => `-${quote(name)}`);
+    const includes = includeTerms.length === 0
+      ? []
+      : tagMatch === "all" || includeTerms.length === 1
+        ? includeTerms
+        : [`(${includeTerms.join(" | ")})`];
+    onExpressionChange([...includes, ...excludeTerms].join(" "));
+    onExpressionModeChange(true);
+  };
+
+  const switchToSelection = () => {
+    const currentResult = parseSearchExpressionDetailed(expression, "tags");
+    const result = currentResult.ok
+      ? currentResult
+      : parseSearchExpressionDetailed(lastValidExpression, "tags");
+    const root = result.ok ? result.expression.root : null;
+    const exactTagValue = (node: SearchExpressionNode): string | null => node.kind === "TERM"
+      && node.field === "tags" && node.match === "exact_tag" ? node.value : null;
+    let includes: string[] = [];
+    let excludes: string[] = [];
+    let match: "any" | "all" = "any";
+    let simple = result.ok && root === null;
+    if (root && exactTagValue(root)) {
+      includes = [exactTagValue(root)!]; simple = true;
+    } else if (root?.kind === "OR" && root.children.every((node) => exactTagValue(node) !== null)) {
+      includes = root.children.map((node) => exactTagValue(node)!); simple = true;
+    } else if (root?.kind === "AND") {
+      const positive = root.children.filter((node) => node.kind !== "NOT");
+      const negative = root.children.filter((node) => node.kind === "NOT");
+      if (negative.every((node) => node.kind === "NOT" && exactTagValue(node.child) !== null)) {
+        if (positive.length === 0) {
+          excludes = negative.flatMap((node) => node.kind === "NOT" && exactTagValue(node.child) ? [exactTagValue(node.child)!] : []);
+          simple = true;
+        } else if (positive.length === 1 && positive[0]?.kind === "OR" && positive[0].children.every((node) => exactTagValue(node) !== null)) {
+          includes = positive[0].children.flatMap((node) => exactTagValue(node) ? [exactTagValue(node)!] : []);
+          excludes = negative.flatMap((node) => node.kind === "NOT" && exactTagValue(node.child) ? [exactTagValue(node.child)!] : []);
+          simple = true;
+        } else if (positive.every((node) => exactTagValue(node) !== null)) {
+          includes = positive.flatMap((node) => exactTagValue(node) ? [exactTagValue(node)!] : []);
+          excludes = negative.flatMap((node) => node.kind === "NOT" && exactTagValue(node.child) ? [exactTagValue(node.child)!] : []);
+          match = "all"; simple = true;
+        }
+      }
+    } else if (root?.kind === "NOT" && exactTagValue(root.child)) {
+      excludes = [exactTagValue(root.child)!]; simple = true;
+    }
+    if (!simple) { setConfirmReplace(true); return; }
+    onChange({ includes, excludes });
+    onTagMatchChange(match);
+    onExpressionChange("");
+    onExpressionModeChange(false);
+    setConfirmReplace(false);
+  };
+
   const choose = (name: string, side: "include" | "exclude", shiftKey: boolean) => {
+    if (expressionMode) {
+      const edited = replaceTagExpressionTerm(expression, expressionInputRef.current?.selectionStart ?? expressionCaret, name, side, shiftKey);
+      onExpressionChange(edited.value);
+      setExpressionCaret(edited.caret);
+      requestAnimationFrame(() => {
+        expressionInputRef.current?.focus();
+        expressionInputRef.current?.setSelectionRange(edited.caret, edited.caret);
+      });
+      return;
+    }
     onChange(applyTagFilterClick(
       { includes: includedNames, excludes: excludedNames },
       name,
@@ -145,6 +235,64 @@ export function FilterTagPicker({
 
   return (
     <div className="filter-tag-picker">
+      <button
+        className="dimension-filter-btn"
+        disabled={disabled}
+        onClick={() => expressionMode ? switchToSelection() : switchToExpression()}
+        type="button"
+      >{t(expressionMode ? "filter.tagSimpleMode" : "filter.tagExpressionMode")}</button>
+      {confirmReplace && (
+        <div className="filter-tag-expression-confirm" role="alert">
+          <span>{t("filter.tagExpressionReplacePrompt")}</span>
+          <button className="dimension-filter-btn" onClick={() => setConfirmReplace(false)} type="button">{t("common.cancel")}</button>
+          <button className="dimension-filter-btn" onClick={() => {
+            onExpressionChange(""); onChange({ includes: [], excludes: [] });
+            onExpressionModeChange(false); setConfirmReplace(false);
+          }} type="button">{t("filter.tagExpressionReplace")}</button>
+        </div>
+      )}
+      {expressionMode ? (
+        <>
+          <div className="filter-tag-expression-input">
+            <textarea
+              aria-label={t("filter.tagExpression")}
+              className="text-field"
+              disabled={disabled}
+              onChange={(event) => { setExpressionCaret(event.target.selectionStart); onExpressionChange(event.target.value); }}
+              onClick={(event) => setExpressionCaret(event.currentTarget.selectionStart)}
+              onKeyUp={(event) => setExpressionCaret(event.currentTarget.selectionStart)}
+              onSelect={(event) => setExpressionCaret(event.currentTarget.selectionStart)}
+              ref={expressionInputRef}
+              rows={1}
+              value={expression}
+            />
+            <button
+              aria-label={t("filter.tagExpressionSyntax")}
+              className="search-syntax-help"
+              data-hover-tip={t("filter.tagExpressionHelp")}
+              data-hover-tip-variant="search-syntax"
+              type="button"
+            >?</button>
+          </div>
+          {!expressionResult.ok && expression.trim() && (
+            <p className="dimension-filter-hint" role="alert">
+              {t("filter.tagExpressionError", { position: expressionResult.diagnostic.start + 1, reason: t(`toolbar.searchExpressionReasons.${searchExpressionReasonKey(expressionResult.diagnostic.code)}`) })} {t("filter.tagLastValidResults")}
+            </p>
+          )}
+          {!disabled && (
+            <div className="filter-tag-suggestions" aria-label={t("filter.addableTags")}>
+              <div className="filter-tag-section-label">{t("filter.addableTags")}</div>
+              {isSearching ? searchResults.length > 0 && <TagOptionList tags={searchResults} onContextMenuSelect={(name, shiftKey) => choose(name, "exclude", shiftKey)} onSelect={(name, shiftKey) => choose(name, "include", shiftKey)} /> : sortedRecent.length > 0 || sortedAll.length > 0 ? (
+                <>
+                  {sortedRecent.length > 0 && <TagOptionList className="filter-tag-recent-options" tags={sortedRecent} onContextMenuSelect={(name, shiftKey) => choose(name, "exclude", shiftKey)} onSelect={(name, shiftKey) => choose(name, "include", shiftKey)} />}
+                  {sortedAll.length > 0 && <div className="filter-tag-all-scroll"><TagOptionList tags={sortedAll} onContextMenuSelect={(name, shiftKey) => choose(name, "exclude", shiftKey)} onSelect={(name, shiftKey) => choose(name, "include", shiftKey)} /></div>}
+                </>
+              ) : null}
+            </div>
+          )}
+        </>
+      ) : (
+      <>
       {(includedNames.length > 0 || excludedNames.length > 0) && (
         <div className="filter-tag-chips">
           {includedNames.map((name) => (
@@ -270,6 +418,8 @@ export function FilterTagPicker({
                 </>
               )}
         </div>
+      )}
+      </>
       )}
     </div>
   );

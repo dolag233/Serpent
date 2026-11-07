@@ -1,6 +1,11 @@
 import { buildAiAnalysisSystemPrompt } from '../../shared/ai-analysis-settings';
 import { resolveDashScopeMultimodalGenerationUrl } from '../../shared/ai-endpoints';
 import {
+  applyAiRequestPolicy,
+  collapseProviderMessage,
+  fetchAiWithPolicyRetry,
+} from '../../shared/ai-request-policy';
+import {
   buildAiAnalysisUserTextLines,
   parseAiAnalysisResultFromModelText,
   resolveAiAnalysisSettings,
@@ -60,7 +65,7 @@ export class DashScopeVendorAdapter implements VendorAdapter {
     request: AiAnalysisRequest,
     signal?: AbortSignal,
   ): Promise<AiAnalysisResult> {
-    const body = {
+    const body = applyAiRequestPolicy({
       model: this.#model,
       input: {
         messages: [
@@ -79,22 +84,20 @@ export class DashScopeVendorAdapter implements VendorAdapter {
         response_format: { type: 'json_object' },
         temperature: 0.2,
       },
-    };
+    }, this.#policyInput('analyze'));
 
     let response: Response;
     try {
-      response = await this.#fetch(
+      ({ response } = await fetchAiWithPolicyRetry(
+        this.#fetch,
         resolveDashScopeMultimodalGenerationUrl(this.#baseUrl),
         {
           method: 'POST',
-          headers: {
-            Authorization: `Bearer ${this.#apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(body),
+          headers: this.#headers(),
           signal,
         },
-      );
+        body,
+      ));
     } catch (error: unknown) {
       throw this.#mapFetchError(error);
     }
@@ -116,27 +119,25 @@ export class DashScopeVendorAdapter implements VendorAdapter {
   async probeConnection(signal?: AbortSignal): Promise<void> {
     let response: Response;
     try {
-      response = await this.#fetch(
+      ({ response } = await fetchAiWithPolicyRetry(
+        this.#fetch,
         resolveDashScopeMultimodalGenerationUrl(this.#baseUrl),
         {
           method: 'POST',
-          headers: {
-            Authorization: `Bearer ${this.#apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: this.#model,
-            input: {
-              messages: [{
-                role: 'user',
-                content: 'Reply with the single word OK.',
-              }],
-            },
-            parameters: { result_format: 'message', temperature: 0 },
-          }),
+          headers: this.#headers(),
           signal,
         },
-      );
+        applyAiRequestPolicy({
+          model: this.#model,
+          input: {
+            messages: [{
+              role: 'user',
+              content: 'Reply with the single word OK.',
+            }],
+          },
+          parameters: { result_format: 'message', temperature: 0 },
+        }, this.#policyInput('probe')),
+      ));
     } catch (error: unknown) {
       throw this.#mapFetchError(error);
     }
@@ -150,6 +151,22 @@ export class DashScopeVendorAdapter implements VendorAdapter {
         { cause: error },
       );
     }
+  }
+
+  #headers(): Record<string, string> {
+    return {
+      Authorization: `Bearer ${this.#apiKey}`,
+      'Content-Type': 'application/json',
+    };
+  }
+
+  #policyInput(purpose: 'probe' | 'analyze') {
+    return {
+      apiFormat: 'dashscope_native' as const,
+      baseUrl: this.#baseUrl,
+      model: this.#model,
+      purpose,
+    };
   }
 
   #buildSystemPrompt(request: AiAnalysisRequest): string {
@@ -198,10 +215,16 @@ export class DashScopeVendorAdapter implements VendorAdapter {
     } catch {
       // Status remains sufficient for safe error classification.
     }
+    const providerMessage = collapseProviderMessage(bodyText);
     return new VendorAdapterError(
       httpStatusToErrorKind(response.status, bodyText),
       `AI service returned HTTP ${response.status}`,
-      { details: { httpStatus: response.status } },
+      {
+        details: {
+          httpStatus: response.status,
+          ...(providerMessage ? { providerMessage } : {}),
+        },
+      },
     );
   }
 

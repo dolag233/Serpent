@@ -62,6 +62,36 @@ function makeOptions(overrides: Partial<SyncAutoSchedulerOptions> = {}): {
 const settle = () => new Promise((resolve) => setTimeout(resolve, 40));
 
 describe('SyncAutoScheduler (Serpent-bfsb 后续)', () => {
+  it('defers a save-triggered run while a manual sync owns the library', async () => {
+    let manualActive = true;
+    const { options, client } = makeOptions({
+      isManualSyncActive: () => manualActive,
+    });
+    const scheduler = new SyncAutoScheduler(options);
+    scheduler.start();
+    scheduler.syncNow('lib-enabled');
+    await settle();
+    expect(client.posts.filter((post) => post.type === 'sync.run')).toHaveLength(0);
+
+    manualActive = false;
+    scheduler.manualSyncFinished('lib-enabled');
+    await settle();
+    scheduler.stop();
+    expect(client.posts.filter((post) => post.type === 'sync.run')).toHaveLength(1);
+  });
+
+  it('retries a saved binding once when the covering manual run failed', async () => {
+    let manualActive = true;
+    const { options, client } = makeOptions({ isManualSyncActive: () => manualActive });
+    const scheduler = new SyncAutoScheduler(options);
+    scheduler.start();
+    manualActive = false;
+    scheduler.manualSyncFinished('lib-enabled', true);
+    await settle();
+    scheduler.stop();
+    expect(client.posts.filter((post) => post.type === 'sync.run')).toHaveLength(1);
+  });
+
   it('auto-syncs only enabled bindings after a local asset change (debounced)', async () => {
     const { options, client } = makeOptions({ localChangeDebounceMs: 5 });
     const scheduler = new SyncAutoScheduler(options);

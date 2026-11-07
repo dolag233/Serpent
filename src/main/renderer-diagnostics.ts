@@ -5,18 +5,18 @@ export interface RendererDiagnosticLogger {
 
 export function logRendererConsoleMessage(
   logger: RendererDiagnosticLogger | undefined,
-  level: number,
+  level: number | "info" | "warning" | "error" | "debug",
   message: string,
   line: number,
   sourceId: string,
 ): void {
   if (logger === undefined) return;
   const context = { level, line, sourceId };
-  if (level >= 3) {
+  if (level === 3 || level === "error") {
     logger.error("renderer.console.error", new Error(message), context);
     return;
   }
-  if (level === 2) {
+  if (level === 2 || level === "warning") {
     logger.info("renderer.console.warning", message, context);
   }
 }

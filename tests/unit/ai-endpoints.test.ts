@@ -5,6 +5,7 @@ import {
   DEFAULT_AI_API_FORMAT,
   DEFAULT_AI_BASE_URLS,
   DEFAULT_AI_MODELS,
+  anthropicCustomBaseUrlMissesProtocolPath,
   effectiveAiBaseUrl,
   formatAiLanguagesForPrompt,
   listAiModels,
@@ -82,6 +83,20 @@ describe('ai-endpoints URL resolution', () => {
     expect(resolveAnthropicMessagesUrl('https://proxy.example/v1')).toBe(
       'https://proxy.example/v1/messages',
     );
+    expect(resolveAnthropicMessagesUrl('https://api.deepseek.com')).toBe(
+      'https://api.deepseek.com/v1/messages',
+    );
+    expect(resolveAnthropicMessagesUrl('https://api.deepseek.com/anthropic')).toBe(
+      'https://api.deepseek.com/anthropic/v1/messages',
+    );
+  });
+
+  it('flags host-only custom Anthropic bases and accepts a protocol path or the official host', () => {
+    expect(anthropicCustomBaseUrlMissesProtocolPath('https://api.deepseek.com')).toBe(true);
+    expect(anthropicCustomBaseUrlMissesProtocolPath('https://api.deepseek.com/')).toBe(true);
+    expect(anthropicCustomBaseUrlMissesProtocolPath('https://api.deepseek.com/anthropic')).toBe(false);
+    expect(anthropicCustomBaseUrlMissesProtocolPath('https://api.anthropic.com')).toBe(false);
+    expect(anthropicCustomBaseUrlMissesProtocolPath('')).toBe(false);
   });
 
   it('converts Model Studio compatible-mode workspace URLs to the native DashScope root', () => {
@@ -138,18 +153,99 @@ describe('listAiModels', () => {
     );
   });
 
-  it('provides native DashScope visual-model presets without a brittle model-list request', async () => {
-    const fetchFn = vi.fn() as unknown as typeof fetch;
+  it('reads DashScope native model ids from GET /api/v1/models and follows pages', async () => {
+    const fetchFn = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      const page = url.searchParams.get('page_no');
+      const body = page === '1'
+        ? {
+            success: true,
+            output: {
+              total: 3,
+              page_no: 1,
+              page_size: 2,
+              models: [
+                { model: 'qwen3-vl-plus', name: '通义千问 VL Plus' },
+                { model: ' qwen-plus ', name: '通义千问 Plus' },
+              ],
+            },
+          }
+        : {
+            success: true,
+            output: {
+              total: 3,
+              page_no: 2,
+              page_size: 2,
+              models: [{ model: 'qwen3-vl-flash' }],
+            },
+          };
+      return new Response(JSON.stringify(body), { status: 200 });
+    }) as unknown as typeof fetch;
+
     const result = await listAiModels({
       apiFormat: 'dashscope_native',
       apiKey: 'sk-test',
+      baseUrl: 'https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
       fetchFn,
     });
 
     expect(result).toEqual({
       ok: true,
-      models: ['qwen3-vl-flash', 'qwen3-vl-plus'],
+      models: ['qwen-plus', 'qwen3-vl-flash', 'qwen3-vl-plus'],
     });
-    expect(fetchFn).not.toHaveBeenCalled();
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    const firstUrl = String(vi.mocked(fetchFn).mock.calls[0]?.[0]);
+    const secondUrl = String(vi.mocked(fetchFn).mock.calls[1]?.[0]);
+    expect(firstUrl).toBe(
+      'https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/models?page_no=1&page_size=100',
+    );
+    expect(secondUrl).toContain('page_no=2');
+    expect(firstUrl).not.toContain('sk-test');
+    expect(vi.mocked(fetchFn).mock.calls[0]?.[1]).toMatchObject({
+      method: 'GET',
+      headers: { Authorization: 'Bearer sk-test' },
+    });
+  });
+
+  it('reports a DashScope model-list auth failure without reading another page', async () => {
+    const fetchFn = vi.fn(async () => new Response('InvalidApiKey', { status: 401 })) as unknown as typeof fetch;
+    const result = await listAiModels({
+      apiFormat: 'dashscope_native',
+      apiKey: 'sk-test',
+      fetchFn,
+    });
+    expect(result).toMatchObject({ ok: false, errorKind: 'auth' });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(fetchFn).mock.calls[0]?.[0])).toBe(
+      'https://dashscope.aliyuncs.com/api/v1/models?page_no=1&page_size=100',
+    );
+  });
+
+  it('lists Bailian models from the workspace catalog when the profile uses the Anthropic prefix', async () => {
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify({
+      success: true,
+      output: {
+        total: 1,
+        models: [{ model: 'qwen3-vl-plus' }],
+      },
+    }), { status: 200 })) as unknown as typeof fetch;
+    const baseUrl = 'https://llm-example.cn-beijing.maas.aliyuncs.com/apps/anthropic';
+
+    const result = await listAiModels({
+      apiFormat: 'anthropic',
+      apiKey: 'sk-test',
+      baseUrl,
+      fetchFn,
+    });
+
+    expect(result).toEqual({ ok: true, models: ['qwen3-vl-plus'] });
+    const url = String(vi.mocked(fetchFn).mock.calls[0]?.[0]);
+    expect(url).toBe(
+      'https://llm-example.cn-beijing.maas.aliyuncs.com/api/v1/models?page_no=1&page_size=100',
+    );
+    expect(url).not.toContain('/apps/anthropic');
+    expect(vi.mocked(fetchFn).mock.calls[0]?.[1]).toMatchObject({
+      headers: { Authorization: 'Bearer sk-test' },
+    });
   });
 });

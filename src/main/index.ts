@@ -82,6 +82,7 @@ import {
 import {
   tryHandleSyncOwnedRequest,
   applySyncWorkerBindings,
+  bindingNeedsRunAfterManual,
   runSyncProbeWithRetry,
   type SyncServerRecord,
   type SyncBindingRecord,
@@ -428,6 +429,7 @@ import {
   parseRendererLifecycleEvent,
   type RendererLifecycleEvent,
   type RendererResult,
+  type WorkerResult,
   type AssetChangeEvent,
   parseAssetChangeEvent,
   type LibraryChangedEvent,
@@ -447,6 +449,7 @@ import { LibraryWorkerClient, WorkerRequestTimeoutError } from "./worker-client"
 import { performanceConsumerIdForWindow } from "../shared/performance-contract";
 import { SyncAutoScheduler, type SyncBindingLike } from "./sync-auto-scheduler";
 import { AppLogger } from "./app-logger";
+import { loadRendererDevUrl } from "./dev-renderer-load";
 import { chooseUniqueSessionLogPath, pruneSessionLogs } from "./session-log";
 import {
   logRendererChildProcessGone,
@@ -670,6 +673,12 @@ function embeddingHttp(): EmbeddingHttpIndex {
 }
 /** 自动同步调度器（Serpent-bfsb 后续），随 Worker 生命周期启停。 */
 let syncAutoScheduler: SyncAutoScheduler | undefined;
+const manualSyncRuns = new Map<string, {
+  count: number;
+  serverId: string;
+  directoryName?: string;
+  savedBindingDuringRun: boolean;
+}>();
 type ArtifactPathBatchWaiter = {
   artifactId: string;
   generation: number;
@@ -2086,17 +2095,8 @@ function storeStartupPreferences(input: unknown): StartupPreferencesSnapshot {
 
 function handleSecondInstance(): void {
   if (!shouldHandleSecondaryLaunch({ updateHandoff, applicationQuitting })) return;
-  if (
-    MAIN_WINDOW_VITE_DEV_SERVER_URL &&
-    mainWindow &&
-    !mainWindow.isDestroyed()
-  ) {
-    void loadRendererDevUrl(
-      mainWindow,
-      MAIN_WINDOW_VITE_DEV_SERVER_URL,
-    ).finally(() => focusMainWindow());
-    return;
-  }
+  // A second launch while Vite is preparing its first module graph must not
+  // reload the still-loading window and reset its mount deadline.
   focusMainWindow();
 }
 
@@ -2158,91 +2158,17 @@ function resolveE2eIsolatedPlacement(
   return undefined;
 }
 
-const DEV_SERVER_WAIT_MS = 60_000;
-const DEV_SERVER_POLL_MS = 250;
-const DEV_RENDERER_MOUNT_TIMEOUT_MS = 20_000;
-const DEV_RENDERER_LOAD_ATTEMPTS = 4;
-
-async function waitForDevServer(url: string): Promise<void> {
-  const deadline = Date.now() + DEV_SERVER_WAIT_MS;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(2_000) });
-      if (response.ok) return;
-    } catch {
-      // Vite may still be binding; keep polling until the deadline.
-    }
-    await new Promise((resolve) => setTimeout(resolve, DEV_SERVER_POLL_MS));
-  }
-  throw new Error(
-    `Renderer dev server did not become reachable within ${DEV_SERVER_WAIT_MS}ms: ${url}`,
-  );
-}
-
-async function isRendererMounted(
-  webContents: Electron.WebContents,
-): Promise<boolean> {
-  try {
-    return await webContents.executeJavaScript(
-      "Boolean(document.querySelector('#root .app-shell'))",
-    );
-  } catch {
-    return false;
-  }
-}
-
-async function waitForRendererMounted(
-  webContents: Electron.WebContents,
-  timeoutMs = DEV_RENDERER_MOUNT_TIMEOUT_MS,
-): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await isRendererMounted(webContents)) return true;
-    await new Promise((resolve) => setTimeout(resolve, DEV_SERVER_POLL_MS));
-  }
-  return false;
-}
-
-async function loadRendererDevUrl(
-  window: BrowserWindow,
-  url: string,
-): Promise<void> {
-  for (let attempt = 1; attempt <= DEV_RENDERER_LOAD_ATTEMPTS; attempt++) {
-    try {
-      await waitForDevServer(url);
-      await window.loadURL(url);
-    } catch (error) {
-      logger?.error("main.window.load-attempt", error, { attempt, url });
-      await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
-      continue;
-    }
-    if (await waitForRendererMounted(window.webContents)) {
-      logger?.info("main.window.mount-verified", "Renderer shell visible.", {
-        attempt,
-        url,
-      });
-      return;
-    }
-    logger?.info(
-      "main.window.mount-retry",
-      "Renderer still blank after load; retrying.",
-      { attempt, url },
-    );
-    await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
-  }
-  logger?.error(
-    "main.window.mount-failed",
-    new Error("Renderer remained blank after dev load retries."),
-    { url, attempts: DEV_RENDERER_LOAD_ATTEMPTS },
-  );
-  throw new Error(`Renderer remained blank after dev load retries: ${url}`);
-}
-
 function attachRendererDiagnostics(window: BrowserWindow): void {
   window.webContents.on(
     "console-message",
-    (_event, level, message, line, sourceId) => {
-      logRendererConsoleMessage(logger, level, message, line, sourceId);
+    (details) => {
+      logRendererConsoleMessage(
+        logger,
+        details.level,
+        details.message,
+        details.lineNumber,
+        details.sourceId,
+      );
     },
   );
   window.webContents.on("render-process-gone", (_event, details) => {
@@ -2314,7 +2240,7 @@ async function createMainWindow(): Promise<void> {
   // A blank window in a packaged build must leave the same evidence as one
   // started from Vite; idle windows produce no log entries.
   attachRendererDiagnostics(window);
-  window.on("ready-to-show", () => {
+  const showMainWindowIfAllowed = (): void => {
     // E2E can keep its renderer fully loaded and automatable without putting
     // a test window over the user's desktop session. An update handoff stays
     // hidden so a second launch cannot flash a window.
@@ -2327,10 +2253,12 @@ async function createMainWindow(): Promise<void> {
         && process.env.SERPENT_E2E_HIDE_WINDOW === "1"
         && !e2eShowInactive,
     })) {
+      if (window.isVisible()) return;
       if (e2eShowInactive) window.showInactive();
       else window.show();
     }
-  });
+  };
+  window.on("ready-to-show", showMainWindowIfAllowed);
   // Cleanup while webContents/HWND still exist (`closed` is too late).
   window.on("close", () => {
     clearViewerVideoShortcutCapture(mainContentsId);
@@ -2511,6 +2439,22 @@ async function createMainWindow(): Promise<void> {
   });
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    let devModuleNetworkChanged = false;
+    const devOrigin = new URL(MAIN_WINDOW_VITE_DEV_SERVER_URL).origin;
+    const devSession = window.webContents.session;
+    devSession.webRequest.onErrorOccurred(
+      { urls: [`${devOrigin}/*`] },
+      (details) => {
+        if (details.webContentsId === window.webContents.id
+          && details.resourceType === "script"
+          && details.error === "net::ERR_NETWORK_CHANGED") {
+          devModuleNetworkChanged = true;
+        }
+      },
+    );
+    window.once("closed", () => {
+      devSession.webRequest.onErrorOccurred(null);
+    });
     window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
       if (errorCode === -3) return; // aborted
       const detail = [
@@ -2525,7 +2469,24 @@ async function createMainWindow(): Promise<void> {
       dialog.showErrorBox("Serpent renderer failed to load", detail);
     });
     try {
-      await loadRendererDevUrl(window, MAIN_WINDOW_VITE_DEV_SERVER_URL);
+      await loadRendererDevUrl(window, MAIN_WINDOW_VITE_DEV_SERVER_URL, logger, {
+        consumeNetworkChange: () => {
+          const changed = devModuleNetworkChanged;
+          devModuleNetworkChanged = false;
+          return changed;
+        },
+        // A cold Vite module graph can leave a hidden BrowserWindow without a
+        // first paint. Showing it after navigation lets Chromium schedule the
+        // Renderer normally; the E2E hidden-window policy is still respected.
+        onNavigated: () => {
+          const visibleBefore = window.isVisible();
+          showMainWindowIfAllowed();
+          logger?.info("main.window.dev-navigation", "Renderer navigation completed.", {
+            visibleBefore,
+            visibleAfter: window.isVisible(),
+          });
+        },
+      });
     } catch (error) {
       logger?.error("main.window.dev-load", error);
       dialog.showErrorBox(
@@ -3764,6 +3725,18 @@ async function handleLibraryRequest(
       encryptPassword: (password) =>
         safeStorage.encryptString(password).toString("base64"),
       syncNow: (libraryId) => {
+        const manual = manualSyncRuns.get(libraryId);
+        if (manual) {
+          const binding = readSyncBindings()[libraryId];
+          // The in-flight manual run already covers this binding. A rebind to
+          // another remote still needs one run after the manual one finishes.
+          if (bindingNeedsRunAfterManual(binding, manual)) {
+            syncAutoScheduler?.syncNow(libraryId);
+          } else {
+            manual.savedBindingDuringRun = true;
+          }
+          return;
+        }
         syncAutoScheduler?.syncNow(libraryId);
       },
     });
@@ -3977,7 +3950,34 @@ async function handleLibraryRequest(
             { workerCommand: command.type },
           );
         }
-        const result = await workerClient.request(command, { consumerId: options.consumerId });
+        const manualRequest = request.type === "sync.run.request" ? request : undefined;
+        const manualLibraryId = manualRequest?.libraryId;
+        if (manualLibraryId !== undefined) {
+          const active = manualSyncRuns.get(manualLibraryId);
+          manualSyncRuns.set(manualLibraryId, {
+            count: (active?.count ?? 0) + 1,
+            serverId: manualRequest!.serverId,
+            directoryName: manualRequest!.directoryName,
+            savedBindingDuringRun: active?.savedBindingDuringRun ?? false,
+          });
+        }
+        let result: WorkerResult | undefined;
+        try {
+          result = await workerClient.request(command, { consumerId: options.consumerId });
+        } finally {
+          if (manualLibraryId !== undefined) {
+            const active = manualSyncRuns.get(manualLibraryId);
+            if (active && active.count > 1) {
+              manualSyncRuns.set(manualLibraryId, { ...active, count: active.count - 1 });
+            } else {
+              manualSyncRuns.delete(manualLibraryId);
+              syncAutoScheduler?.manualSyncFinished(
+                manualLibraryId,
+                Boolean(active?.savedBindingDuringRun && (!result || !result.ok)),
+              );
+            }
+          }
+        }
         if (traceLibraryRequest) {
           logger?.info(
             "diag.library-request.dispatched",
@@ -6207,6 +6207,7 @@ async function startApplication(): Promise<void> {
     readBindings: () => readSyncBindings() as unknown as Record<string, SyncBindingLike>,
     writeBindings: (bindings) => writeSyncBindings(bindings as unknown as Record<string, SyncBindingRecord>),
     resolveCredentials: (serverId) => resolveSyncServerCredentials(serverId),
+    isManualSyncActive: (libraryId) => manualSyncRuns.has(libraryId),
     logger,
   });
   syncAutoScheduler.start();

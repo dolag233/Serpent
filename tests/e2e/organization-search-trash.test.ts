@@ -26,6 +26,101 @@ function collectionRow(window: Page, name: string) {
 
 test.describe.configure({ timeout: 120_000 });
 
+test('uses the shared search and tag expressions to filter real asset cards', async () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-search-expression-e2e-'));
+  const profilePath = path.join(temporaryRoot, 'user-data');
+  const libraryName = '表达式验收库';
+  const libraryPath = path.join(temporaryRoot, libraryName);
+  const sourcePath = path.join(temporaryRoot, 'hero.png');
+  writeFileSync(sourcePath, Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    'base64',
+  ));
+
+  const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  const application = await electron.launch({
+    args: [applicationDirectory],
+    cwd: applicationDirectory,
+    executablePath: resolveElectronExecutablePath(),
+    env: {
+      ...process.env,
+      SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: profilePath,
+      SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
+      SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
+      SERPENT_E2E_IMPORT_FILES: sourcePath,
+    },
+  });
+
+  try {
+    const window = await application.firstWindow();
+    await window.getByRole('button', { name: '创建资源库' }).click();
+    await window.getByRole('textbox', { name: '名称' }).fill(libraryName);
+    await window.getByRole('button', { name: '创建', exact: true }).click();
+    await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
+    const assetCard = locateAssetCard(window, 'hero.png');
+    await expect(assetCard).toBeVisible();
+
+    const assetId = await assetCard.getAttribute('data-asset-id');
+    if (!assetId) throw new Error('Expected the imported asset to have an id.');
+    await window.evaluate(async (targetAssetId) => {
+      const api = (globalThis as typeof globalThis & { serpent: { library: {
+        listOpen(): Promise<{ ok: boolean; value?: Array<{ libraryId: string }> }>;
+        createTag(input: { libraryId: string; name: string }): Promise<{ ok: boolean; value?: { tagId: string } }>;
+        assignTags(input: { libraryId: string; assetIds: string[]; tagIds: string[] }): Promise<{ ok: boolean }>;
+      } } }).serpent.library;
+      const open = await api.listOpen();
+      const libraryId = open.value?.[0]?.libraryId;
+      if (!open.ok || !libraryId) throw new Error('No open library.');
+      const role = await api.createTag({ libraryId, name: '角色' });
+      const draft = await api.createTag({ libraryId, name: '临时' });
+      if (!role.ok || !role.value || !draft.ok || !draft.value) throw new Error('Could not create tag fixtures.');
+      const assigned = await api.assignTags({ libraryId, assetIds: [targetAssetId], tagIds: [role.value.tagId, draft.value.tagId] });
+      if (!assigned.ok) throw new Error('Could not assign tag fixtures.');
+    }, assetId);
+
+    const searchBox = window.getByLabel('搜索资源库');
+    await searchBox.fill('tag=角色 -tag=临时');
+    await expect(assetCard).toHaveCount(0);
+    await searchBox.fill('tag=角色');
+    await expect(assetCard).toBeVisible();
+    await expect.poll(() => window.evaluate(() => window.localStorage.getItem('serpent.search-history.v1'))).toContain('tag=角色');
+    await searchBox.fill('tag=角');
+    await expect(window.locator('.search-history-item').filter({ hasText: 'tag=角色' })).toBeVisible();
+    await searchBox.evaluate((input: HTMLInputElement) => input.setSelectionRange(input.value.length, input.value.length));
+    await searchBox.press('ArrowLeft');
+    await expect.poll(() => searchBox.evaluate((input: HTMLInputElement) => input.selectionStart)).toBe(4);
+    await searchBox.press('ArrowRight');
+    await expect.poll(() => searchBox.evaluate((input: HTMLInputElement) => input.selectionStart)).toBe(5);
+    await searchBox.press('ArrowDown');
+    await expect(searchBox).toHaveAttribute('aria-activedescendant', 'search-history-0');
+    await searchBox.press('ArrowLeft');
+    await expect(searchBox).not.toHaveAttribute('aria-activedescendant', /search-history-/);
+    await searchBox.fill('');
+
+    await window.getByRole('button', { name: '标签', exact: true }).click();
+    const tagPanel = window.getByRole('dialog');
+    const expression = tagPanel.getByRole('textbox', { name: '标签条件' });
+    await expect(expression).toBeVisible();
+    await expect(tagPanel.getByRole('button', { name: '标签条件语法' })).toHaveAttribute('data-hover-tip-variant', 'search-syntax');
+    await expect(tagPanel.getByRole('textbox')).toHaveCount(1);
+    await expression.fill('角');
+    await tagPanel.getByRole('button', { name: /角色/ }).click();
+    await expect(expression).toHaveValue('"角色" ');
+    await expect(assetCard).toBeVisible();
+    await tagPanel.locator('.filter-tag-options button').filter({ hasText: '临时' }).click({ button: 'right' });
+    await expect(expression).toHaveValue('"角色" -"临时" ');
+    await expect(assetCard).toHaveCount(0);
+    await expression.fill('角色');
+    await expect(assetCard).toBeVisible();
+    await window.getByRole('button', { name: '选择标签' }).click();
+    await expect(window.getByRole('textbox', { name: '标签过滤' })).toBeVisible();
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
 test('organizes, finds, trashes, and restores an imported asset through the UI', async () => {
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-organization-e2e-'));
   const sourcePath = path.join(temporaryRoot, 'hero.png');
@@ -134,6 +229,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await window.getByRole('menuitem', { name: '添加标签…' }).click();
     await window.getByRole('option', { name: '临时' }).click();
     await expect(window.locator('.workspace-notice')).toContainText('标签已添加');
+
     // The sidebar no longer enumerates tags (REQ-TAG-001); enter the
     // tag-filtered view through the retained 标签过滤 entry instead.
     await window.getByRole('button', { name: '标签', exact: true }).click();
