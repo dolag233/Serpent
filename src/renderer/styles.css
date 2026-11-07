@@ -3045,7 +3045,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 .main-menu-submenu {
   position: absolute;
   z-index: calc(var(--ui-layer-menu) + 1);
-  display: grid;
+  display: block;
   width: max-content;
   min-width: 180px;
   max-width: min(360px, calc(100vw - 12px));
@@ -8507,7 +8507,6 @@ select.ai-config-input.ai-config-languages {
 .app-settings-nav-plugin-settings-list {
   display: grid;
   gap: 2px;
-  padding-left: 10px;
 }
 
 .app-settings-nav-plugin-settings-empty {
@@ -8582,9 +8581,11 @@ select.ai-config-input.ai-config-languages {
 }
 
 .app-settings-nav-item.app-settings-nav-plugin-settings-item {
-  grid-template-columns: minmax(0, 1fr);
-  font-size: calc(12px * var(--ui-font-scale));
-  font-weight: var(--ui-font-weight-medium);
+  grid-template-columns: 18px minmax(0, 1fr);
+}
+
+.app-settings-nav-plugin-settings-item > span {
+  grid-column: 2;
 }
 
 .app-settings-nav-plugin-settings-toggle > span:not(.app-settings-nav-chevron),
