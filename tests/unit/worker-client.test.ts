@@ -224,6 +224,9 @@ describe('requestTimeoutForCommand', () => {
     expect(requestTimeoutForCommand('asset.delete-linked')).toBeNull();
     expect(requestTimeoutForCommand('sync.preview')).toBeNull();
     expect(requestTimeoutForCommand('sync.run')).toBeNull();
+    // Probe can remain queued behind an active transfer; its HTTP requests
+    // carry deadlines once admitted, rather than timing out in the queue.
+    expect(requestTimeoutForCommand('sync.probe')).toBeNull();
     expect(requestTimeoutForCommand('sync.list-remote-libraries')).toBeNull();
     expect(requestTimeoutForCommand('sync.open-remote-library')).toBeNull();
     expect(requestTimeoutForCommand({

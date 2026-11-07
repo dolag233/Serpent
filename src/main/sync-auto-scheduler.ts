@@ -14,8 +14,8 @@
  *    不做本地全量 hash），有变化则自动 sync.run；轮询间隔不代替本地防抖；
  * 3. 绑定保存（binding-save）→ 立即触发一次同步。
  *
- * 只对 enabled 的绑定生效；与手动同步经 worker 端 beginSyncSession
- * 内存互斥（SYNC_IN_PROGRESS）。失败只记日志，不打扰用户。
+ * 只对 enabled 的绑定生效；Main 在手动同步期间合并触发，Worker 的
+ * beginSyncSession 再兜底互斥（SYNC_IN_PROGRESS）。失败只记日志。
  */
 
 import type { AppLogger } from './app-logger';
@@ -46,6 +46,8 @@ export interface SyncAutoSchedulerOptions {
     allowInsecureTls: boolean;
   } | null;
   logger: AppLogger;
+  /** Manual sync is already transferring this library; do not queue another run behind it. */
+  isManualSyncActive?(libraryId: string): boolean;
   /** 绑定未设置 pollIntervalMs 时的默认轮询间隔（默认 5 秒，用户决定 2026-08-18）。 */
   pollIntervalMs?: number;
   /** 内部 tick（驱动每库独立间隔检查，默认 1 秒）。 */
@@ -112,11 +114,17 @@ export class SyncAutoScheduler {
   }
 
   /**
-   * 立即触发一次同步（如绑定保存后）。与手动同步经 worker 端
-   * beginSyncSession 互斥；绑定未启用或同步进行中则静默跳过。
+   * 立即触发一次同步（如绑定保存后）。手动同步进行中只记一次后续
+   * 需求，绑定未启用时不运行；Worker 会再次检查同步会话互斥。
    */
   syncNow(libraryId: string, reason: SyncReason = 'binding-save'): void {
     void this.#autoSync(libraryId, reason);
+  }
+
+  /** Admit one coalesced follow-up after a manual sync releases the Worker. */
+  manualSyncFinished(libraryId: string, retrySavedBinding = false): void {
+    if (!this.#pendingLocal.delete(libraryId) && !retrySavedBinding) return;
+    void this.#autoSync(libraryId, 'local-change');
   }
 
   stop(): void {
@@ -239,6 +247,10 @@ export class SyncAutoScheduler {
 
   async #autoSync(libraryId: string, reason: SyncReason): Promise<void> {
     if (this.#running.has(libraryId)) {
+      this.#pendingLocal.add(libraryId);
+      return;
+    }
+    if (this.#options.isManualSyncActive?.(libraryId)) {
       this.#pendingLocal.add(libraryId);
       return;
     }

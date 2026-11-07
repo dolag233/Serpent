@@ -386,6 +386,17 @@ export class WebDAVDriver implements RemoteStorageDriver {
 
   async probe(): Promise<DriverCapabilities> {
     if (this.cachedCapabilities) return this.cachedCapabilities;
+    // Probe is read-only. A timed-out write can still commit on the server
+    // after our DELETE, leaving a hidden remote file behind. Actual writes
+    // are checked by sync.run, where permission errors are reported directly.
+    const probeDeadline = Date.now() + Math.min(this.config.timeoutMs, 15_000);
+    const remainingProbeMs = (): number => {
+      const remaining = probeDeadline - Date.now();
+      if (remaining <= 0) {
+        throw new RemoteStorageError('TIMEOUT', '连接超时，请检查地址与网络。', true);
+      }
+      return remaining;
+    };
     const capabilities: DriverCapabilities = {
       auth: 'none',
       supportsContentTransfer: false,
@@ -401,22 +412,36 @@ export class WebDAVDriver implements RemoteStorageDriver {
       method: 'PROPFIND',
       headers: { Depth: '0', 'Content-Type': 'application/xml; charset=utf-8' },
       rejectUnauthorized: !this.config.allowInsecureTls,
-      timeoutMs: this.config.timeoutMs,
+      timeoutMs: remainingProbeMs(),
     });
     if (anonymous.status === 401) {
       const challenge = String(anonymous.headers['www-authenticate'] ?? '');
       capabilities.auth = /^Digest/i.test(challenge) ? 'digest' : 'basic';
+      if (!this.config.username || !this.config.password) {
+        this.cachedCapabilities = capabilities;
+        return capabilities;
+      }
     } else if (anonymous.status === 207) {
       capabilities.auth = 'none';
     } else {
       throw this.mapError(anonymous.status, anonymous.body, 'PROPFIND');
     }
 
+    if (this.config.username && this.config.password) {
+      const authenticated = await this.request('PROPFIND', '', {
+        headers: { Depth: '0', 'Content-Type': 'application/xml; charset=utf-8' },
+        timeoutMs: remainingProbeMs(),
+      });
+      if (authenticated.status !== 207) {
+        throw this.mapError(authenticated.status, authenticated.body, 'PROPFIND');
+      }
+    }
+
     // 2) 递归列举能力 + 根配额属性。Depth: infinity 在部分服务端
     // 实现非常慢（60s+），用短超时探测：超时即视为不可用（分层遍历兜底）。
     const root = await this.request('PROPFIND', '', {
       headers: { Depth: 'infinity', 'Content-Type': 'application/xml; charset=utf-8' },
-      timeoutMs: Math.min(this.config.timeoutMs, 15_000),
+      timeoutMs: Math.min(remainingProbeMs(), 5_000),
     }).catch(() => null);
     if (root && root.status === 207) {
       capabilities.supportsDepthInfinity = true;
@@ -428,74 +453,32 @@ export class WebDAVDriver implements RemoteStorageDriver {
       }
     }
 
-    // 3) ETag / If-Match 条件写：写临时探测文件（先建父目录）。
-    const probeFile = '.serpent-sync/.probe';
-    const hasCredentials = this.config.username !== undefined && this.config.password !== undefined;
+    // 3) OPTIONS describes methods on this collection, not on a new child
+    // file. A real WebDAV server can omit PUT here while accepting PUT on
+    // <collection>/file. Keep transfer optimistic and let sync.run report an
+    // actual write failure. ETag/If-Match cannot be proven read-only.
     try {
-      const mkcol = await this.request('MKCOL', '.serpent-sync/');
-      const mkcolOk = [201, 405, 301].includes(mkcol.status);
-      if (!mkcolOk && hasCredentials) {
-        // 带凭据仍无法建目录：认证失败 / 无权限。给出可读原因而非“不支持”。
-        throw this.mapError(mkcol.status, mkcol.body, 'MKCOL');
-      }
-      if (mkcolOk) {
-        const written = await this.request('PUT', probeFile, {
-          body: Buffer.from(`serpent-probe-${Date.now()}`),
-          headers: { 'Content-Type': 'application/octet-stream' },
-        });
-        if (written.status >= 200 && written.status < 300) {
-          capabilities.supportsContentTransfer = true;
-          const etag = written.headers.etag;
-          if (etag) {
-            const conditional = await this.request('PUT', probeFile, {
-              body: Buffer.from('conditional'),
-              ifMatch: etag,
-              headers: { 'Content-Type': 'application/octet-stream' },
-            });
-            capabilities.supportsEtagIfMatch = conditional.status >= 200 && conditional.status < 300;
-            const stale = await this.request('PUT', probeFile, {
-              body: Buffer.from('stale'),
-              ifMatch: '"stale-etag"',
-              headers: { 'Content-Type': 'application/octet-stream' },
-            });
-            if (stale.status === 412) capabilities.supportsEtagIfMatch = true;
-          }
-          // 4) MOVE 支持：只有 2xx 才算真正支持。
-          const moved = await this.request('MOVE', probeFile, {
-            destination: joinWebDAVUrl(this.config.baseUrl, '.serpent-sync/.probe-2'),
-            headers: { Overwrite: 'T' },
-          });
-          capabilities.supportsMove = moved.status >= 200 && moved.status < 300;
-          if (capabilities.supportsMove) await this.request('DELETE', '.serpent-sync/.probe-2');
-        } else if (written.status === 405 || written.status === 501) {
-          // 服务器明确不支持 PUT：无法承载文件上传（保留默认 false）。
-          capabilities.supportsContentTransfer = false;
-        } else if (hasCredentials) {
-          // 带凭据仍失败：认证失败 / 无权限 → 抛出可读原因。
-          throw this.mapError(written.status, written.body, 'PUT');
-        } else {
-          // 匿名探测：服务器要求认证（步骤 1 已检测 auth），保持默认 false。
-          capabilities.supportsContentTransfer = false;
-        }
+      const options = await this.request('OPTIONS', '', { timeoutMs: remainingProbeMs() });
+      if (options.status >= 200 && options.status < 300) {
+        const allow = String(options.headers.allow ?? '');
+        capabilities.supportsContentTransfer = true;
+        capabilities.supportsMove = /(?:^|[,\s])MOVE(?:[,\s]|$)/i.test(allow);
+        const dav = String(options.headers.dav ?? '');
+        capabilities.supportsLock = /(^|\s)2(\s|,|$)/.test(dav);
+      } else if (options.status === 401 || options.status === 403) {
+        throw this.mapError(options.status, options.body, 'OPTIONS');
+      } else {
+        capabilities.supportsContentTransfer = true;
       }
     } catch (error) {
-      if (error instanceof RemoteStorageError) throw error;
-      // 其余探测失败不致命：保留默认能力。
-    } finally {
-      try {
-        await this.request('DELETE', probeFile);
-      } catch {
-        // 清理失败不影响探测结论。
-      }
-    }
-
-    // 5) 锁支持：OPTIONS 的 DAV 头。
-    try {
-      const options = await this.request('OPTIONS', '');
-      const dav = String(options.headers.dav ?? '');
-      capabilities.supportsLock = /(^|\s)2(\s|,|$)/.test(dav);
-    } catch {
-      // OPTIONS 失败不影响其余能力。
+      if (error instanceof RemoteStorageError && (
+        error.code === 'TIMEOUT'
+        || error.code === 'AUTH_FAILED'
+        || error.code === 'PERMISSION_DENIED'
+      )) throw error;
+      // Some WebDAV servers reject OPTIONS even when PROPFIND succeeds.
+      // Let sync.run verify PUT instead of claiming the connection failed.
+      capabilities.supportsContentTransfer = true;
     }
 
     this.cachedCapabilities = capabilities;

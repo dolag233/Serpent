@@ -125,12 +125,12 @@ Library Worker（SyncEngine — 同步的唯一所有者，与库数据同进程
 - **支持任意子路径**：URL 可为服务端的任意子目录（如 `https://nas/dav/share/serpent/`），同步空间以该子路径为根，能力探测与连接测试均针对该子路径执行；用户可输入完整子路径或从根逐级选择。
 - 认证自动协商 Basic/Digest；支持 401 `WWW-Authenticate` 探测。
 - **仅 HTTPS**：HTTP 明文连接默认拒绝并明确警告（用户可显式确认仅局域网自用）；凭证只走系统凭据存储，绝不写入库、日志或任何 `.json`。
-- 连接测试：MKCOL 探测目录 + PROPFIND 根 + 写入/删除临时探测文件；失败返回可读错误（401 凭据错误 / 403 权限 / 404 路径 / 507 配额 / 超时）。
+- 连接测试（2026-11-07 修订）：只读 PROPFIND 根 + OPTIONS，不创建远端临时文件。配置凭据时即使匿名读取成功仍再次验证带凭据请求；401/403 保留可读错误。`OPTIONS` 针对根集合，不列出 PUT 不能证明其子文件无法上传；认证成功后允许尝试同步，写入权限、条件写、MOVE 的实际行为在同步执行时验证并报告。这样避免探测 PUT 超时后服务端迟交导致远端临时文件残留。
 - **多库共享一个远端根**：根下按库名建目录（见 §5）；同一根上的不同库共享凭据配置，绑定各自目录。库目录的 manifest 记录 `libraryId`，与本地库不一致（撞名）时明确报错，不自动写入。
 
 ### 6.2 首次同步
 
-1. 配置连接 → 连接测试 → 探测能力（见 6.4）。
+1. 配置连接 → 只读连接测试 → 探测服务端声明的能力（见 6.4）；实际写入权限由首次同步验证。
 2. **首次同步预览**：列出本地与远端条目差异（新增/更新/删除/冲突，按数量与大小汇总），用户确认方向策略：
    - 根下无该库目录 → `MKCOL` 链创建 `<库名>/` 结构，全量上传（建立初始 manifest）；
    - 库目录存在且 `libraryId` 匹配（新设备）→ 全量下载后本地重建库与派生文件；
@@ -160,13 +160,14 @@ Library Worker（SyncEngine — 同步的唯一所有者，与库数据同进程
 
 ### 6.4 能力探测（Probe）
 
-连接后一次性探测并缓存结果：
+连接后一次性只读探测并缓存结果；Worker 排队时间不计入约 15 秒的网络探测预算：
 
 | 能力 | 探测方法 | 首版行为 |
 | --- | --- | --- |
 | 认证方式 | 401 `WWW-Authenticate` | Basic/Digest 自动 |
 | PROPFIND 递归 | Depth: infinity 请求 | 不支持则分层遍历 |
-| ETag / If-Match | 写临时文件后条件写 | 支持→CAS；不支持→检查后写 |
+| ETag / If-Match | 只读探测无法确认；当前布尔 DTO 暂以 `false` 表示未验证 | 同步时按实际响应处理；界面不能把该值解释成「已证明不支持」，若展示该能力须先升级三态 |
+| PUT / MOVE | 根集合的 OPTIONS Allow 仅作参考 | 即使 Allow 不含 PUT，仍允许向子文件尝试同步；实际权限或方法失败由同步操作报告 |
 | 锁支持 | OPTIONS / LOCK 探测 | 不使用（无状态原则），仅记录 |
 | 配额 | 207 `quota-*` 属性 | 展示剩余空间 |
 | 单文件大小限制 | 服务端文档/实测 | 超限资产标记"不同步"并说明 |
@@ -234,7 +235,7 @@ Library Worker（SyncEngine — 同步的唯一所有者，与库数据同进程
 | --- | --- | --- | --- | --- |
 | WebDAV 连接与认证 | HTTPS 强制 + 明文警告；Basic/Digest 自动协商；应用专用密码可用；401/403/404/507/超时给出可读错误；凭据入系统凭据存储且不出现在日志/库文件 | `src/worker/sync/webdav-driver.ts`（Basic/Digest、错误映射、请求级硬超时）；凭据经 Main 内存转发（系统凭据存储列为后续项） | `tests/worker/webdav-driver.test.ts`（Basic/Digest/错误映射/连接失败 8 用例） | 真实端点实测：Basic dev 凭据 ✓、405/401/慢响应超时路径 ✓；Nextcloud/群晖/Apache 待测 |
 | 单远端根多库 | 一个 WebDAV 根承载多个库（`<根>/<库名>/` 各自独立同步）；库名安全化（非法字符/保留名替换、首尾修剪、空名兜底），displayName 存 manifest；库重命名远端 MOVE 迁移，失败回滚提示；同名不同库（libraryId 不一致）明确报错不自动写 | `src/shared/sync-paths.ts` sanitize + `src/worker/sync/sync-engine.ts` 库目录 | `tests/unit/sync-directory-name.test.ts`（6 用例）；libraryId 撞名校验在 `manifest.ts` parse | 真实端点实测：中文库名目录创建/读写 ✓；库重命名 MOVE 与撞名 UI 为后续项 |
-| 能力探测 | 认证方式/递归/ETag/配额/大小限制探测结果可见；不支持递归的服务端分层遍历可用 | `webdav-driver.ts` probe()（短超时递归探测、supportsContentTransfer、ETag/MOVE 实测） | driver 测试能力矩阵（7 用例） | 真实端点全能力矩阵 ✓（basic/content/etag/move/lock/recursive） |
+| 能力探测 | 只读验证连接和认证，读取递归/配额及 OPTIONS 方法声明；根集合未声明 PUT 不阻止子文件上传，实际写权限与条件写不在探测时承诺 | `webdav-driver.ts` probe()（无临时远端文件、总计约 15 秒网络预算） | `tests/worker/webdav-driver.test.ts`（无远端写入、根集合不声明 PUT 但子文件可写、公开读取但凭据无效） | 真实服务端验证：根集合 OPTIONS 不含 PUT，独立测试目录子文件 PUT 201、GET 200；隔离 Electron 同步与保存旅程通过 |
 | 首次同步 | 三向预览（新增/更新/删除/冲突）+ 确认后执行；新设备全量下载后库可完整浏览（含缩略图重建） | `sync-engine.ts` previewSync（零写入）/syncOnce | `tests/worker/sync-engine.test.ts`（预览零写入、新设备下载、无内容传输服务器拒绝） | 真实双设备 E2E：A 上传 2 → B 下载 2（`webdav-sync-e2e-manual.test.ts`） |
 | 文件级增量同步 | 不同资产同时改互不干扰；上传/下载/重命名/移动正确传播；派生文件不上传 | `sync-plan.ts`（条目级决策）+ `sync-runner.ts`（库目录前缀、父目录确保） | plan 8 / runner 6 / engine 6 用例（单侧变更、双侧一致无动作、新资产上传） | 真实 E2E：B 改 1 文件 → A 收到更新 ✓；派生文件不上传由引擎结构保证 |
 | 同资产冲突 | 双侧修改 → LWW + 冲突副本（命名 `name (conflict-…)`）+ 通知；绝不静默覆盖 | `sync-plan.ts` conflict 裁决 + `sync-runner.ts` 双端冲突副本 + manifest 登记收敛 | runner/engine 冲突用例（败者双端保存、conflict 命名） | 待人工双设备冲突场景复验 |

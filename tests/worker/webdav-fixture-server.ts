@@ -15,7 +15,11 @@ export interface MockWebDAVOptions {
   password?: string;
   supportsEtag?: boolean;
   supportsMove?: boolean;
+  supportsPut?: boolean;
+  advertisePutOnCollection?: boolean;
+  publicPropfind?: boolean;
   supportsDepthInfinity?: boolean;
+  onPut?: (path: string) => Promise<void> | void;
 }
 
 interface StoredFile {
@@ -38,6 +42,8 @@ export function startMockWebDAVServer(options: MockWebDAVOptions = {}): Promise<
   const password = options.password ?? 'pass';
   const supportsEtag = options.supportsEtag ?? true;
   const supportsMove = options.supportsMove ?? true;
+  const supportsPut = options.supportsPut ?? true;
+  const advertisePutOnCollection = options.advertisePutOnCollection ?? supportsPut;
   const supportsDepthInfinity = options.supportsDepthInfinity ?? true;
 
   const storage = new Map<string, StoredFile>();
@@ -90,7 +96,7 @@ ${responses}
 
   const server = http.createServer((req, res) => {
     void (async () => {
-      if (auth !== 'none' && !isAuthorized(req)) {
+      if (auth !== 'none' && !(options.publicPropfind && req.method === 'PROPFIND') && !isAuthorized(req)) {
         res.writeHead(401, { 'WWW-Authenticate': auth === 'digest' ? digestChallengeHeader() : 'Basic realm="mock"' });
         res.end('Not authorized');
         return;
@@ -99,7 +105,10 @@ ${responses}
       const method = req.method ?? 'GET';
 
       if (method === 'OPTIONS') {
-        res.writeHead(200, { DAV: '1,2', Allow: 'OPTIONS, PROPFIND, PUT, GET, DELETE, MKCOL, MOVE' });
+        res.writeHead(200, { DAV: '1,2', Allow: [
+          'OPTIONS', 'PROPFIND', ...(advertisePutOnCollection ? ['PUT'] : []), 'GET', 'DELETE', 'MKCOL',
+          ...(supportsMove ? ['MOVE'] : []),
+        ].join(', ') });
         res.end();
         return;
       }
@@ -142,9 +151,15 @@ ${responses}
       }
 
       if (method === 'PUT') {
+        if (!supportsPut) {
+          res.writeHead(405);
+          res.end('PUT not supported');
+          return;
+        }
         const chunks: Buffer[] = [];
         for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
         const body = Buffer.concat(chunks);
+        await options.onPut?.(path);
         const existing = storage.get(path);
         if (supportsEtag && req.headers['if-match'] && existing && req.headers['if-match'] !== existing.etag) {
           res.writeHead(412);

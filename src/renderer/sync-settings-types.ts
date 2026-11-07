@@ -10,3 +10,13 @@ export interface SyncServerSummary {
   hasPassword: boolean;
   allowInsecureTls: boolean;
 }
+
+/** A 401 without stored credentials asks for login, not a claim about PUT support. */
+export function syncUnavailableMessageKey(
+  auth: "none" | "basic" | "digest",
+  hasPassword: boolean,
+): "settings.sync.authenticationRequired" | "settings.sync.contentTransferUnsupported" {
+  return auth !== "none" && !hasPassword
+    ? "settings.sync.authenticationRequired"
+    : "settings.sync.contentTransferUnsupported";
+}

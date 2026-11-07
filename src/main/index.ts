@@ -82,6 +82,7 @@ import {
 import {
   tryHandleSyncOwnedRequest,
   applySyncWorkerBindings,
+  bindingNeedsRunAfterManual,
   runSyncProbeWithRetry,
   type SyncServerRecord,
   type SyncBindingRecord,
@@ -428,6 +429,7 @@ import {
   parseRendererLifecycleEvent,
   type RendererLifecycleEvent,
   type RendererResult,
+  type WorkerResult,
   type AssetChangeEvent,
   parseAssetChangeEvent,
   type LibraryChangedEvent,
@@ -671,6 +673,12 @@ function embeddingHttp(): EmbeddingHttpIndex {
 }
 /** 自动同步调度器（Serpent-bfsb 后续），随 Worker 生命周期启停。 */
 let syncAutoScheduler: SyncAutoScheduler | undefined;
+const manualSyncRuns = new Map<string, {
+  count: number;
+  serverId: string;
+  directoryName?: string;
+  savedBindingDuringRun: boolean;
+}>();
 type ArtifactPathBatchWaiter = {
   artifactId: string;
   generation: number;
@@ -3717,6 +3725,18 @@ async function handleLibraryRequest(
       encryptPassword: (password) =>
         safeStorage.encryptString(password).toString("base64"),
       syncNow: (libraryId) => {
+        const manual = manualSyncRuns.get(libraryId);
+        if (manual) {
+          const binding = readSyncBindings()[libraryId];
+          // The in-flight manual run already covers this binding. A rebind to
+          // another remote still needs one run after the manual one finishes.
+          if (bindingNeedsRunAfterManual(binding, manual)) {
+            syncAutoScheduler?.syncNow(libraryId);
+          } else {
+            manual.savedBindingDuringRun = true;
+          }
+          return;
+        }
         syncAutoScheduler?.syncNow(libraryId);
       },
     });
@@ -3930,7 +3950,34 @@ async function handleLibraryRequest(
             { workerCommand: command.type },
           );
         }
-        const result = await workerClient.request(command, { consumerId: options.consumerId });
+        const manualRequest = request.type === "sync.run.request" ? request : undefined;
+        const manualLibraryId = manualRequest?.libraryId;
+        if (manualLibraryId !== undefined) {
+          const active = manualSyncRuns.get(manualLibraryId);
+          manualSyncRuns.set(manualLibraryId, {
+            count: (active?.count ?? 0) + 1,
+            serverId: manualRequest!.serverId,
+            directoryName: manualRequest!.directoryName,
+            savedBindingDuringRun: active?.savedBindingDuringRun ?? false,
+          });
+        }
+        let result: WorkerResult | undefined;
+        try {
+          result = await workerClient.request(command, { consumerId: options.consumerId });
+        } finally {
+          if (manualLibraryId !== undefined) {
+            const active = manualSyncRuns.get(manualLibraryId);
+            if (active && active.count > 1) {
+              manualSyncRuns.set(manualLibraryId, { ...active, count: active.count - 1 });
+            } else {
+              manualSyncRuns.delete(manualLibraryId);
+              syncAutoScheduler?.manualSyncFinished(
+                manualLibraryId,
+                Boolean(active?.savedBindingDuringRun && (!result || !result.ok)),
+              );
+            }
+          }
+        }
         if (traceLibraryRequest) {
           logger?.info(
             "diag.library-request.dispatched",
@@ -6160,6 +6207,7 @@ async function startApplication(): Promise<void> {
     readBindings: () => readSyncBindings() as unknown as Record<string, SyncBindingLike>,
     writeBindings: (bindings) => writeSyncBindings(bindings as unknown as Record<string, SyncBindingRecord>),
     resolveCredentials: (serverId) => resolveSyncServerCredentials(serverId),
+    isManualSyncActive: (libraryId) => manualSyncRuns.has(libraryId),
     logger,
   });
   syncAutoScheduler.start();

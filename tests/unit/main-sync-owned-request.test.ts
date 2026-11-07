@@ -3,6 +3,7 @@ import { expect, test, vi } from "vitest";
 import { createPublicError } from "../../src/shared/protocol/errors";
 import {
   applySyncWorkerBindings,
+  bindingNeedsRunAfterManual,
   runSyncProbeWithRetry,
   tryHandleSyncOwnedRequest,
   type SyncOwnedRequestRuntime,
@@ -86,8 +87,18 @@ test("sync.library.binding.save triggers syncNow when enabled", async () => {
     directoryName: "Studio",
     enabled: true,
   });
-  expect(syncNow).toHaveBeenCalledWith("lib-1");
   expect(writeSyncBindings).toHaveBeenCalled();
+  expect(syncNow).not.toHaveBeenCalled();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(syncNow).toHaveBeenCalledWith("lib-1");
+});
+
+test("a same-target save is covered by an active manual run, but a rebind is not", () => {
+  const manual = { serverId: "server-1", directoryName: "Fixture" };
+  expect(bindingNeedsRunAfterManual({ serverId: "server-1", directoryName: "Fixture", enabled: true }, manual)).toBe(false);
+  expect(bindingNeedsRunAfterManual({ serverId: "server-1", directoryName: "Other", enabled: true }, manual)).toBe(true);
+  expect(bindingNeedsRunAfterManual({ serverId: "server-2", directoryName: "Fixture", enabled: true }, manual)).toBe(true);
+  expect(bindingNeedsRunAfterManual({ serverId: "server-2", directoryName: "Fixture", enabled: false }, manual)).toBe(false);
 });
 
 test("sync.run persists lastSyncedAt and keeps auto-sync off by default", () => {
@@ -114,6 +125,50 @@ test("sync.run persists lastSyncedAt and keeps auto-sync off by default", () => 
       enabled: false,
     },
   });
+});
+
+test("a completed manual sync preserves settings saved during the transfer", () => {
+  const writeSyncBindings = vi.fn();
+  const binding = {
+    serverId: "server-1",
+    directoryName: "Fixture",
+    enabled: true,
+    pollIntervalMs: 60_000,
+    showCardSyncStatus: false,
+  };
+  applySyncWorkerBindings(
+    { type: "sync.run.request", libraryId: "lib-1", serverId: "server-1", directoryName: "Fixture" },
+    { ok: true, type: "ai.config.saved" },
+    {
+      readSyncBindings: () => ({ "lib-1": binding }),
+      writeSyncBindings,
+      now: () => new Date("2026-11-07T00:00:00.000Z"),
+    },
+  );
+  expect(writeSyncBindings).toHaveBeenCalledWith({
+    "lib-1": { ...binding, lastSyncedAt: "2026-11-07T00:00:00.000Z" },
+  });
+});
+
+test("a completed old manual sync does not revert a newer remote binding", () => {
+  const writeSyncBindings = vi.fn();
+  const newer = {
+    serverId: "server-2",
+    directoryName: "Other",
+    enabled: true,
+    pollIntervalMs: 60_000,
+    showCardSyncStatus: false,
+  };
+  applySyncWorkerBindings(
+    { type: "sync.run.request", libraryId: "lib-1", serverId: "server-1", directoryName: "Fixture" },
+    { ok: true, type: "ai.config.saved" },
+    {
+      readSyncBindings: () => ({ "lib-1": newer }),
+      writeSyncBindings,
+      now: () => new Date("2026-11-07T00:00:00.000Z"),
+    },
+  );
+  expect(writeSyncBindings).not.toHaveBeenCalled();
 });
 
 test("sync.probe retries timeouts then returns the timeout error", async () => {
