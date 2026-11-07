@@ -23,11 +23,17 @@
 > 记为“人类验收通过”；该授权不自动延伸到后续会话或未实际操作的条目。
 > 2026-08-01：插件/脚本轨道改走自动化验收（见下表），与上条 Computer Use 人类等价授权无关。
 
+## 2026-11-07 查看器返回底部浏览位置
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| VIEWER-RETURN-001 / `Serpent-940c54` | 从查看器返回深处浏览画布 | 待人类验收 | 在资产较多的图片或视频库滚动到最底部，双击一项，分别用 Esc 和后退返回；返回后立刻继续滚动。 | 画布尽快显示原区域，不出现明显空白或跳顶；后续滚动不被恢复任务拉回。 | [开发记录](../development/2026-11-07-viewer-bottom-return-development-log.md) / `tests/e2e/viewer-close-scroll-restore.test.ts` | 隐藏 Electron 合成库 E2E 1 passed，键处理后显示约 5 ms；真实前台与大库待用户验收。 |
+
 ## 2026-11-06 开发态 Renderer 启动
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
 | --- | --- | --- | --- | --- | --- | --- |
-| DEV-START-001 / `Serpent-9d72f7` | 开发态启动时 Renderer 首次挂载 | 人类验收不通过（再次修订后待复验） | ① 在本地工作副本运行 `npm start`，观察首次启动。② 修改 Renderer 源码触发 Vite 重编后完整退出，再运行 `npm start`。③ 首次加载较慢时不要重复启动，确认最终出现主界面；随后再次启动应用，确认原窗口不会被重新加载。 | 窗口最终显示主界面，入口模块迟迟不执行时在原页面恢复挂载；若服务不可用或真实加载失败，日志给出可定位的状态。 | [开发与 QA 记录](../development/2026-11-06-dev-renderer-startup.md) / `src/main/dev-renderer-load.ts` / `tests/unit/dev-renderer-load.test.ts` | 2026-11-06 用户再次截图显示可见窗口在 120 秒后仍未挂载；当前无旧 Serpent/Vite 进程。隔离隐藏 `npm start` 已验证补发入口后挂载，定向单测与 typecheck 通过；前台 Computer Use 按用户此前选择未执行，等待真实可见窗口复验。 |
+| DEV-START-001 / `Serpent-9d72f7` | 开发态启动时 Renderer 首次挂载 | 人类验收通过 | ① 在本地工作副本运行 `npm start`，观察首次启动。② 修改 Renderer 源码触发 Vite 重编后完整退出，再运行 `npm start`。③ 首次加载较慢时不要重复启动，确认最终出现主界面；随后再次启动应用，确认原窗口不会被重新加载。 | 窗口最终显示主界面；脚本请求被网络切换中断时有证据地重建页面，正常冷加载不被主动打断。 | [开发与 QA 记录](../development/2026-11-06-dev-renderer-startup.md) / `src/main/dev-renderer-load.ts` / `tests/unit/dev-renderer-load.test.ts` | 2026-11-07 用户复测反馈「没有问题」；隔离隐藏实例此前复现 `ERR_NETWORK_CHANGED`，不带诊断已验证自动恢复并挂载，定向测试及 typecheck 通过。 |
 
 ## 2026-11-02 输入法确定与 Enter
 

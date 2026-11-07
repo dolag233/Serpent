@@ -2431,6 +2431,22 @@ async function createMainWindow(): Promise<void> {
   });
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    let devModuleNetworkChanged = false;
+    const devOrigin = new URL(MAIN_WINDOW_VITE_DEV_SERVER_URL).origin;
+    const devSession = window.webContents.session;
+    devSession.webRequest.onErrorOccurred(
+      { urls: [`${devOrigin}/*`] },
+      (details) => {
+        if (details.webContentsId === window.webContents.id
+          && details.resourceType === "script"
+          && details.error === "net::ERR_NETWORK_CHANGED") {
+          devModuleNetworkChanged = true;
+        }
+      },
+    );
+    window.once("closed", () => {
+      devSession.webRequest.onErrorOccurred(null);
+    });
     window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
       if (errorCode === -3) return; // aborted
       const detail = [
@@ -2446,6 +2462,11 @@ async function createMainWindow(): Promise<void> {
     });
     try {
       await loadRendererDevUrl(window, MAIN_WINDOW_VITE_DEV_SERVER_URL, logger, {
+        consumeNetworkChange: () => {
+          const changed = devModuleNetworkChanged;
+          devModuleNetworkChanged = false;
+          return changed;
+        },
         // A cold Vite module graph can leave a hidden BrowserWindow without a
         // first paint. Showing it after navigation lets Chromium schedule the
         // Renderer normally; the E2E hidden-window policy is still respected.

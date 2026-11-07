@@ -24,3 +24,13 @@
 - 隔离隐藏 `npm start`：不补发导入时复现初始入口未执行、`root=0`；手动在同一页面动态导入入口后出现 `mount-verified`。集成补发逻辑后，独立后台实例同样出现 `entry-retry` 和 `mount-verified`，没有页面重载。
 - 独立 Vite 服务加 Playwright 附着的隐藏 Electron，在普通与离屏配置下均出现应用根节点；强制重新优化依赖后也能挂载。这验证模块可执行，但不覆盖未附着的可见开发启动。
 - 用户最新截图的真实可见窗口仍失败；修订后的真实可见窗口未启动观察，未跑完整 E2E、Worker 或资源库可用性套件；本次只改开发态 Main 窗口加载流程。`DEV-START-001` 维持人类验收不通过，等待用户在当前源码执行 `npm start` 复验。
+
+## 2026-11-07：启动失败的直接错误与恢复
+
+用户再次报告 `npm start` 黑屏。隔离隐藏开发实例中，Chromium 网络诊断捕获到入口模块依赖的多条 `net::ERR_NETWORK_CHANGED`，而同一时刻 Vite 对这些模块仍返回 HTTP 200。失败后的同一文档不会重新执行静态入口；20 秒后的动态导入也失败。强制重建 Vite 依赖缓存、切换到固定 IPv4 环回地址都未消除该错误，因此不能把它归因于缓存或 `localhost` 解析。重启电脑曾让用户暂时恢复，但这里没有证据能确定是哪一个系统网络组件发起切换。
+
+Main 现在只在开发服务器的脚本请求确实报 `net::ERR_NETWORK_CHANGED` 时重建页面，最多四次；普通冷加载仍保持单次导航。隔离隐藏实例分别在启用诊断和移除诊断后复现网络错误，均于第二次或第三次导航挂载。真实可见窗口与用户的长期运行环境仍待复验，工单和 `DEV-START-001` 保持未验收。
+
+当次命令与结果：`npx vitest run tests/unit/dev-renderer-load.test.ts tests/unit/renderer-diagnostics.test.ts` 为 6 tests passed；`npm run typecheck` 通过；定向 ESLint 0 errors。隔离隐藏 `npm start` 的日志包含 `main.window.network-retry` 和 `main.window.mount-verified`。临时 Chromium 诊断已从最终代码移除。
+
+2026-11-07 用户复测当前开发态启动后确认「没有问题」，`DEV-START-001` 更新为人类验收通过。

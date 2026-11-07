@@ -5,6 +5,30 @@ import { loadRendererDevUrl } from "../../src/main/dev-renderer-load";
 const url = "http://localhost:5173";
 
 describe("development Renderer loading", () => {
+  it("reloads only when module requests were interrupted by a network change", async () => {
+    let now = 0;
+    let navigations = 0;
+    let changed = true;
+    const loadURL = vi.fn(async () => { navigations += 1; });
+    const window = {
+      loadURL,
+      webContents: {
+        executeJavaScript: vi.fn(async () => navigations >= 2),
+      },
+    };
+    await loadRendererDevUrl(window, url, undefined, {
+      now: () => now,
+      sleep: async (ms) => { now += ms; },
+      fetchUrl: async () => ({ ok: true }),
+      consumeNetworkChange: () => {
+        const value = changed;
+        changed = false;
+        return value;
+      },
+    });
+    expect(loadURL).toHaveBeenCalledTimes(2);
+    expect(now).toBe(500);
+  });
   it("keeps one navigation alive while a cold module graph takes over 20 seconds", async () => {
     let now = 0;
     let mountChecks = 0;

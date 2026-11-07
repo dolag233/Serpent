@@ -14,6 +14,7 @@ type LoadOptions = {
   sleep?: (ms: number) => Promise<void>;
   fetchUrl?: (url: string) => Promise<{ ok: boolean }>;
   onNavigated?: () => void;
+  consumeNetworkChange?: () => boolean;
 };
 
 const DEFAULT_SERVER_WAIT_MS = 60_000;
@@ -55,12 +56,14 @@ async function waitForRendererMounted(
   webContents: RendererWindow["webContents"],
   options: Required<Pick<LoadOptions, "mountWaitMs" | "pollMs" | "now" | "sleep">>,
   logger?: Pick<AppLogger, "info" | "error">,
-): Promise<boolean> {
+  consumeNetworkChange?: () => boolean,
+): Promise<"mounted" | "network-changed" | "timeout"> {
   const deadline = options.now() + options.mountWaitMs;
   const entryRetryAt = options.now() + 20_000;
   let entryRetried = false;
   while (options.now() < deadline) {
-    if (await isRendererMounted(webContents)) return true;
+    if (await isRendererMounted(webContents)) return "mounted";
+    if (consumeNetworkChange?.()) return "network-changed";
     if (!entryRetried && options.now() >= entryRetryAt) {
       entryRetried = true;
       // Vite can finish serving the page and its imports while Chromium never
@@ -74,7 +77,7 @@ async function waitForRendererMounted(
     }
     await options.sleep(options.pollMs);
   }
-  return isRendererMounted(webContents);
+  return await isRendererMounted(webContents) ? "mounted" : "timeout";
 }
 
 async function rendererLoadState(webContents: RendererWindow["webContents"]): Promise<string> {
@@ -123,9 +126,20 @@ export async function loadRendererDevUrl(
     config.onNavigated?.();
 
     logger?.info("main.window.mount-wait", "Waiting for the first Renderer mount.", { attempt, url });
-    if (await waitForRendererMounted(window.webContents, options, logger)) {
+    const mountResult = await waitForRendererMounted(
+      window.webContents, options, logger, config.consumeNetworkChange,
+    );
+    if (mountResult === "mounted") {
       logger?.info("main.window.mount-verified", "Renderer shell visible.", { attempt, url });
       return;
+    }
+    if (mountResult === "network-changed" && attempt < LOAD_ATTEMPTS) {
+      logger?.info("main.window.network-retry", "The dev module requests were interrupted by a network change; retrying the page.", { attempt });
+      await options.sleep(500);
+      continue;
+    }
+    if (mountResult === "network-changed") {
+      throw new Error(`Renderer module requests were repeatedly interrupted by network changes (${LOAD_ATTEMPTS} attempts).`);
     }
 
     // A successful loadURL can still be fetching/transforming the Vite module

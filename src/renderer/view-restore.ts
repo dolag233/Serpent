@@ -21,6 +21,7 @@ import {
 export interface BrowseViewSnapshot {
   scrollLeft: number;
   scrollTop: number;
+  maxScrollTop?: number;
   anchor: CanvasAnchor | null;
 }
 
@@ -35,12 +36,14 @@ export function captureBrowseViewSnapshot(
   cardRect: RectLike | null,
   scrollLeft: number,
   scrollTop: number,
+  maxScrollTop?: number,
 ): BrowseViewSnapshot {
-  if (!cardRect) return { scrollLeft, scrollTop, anchor: null };
+  const position = { scrollLeft, scrollTop, ...(maxScrollTop === undefined ? {} : { maxScrollTop }) };
+  if (!cardRect) return { ...position, anchor: null };
   const card: AnchorCard = { ...cardRect, assetId };
   const clientX = cardRect.left + cardRect.width / 2;
   const clientY = cardRect.top + cardRect.height / 2;
-  return { scrollLeft, scrollTop, anchor: captureAnchor(card, clientX, clientY) };
+  return { ...position, anchor: captureAnchor(card, clientX, clientY) };
 }
 
 export interface ScrollExtent {
@@ -68,7 +71,17 @@ export function browseRestoreExtentIsReady(
   if (extent.clientHeight <= 1 || extent.clientWidth <= 1) return false;
   const maxTop = Math.max(0, extent.scrollHeight - extent.clientHeight);
   const maxLeft = Math.max(0, extent.scrollWidth - extent.clientWidth);
-  if (snapshot.scrollTop > maxTop + 1) return false;
+  if (snapshot.scrollTop > maxTop + 1) {
+    // At the bottom, a slightly shorter settled layout cannot hold the exact
+    // old pixel offset. Accept its new bottom once most of the old extent is
+    // present; a still-collapsed virtual canvas remains unready.
+    const oldMax = snapshot.maxScrollTop;
+    if (oldMax === undefined
+      || oldMax - snapshot.scrollTop > 2
+      || maxTop <= 0
+      || maxTop < oldMax * 0.75
+      || oldMax - maxTop > extent.clientHeight) return false;
+  }
   if (snapshot.scrollLeft > maxLeft + 1) return false;
   return true;
 }

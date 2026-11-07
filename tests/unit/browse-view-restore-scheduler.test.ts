@@ -127,4 +127,33 @@ describe("scheduleBrowseViewRestore (VIEWER-001 / Serpent-bd481f)", () => {
     expect(onComplete).not.toHaveBeenCalled();
     expect(() => frames.flushOne()).toThrow(/No animation frame is queued/);
   });
+
+  it("reveals a settled bottom frame before the final stability frames", () => {
+    const frames = installAnimationFrameQueue();
+    const canvas = createScrollElement({ clientHeight: 600, scrollHeight: 9960 });
+    const snapshot = captureBrowseViewSnapshot("asset-1", null, 0, 9400, 9400);
+    const onPositionReady = vi.fn();
+    const onComplete = vi.fn();
+
+    scheduleBrowseViewRestore({ canvas, snapshot, isCurrent: () => true, onPositionReady, onComplete });
+    expect(canvas.scrollTop).toBe(9360);
+    expect(onPositionReady).toHaveBeenCalledTimes(1);
+    expect(onComplete).not.toHaveBeenCalled();
+    frames.flushOne();
+    frames.flushOne();
+    expect(onComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not overwrite a new scroll after the browse frame becomes visible", () => {
+    const frames = installAnimationFrameQueue();
+    const canvas = createScrollElement({ clientHeight: 600, scrollHeight: 8000 });
+    const snapshot = captureBrowseViewSnapshot("asset-1", null, 0, 2400, 7400);
+    const onComplete = vi.fn();
+    scheduleBrowseViewRestore({ canvas, snapshot, isCurrent: () => true, onComplete });
+    expect(canvas.scrollTop).toBe(2400);
+    canvas.scrollTop = 2040;
+    frames.flushOne();
+    expect(canvas.scrollTop).toBe(2040);
+    expect(onComplete).toHaveBeenCalledTimes(1);
+  });
 });

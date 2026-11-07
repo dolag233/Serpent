@@ -2398,6 +2398,7 @@ function AppInner() {
   // restoration causes a one-frame flash and can make Chromium paint at the
   // top of the canvas during a rapid open/close.
   const [previewRestoring, setPreviewRestoring] = useState(false);
+  const [previewCanvasReady, setPreviewCanvasReady] = useState(false);
   const previewModalRef = useRef<AssetPreviewModalHandle>(null);
   // REQ-CANVAS-019: read synchronously inside the canvas ResizeObserver
   // callback (which is created once and does not close over fresh state)
@@ -4374,6 +4375,7 @@ function AppInner() {
     previewRestoringRef.current = false;
     pendingViewportRestoreRef.current = null;
     setPreviewRestoring(false);
+    setPreviewCanvasReady(false);
     cancelPreviewViewRestoreRef.current?.();
     cancelPreviewViewRestoreRef.current = null;
     clearPreviewScrollHold();
@@ -4403,6 +4405,7 @@ function AppInner() {
         card?.getBoundingClientRect() ?? null,
         canvas.scrollLeft,
         canvas.scrollTop,
+        Math.max(0, canvas.scrollHeight - canvas.clientHeight),
       );
       logBrowseScrollWrite("openAssetPreview.capture", canvas, {
         snapshotTop: Math.round(canvas.scrollTop),
@@ -4530,8 +4533,14 @@ function AppInner() {
     const closeGeneration = ++previewCloseGenerationRef.current;
     closingPreviewRef.current = closingAsset.assetId;
     previewRestoringRef.current = restoreBrowsePosition;
-    setPreviewRestoring(restoreBrowsePosition);
-    setPreviewAsset(null);
+    // Commit the viewer teardown before measuring the browse extent. Measuring
+    // the still-open viewer restores against stale geometry; its next commit
+    // can then clamp a deep scroll back to zero.
+    flushSync(() => {
+      setPreviewRestoring(restoreBrowsePosition);
+      setPreviewCanvasReady(false);
+      setPreviewAsset(null);
+    });
     cancelWorkspaceViewportRestoreRef.current?.();
     cancelWorkspaceViewportRestoreRef.current = null;
     pendingViewportRestoreRef.current = null;
@@ -4617,12 +4626,18 @@ function AppInner() {
           canvas,
           snapshot: scrollSnapshot,
           isCurrent: () => closeGeneration === previewCloseGenerationRef.current,
+          onPositionReady: () => {
+            if (closeGeneration === previewCloseGenerationRef.current) {
+              setPreviewCanvasReady(true);
+            }
+          },
           onComplete: () => {
             if (closeGeneration !== previewCloseGenerationRef.current) return;
             cancelPreviewViewRestoreRef.current = null;
             armPreviewScrollHold(scrollSnapshot.scrollTop);
             previewRestoringRef.current = false;
             setPreviewRestoring(false);
+            setPreviewCanvasReady(false);
             previewRestoreFrameRef.current = window.requestAnimationFrame(() =>
               settleRestoredFocus(12),
             );
@@ -4631,6 +4646,7 @@ function AppInner() {
       } else {
         previewRestoringRef.current = false;
         setPreviewRestoring(false);
+        setPreviewCanvasReady(false);
         previewRestoreFrameRef.current = window.requestAnimationFrame(() =>
           settleRestoredFocus(12),
         );
@@ -4639,6 +4655,7 @@ function AppInner() {
     if (!restoreBrowsePosition) {
       clearPreviewScrollHold();
       setPreviewRestoring(false);
+      setPreviewCanvasReady(false);
     }
     try {
       if (api && library) {
@@ -15200,7 +15217,7 @@ function AppInner() {
         )}
         <div
           aria-busy={workspaceNavigationPending || workerRecoveryState === 'recovering'}
-          className={`workspace-canvas-host${previewAsset || previewRestoring ? " is-viewing" : ""}${previewRestoring ? " is-restoring" : ""}${workspaceNavigationPending ? " is-navigating" : ""}`}
+          className={`workspace-canvas-host${previewAsset || previewRestoring ? " is-viewing" : ""}${previewRestoring ? " is-restoring" : ""}${previewRestoring && previewCanvasReady ? " is-restore-visible" : ""}${workspaceNavigationPending ? " is-navigating" : ""}`}
         >
           {renderedToastStack.length > 0 || workerRecoveryState !== 'ready'
             ? createPortal(

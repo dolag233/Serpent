@@ -10751,6 +10751,14 @@ select.ai-config-input.ai-config-languages {
   pointer-events: none;
 }
 
+/* Show the restored browse frame as soon as its deep scroll position is
+   reachable; keep the host geometry fixed until the existing two-frame
+   stability check completes. */
+.workspace-canvas-host.is-restoring.is-restore-visible > .workspace-canvas {
+  visibility: visible;
+  pointer-events: auto;
+}
+
 .workspace-canvas-host.is-viewing > .activity-strip {
   pointer-events: auto;
 }

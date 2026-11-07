@@ -10,7 +10,7 @@ import { resolveElectronExecutablePath } from "./electron-test-helpers";
 test.describe.configure({ timeout: 120_000 });
 
 async function visibleCardId(window: Page): Promise<string> {
-  const assetId = await window.evaluate(() => {
+  const read = () => window.evaluate(() => {
     const canvas = document.querySelector(".workspace-canvas");
     if (!canvas) return "";
     const canvasBox = canvas.getBoundingClientRect();
@@ -26,6 +26,8 @@ async function visibleCardId(window: Page): Promise<string> {
     );
     return card?.dataset.assetId ?? "";
   });
+  await expect.poll(read, { timeout: 8_000 }).not.toBe("");
+  const assetId = await read();
   expect(assetId).not.toBe("");
   return assetId;
 }
@@ -96,7 +98,7 @@ test("closing the viewer keeps a deep browse scroll after the delayed reload", a
       .toBeGreaterThan(800);
 
     await canvas.evaluate((el) => {
-      el.scrollTop = (el.scrollHeight - el.clientHeight) * 0.85;
+      el.scrollTop = el.scrollHeight - el.clientHeight;
     });
     const beforeOpen = await canvas.evaluate((el) => el.scrollTop);
     expect(beforeOpen).toBeGreaterThan(400);
@@ -106,8 +108,11 @@ test("closing the viewer keeps a deep browse scroll after the delayed reload", a
     await expect(window.getByRole("region", { name: /查看页面/ })).toBeVisible({
       timeout: 15_000,
     });
+    const escapeReturnStarted = Date.now();
     await window.keyboard.press("Escape");
+    const escapePressedAt = Date.now();
     await expect(canvas).toBeVisible({ timeout: 15_000 });
+    console.info(`viewer-close bottom return: keyboard=${escapePressedAt - escapeReturnStarted}ms, reveal=${Date.now() - escapePressedAt}ms`);
     await canvas.evaluate((el) => {
       el.scrollTop = Math.max(0, el.scrollTop - 360);
     });
@@ -123,7 +128,7 @@ test("closing the viewer keeps a deep browse scroll after the delayed reload", a
     ).toBeLessThan(80);
 
     await canvas.evaluate((el) => {
-      el.scrollTop = (el.scrollHeight - el.clientHeight) * 0.85;
+      el.scrollTop = el.scrollHeight - el.clientHeight;
     });
     const beforeBack = await canvas.evaluate((el) => el.scrollTop);
     expect(beforeBack).toBeGreaterThan(400);

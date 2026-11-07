@@ -94,4 +94,14 @@ describe("resolveBrowseRestoreScroll", () => {
     expect(browseRestoreExtentIsReady(snapshot, collapsed)).toBe(false);
     expect(browseRestoreExtentIsReady(snapshot, extent)).toBe(true);
   });
+
+  it("accepts a nearby new bottom but waits for a still-short virtual extent", () => {
+    const snapshot = captureBrowseViewSnapshot("asset-1", null, 0, 9400, 9400);
+    expect(browseRestoreExtentIsReady(snapshot, {
+      scrollWidth: 800, clientWidth: 800, clientHeight: 600, scrollHeight: 9960,
+    })).toBe(true);
+    expect(browseRestoreExtentIsReady(snapshot, {
+      scrollWidth: 800, clientWidth: 800, clientHeight: 600, scrollHeight: 3000,
+    })).toBe(false);
+  });
 });
