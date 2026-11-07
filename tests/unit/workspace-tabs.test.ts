@@ -6,6 +6,7 @@ import {
   closeWorkspaceTabsExcept,
   createDefaultWorkspaceTabBrowseState,
   createWorkspaceTabs,
+  resolveWorkspaceTagExpression,
   getWorkspaceTab,
   moveWorkspaceTab,
   selectWorkspaceTab,
@@ -23,6 +24,22 @@ function ids(...values: string[]) {
 }
 
 describe("workspace tabs", () => {
+  it("migrates legacy selection filters but respects an explicitly empty expression", () => {
+    const base = createDefaultWorkspaceTabBrowseState().filters;
+    expect(resolveWorkspaceTagExpression({
+      ...base,
+      tagFilter: "A, B",
+      tagFilterMode: "selection",
+      tagFilterMatch: "any",
+    })).toBe('("A" | "B")');
+    expect(resolveWorkspaceTagExpression({
+      ...base,
+      tagFilter: "A",
+      tagFilterMode: "expression",
+      tagFilterExpression: "",
+    })).toBe("");
+  });
+
   it("detects browse state that will trigger an asynchronous discovery refresh", () => {
     const defaults = createDefaultWorkspaceTabBrowseState();
     expect(workspaceTabBrowseStateHasDiscoveryInput(defaults)).toBe(false);

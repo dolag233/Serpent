@@ -203,7 +203,7 @@ import {
   CONTENT_REPLACE_BATCH_MAX_ITEMS,
   CONTENT_REPLACE_STAGE_CHUNK_MAX_BYTES,
 } from '../shared/content-replace';
-import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type BrowseLayoutEntry, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type GitignorePreview, type IgnoredPath, type LinkedFolderDirectoryMutation, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchQuery, type SearchScope, type SortDefinition, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagCooccurrenceGraph, type TagSummary, type TrashedFolderSummary } from '../shared/asset-types';
+import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type BrowseLayoutEntry, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type GitignorePreview, type IgnoredPath, type LinkedFolderDirectoryMutation, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchExpressionNode, type SearchQuery, type SearchScope, type SortDefinition, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagCooccurrenceGraph, type TagSummary, type TrashedFolderSummary } from '../shared/asset-types';
 import {
   parseWritableAppearance,
   sanitizeEntityAppearance,
@@ -759,6 +759,8 @@ import {
   buildCatalogAssetVisibilityPredicates,
   buildCatalogCollectionScope,
   buildCatalogContextualSearchWhere,
+  buildCatalogExpressionFtsCandidate,
+  buildCatalogExpressionWhere,
   buildCatalogExplicitIgnoreSql,
   buildCatalogFilterWhere,
   buildCatalogFolderScopeClause,
@@ -767,6 +769,7 @@ import {
   catalogAssetSummaryFromRow,
   catalogBrowseLayoutEntryFromRow,
   catalogFtsCanNarrowSearchGroups,
+  catalogExpressionRankGroups,
   countCatalogNavigationAssets,
   foldCatalogImageSequenceSummaries,
   hasPositiveCatalogSearchClause,
@@ -976,6 +979,7 @@ interface DatabaseConnection {
   }): Promise<{ remainingPages: number; totalPages: number }>;
   close(): void;
   exec(sql: string): void;
+  function?(name: string, options: { deterministic: boolean }, callback: (value: string) => string): void;
   pragma(source: string, options?: { simple?: boolean }): unknown;
   prepare(sql: string): Statement;
   transaction<T>(operation: () => T): DatabaseTransaction<T>;
@@ -5909,6 +5913,8 @@ export function openConfiguredDatabase(
     connection = options.readonly
       ? new Database(filename, { readonly: true, ...(options.trace ? { verbose: options.trace } : {}) })
       : new Database(filename, options.trace ? { verbose: options.trace } : {});
+    if (!connection.function) throw new Error('SQLite search normalization is unavailable.');
+    connection.function('serpent_normalize_search_text', { deterministic: true }, normalizeSearchText);
     connection.pragma('foreign_keys = ON');
     connection.pragma('trusted_schema = ON');
     // A second Serpent process may be finishing a short SQLite transaction
@@ -6585,8 +6591,24 @@ function ensurePluginDerivedFieldsSchema(connection: DatabaseConnection): void {
 function normalizedSearchGroups(query: {
   clauses: SearchClause[];
   groups?: SearchGroup[];
+  expression?: { version: 1; root: SearchExpressionNode | null };
 }): SearchGroup[] {
   return normalizedCatalogSearchGroups(query);
+}
+
+function expressionHasPositiveText(root: SearchExpressionNode): boolean {
+  const visit = (node: SearchExpressionNode, negated: boolean): boolean => {
+    if (node.kind === 'NOT') return visit(node.child, !negated);
+    if (node.kind === 'TERM') return !negated && node.match === 'contains';
+    return node.children.some((child) => visit(child, negated));
+  };
+  return visit(root, false);
+}
+
+function expressionUsesSearchIndex(root: SearchExpressionNode): boolean {
+  if (root.kind === 'TERM') return root.match === 'contains';
+  if (root.kind === 'NOT') return expressionUsesSearchIndex(root.child);
+  return root.children.some(expressionUsesSearchIndex);
 }
 
 function hasPositiveSearchClause(groups: SearchGroup[]): boolean {
@@ -35329,7 +35351,7 @@ export class LibraryService {
   }
 
   private isDefaultBrowseIndexRequest(input: {
-    query?: { clauses: SearchClause[]; groups?: SearchGroup[] } | null;
+    query?: { clauses: SearchClause[]; groups?: SearchGroup[]; expression?: { version: 1; root: SearchExpressionNode | null } } | null;
     filters?: FilterClause[] | null;
     scope?: SearchScope | null;
     sort?: SortDefinition | null;
@@ -35651,7 +35673,7 @@ export class LibraryService {
 
   searchAssets(input: {
     libraryId: string;
-    query?: { clauses: SearchClause[]; groups?: SearchGroup[] } | null;
+    query?: { clauses: SearchClause[]; groups?: SearchGroup[]; expression?: { version: 1; root: SearchExpressionNode | null } } | null;
     filters?: FilterClause[] | null;
     scope?: SearchScope | null;
     sort?: SortDefinition | null;
@@ -35731,18 +35753,30 @@ export class LibraryService {
         : scopeMode || idsOnly || layoutOnly ? 0 : (input.offset ?? 0);
 
     const searchGroups = input.query ? normalizedSearchGroups(input.query) : [];
-    const hasQuery = searchGroups.length > 0;
-    const hasPositiveQuery = hasPositiveSearchClause(searchGroups);
+    const searchExpression = input.query?.expression?.root ?? null;
+    const hasQuery = searchGroups.length > 0 || searchExpression !== null;
+    const hasPositiveQuery = searchExpression
+      ? expressionHasPositiveText(searchExpression)
+      : hasPositiveSearchClause(searchGroups);
     // Serpent-verg.2 — lenient read: the trigram FTS path requires the FTS
     // tables to exist; older libraries fall back to the contextual substring
     // search instead of referencing a missing MATCH table.
-    const useTrigramIndex = hasQuery && hasSearchIndex && hasSearchFts && ftsCanNarrowSearchGroups(searchGroups);
-    const fts5Query = useTrigramIndex
-      ? buildCatalogFtsQuery(searchGroups)
+    const expressionFtsCandidate = searchExpression
+      ? buildCatalogExpressionFtsCandidate(searchExpression)
       : null;
-    const { sql: contextualSearchWhere, params: contextualSearchParams } = hasQuery
+    const useTrigramIndex = hasQuery && hasSearchIndex && hasSearchFts
+      && (ftsCanNarrowSearchGroups(searchGroups) || expressionFtsCandidate !== null);
+    const fts5Query = useTrigramIndex
+      ? expressionFtsCandidate ?? buildCatalogFtsQuery(searchGroups)
+      : null;
+    const legacySearchWhere = hasQuery && searchGroups.length > 0
       ? buildContextualSearchWhere(searchGroups, !hasSearchIndex)
       : { sql: '', params: [] };
+    const expressionSearchWhere = searchExpression
+      ? buildCatalogExpressionWhere(searchExpression, { assetOnly: !hasSearchIndex, includeAiTags: hasAiAssetTags })
+      : { sql: '', params: [] };
+    const contextualSearchWhere = [legacySearchWhere.sql, expressionSearchWhere.sql].filter(Boolean).join(' AND ');
+    const contextualSearchParams = [...legacySearchWhere.params, ...expressionSearchWhere.params];
     const { sql: filterWhere, params: filterParams } = this.buildFilterWhere(
       input.filters ?? [],
       { hasAiContent, hasAiAssetTags },
@@ -35773,7 +35807,9 @@ export class LibraryService {
     // appended after them in the data query.
     const { sql: orderBy, params: orderParams } = buildCatalogSortOrder({
       hasPositiveQuery,
-      searchGroups,
+      searchGroups: searchExpression
+        ? [...searchGroups, ...catalogExpressionRankGroups(searchExpression)]
+        : searchGroups,
       hasSearchIndex,
       sort: input.sort,
       revisionColumns,
@@ -35827,7 +35863,8 @@ export class LibraryService {
           artifactColumns.has('status') ? "AND chosen.status = 'ready'" : '',
         )
       : '';
-    const searchJoins = hasQuery && hasSearchIndex
+    const needsSearchIndex = searchGroups.length > 0 || (searchExpression !== null && expressionUsesSearchIndex(searchExpression));
+    const searchJoins = needsSearchIndex && hasSearchIndex
       ? `JOIN asset_search_index sc ON a.asset_id = sc.asset_id
          ${useTrigramIndex && hasSearchFts ? 'JOIN asset_search s ON sc.rowid = s.rowid' : ''}`
       : '';

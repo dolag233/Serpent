@@ -63,7 +63,8 @@ import { useAssetCardHoverPreview } from "./use-asset-card-hover-preview";
 import { SyncCardStatusBadge } from "./SyncCardStatusBadge";
 import { useSyncCardStatuses } from "./use-sync-card-status";
 import { resolveSearchSnippetCaption } from "./search-snippet-caption";
-import { parseSearchExpression, splitSearchHighlights } from "./search-expression";
+import { parseSearchExpressionDetailed, searchExpressionReasonKey, splitSearchHighlights } from "./search-expression";
+import type { parseSearchExpression } from "./search-expression";
 import { ConvertLinkedDialog } from "./ConvertLinkedDialog";
 import { LinkedRulesDialog } from "./LinkedRulesDialog";
 import { TagManagementWorkspace } from "./TagManagementWorkspace";
@@ -81,6 +82,7 @@ import {
   readSearchHistory,
   readVisibleSearchHistoryCount,
   rememberSearchQuery,
+  searchHistoryNavigationDirection,
 } from "./search-history";
 import { useWindowsBrowseShortcutBridge } from "./use-windows-browse-shortcut-bridge";
 import { useCollectionCommandShortcuts } from "./use-collection-command-shortcuts";
@@ -220,6 +222,7 @@ import type {
 } from "./workspace-render-snapshot-cache";
 import {
   createDefaultWorkspaceTabBrowseState,
+  resolveWorkspaceTagExpression,
   workspaceTabBrowseStateHasDiscoveryInput,
   type WorkspaceTabBrowseState,
   type WorkspaceTabSession,
@@ -381,7 +384,6 @@ import {
 } from "./canvas-asset-layout";
 import { useSelectionKeyboard } from "./use-selection-keyboard";
 import { useBrowseCommandKeyboard } from "./use-browse-command-keyboard";
-import { useWorkspaceTabShortcuts } from "./use-workspace-tab-shortcuts";
 import { resolveBrowsePasteDestination } from "./browse-paste-target";
 import { useWorkspaceMouseNavigation } from "./use-workspace-mouse-navigation";
 import {
@@ -776,6 +778,9 @@ type QueryFilterSnapshot = {
   formatFilter: string;
   excludeFormatFilter: boolean;
   tagFilter: string;
+  tagFilterExpression?: string;
+  tagFilterMode?: "selection" | "expression";
+  tagFilterLastValidExpression?: string;
   excludeTagFilter: boolean;
   excludedTagFilter: string;
   includeAiTagFilter: boolean;
@@ -1392,6 +1397,8 @@ function AppInner() {
     string | null
   >(null);
   const [searchValue, setSearchValue] = useState("");
+  const lastValidSearchQueryRef = useRef<{ scope: string; query: ReturnType<typeof parseSearchExpression> } | null>(null);
+  const lastValidFolderSearchQueryRef = useRef<{ scope: string; query: ReturnType<typeof parseSearchExpression> } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [storedSearchHistory, setStoredSearchHistory] = useState<{
     libraryId: string;
@@ -1420,6 +1427,9 @@ function AppInner() {
   const [colorFilterPrefs, setColorFilterPrefs] = useState(loadColorFilterPreferences);
   const [excludeColorFilter, setExcludeColorFilter] = useState(false);
   const [tagFilter, setTagFilter] = useState("");
+  const [tagFilterExpression, setTagFilterExpression] = useState("");
+  const [tagFilterMode, setTagFilterMode] = useState<"selection" | "expression">("expression");
+  const [tagFilterLastValidExpression, setTagFilterLastValidExpression] = useState("");
   const [excludeTagFilter, setExcludeTagFilter] = useState(false);
   const [excludedTagFilter, setExcludedTagFilter] = useState("");
   const [includeAiTagFilter, setIncludeAiTagFilter] = useState(true);
@@ -1485,61 +1495,6 @@ function AppInner() {
   const [searchSnippets, setSearchSnippets] = useState<Map<string, string>>(
     new Map(),
   );
-  // Serpent-f74e48: while a text term is present, surface matching folders
-  // (name or relative path) as a "Folders" section above the asset grid.
-  const searchFolderResults = useMemo(() => {
-    if (searchValue.trim() === "") return [];
-    return resolveSearchFolderResults({
-      query: parseSearchExpression(searchValue),
-      folders,
-      linkedFolders,
-    });
-  }, [searchValue, folders, linkedFolders]);
-  // Serpent-f74e48: fetch the real FolderBrowseEntry (cover previews + counts)
-  // for search-matched folders so the reused asset-browser folder cards show
-  // the same previews as normal browsing. Enrichment is keyed by the matched
-  // ref set so a slow older response never overwrites a newer search.
-  const searchFolderMatchKey = searchFolderResults.length
-    ? searchFolderResults
-        .map((result) => `${result.locationKind}:${result.folderId}`)
-        .join("|")
-    : null;
-  const [searchFolderRealKey, setSearchFolderRealKey] = useState<string | null>(
-    null,
-  );
-  const [searchFolderRealEntries, setSearchFolderRealEntries] = useState<
-    FolderBrowseEntry[]
-  >([]);
-  const searchFolderEntriesKeyRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!api || !library || searchFolderMatchKey === null) return;
-    searchFolderEntriesKeyRef.current = searchFolderMatchKey;
-    let cancelled = false;
-    void api
-      .listFolderEntriesByRefs({
-        libraryId: library.libraryId,
-        refs: searchFolderResults.map((result) => ({
-          locationKind: result.locationKind,
-          folderId: result.folderId,
-        })),
-      })
-      .then((result) => {
-        if (
-          !cancelled &&
-          result.ok &&
-          searchFolderEntriesKeyRef.current === searchFolderMatchKey
-        ) {
-          setSearchFolderRealKey(searchFolderMatchKey);
-          setSearchFolderRealEntries(result.value);
-        }
-      })
-      .catch(() => {
-        // Enrichment is best-effort: fall back to the lightweight entries.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [searchFolderMatchKey, searchFolderResults, library, api]);
   // Serpent-b8a853: one-time hint for the include-subfolders icon. The hint
   // key is per (library, folder scope); the actual flash decision needs the
   // browse canvas mode (folders-only = child-folder cards but zero direct
@@ -2041,6 +1996,69 @@ function AppInner() {
       );
     },
   });
+  // Serpent-f74e48: while a text term is present, surface matching folders
+  // (name or relative path) as a "Folders" section above the asset grid.
+  const searchFolderResults = useMemo(() => {
+    if (searchValue.trim() === "") return [];
+    const scopeKey = `${library?.libraryId ?? "no-library"}:${workspaceTabsState.activeTabId}`;
+    const parsed = parseSearchExpressionDetailed(searchValue);
+    const query = parsed.ok
+      ? { clauses: [], expression: parsed.expression }
+      : lastValidFolderSearchQueryRef.current?.scope === scopeKey
+        ? lastValidFolderSearchQueryRef.current.query
+        : { clauses: [] };
+    if (parsed.ok) lastValidFolderSearchQueryRef.current = { scope: scopeKey, query };
+    return resolveSearchFolderResults({
+      query,
+      folders,
+      linkedFolders,
+    });
+  }, [searchValue, folders, linkedFolders, library?.libraryId, workspaceTabsState.activeTabId]);
+  // Serpent-f74e48: fetch the real FolderBrowseEntry (cover previews + counts)
+  // for search-matched folders so the reused asset-browser folder cards show
+  // the same previews as normal browsing. Enrichment is keyed by the matched
+  // ref set so a slow older response never overwrites a newer search.
+  const searchFolderMatchKey = searchFolderResults.length
+    ? searchFolderResults
+        .map((result) => `${result.locationKind}:${result.folderId}`)
+        .join("|")
+    : null;
+  const [searchFolderRealKey, setSearchFolderRealKey] = useState<string | null>(
+    null,
+  );
+  const [searchFolderRealEntries, setSearchFolderRealEntries] = useState<
+    FolderBrowseEntry[]
+  >([]);
+  const searchFolderEntriesKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!api || !library || searchFolderMatchKey === null) return;
+    searchFolderEntriesKeyRef.current = searchFolderMatchKey;
+    let cancelled = false;
+    void api
+      .listFolderEntriesByRefs({
+        libraryId: library.libraryId,
+        refs: searchFolderResults.map((result) => ({
+          locationKind: result.locationKind,
+          folderId: result.folderId,
+        })),
+      })
+      .then((result) => {
+        if (
+          !cancelled &&
+          result.ok &&
+          searchFolderEntriesKeyRef.current === searchFolderMatchKey
+        ) {
+          setSearchFolderRealKey(searchFolderMatchKey);
+          setSearchFolderRealEntries(result.value);
+        }
+      })
+      .catch(() => {
+        // Enrichment is best-effort: fall back to the lightweight entries.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [searchFolderMatchKey, searchFolderResults, library, api]);
   const beginBrowsePageClearingSimilar = useCallback(
     (...args: Parameters<typeof beginBrowsePage>) => {
       const definition = args[0];
@@ -3453,6 +3471,8 @@ function AppInner() {
       formatFilter,
       excludeFormatFilter,
       tagFilter,
+      tagFilterExpression,
+      tagFilterMode,
       excludeTagFilter,
       excludedTagFilter,
       includeAiTagFilter,
@@ -3489,6 +3509,8 @@ function AppInner() {
     formatFilter,
     excludeFormatFilter,
     tagFilter,
+    tagFilterExpression,
+    tagFilterMode,
     excludeTagFilter,
     excludedTagFilter,
     includeAiTagFilter,
@@ -5602,6 +5624,9 @@ function AppInner() {
         excludeColorFilter,
         colorSimilarity,
         tagFilter,
+        tagFilterExpression,
+        tagFilterMode,
+        tagFilterLastValidExpression,
         excludeTagFilter,
         excludedTagFilter,
         includeAiTagFilter,
@@ -5813,7 +5838,15 @@ function AppInner() {
     setColorFilter(state.filters.colorFilter);
     setColorSimilarity(state.filters.colorSimilarity ?? DEFAULT_COLOR_SIMILARITY);
     setExcludeColorFilter(state.filters.excludeColorFilter);
+    const restoredTagExpression = resolveWorkspaceTagExpression(state.filters);
     setTagFilter(state.filters.tagFilter);
+    setTagFilterExpression(restoredTagExpression);
+    setTagFilterMode("expression");
+    setTagFilterLastValidExpression(
+      state.filters.tagFilterLastValidExpression?.trim()
+        ? state.filters.tagFilterLastValidExpression
+        : restoredTagExpression,
+    );
     setExcludeTagFilter(state.filters.excludeTagFilter);
     setExcludedTagFilter(state.filters.excludedTagFilter ?? "");
     setIncludeAiTagFilter(state.filters.includeAiTagFilter);
@@ -6534,6 +6567,9 @@ function AppInner() {
     setColorFilter("");
     setExcludeColorFilter(false);
     setTagFilter("");
+    setTagFilterExpression("");
+    setTagFilterLastValidExpression("");
+    setTagFilterMode("expression");
     setExcludeTagFilter(false);
     setExcludedTagFilter("");
     setIncludeAiTagFilter(true);
@@ -6559,6 +6595,9 @@ function AppInner() {
     setColorFilter("");
     setExcludeColorFilter(false);
     setTagFilter("");
+    setTagFilterExpression("");
+    setTagFilterLastValidExpression("");
+    setTagFilterMode("expression");
     setExcludeTagFilter(false);
     setExcludedTagFilter("");
     setIncludeAiTagFilter(true);
@@ -7895,6 +7934,9 @@ function AppInner() {
       formatFilter,
       excludeFormatFilter,
       tagFilter,
+      tagFilterExpression,
+      tagFilterMode,
+      tagFilterLastValidExpression,
       excludeTagFilter,
       excludedTagFilter,
       includeAiTagFilter,
@@ -7943,7 +7985,25 @@ function AppInner() {
         values: formatValues,
         exclude: filtersState.excludeFormatFilter,
       });
-    filters.push(...buildTagFilterClauses(
+    if (filtersState.tagFilterMode === "expression") {
+      const parsedTags = parseSearchExpressionDetailed(filtersState.tagFilterExpression ?? "", "tags");
+      if (!parsedTags.ok && filtersState.tagFilterLastValidExpression) {
+        const lastValidTags = parseSearchExpressionDetailed(filtersState.tagFilterLastValidExpression, "tags");
+        if (lastValidTags.ok && lastValidTags.expression.root) filters.push({
+          field: "tag_expression", exclude: false as const,
+          expression: lastValidTags.expression,
+          expressionSource: filtersState.tagFilterLastValidExpression,
+          includeAi: filtersState.includeAiTagFilter,
+        });
+      }
+      if (parsedTags.ok && parsedTags.expression.root) filters.push({
+        field: "tag_expression",
+        exclude: false as const,
+        expression: parsedTags.expression,
+        expressionSource: filtersState.tagFilterExpression,
+        includeAi: filtersState.includeAiTagFilter,
+      });
+    } else filters.push(...buildTagFilterClauses(
       resolveTagFilterSets({
         tagFilter: overrides.tagFilter ?? filtersState.tagFilter,
         excludeTagFilter: overrides.excludeTagFilter ?? filtersState.excludeTagFilter,
@@ -8023,16 +8083,24 @@ function AppInner() {
       if (range)
         filters.push({ field, ranges: [range], exclude: input.exclude });
     }
+    const requestedSearch = overrides.searchValue === undefined
+      ? searchValue
+      : overrides.searchValue ?? "";
+    const searchParse = parseSearchExpressionDetailed(requestedSearch);
+    const searchScopeKey = `${library?.libraryId ?? "no-library"}:${workspaceTabsState.activeTabId}`;
+    if (searchParse.ok && overrides.searchValue === undefined) {
+      lastValidSearchQueryRef.current = { scope: searchScopeKey, query: { clauses: [], expression: searchParse.expression, expressionSource: requestedSearch } };
+    }
     return {
       ...((overrides.searchValue === undefined
         ? searchValue
         : overrides.searchValue ?? "").trim()
         ? {
-            search: parseSearchExpression(
-              overrides.searchValue === undefined
-                ? searchValue
-                : overrides.searchValue ?? "",
-            ),
+            search: searchParse.ok
+              ? { clauses: [], expression: searchParse.expression, expressionSource: requestedSearch }
+              : lastValidSearchQueryRef.current?.scope === searchScopeKey
+                ? lastValidSearchQueryRef.current.query
+                : { clauses: [] },
           }
         : {}),
       ...(filters.length > 0 ? { filters } : {}),
@@ -8057,6 +8125,9 @@ function AppInner() {
         formatFilter: state.filters.formatFilter,
         excludeFormatFilter: state.filters.excludeFormatFilter,
         tagFilter: state.filters.tagFilter,
+        tagFilterExpression: state.filters.tagFilterExpression,
+        tagFilterMode: state.filters.tagFilterMode,
+        tagFilterLastValidExpression: state.filters.tagFilterLastValidExpression,
         excludeTagFilter: state.filters.excludeTagFilter,
         excludedTagFilter: state.filters.excludedTagFilter ?? "",
         includeAiTagFilter: state.filters.includeAiTagFilter,
@@ -9515,6 +9586,11 @@ function AppInner() {
   ) {
     event?.preventDefault();
     if (workerRecoveryStateRef.current !== 'ready') return;
+    if (
+      (searchValue.trim() && !parseSearchExpressionDetailed(searchValue).ok) ||
+      (tagFilterMode === "expression" && tagFilterExpression.trim()
+        && !parseSearchExpressionDetailed(tagFilterExpression, "tags").ok)
+    ) return;
     if (event) {
       searchHistoryDismissedUntilInputRef.current = true;
       setSearchHistoryOpen(false);
@@ -9573,11 +9649,19 @@ function AppInner() {
   }
 
   useEffect(() => {
+    const searchIsInvalid = Boolean(searchValue.trim()) && !parseSearchExpressionDetailed(searchValue).ok;
+    const tagExpressionIsInvalid = tagFilterMode === "expression"
+      && Boolean(tagFilterExpression.trim())
+      && !parseSearchExpressionDetailed(tagFilterExpression, "tags").ok;
+    // Keep the current cards in place while the user is typing an incomplete
+    // expression. Do not send the last valid AST as a new Worker request.
+    if (searchIsInvalid || tagExpressionIsInvalid) return;
     const hasDiscoveryInput = Boolean(
       searchValue.trim() ||
       colorFilter.trim() ||
       formatFilter.trim() ||
-      tagFilter.trim() ||
+      (tagFilterMode === "selection" && tagFilter.trim()) ||
+      (tagFilterMode === "expression" && tagFilterExpression.trim()) ||
       ratingFilter.trim() ||
       favoriteFilter !== "any" ||
       sourceUrlFilter !== "any" ||
@@ -9645,6 +9729,9 @@ function AppInner() {
     formatFilter,
     excludeFormatFilter,
     tagFilter,
+    tagFilterExpression,
+    tagFilterMode,
+    tagFilterLastValidExpression,
     excludeTagFilter,
     excludedTagFilter,
     includeAiTagFilter,
@@ -12284,20 +12371,6 @@ function AppInner() {
     else void closeAssetPreview();
   }
 
-  useWorkspaceTabShortcuts({
-    enabled: Boolean(library),
-    platform: SHORTCUT_PLATFORM,
-    busy,
-    tabCount: workspaceTabsState.tabs.length,
-    previewOpen: Boolean(previewAsset),
-    onNewTab: () => {
-      void addWorkspaceTab();
-    },
-    onCloseTab: () => {
-      void closeWorkspaceTab(workspaceTabsState.activeTabId);
-    },
-  });
-
   useBrowseCommandKeyboard({
     enabled: Boolean(library) && !showTagManagement && !showPluginSidebarView,
     platform: SHORTCUT_PLATFORM,
@@ -14357,24 +14430,19 @@ function AppInner() {
                   setSearchHistoryOpen(true);
                 }}
                 onKeyDown={(event) => {
-                  if (isImeKeyboardEvent(event)) return;
                   const matches = filterSearchHistory(searchHistory, searchValue);
                   const visibleCount = Math.min(
                     matches.length,
                     readVisibleSearchHistoryCount() ?? matches.length,
                   );
                   if (!searchHistoryOpen || visibleCount === 0) return;
-                  if (
-                    event.key === "ArrowDown" ||
-                    event.key === "ArrowUp" ||
-                    event.key === "ArrowRight" ||
-                    event.key === "ArrowLeft"
-                  ) {
+                  if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                    setSearchHistoryActiveIndex(-1);
+                    return;
+                  }
+                  const direction = searchHistoryNavigationDirection(event.key);
+                  if (direction) {
                     event.preventDefault();
-                    const direction =
-                      event.key === "ArrowDown" || event.key === "ArrowRight"
-                        ? "next"
-                        : "previous";
                     setSearchHistoryActiveIndex((current) =>
                       moveSearchHistoryIndex(current, visibleCount, direction),
                     );
@@ -14477,6 +14545,14 @@ function AppInner() {
                   <Icon name="close" size={12} />
                 </button>
               )}
+              {searchValue.trim() !== "" && (() => {
+                const result = parseSearchExpressionDetailed(searchValue);
+                return result.ok ? null : (
+                  <span className="search-expression-error" role="alert">
+                    {t("toolbar.searchExpressionError", { position: result.diagnostic.start + 1, reason: t(`toolbar.searchExpressionReasons.${searchExpressionReasonKey(result.diagnostic.code)}`) })}
+                  </span>
+                );
+              })()}
             </div>
           </form>
         </div>
@@ -15000,7 +15076,18 @@ function AppInner() {
               // Explicit filter-bar edits leave the tag-management AND mode.
               setTagFilterMatch("any");
               setTagFilter(value);
+              setTagFilterExpression("");
             }}
+            tagFilterExpression={tagFilterExpression}
+            tagFilterLastValidExpression={tagFilterLastValidExpression}
+            tagFilterMode={tagFilterMode}
+            setTagFilterExpression={(value) => {
+              setTagFilterExpression(value);
+              if (parseSearchExpressionDetailed(value, "tags").ok) setTagFilterLastValidExpression(value);
+            }}
+            setTagFilterMode={setTagFilterMode}
+            tagFilterMatch={tagFilterMatch}
+            setTagFilterMatch={setTagFilterMatch}
             setExcludedTagFilter={setExcludedTagFilter}
             setWidthRange={setWidthRange}
             shuffleActive={shuffleSeed !== null}
@@ -15016,6 +15103,9 @@ function AppInner() {
               formatFilter,
               excludeFormatFilter,
               tagFilter,
+              tagFilterExpression,
+              tagFilterMode,
+              tagFilterLastValidExpression,
               excludeTagFilter,
               excludedTagFilter,
               includeAiTagFilter,
@@ -15825,7 +15915,6 @@ function AppInner() {
                                     }}
                                     onKeyDown={(event) => {
                                       event.stopPropagation();
-                                      if (isImeKeyboardEvent(event)) return;
                                       if (event.key === "Enter") {
                                         event.preventDefault();
                                         void submitAssetRename();

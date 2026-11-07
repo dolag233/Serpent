@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import type { AssetSummary, BrowseLayoutEntry, FilterClause, SearchScope, SortDefinition } from '../shared/asset-types';
+import type { AssetSummary, BrowseLayoutEntry, FilterClause, SearchExpressionNode, SearchScope, SortDefinition } from '../shared/asset-types';
 import { parseLinkedVirtualFolderId } from '../shared/linked-folder-tree';
 import { colorFilterSql, parseColorFilterValues } from '../shared/color-filter-presets';
 import { knownProductFormatExtensionsDotless } from '../shared/product-format-extensions';
@@ -72,6 +72,44 @@ export function catalogFtsCanNarrowSearchGroups(groups: CatalogSearchGroup[]): b
   );
 }
 
+/** A necessary FTS condition for an expression, without distributing AND over OR. */
+export function buildCatalogExpressionFtsCandidate(root: SearchExpressionNode): string | null {
+  const visit = (node: SearchExpressionNode): string | null => {
+    if (node.kind === 'TERM') {
+      if (node.match !== 'contains') return null;
+      const clause: SearchClause = { field: node.field, values: [node.value], exclude: false };
+      return catalogFtsCanNarrowSearchGroups([[clause]])
+        ? buildCatalogFtsQuery([[clause]])
+        : null;
+    }
+    if (node.kind === 'NOT') return null;
+    const children = node.children.map(visit);
+    // Every OR arm must have a candidate. An AND only needs one necessary
+    // condition; keeping all available arms makes the candidate more precise.
+    if (node.kind === 'OR' && children.some((child) => child === null)) return null;
+    const usable = children.filter((child): child is string => child !== null);
+    if (usable.length === 0) return null;
+    return usable.length === 1 ? usable[0]! : `(${usable.join(node.kind === 'AND' ? ' AND ' : ' OR ')})`;
+  };
+  return visit(root);
+}
+
+/** Positive text atoms retain the existing best-field relevance rank. */
+export function catalogExpressionRankGroups(root: SearchExpressionNode): CatalogSearchGroup[] {
+  const terms: SearchClause[] = [];
+  const visit = (node: SearchExpressionNode, negated: boolean): void => {
+    if (node.kind === 'TERM') {
+      if (!negated && node.match === 'contains')
+        terms.push({ field: node.field, values: [node.value], exclude: false });
+      return;
+    }
+    if (node.kind === 'NOT') visit(node.child, !negated);
+    else node.children.forEach((child) => visit(child, negated));
+  };
+  visit(root, false);
+  return terms.length > 0 ? [terms] : [];
+}
+
 function searchFieldsForClause(field: string | null): readonly SearchIndexField[] {
   if (field === null) return SEARCH_INDEX_FIELDS;
   return SEARCH_INDEX_FIELDS.includes(field as SearchIndexField)
@@ -133,6 +171,51 @@ export function buildCatalogContextualSearchWhere(
         : `(${groupExpressions.join(' OR ')})`,
     params,
   };
+}
+
+/** Compile the bounded shared AST directly into parameterized boolean SQL. */
+export function buildCatalogExpressionWhere(
+  root: SearchExpressionNode | null,
+  options: { includeAiTags?: boolean; assetOnly?: boolean; tagRelationContains?: boolean } = {},
+): { sql: string; params: unknown[] } {
+  const params: unknown[] = [];
+  const visit = (node: SearchExpressionNode): string => {
+    if (node.kind === 'NOT') return `(NOT (${visit(node.child)}))`;
+    if (node.kind === 'AND' || node.kind === 'OR') {
+      const op = node.kind === 'AND' ? ' AND ' : ' OR ';
+      return `(${node.children.map(visit).join(op)})`;
+    }
+    if (node.match === 'exact_tag') {
+      params.push(node.value);
+      const human = `EXISTS (SELECT 1 FROM human_asset_tags hat JOIN tags t ON t.tag_id = hat.tag_id WHERE hat.asset_id = a.asset_id AND t.name COLLATE NOCASE = ?)`;
+      if (options.includeAiTags === false) return `(${human})`;
+      params.push(node.value);
+      return `(${human} OR EXISTS (SELECT 1 FROM ai_asset_tags aat JOIN tags t ON t.tag_id = aat.tag_id WHERE aat.asset_id = a.asset_id AND t.name COLLATE NOCASE = ?))`;
+    }
+    if (node.field === 'tags' && options.tagRelationContains) {
+      const value = normalizeSearchText(node.value).trim();
+      if (!value) return '0';
+      params.push(value);
+      const human = `EXISTS (SELECT 1 FROM human_asset_tags hat JOIN tags t ON t.tag_id = hat.tag_id WHERE hat.asset_id = a.asset_id AND instr(serpent_normalize_search_text(t.name), ?) > 0)`;
+      if (options.includeAiTags === false) return `(${human})`;
+      params.push(value);
+      return `(${human} OR EXISTS (SELECT 1 FROM ai_asset_tags aat JOIN tags t ON t.tag_id = aat.tag_id WHERE aat.asset_id = a.asset_id AND instr(serpent_normalize_search_text(t.name), ?) > 0))`;
+    }
+    const fields = searchFieldsForClause(node.field);
+    const value = normalizeSearchText(node.value).trim();
+    if (!value || fields.length === 0) return '0';
+    const pieces = fields.flatMap((field) => {
+      if (options.assetOnly) {
+        if (field !== 'filename' && field !== 'folder_path') return [];
+        params.push(value);
+        return ['instr(a.relative_file_path, ?) > 0'];
+      }
+      params.push(value);
+      return [`instr(sc.${field}, ?) > 0`];
+    });
+    return pieces.length === 0 ? '0' : pieces.length === 1 ? `(${pieces[0]})` : `(${pieces.join(' OR ')})`;
+  };
+  return { sql: root ? visit(root) : '', params };
 }
 
 /** Exact/prefix/contains relevance, with filename/tag field priority. */
@@ -221,6 +304,17 @@ export function buildCatalogFilterWhere(
   const params: unknown[] = [];
 
   for (const filter of filters) {
+    if (filter.field === 'tag_expression') {
+      const built = buildCatalogExpressionWhere(filter.expression.root, {
+        includeAiTags: filter.includeAi !== false && options.hasAiAssetTags,
+        tagRelationContains: true,
+      });
+      if (built.sql) {
+        conditions.push(`(${built.sql})`);
+        params.push(...built.params);
+      }
+      continue;
+    }
     if ('ranges' in filter) {
       const width = 'COALESCE(duration_meta.width, technical_thumbnail.width)';
       const height = 'COALESCE(duration_meta.height, technical_thumbnail.height)';

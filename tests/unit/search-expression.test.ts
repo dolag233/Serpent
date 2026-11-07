@@ -1,46 +1,77 @@
 import { describe, expect, it } from 'vitest';
+import { searchExpressionSchema } from '../../src/shared/asset-types';
 
 import { formatDuration, parseNumericRange } from '../../src/renderer/App';
-import { parseSearchExpression, splitSearchHighlights } from '../../src/renderer/search-expression';
+import { parseSearchExpression, parseSearchExpressionDetailed, splitSearchHighlights } from '../../src/renderer/search-expression';
 
 describe('renderer search expression parser', () => {
+  it('rejects exact tag nodes that claim another field at the protocol boundary', () => {
+    expect(searchExpressionSchema.safeParse({ version: 1, root: {
+      kind: 'TERM', field: 'filename', match: 'exact_tag', value: 'Forest',
+    } }).success).toBe(false);
+  });
   it('maps human field aliases and keeps a quoted phrase together', () => {
-    expect(parseSearchExpression('name:"hero concept" tag:y2k')).toEqual({
-      clauses: [
-        { field: 'filename', values: ['hero concept'], exclude: false },
-        { field: 'tags', values: ['y2k'], exclude: false },
+    expect(parseSearchExpression('name:"hero concept" tag:y2k').expression?.root).toEqual({
+      kind: 'AND', children: [
+        { kind: 'TERM', field: 'filename', match: 'contains', value: 'hero concept', quoted: true },
+        { kind: 'TERM', field: 'tags', match: 'contains', value: 'y2k', quoted: false },
       ],
     });
   });
 
   it('treats whitespace as AND, pipe as OR, and minus as an exclusion', () => {
-    expect(parseSearchExpression('tag:角色 -desc:草图 | author:Jane')).toEqual({
-      clauses: [],
-      groups: [
-        [
-          { field: 'tags', values: ['角色'], exclude: false },
-          { field: 'description', values: ['草图'], exclude: true },
-        ],
-        [{ field: 'author', values: ['Jane'], exclude: false }],
+    expect(parseSearchExpression('tag:角色 -desc:草图 | author:Jane').expression?.root).toMatchObject({
+      kind: 'OR', children: [
+        { kind: 'AND', children: [
+          { kind: 'TERM', field: 'tags', value: '角色' },
+          { kind: 'NOT', child: { kind: 'TERM', field: 'description', value: '草图' } },
+        ] },
+        { kind: 'TERM', field: 'author', value: 'Jane' },
       ],
     });
   });
 
   it('keeps pipe and spaces literal inside a quoted phrase', () => {
-    expect(parseSearchExpression('desc:"y2k | poster art"')).toEqual({
-      clauses: [
-        { field: 'description', values: ['y2k | poster art'], exclude: false },
-      ],
+    expect(parseSearchExpression('desc:"y2k | poster art"').expression?.root).toMatchObject({
+      kind: 'TERM', field: 'description', value: 'y2k | poster art', quoted: true,
     });
   });
 
   it('does not reserve legacy NOT or OR words', () => {
-    expect(parseSearchExpression('OR NOT')).toEqual({
-      clauses: [
-        { field: null, values: ['OR'], exclude: false },
-        { field: null, values: ['NOT'], exclude: false },
+    expect(parseSearchExpression('OR NOT').expression?.root).toMatchObject({ kind: 'AND', children: [
+      { kind: 'TERM', value: 'OR' }, { kind: 'TERM', value: 'NOT' },
+    ] });
+  });
+
+  it('honors grouping, exact tag membership, and field-specific legacy contains semantics', () => {
+    expect(parseSearchExpressionDetailed('(tag=A | tag=B) tag=C -tag=D').expression?.root).toMatchObject({
+      kind: 'AND', children: [
+        { kind: 'OR', children: [
+          { kind: 'TERM', field: 'tags', match: 'exact_tag', value: 'A' },
+          { kind: 'TERM', field: 'tags', match: 'exact_tag', value: 'B' },
+        ] },
+        { kind: 'TERM', field: 'tags', match: 'exact_tag', value: 'C' },
+        { kind: 'NOT', child: { kind: 'TERM', field: 'tags', match: 'exact_tag', value: 'D' } },
       ],
     });
+    expect(parseSearchExpressionDetailed('tag:A').expression?.root).toMatchObject({ kind: 'TERM', match: 'contains', value: 'A' });
+  });
+
+  it('parses quoted tag names, escaped quotes, and parentheses inside words', () => {
+    expect(parseSearchExpressionDetailed('-"带 空格标签"', 'tags').expression?.root).toMatchObject({
+      kind: 'NOT', child: { kind: 'TERM', field: 'tags', match: 'exact_tag', value: '带 空格标签' },
+    });
+    expect(parseSearchExpressionDetailed('tag="带 空格标签"').expression?.root).toMatchObject({ kind: 'TERM', match: 'exact_tag', value: '带 空格标签' });
+    expect(parseSearchExpressionDetailed('image(1).png').expression?.root).toMatchObject({ kind: 'TERM', value: 'image(1).png' });
+  });
+
+  it.each([
+    ['"', 'unclosed_quote'], ['()', 'empty_group'], ['A || B', 'empty_or'], ['| A', 'empty_or'],
+    ['A |', 'empty_or'], ['-', 'missing_term'], ['name:', 'empty_field'], ['""', 'empty_field'], ['image(1', 'unmatched_parenthesis'],
+  ] as const)('reports invalid syntax %s', (text, code) => {
+    const result = parseSearchExpressionDetailed(text);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.diagnostic.code).toBe(code);
   });
 
   it('keeps only matching visible filename spans highlighted', () => {

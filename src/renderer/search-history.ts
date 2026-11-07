@@ -134,3 +134,10 @@ export function moveSearchHistoryIndex(
   if (current <= 0) return -1;
   return current - 1;
 }
+
+/** Horizontal arrows belong to the text field, even while history is open. */
+export function searchHistoryNavigationDirection(key: string): "next" | "previous" | null {
+  if (key === "ArrowDown") return "next";
+  if (key === "ArrowUp") return "previous";
+  return null;
+}

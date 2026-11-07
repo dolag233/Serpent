@@ -23,6 +23,20 @@
 > 记为“人类验收通过”；该授权不自动延伸到后续会话或未实际操作的条目。
 > 2026-08-01：插件/脚本轨道改走自动化验收（见下表），与上条 Computer Use 人类等价授权无关。
 
+## 2026-11-06 开发态 Renderer 启动
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| DEV-START-001 / `Serpent-9d72f7` | 开发态启动时 Renderer 首次挂载 | 人类验收不通过（再次修订后待复验） | ① 在本地工作副本运行 `npm start`，观察首次启动。② 修改 Renderer 源码触发 Vite 重编后完整退出，再运行 `npm start`。③ 首次加载较慢时不要重复启动，确认最终出现主界面；随后再次启动应用，确认原窗口不会被重新加载。 | 窗口最终显示主界面，入口模块迟迟不执行时在原页面恢复挂载；若服务不可用或真实加载失败，日志给出可定位的状态。 | [开发与 QA 记录](../development/2026-11-06-dev-renderer-startup.md) / `src/main/dev-renderer-load.ts` / `tests/unit/dev-renderer-load.test.ts` | 2026-11-06 用户再次截图显示可见窗口在 120 秒后仍未挂载；当前无旧 Serpent/Vite 进程。隔离隐藏 `npm start` 已验证补发入口后挂载，定向单测与 typecheck 通过；前台 Computer Use 按用户此前选择未执行，等待真实可见窗口复验。 |
+
+## 2026-11-02 输入法确定与 Enter
+
+## 2026-11-05 统一搜索与标签表达式
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| SEARCH-EXPR-001 / `Serpent-103059` | 搜索框与标签主输入使用统一表达式，并保留旧点选筛选 | 人类验收不通过 | ① 在测试库给 5 个资产分别添加 A+C、B+C、A+C+D、A、AA+C；搜索 `(tag=A | tag=B) tag=C -tag=D`。② 在同一文件夹范围单独搜索 `-tag=D`。③ 打开标签面板，不切换模式，确认唯一主输入直接接受空格、`|`、`-`、双引号和括号；悬停或聚焦输入框旁的问号查看语法说明；在表达式词项处输入一部分并点选建议，确认替换为完整标签；右键建议验证排除。④ 故意输入未闭合引号/括号后修正。⑤ 恢复旧工作区点选条件并确认迁移后表达式等价；保存智能合集、完整退出并重开后验证。 | ① 仅返回 A+C 与 B+C，完整 `tag=` 不把 AA 当 A。② 结果只来自当前文件夹范围。③ 标签面板打开即显示表达式主输入，无需发现“组合标签”按钮，也不出现第二个文本框；语法说明与搜索栏一样由问号展示，输入框下方不常驻显示；左键替换当前词项、右键插入排除项。④ 错误时保留上次有效结果并给出原因。⑤ 旧选择、AI 标签开关与智能合集语义不变。 | [开发记录](../development/2026-11-05-unified-search-expression-development-log.md) / [QA](2026-11-05-unified-search-expression-qa.md) / [隐藏 Electron E2E](../../../tests/e2e/organization-search-trash.test.ts) / `tests/worker/search.test.ts` / `tests/unit/filter-tag-picker.test.tsx` | 2026-11-06 用户反馈旧标签面板入口不通过，维持人类验收不通过。修订后的默认单输入及语法问号后台 Electron E2E 1 passed；Renderer 单测、Worker 定向测试、资源库可用性门禁和 typecheck 已通过。真实窗口人类复验、packaged、跨平台与 Computer Use 未执行。 |
+
 ## 2026-11-02 输入法确定与 Enter
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
@@ -380,6 +394,7 @@
 | CARD-PAD-001 | 资产卡片文字区上下留白加大一半 | 人类验收通过 | ① 打开含图片的文件夹，分别看平铺和瀑布流。② 对照文件名上下到预览图、到卡片底边的空隙。 | 文件名上下空隙比 6px 那一版再多一点，文字仍完整可见，不与预览图贴死，也不被裁切。 | `styles.css` / `asset-caption-band.ts` / `justified-caption-band.ts` / `tests/unit/asset-caption-band.test.ts` / `tests/unit/justified-caption-band.test.ts` | 2026-09-23 用户本人验收通过（用户原话「搜索记录和CARD-PAD-001通过」）。上下 padding 为 8px，平铺/瀑布流预留高度为 30/45/62。 |
 | FOLDER-REVEAL-001 | Ctrl+Shift+S 在资源管理器中打开文件夹 | 人类验收通过 | ① 在 Windows 上打开一个文件夹，不要选中资产，按 Ctrl+Shift+S。② 在左侧点中一个链接文件夹后再按。③ 选中一张资产后再按。④ 看文件夹右键菜单。 | ①② 在资源管理器中打开对应文件夹。③ 仍是显示该资产所在位置，而不是打开整个文件夹。菜单里「在文件浏览器中显示」旁有 Ctrl+Shift+S。macOS 对应为 ⌘⇧S。 | `sidebar-commands.ts` / `folder-shortcut-dispatch.ts` / `tests/unit/folder-shortcut-dispatch.test.ts` / `tests/unit/sidebar-commands.test.ts` | 2026-09-22 用户本人验收通过（用户原话「FOLDER-REVEAL-001通过」）。 |
 | SEARCH-HISTORY-001 | 搜索框显示最近搜索 | 人类验收不通过（用户新反馈已修复，待复验） | ① 连续搜索多个不同的词，每次等结果出现。② 点回搜索框。③ 看历史是横排小标签，最多四排。④ 用方向键选一条后回车。⑤ 点「清空」后再聚焦；⑥ 输入新查询并按回车，确认搜索开始后面板关闭；再聚焦搜索框但不输入，面板保持关闭；输入新字符后面板重新打开。 | 历史以紧凑标签换行排列，标题为「搜索历史」，右侧为「清空」。超过四排的更早记录不显示。选中一条后回车用它搜索。清空后列表消失。换一个资源库不显示上一个库的记录；回车提交搜索后立即关闭面板；失焦/重新聚焦不会重新打开，直到输入新字符才显示。 | `search-history.ts` / `SearchHistoryPopover.tsx` / `tests/unit/search-history.test.ts` / `src/renderer/App.tsx` | 2026-09-23 用户本人验收通过（用户原话「搜索记录和CARD-PAD-001通过」）。紧凑标签最多四排；底色为 `--raised-2` 加细边；2026-10-14 用户反馈「搜索完成（按下回车）后自动关闭，等待下一次输入再开启」；实现已更新，待用户复验。 |
+| SEARCH-HISTORY-002 / `Serpent-0ab972` | 搜索框左右键编辑不被历史记录抢占 | 待人类验收 | ① 先搜索一个词并等待结果，确保历史记录已保存。② 再输入它的一部分，待匹配历史弹层出现。③ 在输入框内按左右键并继续输入；再按上下键选中历史，按左键后继续编辑。④ 重新按下键选历史并回车。 | 左右键移动输入光标且不选择历史；已有历史高亮时按左右键退出历史导航。上下键仍能高亮历史，回车采用高亮记录；整个过程中输入框保持可编辑。 | `src/renderer/App.tsx` / `src/renderer/search-history.ts` / `tests/unit/search-history.test.ts` / `tests/e2e/organization-search-trash.test.ts` | 2026-11-06 用户报告该问题；定向单测与隐藏 Electron E2E 已通过，真实窗口待用户复验。 |
 
 ### 2026-09-23 链接忽略、侧栏缩进与 Windows 图标
 

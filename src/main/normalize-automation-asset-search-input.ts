@@ -1,5 +1,5 @@
 import { automationScriptAssetSearchInputSchema } from '../shared/automation-script-api';
-import { parseSearchExpression } from '../shared/search-expression';
+import { parseSearchExpressionDetailed } from '../shared/search-expression';
 
 /**
  * Scripts and Standard Host guests pass toolbar-style `{ query: string|null }`.
@@ -10,8 +10,11 @@ import { parseSearchExpression } from '../shared/search-expression';
 export function normalizeAutomationAssetSearchInput(rawInput: unknown): unknown | undefined {
   const search = automationScriptAssetSearchInputSchema.safeParse(rawInput);
   if (!search.success) return undefined;
+  if (search.data.query === null) return { ...search.data, query: null };
+  const parsed = parseSearchExpressionDetailed(search.data.query);
+  if (!parsed.ok) return undefined;
   return {
     ...search.data,
-    query: search.data.query === null ? null : parseSearchExpression(search.data.query),
+    query: { clauses: [], expression: parsed.expression },
   };
 }

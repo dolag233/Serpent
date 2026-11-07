@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { act, createElement } from "react";
+import { act, createElement, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -38,6 +38,7 @@ describe("FilterTagPicker sorting", () => {
           LocaleProvider,
           { children: null, initialPreference: "en" },
           createElement(FilterTagPicker, {
+            expressionMode: false,
             excludedNames: [],
             includedNames: [],
             onChange: () => undefined,
@@ -80,6 +81,7 @@ describe("FilterTagPicker sorting", () => {
           LocaleProvider,
           { children: null, initialPreference: "en" },
           createElement(FilterTagPicker, {
+            expressionMode: false,
             excludedNames: [],
             includedNames: ["Warm"],
             onChange: () => undefined,
@@ -106,6 +108,7 @@ describe("FilterTagPicker sorting", () => {
           LocaleProvider,
           { children: null, initialPreference: "zh-CN" },
           createElement(FilterTagPicker, {
+            expressionMode: false,
             excludedNames: [],
             includedNames: ["Wood"],
             onChange: (next) => {
@@ -131,5 +134,38 @@ describe("FilterTagPicker sorting", () => {
     });
     expect(menuEvent.defaultPrevented).toBe(true);
     expect(changes).toEqual([{ includes: ["Wood"], excludes: ["Warm"] }]);
+  });
+
+  it("opens on the expression input and replaces the token with a quoted suggestion", async () => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    function Harness() {
+      const [expression, setExpression] = useState("woo");
+      return createElement(LocaleProvider, { children: null, initialPreference: "en" },
+        createElement(FilterTagPicker, {
+          excludedNames: [], includedNames: [], onChange: () => undefined, tags,
+          expression, onExpressionChange: setExpression,
+        }));
+    }
+    await act(async () => { root?.render(createElement(Harness)); });
+    expect(container!.querySelectorAll("input, textarea")).toHaveLength(1);
+    expect(container!.querySelector("textarea")).not.toBeNull();
+    const syntaxHelp = container!.querySelector<HTMLButtonElement>(".filter-tag-expression-input .search-syntax-help");
+    expect(syntaxHelp?.getAttribute("aria-label")).toBe("Tag condition syntax");
+    expect(syntaxHelp?.getAttribute("data-hover-tip")).toContain("Spaces mean AND");
+    expect(syntaxHelp?.getAttribute("data-hover-tip-variant")).toBe("search-syntax");
+    expect(container!.querySelector(".filter-tag-expression-input + .dimension-filter-hint")).toBeNull();
+    const field = container!.querySelector("textarea")!;
+    const option = (name: string) => [...container!.querySelectorAll<HTMLButtonElement>(".filter-tag-options button")]
+      .find((button) => button.textContent?.includes(name))!;
+    await act(async () => { option("Wood").click(); });
+    expect(field.value).toBe('"Wood" ');
+    await act(async () => { option("Warm").click(); });
+    expect(field.value).toBe('"Wood" "Warm" ');
+    await act(async () => {
+      option("Metal").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    });
+    expect(field.value).toBe('"Wood" "Warm" -"Metal" ');
   });
 });

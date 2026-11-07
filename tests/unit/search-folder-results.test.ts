@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseSearchExpression } from "../../src/shared/search-expression";
+import { parseSearchExpression, parseSearchExpressionDetailed } from "../../src/shared/search-expression";
 import {
   folderSearchTerms,
   resolveSearchFolderResults,
@@ -63,6 +63,31 @@ describe("folderSearchTerms", () => {
     expect(folderSearchTerms(parseSearchExpression("Hero HERO"))).toEqual([
       "hero",
     ]);
+  });
+
+  it("collects folder terms from the shared expression AST and ignores negated terms", () => {
+    const parsed = parseSearchExpressionDetailed('(name:hero | path:monster) -name:backup');
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error("Expected a valid search expression.");
+    expect(folderSearchTerms({ clauses: [], expression: parsed.expression })).toEqual(["hero", "monster"]);
+  });
+
+  it("applies AND/OR expression structure when returning folder results", () => {
+    const broad = parseSearchExpressionDetailed('(name:hero | path:monster)', 'search');
+    const constrained = parseSearchExpressionDetailed('(name:hero | path:monster) name:hero', 'search');
+    expect(broad.ok && constrained.ok).toBe(true);
+    if (!broad.ok || !constrained.ok) throw new Error("Expected valid folder search expressions.");
+    expect(resolveSearchFolderResults({ query: { clauses: [], expression: broad.expression }, folders, linkedFolders }).map((entry) => entry.folderId)).toEqual(["f-hero", "f-backup"]);
+    expect(resolveSearchFolderResults({ query: { clauses: [], expression: constrained.expression }, folders, linkedFolders }).map((entry) => entry.folderId)).toEqual(["f-hero"]);
+  });
+
+  it("treats non-folder fields as inapplicable within OR and NOT", () => {
+    const mixedOr = parseSearchExpressionDetailed("name:maps | tag=red");
+    const mixedNot = parseSearchExpressionDetailed("name:hero | -name:backup");
+    expect(mixedOr.ok && mixedNot.ok).toBe(true);
+    if (!mixedOr.ok || !mixedNot.ok) throw new Error("Expected valid folder search expressions.");
+    expect(resolveSearchFolderResults({ query: { clauses: [], expression: mixedOr.expression }, folders, linkedFolders })).toEqual([]);
+    expect(resolveSearchFolderResults({ query: { clauses: [], expression: mixedNot.expression }, folders, linkedFolders }).map((entry) => entry.folderId)).toEqual(["f-hero", "l-tex"]);
   });
 });
 

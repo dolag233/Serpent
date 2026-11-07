@@ -34,19 +34,26 @@ describe("renderer diagnostics", () => {
     logRendererConsoleMessage(logger, 1, "info", 2, "source.ts");
     logRendererConsoleMessage(logger, 2, "warning", 3, "source.ts");
     logRendererConsoleMessage(logger, 3, "error", 4, "source.ts");
+    logRendererConsoleMessage(logger, "warning", "modern warning", 5, "modern.ts");
+    logRendererConsoleMessage(logger, "error", "modern error", 6, "modern.ts");
 
     expect(logger.infos).toEqual([{
       scope: "renderer.console.warning",
       message: "warning",
       context: { level: 2, line: 3, sourceId: "source.ts" },
+    }, {
+      scope: "renderer.console.warning",
+      message: "modern warning",
+      context: { level: "warning", line: 5, sourceId: "modern.ts" },
     }]);
-    expect(logger.errors).toHaveLength(1);
+    expect(logger.errors).toHaveLength(2);
     expect(logger.errors[0]).toMatchObject({
       scope: "renderer.console.error",
       context: { level: 3, line: 4, sourceId: "source.ts" },
     });
     expect(logger.errors[0]?.error).toBeInstanceOf(Error);
     expect((logger.errors[0]?.error as Error).message).toBe("error");
+    expect((logger.errors[1]?.error as Error).message).toBe("modern error");
   });
 
   it("records renderer lifecycle and child-process failures with window identity", () => {
