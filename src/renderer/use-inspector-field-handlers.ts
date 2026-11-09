@@ -5,6 +5,8 @@
 
 import {
   useCallback,
+  useRef,
+  useEffect,
   type Dispatch,
   type FormEvent,
   type SetStateAction,
@@ -293,8 +295,13 @@ export function useInspectorFieldHandlers({
     t,
   ]);
 
+  const authorDirty = useRef(false);
+  const authorSelectionKey = selectedAssetIds.join("\n") + selectedAssetId;
+  useEffect(() => { authorDirty.current = false; }, [authorSelectionKey]);
+
   const handleAuthorInput = useCallback(
     (event: FormEvent<HTMLInputElement>) => {
+      authorDirty.current = true;
       setEditAuthor((event.target as HTMLInputElement).value);
     },
     [setEditAuthor],
@@ -306,8 +313,9 @@ export function useInspectorFieldHandlers({
       selectedAssetId ?? undefined,
     );
     if (target?.kind === "batch") {
-      if (multiEdit?.author.kind !== "uniform") return;
-      if (editAuthor === multiEdit.author.value) return;
+      if (!multiEdit || !authorDirty.current) return;
+      authorDirty.current = false;
+      if (multiEdit.author.kind === "uniform" && editAuthor === multiEdit.author.value) return;
       void saveMetadataForSelection(target.assetIds, { author: editAuthor });
       return;
     }

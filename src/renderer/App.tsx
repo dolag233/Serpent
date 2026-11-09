@@ -679,6 +679,8 @@ import {
   captureBrowseViewSnapshot,
   type BrowseViewSnapshot,
 } from "./view-restore";
+import { tagRenameError } from "./tag-rename-error";
+import { tagBrowseDefinition } from "./tag-browse-definition";
 import { scheduleBrowseViewRestore } from "./browse-view-restore-scheduler";
 import {
   canvasHasPreviewScrollHold,
@@ -6966,10 +6968,23 @@ function AppInner() {
       const tagResult = await api.listTags({ libraryId: library.libraryId });
       if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
       setTags(tagResult.value);
+      const rename = (metadata: AssetMetadataResult) => ({ ...metadata,
+        tags: metadata.tags.map(tag => tag.id === tagId ? { ...tag, name } : tag),
+      });
+      for (const [id, metadata] of metadataByAssetRef.current) {
+        metadataByAssetRef.current.set(id, rename(metadata));
+      }
+      setAssetMetadata(current => current ? rename(current) : current);
+      if (selectedAssetIds.length >= 2) rebuildAndApplyMultiEdit(selectedAssetIds);
+      if (activeTagId === tagId) {
+        setTagFilter(name);
+        setTagFilterExpression(JSON.stringify(name));
+        setTagFilterLastValidExpression(JSON.stringify(name));
+      }
       setNotice(t("toast.tagRenamed", { name }), result.value.historyEntryId);
       return true;
     } catch (caught) {
-      setError(toMessage(caught, t("toast.renameTagFailed"), locale));
+      setError(tagRenameError(caught, locale));
       return false;
     }
   }
@@ -7127,13 +7142,10 @@ function AppInner() {
     await closeAssetPreview(false);
     if (!request.isCurrent() || !isCurrentLibraryView(viewSession)) return;
     try {
-      const definition = request.browseState
+      const tagExpression = JSON.stringify(tag.name);
+      const definition: SearchDefinition = request.browseState
         ? queryDefinitionForWorkspaceBrowseState(request.browseState)
-        : currentQueryDefinition({
-          tagFilter: tag.name,
-          excludeTagFilter: false,
-          excludedTagFilter: "",
-        });
+        : tagBrowseDefinition(tag.name, currentQueryDefinition());
       const includeIgnored =
         request.browseState?.showIgnoredItems ?? showIgnoredItems;
       const result = await api.openBrowseSession({
@@ -7163,6 +7175,10 @@ function AppInner() {
       setAssetScope("all");
       clearAssetSelection();
       if (!request.browseState) {
+        clearDiscoveryControls();
+        setTagFilterExpression(tagExpression);
+        setTagFilterLastValidExpression(tagExpression);
+        setTagFilterMode("expression");
         setTagFilter(tag.name);
         setExcludeTagFilter(false);
         setExcludedTagFilter("");
@@ -8002,7 +8018,12 @@ function AppInner() {
         values: formatValues,
         exclude: filtersState.excludeFormatFilter,
       });
-    if (filtersState.tagFilterMode === "expression") {
+    const exactTag = activeTagId ? tags.find(tag => tag.tagId === activeTagId) : undefined;
+    if (exactTag && filtersState.tagFilterMode === "expression"
+      && filtersState.tagFilterExpression === JSON.stringify(exactTag.name)) {
+      filters.push({ field: "tag", values: [exactTag.name], exclude: false,
+        includeAi: filtersState.includeAiTagFilter });
+    } else if (filtersState.tagFilterMode === "expression") {
       const parsedTags = parseSearchExpressionDetailed(filtersState.tagFilterExpression ?? "", "tags");
       if (!parsedTags.ok && filtersState.tagFilterLastValidExpression) {
         const lastValidTags = parseSearchExpressionDetailed(filtersState.tagFilterLastValidExpression, "tags");
@@ -16259,7 +16280,9 @@ function AppInner() {
             setError(t("toast.colorCopyUnavailable"));
           }
         }}
-        onRemoveTagFromAsset={(tagId) => void handleInspectorRemoveTag(tagId)}
+        onRemoveTagFromAsset={handleInspectorRemoveTag}
+        onFilterTag={(tagId) => void chooseTag(tagId)}
+        onRenameTag={handleRenameTagInManagement}
         selectedAsset={selectedAsset}
         selectedAssets={selectedAssets}
         multiEdit={multiEdit}
