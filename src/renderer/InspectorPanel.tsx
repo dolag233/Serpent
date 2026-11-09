@@ -10,6 +10,9 @@ import type { EntityAppearance } from "../shared/entity-appearance";
 import type { FolderBrowseEntry } from "../shared/asset-types";
 import { FolderInspectorBody } from "./folder-inspector";
 import { Icon } from "./Icons";
+import { ContextMenuProvider } from "./context-menu";
+import { useInspectorTagEdit } from "./use-inspector-tag-edit";
+import { InspectorTagChip } from "./InspectorTagChip";
 import { InspectorCardFeelMotion } from "./inspector-card-feel-motion";
 import { useInspectorCardFeel } from "./InspectorCardFeelProvider";
 import { IconActionButton } from "./icon-action-button";
@@ -197,7 +200,9 @@ export interface InspectorPanelProps {
   // Tag chip props (REQ-TAG-003)
   allTags: TagSummary[];
   onAssignTagToAsset?: (tagId: string) => void;
-  onRemoveTagFromAsset?: (tagId: string) => void;
+  onRemoveTagFromAsset?: (tagId: string) => void | Promise<void>;
+  onFilterTag?: (tagId: string) => void;
+  onRenameTag?: (tagId: string, name: string) => Promise<boolean>;
   onCreateAndAssignTag?: (tagName: string) => void;
   onApplyTagNames?: (tagNames: string[]) => void;
   // REQ-MENU-007 / REQ-SELECT-004: multi-select UE edit model (null = single-asset path).
@@ -656,6 +661,8 @@ export function InspectorPanel(props: InspectorPanelProps) {
     allTags,
     onAssignTagToAsset,
     onRemoveTagFromAsset,
+    onFilterTag,
+    onRenameTag,
     onCreateAndAssignTag,
     onApplyTagNames,
     multiEdit = null,
@@ -735,6 +742,11 @@ export function InspectorPanel(props: InspectorPanelProps) {
   const [tagInputValue, setTagInputValue] = useState("");
   const [pendingTagNames, setPendingTagNames] = useState<string[]>([]);
   const [showTagInput, setShowTagInput] = useState(false);
+  const tagSelectionKey = selectedAssets.length > 0
+    ? selectedAssets.map(asset => asset.assetId).join("\0")
+    : selectedAsset?.assetId ?? "";
+  const tagEditor = useInspectorTagEdit(tagSelectionKey, onRemoveTagFromAsset);
+  const editingTags = tagEditor.active;
   const [activeTagSuggestionIndex, setActiveTagSuggestionIndex] = useState(-1);
   const tagInputRef = useRef<HTMLInputElement>(null);
   const tagInputComposingRef = useRef(false);
@@ -866,7 +878,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
   // out of the technical strip so the author remains editable in the same
   // place as every other asset.
   const displayAuthor = metadataReady
-    ? editAuthor || rawImageMetadata?.author || ""
+    ? editAuthor
     : "";
 
   // Single-asset: that asset's tags. Multi-select: intersection only (REQ-SELECT-004).
@@ -1216,8 +1228,21 @@ export function InspectorPanel(props: InspectorPanelProps) {
           <section className="inspector-section inspector-tags-section">
             <div className="inspector-tags-header">
               <span className="inspector-section-label">{t("inspector.tags")}</span>
+              <div className="inspector-tag-actions">
+              {editingTags ? <>
+                <IconActionButton disabled={tagEditor.saving} icon="check"
+                  label={t("inspector.finishEditTags")} onClick={() => { void tagEditor.commit(); }} size={12} />
+                <IconActionButton disabled={tagEditor.saving} icon="close"
+                  label={t("common.cancel")} onClick={tagEditor.cancel} size={12} />
+              </> : <IconActionButton disabled={!metadataReady} icon="edit"
+                label={t("inspector.editTags")} onClick={() => {
+                  setShowTagInput(false);
+                  setPendingTagNames([]);
+                  setTagInputValue("");
+                  tagEditor.begin();
+                }} size={12} />}
               <IconActionButton
-                disabled={!metadataReady}
+                disabled={!metadataReady || editingTags}
                 icon="plus"
                 label={t("inspector.addTag")}
                 onClick={() => {
@@ -1227,44 +1252,16 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 }}
                 size={12}
               />
+              </div>
             </div>
-            <div className="tag-chips-container">
-              {displayedTags.map((tag) => (
-                <span
-                  className="tag-chip"
-                  data-source={tag.source}
-                  key={tag.id}
-                  style={
-                    {
-                      borderColor: tagColor(tag.id),
-                      ["--tag-chip-color" as string]: tagColor(tag.id),
-                    }
-                  }
-                >
-                  {tag.source === "ai" && showAiBadges && (
-                    <span
-                      aria-label={t("inspector.aiBadge")}
-                      className="inspector-ai-badge inspector-ai-badge-inline"
-                      data-hover-tip={t("inspector.aiBadge")}
-                    >
-                      AI
-                    </span>
-                  )}
-                  {tag.source !== "ai" && (
-                    <span className="tag-chip-dot" style={{ background: tagColor(tag.id) }} />
-                  )}
-                  <span className="tag-chip-name">{tag.name}</span>
-                  {onRemoveTagFromAsset && (
-                    <button
-                      className="tag-chip-remove"
-                      onClick={() => onRemoveTagFromAsset(tag.id)}
-                      type="button"
-                      {...iconActionAttrs(t("inspector.removeTag"))}
-                    >
-                      <Icon name="close" size={9} />
-                    </button>
-                  )}
-                </span>
+            <ContextMenuProvider key={tagSelectionKey}>
+            <div className={`tag-chips-container${editingTags ? " is-editing-tags" : ""}`}>
+              {displayedTags.filter(tag => !tagEditor.removed.includes(tag.id)).map((tag) => (
+                <InspectorTagChip key={tag.id} id={tag.id} name={tag.name} color={tagColor(tag.id)}
+                  source={tag.source} showAiBadge={showAiBadges} editing={editingTags}
+                  onRename={!editingTags && onRenameTag ? name => onRenameTag(tag.id, name) : undefined}
+                  onFilter={onFilterTag ? () => onFilterTag(tag.id) : undefined}
+                  onRemove={onRemoveTagFromAsset && !tagEditor.saving ? () => tagEditor.remove(tag.id) : undefined} />
               ))}
               {displayedTags.length === 0 && !showTagInput && (
                 <span className="tag-chip-placeholder">
@@ -1385,6 +1382,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 </div>
               )}
             </div>
+          </ContextMenuProvider>
           </section>
 
           <PluginInspectorSections
@@ -1624,7 +1622,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
 
               {(() => {
                 const authorEditable =
-                  !isMultiEdit || isEditableScalar(multiEdit?.author);
+                  !isMultiEdit || Boolean(multiEdit);
                 const authorMixed =
                   isMultiEdit && multiEdit?.author.kind === "mixed";
                 return (
@@ -1632,14 +1630,6 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 <label className="micro-label" htmlFor="meta-author">
                   {t("inspector.author")}
                 </label>
-                {authorMixed ? (
-                  <div
-                    className="text-field inspector-input inspector-mixed-field"
-                    id="meta-author"
-                  >
-                    {t("inspector.mixedValues")}
-                  </div>
-                ) : (
                 <input
                   className="text-field inspector-input"
                   disabled={!authorEditable || !metadataReady}
@@ -1651,10 +1641,9 @@ export function InspectorPanel(props: InspectorPanelProps) {
                     if (isImeKeyboardEvent(e)) return;
                     if (e.key === "Enter") handleAuthorSave();
                   }}
-                  placeholder={t("inspector.authorPlaceholder")}
+                  placeholder={t(authorMixed ? "inspector.mixedValues" : "inspector.authorPlaceholder")}
                   value={displayAuthor}
                 />
-                )}
               </div>
                 );
               })()}
