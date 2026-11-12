@@ -1563,6 +1563,7 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('extension.asset-saved'),
     asset: assetSummarySchema,
+    duplicate: z.literal(true).optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -1793,6 +1794,12 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
     ok: z.literal(true),
     type: z.literal('library.list'),
     libraries: z.array(internalLibrarySummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('extension.segmented-video.cancelled'),
+    transferId: nonBlankString,
+    active: z.boolean(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -2315,6 +2322,7 @@ export const workerResultSchema = z.union([
   z.strictObject({
     ok: z.literal(false),
     error: publicErrorSchema,
+    errorCode: z.enum(['SEGMENTED_SOURCE_VALIDATION']).optional(),
   }),
 ]);
 

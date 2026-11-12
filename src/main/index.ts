@@ -535,6 +535,12 @@ import {
   extensionCollectionSummaries,
   type ListCollectionsDisposition,
 } from "./extension-server";
+import { mapWorkerSaveFailure } from "./extension-save-disposition";
+import {
+  SegmentedSourceValidationError,
+  SegmentedMediaTransferManager,
+  type SegmentedMediaCommitInput,
+} from "./segmented-media-transfer";
 import {
   readExtensionBrowseFolderIds,
   recordExtensionBrowseFolder,
@@ -1079,6 +1085,7 @@ function refreshApplicationMenuRecentLibraries(): void {
 }
 
 let extensionServer: ExtensionServer | undefined;
+let segmentedMediaTransferManager: SegmentedMediaTransferManager | undefined;
 let extensionBrowseFoldersStorePath: string | undefined;
 const aiQueueScheduler = new AiQueueScheduler(processAiQueueBatch, {
   batchSize: AI_ANALYSIS_QUEUE_BATCH_SIZE,
@@ -1812,6 +1819,8 @@ let loopbackRelease: Promise<void> | undefined;
 
 function releaseLoopbackListeners(): Promise<void> {
   if (loopbackRelease !== undefined) return loopbackRelease;
+  const segmentedTransferClose = segmentedMediaTransferManager?.dispose() ?? Promise.resolve();
+  segmentedMediaTransferManager = undefined;
   try {
     extensionServer?.server.close();
   } catch (error) {
@@ -1819,7 +1828,7 @@ function releaseLoopbackListeners(): Promise<void> {
   }
   extensionServer = undefined;
   const mcpClose = embeddedMcpServer?.close() ?? Promise.resolve();
-  loopbackRelease = mcpClose.catch((error: unknown) => {
+  loopbackRelease = Promise.all([segmentedTransferClose, mcpClose]).then(() => undefined).catch((error: unknown) => {
     logger?.error("automation.mcp.close", error);
   });
   return loopbackRelease;
@@ -2721,21 +2730,22 @@ async function handleSaveIntent(
           reason: result.error.reason,
         },
       );
-      return {
-        accepted: false,
-        status: result.error.code === "LIBRARY_NOT_OPEN" ? 503 : 422,
-        reason: result.error.reason ?? result.error.code,
-      };
+      return mapWorkerSaveFailure(result);
     }
     logger?.info("extension-server.save", "Asset saved successfully.", {
       type: result.type,
     });
-    if (result.type === "extension.asset-saved") {
+    if (result.type === "extension.asset-saved" && !result.duplicate) {
       void enqueueAutoAnalyzeAfterImport(saveContext.libraryId, [
         result.asset.assetId,
       ]);
     }
-    return { accepted: true };
+    return {
+      accepted: true,
+      ...(result.type === "extension.asset-saved" && result.duplicate
+        ? { duplicate: true as const }
+        : {}),
+    };
   } catch (error) {
     logger?.error("extension-server.save", error);
     throw error;
@@ -2768,6 +2778,9 @@ async function handleSaveUpload(
     );
     return { accepted: false, status: 503, reason: "no active library" };
   }
+  if (upload.expectedLibraryId !== undefined && upload.expectedLibraryId !== saveContext.libraryId) {
+    return { accepted: false, status: 409, reason: "the original library is no longer active" };
+  }
 
   const targetFolderId = upload.targetCollectionId
     ? undefined
@@ -2777,6 +2790,7 @@ async function handleSaveUpload(
 
   const command: WorkerCommand = {
     type: "extension.save-from-file",
+    kind: upload.kind,
     libraryId: saveContext.libraryId,
     targetFolderId,
     sourcePageUrl: upload.sourcePageUrl,
@@ -2797,11 +2811,7 @@ async function handleSaveUpload(
           reason: result.error.reason,
         },
       );
-      return {
-        accepted: false,
-        status: result.error.code === "LIBRARY_NOT_OPEN" ? 503 : 422,
-        reason: result.error.reason ?? result.error.code,
-      };
+      return mapWorkerSaveFailure(result);
     }
     if (result.type !== "extension.asset-saved") {
       return { accepted: false, status: 500, reason: "unexpected worker response" };
@@ -2839,10 +2849,15 @@ async function handleSaveUpload(
         asset: result.asset,
       });
     }
-    void enqueueAutoAnalyzeAfterImport(saveContext.libraryId, [
-      result.asset.assetId,
-    ]);
-    return { accepted: true };
+    if (!result.duplicate) {
+      void enqueueAutoAnalyzeAfterImport(saveContext.libraryId, [
+        result.asset.assetId,
+      ]);
+    }
+    return {
+      accepted: true,
+      ...(result.duplicate ? { duplicate: true as const } : {}),
+    };
   } catch (error) {
     logger?.error("extension-server.save-upload", error);
     throw error;
@@ -2852,6 +2867,80 @@ async function handleSaveUpload(
     } catch (error) {
       logger?.error("extension-server.save-upload-cleanup", error);
     }
+  }
+}
+
+async function commitSegmentedMediaTransfer(
+  transfer: SegmentedMediaCommitInput,
+): Promise<{ duplicate?: true }> {
+  if (!workerClient) throw new Error("Worker unavailable");
+  const result = await workerClient.request({
+    type: "extension.save-segmented-video",
+    libraryId: transfer.target.libraryId,
+    transferId: transfer.sessionId,
+    ...(transfer.target.targetFolderId === undefined
+      ? {}
+      : { targetFolderId: transfer.target.targetFolderId }),
+    sourcePageUrl: transfer.sourcePageUrl,
+    mediaUrl: transfer.mediaUrl,
+    stagingDirectory: transfer.stagingDirectory,
+    contentType: "video/mp4",
+    filename: transfer.filename,
+    protocol: transfer.protocol,
+    totalBytes: transfer.totalBytes,
+    tracks: transfer.tracks,
+  });
+  if (!result.ok) {
+    if (result.errorCode === "SEGMENTED_SOURCE_VALIDATION") {
+      throw new SegmentedSourceValidationError(result.error.reason ?? "The selected video failed media validation.");
+    }
+    throw new Error(result.error.reason ?? result.error.code);
+  }
+  if (result.type !== "extension.asset-saved") throw new Error("Unexpected segmented media worker response");
+
+  if (transfer.target.targetCollectionId) {
+    const added = await workerClient.request({
+      type: "collection.assets.add",
+      libraryId: transfer.target.libraryId,
+      collectionId: transfer.target.targetCollectionId,
+      assetIds: [result.asset.assetId],
+    });
+    if (!added.ok || added.type !== "collection.assets.added") {
+      throw new Error(added.ok ? "Unable to add the asset to its collection" : added.error.reason ?? added.error.code);
+    }
+  }
+  logger?.info("extension-server.segmented-media", "Segmented video saved successfully.", {
+    transferId: transfer.sessionId,
+    byteLength: transfer.totalBytes,
+    assetId: result.asset.assetId,
+  });
+  if (transfer.focusAppAfterSave) {
+    focusSerpentWindow(transfer.target.targetWindowId ?? undefined);
+  }
+  if (transfer.revealInLibrary) {
+    publishExtensionSaveCompleted(transfer.target.targetWindowId ?? null, {
+      type: "extension.save.completed",
+      libraryId: transfer.target.libraryId,
+      asset: result.asset,
+    });
+  }
+  if (!result.duplicate) {
+    void enqueueAutoAnalyzeAfterImport(transfer.target.libraryId, [result.asset.assetId]);
+  }
+  return result.duplicate ? { duplicate: true } : {};
+}
+
+async function cancelSegmentedMediaWorkerTransfer(
+  transferId: string,
+): Promise<void> {
+  if (!workerClient) return;
+  const result = await workerClient.request({
+    type: "extension.cancel-segmented-video",
+    transferId,
+  });
+  if (!result.ok) throw new Error(result.error.reason ?? result.error.code);
+  if (result.type !== "extension.segmented-video.cancelled") {
+    throw new Error("Unexpected segmented media cancellation response");
   }
 }
 
@@ -7436,9 +7525,36 @@ async function startApplication(): Promise<void> {
 
   // Start the browser-extension HTTP server on 127.0.0.1.
   try {
+      segmentedMediaTransferManager = new SegmentedMediaTransferManager(
+        app.getPath("temp"),
+        {
+          resolveTarget: async (request) => {
+            const routing = getExtensionSaveRouting();
+            const context = routing.context;
+            if (!context) return undefined;
+            const targetFolderId = request.targetCollectionId
+              ? undefined
+              : request.targetFolderId !== undefined
+                ? request.targetFolderId ?? undefined
+                : context.selectedFolderId;
+            return {
+              libraryId: context.libraryId,
+              ...(targetFolderId === undefined ? {} : { targetFolderId }),
+              ...(request.targetCollectionId === undefined
+                ? {}
+                : { targetCollectionId: request.targetCollectionId }),
+              targetWindowId: routing.targetWindowId,
+            };
+          },
+          commit: commitSegmentedMediaTransfer,
+          cancelCommit: cancelSegmentedMediaWorkerTransfer,
+        },
+      );
+      await segmentedMediaTransferManager.initialize();
     extensionServer = await createExtensionServer({
       port: 19876,
       uploadStagingRoot: app.getPath("temp"),
+        segmentedMediaTransferManager,
       onListFolders: handleListFolders,
       onListCollections: handleListCollections,
       onSaveIntent: handleSaveIntent,

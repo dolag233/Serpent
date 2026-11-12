@@ -44630,6 +44630,8 @@ export class LibraryService {
     imageSequenceFps?: number;
     createImageSequence?: boolean;
     sourcePageUrl?: string;
+    /** Opt a caller into content-deduping identical bytes even at the same path. */
+    dedupeSameNameByContent?: boolean;
     automationPlan?: {
       planHash: string;
       expectedChangeSequence: number;
@@ -49378,7 +49380,7 @@ export class LibraryService {
     sourcePageUrl?: string;
     mediaUrl: string;
     mediaType?: string;
-  }): Promise<{ asset: AssetSummary }> {
+  }): Promise<{ asset: AssetSummary; duplicate?: true }> {
     // Validate HTTP scheme on mediaUrl (already Zod-validated but defense in depth).
     let parsedUrl: URL;
     try {
@@ -49614,7 +49616,7 @@ export class LibraryService {
     stagedFilePath: string;
     contentType: string;
     filename: string;
-  }): Promise<{ asset: AssetSummary }> {
+  }): Promise<{ asset: AssetSummary; duplicate?: true }> {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
 
     let stagedAbsolute: string;
@@ -49706,8 +49708,12 @@ export class LibraryService {
         ...(input.targetFolderId === undefined ? {} : { targetFolderId: input.targetFolderId }),
         sourceKind: 'files',
         sourcePaths: [sourcePath],
+        dedupeSameNameByContent: true,
         ...(input.sourcePageUrl === undefined ? {} : { sourcePageUrl: input.sourcePageUrl }),
       });
+      const duplicateAssetId = isImportConflictPlan(prepared)
+        ? prepared.examples.find((example) => example.existingAssetId !== undefined)?.existingAssetId
+        : undefined;
       const completion = this.finishImportWithoutUserDecision(prepared, {
         suspectedDuplicate: 'skip',
         nameConflict: 'keep-both',
@@ -49715,21 +49721,12 @@ export class LibraryService {
       const asset = completion.assets[0];
       if (asset !== undefined) return { asset };
 
-      // A library-level duplicate is intentionally skipped by the extension,
-      // matching the ordinary import default. Return the retained asset just
-      // as the old extension path did, without creating a second record.
-      const existingAssetId = this.findActiveManagedAssetIdByContent(
-        openLibrary,
-        stagedStat.size,
-        sha256FileAtPath(sourcePath),
-        new Map(),
-      );
-      if (existingAssetId !== null) {
-        const existing = this.listAssets({
-          libraryId: input.libraryId,
-          recursive: true,
-        }).find((candidate) => candidate.assetId === existingAssetId);
-        if (existing !== undefined) return { asset: existing };
+      // The conflict plan already identified the matching content by its
+      // indexed hash. Resolve only that row instead of rehashing the library
+      // and materializing every AssetSummary to recover the skipped asset.
+      if (duplicateAssetId !== undefined) {
+        const existing = this.listAssetSummariesByIds(openLibrary, [duplicateAssetId])[0];
+        if (existing !== undefined) return { asset: existing, duplicate: true };
       }
       throw new LibraryServiceError('IMPORT_APPLY_FAILED');
     } catch (error) {

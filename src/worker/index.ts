@@ -87,6 +87,7 @@ import { runWithVerifiedDestructiveBackup } from './destructive-backup';
 import { executeLibraryIdentityWorkerCommand } from './handlers/library-identity';
 import { executeLibraryTransferWorkerCommand } from './handlers/library-transfer';
 import { executeExtensionWorkerCommand } from './handlers/extension';
+import { SegmentedMediaSourceValidationError } from './segmented-media';
 import { executeFolderWorkerCommand } from './handlers/folders';
 import { executeLinkedFolderWorkerCommand } from './handlers/linked-folders';
 import { executeAssetIngestionWorkerCommand } from './handlers/asset-ingestion';
@@ -2786,7 +2787,9 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       return result;
     }
     case 'extension.save-from-url':
-    case 'extension.save-from-file': {
+    case 'extension.save-from-file':
+    case 'extension.save-segmented-video':
+    case 'extension.cancel-segmented-video': {
       const result = await executeExtensionWorkerCommand(libraryService, request, {
         scheduleMutationThumbnails: (libraryId, assetIds) => {
           scheduleThumbnailScene(libraryId, 'mutation', assetIds);
@@ -3383,6 +3386,7 @@ const handleLibraryWorkerMessage = async (event: { data: unknown }): Promise<voi
         request.command.type === 'library.import-cancel'
         || request.command.type === 'library.export-cancel'
         || request.command.type === 'asset.delete-cancel'
+        || request.command.type === 'extension.cancel-segmented-video'
         || request.command.type === 'semantic.index.cancel-search';
       const aiProcessLibraryId = request.command.type === 'ai.process-queue'
         ? request.command.libraryId
@@ -3438,6 +3442,9 @@ const handleLibraryWorkerMessage = async (event: { data: unknown }): Promise<voi
       result: {
         ok: false,
         error: publicErrorForWorkerFailure(error),
+        ...(error instanceof SegmentedMediaSourceValidationError
+          ? { errorCode: 'SEGMENTED_SOURCE_VALIDATION' as const }
+          : {}),
       },
     };
   }

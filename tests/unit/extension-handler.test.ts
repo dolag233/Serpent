@@ -42,6 +42,7 @@ test('extension.save-from-file schedules a mutation thumbnail', async () => {
     libraryService,
     extensionRequest({
       type: 'extension.save-from-file',
+      kind: 'image',
       libraryId: 'lib-1',
       stagedFilePath: 'C:\\temp\\staged.png',
       contentType: 'image/png',
@@ -54,4 +55,49 @@ test('extension.save-from-file schedules a mutation thumbnail', async () => {
     asset,
   });
   expect(scheduleMutationThumbnails).toHaveBeenCalledWith('lib-1', ['asset-2']);
+});
+
+test('extension save commands report duplicates without scheduling thumbnail work', async () => {
+  const asset = { assetId: 'asset-existing' };
+  const libraryService = {
+    saveAssetFromUrl: vi.fn(async () => ({ asset, duplicate: true as const })),
+    saveAssetFromFile: vi.fn(async () => ({ asset, duplicate: true as const })),
+  } as unknown as LibraryService;
+  const scheduleMutationThumbnails = vi.fn();
+  const hooks = { scheduleMutationThumbnails };
+
+  await expect(executeExtensionWorkerCommand(
+    libraryService,
+    extensionRequest({
+      type: 'extension.save-from-url',
+      libraryId: 'lib-1',
+      mediaUrl: 'https://example.com/hero.png',
+    }),
+    hooks,
+  )).resolves.toEqual({
+    ok: true,
+    type: 'extension.asset-saved',
+    asset,
+    duplicate: true,
+  });
+
+  await expect(executeExtensionWorkerCommand(
+    libraryService,
+    extensionRequest({
+      type: 'extension.save-from-file',
+      kind: 'image',
+      libraryId: 'lib-1',
+      stagedFilePath: 'C:\\temp\\staged.png',
+      contentType: 'image/png',
+      filename: 'hero.png',
+    }),
+    hooks,
+  )).resolves.toEqual({
+    ok: true,
+    type: 'extension.asset-saved',
+    asset,
+    duplicate: true,
+  });
+
+  expect(scheduleMutationThumbnails).not.toHaveBeenCalled();
 });

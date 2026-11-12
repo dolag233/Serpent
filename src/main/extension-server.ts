@@ -6,6 +6,15 @@ import { randomUUID } from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
 import { Transform } from 'node:stream';
 import { z } from 'zod';
+import {
+  isValidExtensionUploadMediaUrl,
+  isValidExtensionUploadSourcePageUrl,
+} from '../shared/protocol/media-url';
+import { SEGMENTED_MEDIA_CHUNK_BYTES } from './segmented-media-transfer';
+import type {
+  CreateSegmentedMediaSessionInput,
+  SegmentedMediaTransferManager,
+} from './segmented-media-transfer';
 
 // ---------------------------------------------------------------------------
 // Save-intent schema — JSON URL save (legacy / fallback)
@@ -113,14 +122,16 @@ export interface SaveUploadRequest {
   targetFolderId?: string | null;
   /** 设置后文件固定进资源库根目录，导入成功后再加入该合集。 */
   targetCollectionId?: string;
+  /** Refuse to route a deferred segmented-media fallback into another library. */
+  expectedLibraryId?: string;
   byteLength: number;
   focusAppAfterSave: boolean;
   revealInLibrary: boolean;
 }
 
 export type SaveUploadDisposition =
-  | { accepted: true }
-  | { accepted: false; status: number; reason: string };
+  | { accepted: true; duplicate?: true }
+  | { accepted: false; status: number; reason: string; failureKind?: 'source-invalid' };
 
 // ---------------------------------------------------------------------------
 // Server options
@@ -146,13 +157,15 @@ export interface ExtensionServerOptions {
   onListFolders: () => ListFoldersDisposition | Promise<ListFoldersDisposition>;
   /** Called on GET /collections. */
   onListCollections: () => ListCollectionsDisposition | Promise<ListCollectionsDisposition>;
+  /** Optional HLS/DASH segment session manager. Older clients remain on `/save-upload`. */
+  segmentedMediaTransferManager?: SegmentedMediaTransferManager;
   /** Optional error callback for server-level errors (e.g. bind failure). */
   onError?: (error: Error) => void;
 }
 
 export type SaveIntentDisposition =
-  | { accepted: true }
-  | { accepted: false; status: number; reason: string };
+  | { accepted: true; duplicate?: true }
+  | { accepted: false; status: number; reason: string; failureKind?: 'source-invalid' };
 
 export interface ExtensionServer {
   server: http.Server;
@@ -184,6 +197,7 @@ function isAllowedOrigin(origin: string | string[] | undefined): boolean {
 }
 
 const MAX_SAVE_JSON_BYTES = 16 * 1024;
+const MAX_SEGMENTED_SESSION_JSON_BYTES = 512 * 1024;
 /** Same cap as Worker remote download (500 MB). */
 export const MAX_EXTENSION_UPLOAD_BYTES = 500 * 1024 * 1024;
 const UPLOAD_STAGE_PREFIX = 'serpent-ext-upload-';
@@ -234,6 +248,7 @@ function parseUploadMetadata(headers: http.IncomingHttpHeaders):
     filename: string;
     targetFolderId?: string | null;
     targetCollectionId?: string;
+    expectedLibraryId?: string;
     focusAppAfterSave: boolean;
     revealInLibrary: boolean;
   }
@@ -248,18 +263,24 @@ function parseUploadMetadata(headers: http.IncomingHttpHeaders):
   const filename = decodeHeaderText(headerValue(headers, 'x-serpent-filename')) ?? 'download';
   const targetRaw = headerValue(headers, 'x-serpent-target-folder-id');
   const collectionRaw = headerValue(headers, 'x-serpent-target-collection-id');
+  const expectedLibraryId = decodeHeaderText(headerValue(headers, 'x-serpent-expected-library-id'))?.trim();
 
   if (kindRaw !== 'image' && kindRaw !== 'video') {
     return { ok: false, reason: 'invalid kind' };
   }
-  if (!localFileUpload && (!sourcePageUrl || !/^https?:\/\//.test(sourcePageUrl))) {
+  if (!localFileUpload && (!sourcePageUrl || !isValidExtensionUploadSourcePageUrl(sourcePageUrl))) {
     return { ok: false, reason: 'invalid source page url' };
   }
-  if (!localFileUpload && (!mediaUrl || !/^https?:\/\//.test(mediaUrl))) {
+  if (!localFileUpload
+    && (!mediaUrl || !sourcePageUrl || !isValidExtensionUploadMediaUrl(mediaUrl, sourcePageUrl))) {
     return { ok: false, reason: 'invalid media url' };
   }
   if (localFileUpload && (sourcePageUrl !== undefined || mediaUrl !== undefined)) {
     return { ok: false, reason: 'invalid local file metadata' };
+  }
+  if (expectedLibraryId !== undefined
+    && (!expectedLibraryId || expectedLibraryId.length > 128 || /[\r\n\0]/u.test(expectedLibraryId))) {
+    return { ok: false, reason: 'invalid expected library id' };
   }
   if (!contentType || contentType === 'application/octet-stream') {
     // octet-stream alone is too vague; require an explicit media content-type header.
@@ -291,6 +312,7 @@ function parseUploadMetadata(headers: http.IncomingHttpHeaders):
     ...(decodeHeaderText(collectionRaw)?.trim()
       ? { targetCollectionId: decodeHeaderText(collectionRaw)!.trim() }
       : {}),
+    ...(expectedLibraryId ? { expectedLibraryId } : {}),
     focusAppAfterSave: parseBooleanHeader(
       headerValue(headers, 'x-serpent-focus-app-after-save'),
       true,
@@ -323,6 +345,48 @@ function sizeLimitTransform(maxBytes: number): {
   });
   return { stream, getByteLength: () => byteLength };
 }
+
+async function readRequestBodyLimited(
+  request: http.IncomingMessage,
+  maxBytes: number,
+): Promise<Buffer | undefined> {
+  const chunks: Buffer[] = [];
+  let byteLength = 0;
+  for await (const value of request) {
+    const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    byteLength += chunk.length;
+    if (byteLength > maxBytes) {
+      request.resume();
+      return undefined;
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks, byteLength);
+}
+
+const segmentedMediaTrackSchema = z.strictObject({
+  kind: z.enum(['video', 'audio']),
+  segments: z.array(z.strictObject({
+    id: z.string().min(1).max(64),
+    role: z.enum(['init', 'media']),
+    durationMs: z.number().finite().positive().optional(),
+    discontinuityBefore: z.boolean().optional(),
+  })).min(1).max(20_000),
+});
+
+const segmentedMediaSessionSchema = z.strictObject({
+  requestId: z.string().uuid(),
+  filename: z.string().min(1).max(255),
+  sourcePageUrl: httpUrlSchema,
+  mediaUrl: httpUrlSchema,
+  protocol: z.enum(['hls-ts', 'hls-fmp4', 'dash-fmp4']),
+  tracks: z.array(segmentedMediaTrackSchema).min(1).max(2),
+  targetFolderId: z.string().min(1).nullable().optional(),
+  targetCollectionId: z.string().min(1).optional(),
+  expectedLibraryId: z.string().min(1).max(128).optional(),
+  focusAppAfterSave: z.boolean().optional(),
+  revealInLibrary: z.boolean().optional(),
+});
 
 // ---------------------------------------------------------------------------
 // createExtensionServer
@@ -360,6 +424,202 @@ export async function createExtensionServer(
 
     if (req.method === 'GET' && req.url === '/ping') {
       jsonResponse(res, 200, { app: 'Serpent' });
+      return;
+    }
+
+    const mediaTransferRequest = options.segmentedMediaTransferManager;
+    const origin = headerValue(req.headers, 'origin');
+    const mediaRoute = req.url === '/capabilities'
+      || (typeof req.url === 'string' && req.url.startsWith('/media-transfer/sessions'));
+    if (mediaRoute && origin && isAllowedOrigin(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Segment-Final');
+    }
+    if (mediaRoute && req.method === 'OPTIONS') {
+      if (!isAllowedOrigin(req.headers.origin)) {
+        jsonResponse(res, 403, { status: 'rejected', reason: 'forbidden origin' });
+        return;
+      }
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    if (req.method === 'GET' && req.url === '/capabilities') {
+      if (!isAllowedOrigin(req.headers.origin)) {
+        jsonResponse(res, 403, { status: 'rejected', reason: 'forbidden origin' });
+        req.resume();
+        return;
+      }
+      jsonResponse(res, 200, {
+        status: 'ok',
+        segmentedMediaUpload: mediaTransferRequest
+          ? {
+              version: 1,
+              maxAssetBytes: mediaTransferRequest.maxAssetBytes,
+              chunkBytes: mediaTransferRequest.chunkBytes,
+              protocols: ['hls-ts', 'hls-fmp4', 'dash-fmp4'],
+            }
+          : null,
+      });
+      return;
+    }
+
+    if (mediaRoute && mediaTransferRequest) {
+      if (!isAllowedOrigin(req.headers.origin)) {
+        jsonResponse(res, 403, { status: 'rejected', reason: 'forbidden origin' });
+        req.resume();
+        return;
+      }
+      const requestUrl = new URL(req.url ?? '/', 'http://127.0.0.1');
+      if (req.method === 'POST' && requestUrl.pathname === '/media-transfer/sessions') {
+        if (!(req.headers['content-type'] ?? '').toLowerCase().includes('application/json')) {
+          jsonResponse(res, 400, { status: 'rejected', reason: 'invalid content-type' });
+          req.resume();
+          return;
+        }
+        const declaredLength = Number(req.headers['content-length']);
+        if (Number.isFinite(declaredLength) && declaredLength > MAX_SEGMENTED_SESSION_JSON_BYTES) {
+          jsonResponse(res, 413, { status: 'rejected', reason: 'payload too large' });
+          req.resume();
+          return;
+        }
+        void (async () => {
+          const body = await readRequestBodyLimited(req, MAX_SEGMENTED_SESSION_JSON_BYTES);
+          if (!body) {
+            jsonResponse(res, 413, { status: 'rejected', reason: 'payload too large' });
+            return;
+          }
+          let payload: unknown;
+          try {
+            payload = JSON.parse(body.toString('utf8')) as unknown;
+          } catch {
+            jsonResponse(res, 400, { status: 'rejected', reason: 'invalid json' });
+            return;
+          }
+          const parsed = segmentedMediaSessionSchema.safeParse(payload);
+          if (!parsed.success) {
+            jsonResponse(res, 400, { status: 'rejected', reason: 'invalid body' });
+            return;
+          }
+          const created = await mediaTransferRequest.create(
+            parsed.data as CreateSegmentedMediaSessionInput,
+            origin,
+          );
+          if (!created.ok) {
+            jsonResponse(res, created.status, { status: 'rejected', reason: created.reason });
+            return;
+          }
+          jsonResponse(res, 201, {
+            status: 'accepted',
+            sessionId: created.sessionId,
+            token: created.token,
+            chunkBytes: created.chunkBytes,
+            maxAssetBytes: created.maxAssetBytes,
+          });
+        })().catch((error: unknown) => {
+          options.onError?.(error instanceof Error ? error : new Error(String(error)));
+          if (!res.headersSent) jsonResponse(res, 500, { status: 'rejected', reason: 'internal error' });
+        });
+        return;
+      }
+
+      const sessionMatch = /^\/media-transfer\/sessions\/([0-9a-f-]{36})(?:\/(segments\/([a-z0-9_-]{1,64})|commit))?$/iu.exec(requestUrl.pathname);
+      if (!sessionMatch) {
+        jsonResponse(res, 404, { status: 'rejected', reason: 'not found' });
+        req.resume();
+        return;
+      }
+      const sessionId = sessionMatch[1]!;
+      const tokenHeader = headerValue(req.headers, 'authorization');
+      const token = tokenHeader?.startsWith('Bearer ') ? tokenHeader.slice(7) : undefined;
+      if (req.method === 'GET' && sessionMatch[2] === undefined) {
+        const snapshot = mediaTransferRequest.snapshot(sessionId, token, origin);
+        if (!snapshot) {
+          jsonResponse(res, 404, { status: 'rejected', reason: 'session not found' });
+          return;
+        }
+        jsonResponse(res, 200, { ...snapshot });
+        return;
+      }
+      if (req.method === 'PUT' && sessionMatch[3] !== undefined) {
+        const offsetRaw = requestUrl.searchParams.get('offset');
+        const offset = offsetRaw === null ? NaN : Number(offsetRaw);
+        const declaredLength = Number(req.headers['content-length']);
+        if (Number.isFinite(declaredLength) && declaredLength > SEGMENTED_MEDIA_CHUNK_BYTES) {
+          jsonResponse(res, 413, { status: 'rejected', reason: 'chunk too large' });
+          req.resume();
+          return;
+        }
+        if (!Number.isSafeInteger(offset) || offset < 0) {
+          jsonResponse(res, 400, { status: 'rejected', reason: 'invalid segment offset' });
+          req.resume();
+          return;
+        }
+        void (async () => {
+          const bytes = await readRequestBodyLimited(req, SEGMENTED_MEDIA_CHUNK_BYTES);
+          if (!bytes) {
+            jsonResponse(res, 413, { status: 'rejected', reason: 'chunk too large' });
+            return;
+          }
+          const result = await mediaTransferRequest.uploadChunk({
+            sessionId,
+            token,
+            origin,
+            segmentId: sessionMatch[3]!,
+            offset,
+            final: headerValue(req.headers, 'x-segment-final') === 'true',
+            bytes,
+          });
+          if (!result.ok) {
+            jsonResponse(res, result.status, { status: 'rejected', reason: result.reason });
+            return;
+          }
+          jsonResponse(res, 200, { status: 'ok', received: true });
+        })().catch((error: unknown) => {
+          options.onError?.(error instanceof Error ? error : new Error(String(error)));
+          if (!res.headersSent) jsonResponse(res, 500, { status: 'rejected', reason: 'internal error' });
+        });
+        return;
+      }
+      if (req.method === 'POST' && sessionMatch[2] === 'commit') {
+        void mediaTransferRequest.commit(sessionId, token, origin).then((result) => {
+          if (!result.ok) {
+            jsonResponse(res, result.status, { status: 'rejected', reason: result.reason });
+            return;
+          }
+          jsonResponse(res, 202, { status: 'accepted', state: 'committing' });
+        }).catch((error: unknown) => {
+          options.onError?.(error instanceof Error ? error : new Error(String(error)));
+          if (!res.headersSent) jsonResponse(res, 500, { status: 'rejected', reason: 'internal error' });
+        });
+        return;
+      }
+      if (req.method === 'DELETE' && sessionMatch[2] === undefined) {
+        void mediaTransferRequest.cancel(sessionId, token, origin).then((result) => {
+          if (!result.ok) {
+            jsonResponse(res, result.status, { status: 'rejected', reason: result.reason });
+            return;
+          }
+          const snapshot = mediaTransferRequest.snapshot(sessionId, token, origin);
+          jsonResponse(res, 200, {
+            status: 'ok',
+            ...(result.duplicate ? { duplicate: true } : {}),
+            ...(snapshot ? {
+              state: snapshot.status,
+              cleanupFailed: snapshot.cleanupFailed,
+              ...(snapshot.failureKind ? { failureKind: snapshot.failureKind } : {}),
+            } : {}),
+          });
+        }).catch((error: unknown) => {
+          options.onError?.(error instanceof Error ? error : new Error(String(error)));
+          if (!res.headersSent) jsonResponse(res, 500, { status: 'rejected', reason: 'internal error' });
+        });
+        return;
+      }
+      jsonResponse(res, 405, { status: 'rejected', reason: 'method not allowed' });
+      req.resume();
       return;
     }
 
@@ -484,6 +744,7 @@ export async function createExtensionServer(
             ...(metadata.targetCollectionId
               ? { targetCollectionId: metadata.targetCollectionId }
               : {}),
+            ...(metadata.expectedLibraryId ? { expectedLibraryId: metadata.expectedLibraryId } : {}),
             byteLength,
             focusAppAfterSave: metadata.focusAppAfterSave,
             revealInLibrary: metadata.revealInLibrary,
@@ -502,11 +763,15 @@ export async function createExtensionServer(
             jsonResponse(res, disposition.status, {
               status: 'rejected',
               reason: disposition.reason,
+              ...(disposition.failureKind ? { failureKind: disposition.failureKind } : {}),
             });
             return;
           }
 
-          jsonResponse(res, 202, { status: 'accepted' });
+          jsonResponse(res, 202, {
+            status: 'accepted',
+            ...(disposition?.accepted && disposition.duplicate ? { duplicate: true } : {}),
+          });
         } catch (error) {
           try {
             await rm(stagingDirectory, { recursive: true, force: true });
@@ -578,8 +843,9 @@ export async function createExtensionServer(
           return;
         }
 
+        let disposition: void | SaveIntentDisposition;
         try {
-          const disposition = await options.onSaveIntent(result.data);
+          disposition = await options.onSaveIntent(result.data);
           if (
             disposition &&
             typeof disposition === 'object' &&
@@ -589,6 +855,7 @@ export async function createExtensionServer(
             jsonResponse(res, disposition.status, {
               status: 'rejected',
               reason: disposition.reason,
+              ...(disposition.failureKind ? { failureKind: disposition.failureKind } : {}),
             });
             return;
           }
@@ -599,7 +866,10 @@ export async function createExtensionServer(
           return;
         }
 
-        jsonResponse(res, 202, { status: 'accepted' });
+        jsonResponse(res, 202, {
+          status: 'accepted',
+          ...(disposition?.accepted && disposition.duplicate ? { duplicate: true } : {}),
+        });
       });
       return;
     }

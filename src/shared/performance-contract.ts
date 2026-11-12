@@ -179,6 +179,7 @@ const MUTATION_COMMANDS = new Set([
   'asset.text.save',
   'extension.save-from-url',
   'extension.save-from-file',
+  'extension.save-segmented-video',
   'folder.create',
   'folder.rename',
   'appearance.set',

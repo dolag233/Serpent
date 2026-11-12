@@ -1,4 +1,5 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -9,6 +10,14 @@ import { LibraryService } from '../../src/worker/library-service';
 import type { PinnedHttpTransport } from '../../src/worker/secure-http-download';
 
 const temporaryRoots: string[] = [];
+const require = createRequire(import.meta.url);
+const TestDatabase = require('better-sqlite3') as new (filename: string) => {
+  prepare(source: string): {
+    get(...parameters: unknown[]): unknown;
+    run(...parameters: unknown[]): unknown;
+  };
+  close(): void;
+};
 
 function tempDir(): string {
   const dir = mkdtempSync(path.join(tmpdir(), 'serpent-test-extension-'));
@@ -836,6 +845,44 @@ describe('saveAssetFromUrl', () => {
     });
 
     expect(duplicate.asset.assetId).toBe(first.asset.assetId);
+    expect(duplicate.duplicate).toBe(true);
+    expect(service.listAssets({ libraryId, recursive: true })).toHaveLength(1);
+
+    const sameNameSameBytesPath = path.join(tempDir(), 'same-name-same-bytes.png');
+    writeFileSync(sameNameSameBytesPath, firstBytes);
+    const sameNameDuplicate = await service.saveAssetFromFile({
+      libraryId,
+      stagedFilePath: sameNameSameBytesPath,
+      contentType: 'image/png',
+      filename: 'photo.png',
+      sourcePageUrl: 'https://example.com/same-name-duplicate',
+    });
+    expect(sameNameDuplicate).toMatchObject({ asset: { assetId: first.asset.assetId }, duplicate: true });
+    expect(service.listAssets({ libraryId, recursive: true })).toHaveLength(1);
+
+    stubFetch({ contentType: 'image/png', body: firstBytes });
+    const urlDuplicate = await service.saveAssetFromUrl({
+      libraryId,
+      sourcePageUrl: 'https://example.com/from-url',
+      mediaUrl: 'https://example.com/url-copy.png',
+    });
+    expect(urlDuplicate).toMatchObject({ asset: { assetId: first.asset.assetId }, duplicate: true });
+    expect(service.listAssets({ libraryId, recursive: true })).toHaveLength(1);
+
+    const targetFolder = service.createManagedFolder({ libraryId, name: 'Duplicate target' });
+    const folderDuplicatePath = path.join(tempDir(), 'folder-target-copy.png');
+    writeFileSync(folderDuplicatePath, firstBytes);
+    const folderDuplicate = await service.saveAssetFromFile({
+      libraryId,
+      targetFolderId: targetFolder.folderId,
+      stagedFilePath: folderDuplicatePath,
+      contentType: 'image/png',
+      filename: 'inside-folder.png',
+      sourcePageUrl: 'https://example.com/folder-target-copy',
+    });
+    expect(folderDuplicate).toMatchObject({ asset: { assetId: first.asset.assetId }, duplicate: true });
+    expect(folderDuplicate.asset.managedFolderId).toBe(first.asset.managedFolderId);
+    expect(service.listAssets({ libraryId, folderId: targetFolder.folderId, recursive: false })).toHaveLength(0);
     expect(service.listAssets({ libraryId, recursive: true })).toHaveLength(1);
 
     const secondPath = path.join(tempDir(), 'second.png');
@@ -855,5 +902,62 @@ describe('saveAssetFromUrl', () => {
       .toBe('https://example.com/first');
     expect(service.getAssetMetadata({ libraryId, assetId: second.asset.assetId }).sourcePageUrl)
       .toBe('https://example.com/second');
+  });
+
+  it('compares original revisions and ignores matching thumbnail artifact bytes', async () => {
+    const originalBytes = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x10, 0x11,
+    ]);
+    const thumbnailBytes = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x21,
+    ]);
+    const originalPath = path.join(tempDir(), 'original.png');
+    writeFileSync(originalPath, originalBytes);
+    const original = await service.saveAssetFromFile({
+      libraryId,
+      stagedFilePath: originalPath,
+      contentType: 'image/png',
+      filename: 'original.png',
+    });
+
+    const libraryPath = service.listLibraries().find((library) => library.libraryId === libraryId)!.libraryPath;
+    const artifactsPath = path.join(libraryPath, '.serpent', 'artifacts');
+    mkdirSync(artifactsPath, { recursive: true });
+    const artifactId = randomUUID();
+    const artifactFilename = `${artifactId}.png`;
+    writeFileSync(path.join(artifactsPath, artifactFilename), thumbnailBytes);
+    const database = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    try {
+      const revision = database.prepare(
+        'SELECT current_revision_id FROM assets WHERE asset_id = ?',
+      ).get(original.asset.assetId) as { current_revision_id: string };
+      database.prepare(
+        `INSERT INTO revision_artifacts
+           (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+            generator_version, status, generated_at)
+         VALUES (?, ?, 'thumbnail', 'image/png', ?, ?, 'test', 'ready', ?)`,
+      ).run(
+        artifactId,
+        revision.current_revision_id,
+        thumbnailBytes.length,
+        artifactFilename,
+        new Date().toISOString(),
+      );
+    } finally {
+      database.close();
+    }
+
+    const thumbnailSourcePath = path.join(tempDir(), 'thumbnail-bytes-as-source.png');
+    writeFileSync(thumbnailSourcePath, thumbnailBytes);
+    const imported = await service.saveAssetFromFile({
+      libraryId,
+      stagedFilePath: thumbnailSourcePath,
+      contentType: 'image/png',
+      filename: 'thumbnail-bytes-as-source.png',
+    });
+
+    expect(imported.duplicate).toBeUndefined();
+    expect(imported.asset.assetId).not.toBe(original.asset.assetId);
+    expect(service.listAssets({ libraryId, recursive: true })).toHaveLength(2);
   });
 });
