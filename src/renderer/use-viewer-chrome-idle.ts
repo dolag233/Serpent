@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import {
   pointerEventIsUserMove,
@@ -12,6 +12,13 @@ import {
 } from "./viewer-chrome-idle";
 
 const DEFAULT_IDLE_MS = 2_000;
+const FULLSCREEN_IDLE_MS = 1_000;
+
+function subscribeFullscreenChange(notify: () => void): () => void {
+  document.addEventListener('fullscreenchange', notify);
+  return () => document.removeEventListener('fullscreenchange', notify);
+}
+const readFullscreen = () => Boolean(document.fullscreenElement);
 
 /**
  * Fade viewer chrome after input idle (Serpent-627 / Serpent-njoy).
@@ -32,13 +39,15 @@ export function useViewerChromeIdle(
   wake: () => void;
 } {
   const [idle, setIdle] = useState(false);
+  const fullscreen = useSyncExternalStore(subscribeFullscreenChange, readFullscreen, () => false);
+  const effectiveIdleMs = active && fullscreen ? FULLSCREEN_IDLE_MS : idleMs;
   const schedulerRef = useRef<ReturnType<
     typeof createViewerChromeIdleScheduler
   > | null>(null);
 
   useEffect(() => {
     const scheduler = createViewerChromeIdleScheduler(
-      idleMs,
+      effectiveIdleMs,
       () => setIdle(true),
       () => setIdle(false),
     );
@@ -48,7 +57,7 @@ export function useViewerChromeIdle(
       scheduler.dispose();
       schedulerRef.current = null;
     };
-  }, [idleMs]);
+  }, [effectiveIdleMs]);
 
   const wake = useCallback(() => {
     schedulerRef.current?.bump();

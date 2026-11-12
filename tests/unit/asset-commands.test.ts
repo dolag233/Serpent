@@ -504,6 +504,7 @@ describe('注册表完整性', () => {
       'asset.remove-from-current-collection',
       'asset.relink',
       'asset.move-to-folder',
+      'asset.cut',
       'asset.copy',
       'asset.paste',
       'asset.copy-file-path',
@@ -535,4 +536,15 @@ describe('注册表完整性', () => {
       'delete',
     ]);
   });
+});
+
+it('exposes cut with its shortcut and passes the entire available selection', () => {
+  const { ctx, calls } = makeCtx();
+  const ids: string[][] = [];
+  const context = { ...ctx, actions: { ...ctx.actions, cutFiles: (values: string[]) => { ids.push(values); } } };
+  const item = registry.resolveMenu(context).find(item => item.id === 'asset.cut');
+  expect(item?.shortcutLabel).toBeTruthy();
+  registry.get('asset.cut')!.run(context);
+  expect(ids).toEqual([ctx.primaryAssetId ? [ctx.primaryAssetId] : []]);
+  expect(calls).toEqual([]);
 });

@@ -202,10 +202,9 @@
   align-self: center;
   width: var(--shell-control-height);
   height: var(--shell-control-height);
-  /* List padding-inline reserves scoop width; pull plus back into that gutter.
-     The list is position:relative, so it paints above this in-flow button
-     where they overlap — keep the plus above that hit target. */
-  margin-inline-start: calc(-1 * var(--workspace-tab-scoop) + var(--ui-space-1));
+  /* Keep the add button outside the scrolling viewport. A negative margin
+     lets overflowing titles and close buttons paint underneath the plus. */
+  margin-inline-start: var(--ui-space-1);
   border-radius: var(--ui-radius-surface);
   color: var(--secondary);
 }
@@ -233,12 +232,17 @@
 
 .toolbar-workspace-leading {
   display: flex;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   align-self: center;
   align-items: center;
   min-width: 0;
   height: var(--shell-control-height);
   gap: 9px;
+}
+
+/* Leave a quiet gap before the scroll viewport, even when a tab is clipped. */
+.toolbar-workspace-leading + .workspace-tabs {
+  margin-inline-start: var(--ui-space-2);
 }
 
 /* Flush the browse chrome to the pane dividers: search's right edge meets

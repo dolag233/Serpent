@@ -15,6 +15,7 @@ import {
 } from '../content-replace';
 import { performanceRequestEnvelopeSchema } from '../performance-contract';
 import { EMBEDDING_HTTP_ADAPTERS, isEmbeddingSelectionId } from '../embedding/http-service';
+import { isValidExtensionUploadMediaUrl } from './media-url';
 import {
   SEMANTIC_IMAGE_BYTES_MAX,
   SEMANTIC_IMAGE_BYTES_MIN,
@@ -96,6 +97,7 @@ const httpUrlSchema = nonBlankString.max(8_192).refine((value) => {
     return false;
   }
 }, { message: 'Expected an HTTP(S) URL without embedded credentials.' });
+const extensionUploadMediaUrlSchema = z.string().max(8_192);
 export const sourcePageUrlSchema = z.union([
   z.literal(''),
   httpUrlSchema.refine((value) => value === value.trim(), {
@@ -1281,17 +1283,23 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   }),
   // Clarification #5 / Serpent-bkef: OS file clipboard for asset files.
   z.strictObject({
+    type: z.literal('asset.clipboard-state.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('asset.copy-files.request'),
+    operation: z.enum(['copy', 'cut']).optional(),
     libraryId: identifierSchema,
     assetIds: z
       .array(identifierSchema)
-      .min(1)
+      .min(0)
       .max(10_000)
       .refine(
         (assetIds) => new Set(assetIds).size === assetIds.length,
         { message: 'assetIds must not contain duplicates.' },
       ),
-  }),
+    folderIds: z.array(identifierSchema).min(1).max(10_000).refine(ids => new Set(ids).size === ids.length).optional(),
+  }).refine(input => input.assetIds.length + (input.folderIds?.length ?? 0) > 0, { message: 'Select at least one asset or folder.' }),
   z.strictObject({
     type: z.literal('asset.retry-artifact.request'),
     libraryId: identifierSchema,
@@ -1864,6 +1872,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('asset.import.prepare'),
+    moveSourceFiles: z.boolean().optional(),
     libraryId: identifierSchema,
     targetFolderId: optionalIdentifierSchema,
     sourceKind: z.enum(['files', 'folder']),
@@ -2495,13 +2504,46 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('extension.save-from-file'),
+    kind: z.enum(['image', 'video']),
     libraryId: identifierSchema,
     targetFolderId: optionalIdentifierSchema,
     sourcePageUrl: httpUrlSchema.optional(),
-    mediaUrl: httpUrlSchema.optional(),
+    mediaUrl: extensionUploadMediaUrlSchema.optional(),
     stagedFilePath: selectedPathSchema,
     contentType: z.string().min(1).max(128),
     filename: z.string().min(1).max(255),
+  }).refine((value) => value.mediaUrl === undefined
+    || isValidExtensionUploadMediaUrl(value.mediaUrl, value.sourcePageUrl), {
+    path: ['mediaUrl'],
+    message: 'Expected an HTTP(S) URL or a blob URL matching the source page origin.',
+  }),
+  z.strictObject({
+    type: z.literal('extension.save-segmented-video'),
+    libraryId: identifierSchema,
+    transferId: z.string().uuid(),
+    targetFolderId: optionalIdentifierSchema,
+    sourcePageUrl: httpUrlSchema.optional(),
+    mediaUrl: httpUrlSchema.optional(),
+    stagingDirectory: selectedPathSchema,
+    contentType: z.literal('video/mp4'),
+    filename: z.string().min(1).max(255),
+    protocol: z.enum(['hls-ts', 'hls-fmp4', 'dash-fmp4']),
+    totalBytes: z.number().int().min(1).max(500 * 1024 * 1024),
+    tracks: z.array(z.strictObject({
+      kind: z.enum(['video', 'audio']),
+      segments: z.array(z.strictObject({
+        id: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u),
+        role: z.enum(['init', 'media']),
+        byteLength: z.number().int().min(1).max(500 * 1024 * 1024),
+        sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+        durationMs: z.number().int().positive().optional(),
+        discontinuityBefore: z.boolean().optional(),
+      })).min(1).max(20_000),
+    })).min(1).max(2),
+  }),
+  z.strictObject({
+    type: z.literal('extension.cancel-segmented-video'),
+    transferId: z.string().uuid(),
   }),
   z.strictObject({
     type: z.literal('library.export'),
@@ -2820,13 +2862,14 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     assetIds: z
       .array(identifierSchema)
-      .min(1)
+      .min(0)
       .max(10_000)
       .refine(
         (assetIds) => new Set(assetIds).size === assetIds.length,
         { message: 'assetIds must not contain duplicates.' },
       ),
-  }),
+    folderIds: z.array(identifierSchema).min(1).max(10_000).refine(ids => new Set(ids).size === ids.length).optional(),
+  }).refine(input => input.assetIds.length + (input.folderIds?.length ?? 0) > 0, { message: 'Select at least one asset or folder.' }),
   // Main-only cache primer for OS-native asset drag. The Worker resolves the
   // paths before dragstart, so Main can start the platform drag synchronously.
   z.strictObject({

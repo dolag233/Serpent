@@ -537,6 +537,7 @@ export const zhCN = {
       showInLibraryFolder: "在所在文件夹中显示",
       findSimilar: "找相似",
       copyFilePath: "复制文件路径",
+      cut: "剪切",
       copy: "复制",
       paste: "粘贴",
       rename: "重命名…",
@@ -1645,7 +1646,7 @@ export const zhCN = {
     themeProfileAsh: "石灰",
     themeProfileNotion: "Notion",
     themeProfileOnedark: "One Dark",
-    themeProfileCode: "VS Code 深色+/浅色+",
+    themeProfileCode: "VS Code 青蓝",
     themeProfileAzure: "霁蓝",
     themeProfileTeal: "青碧",
     themeProfileJade: "翠玉",
@@ -2155,6 +2156,9 @@ export const zhCN = {
     importConflictRememberEmpty: "当前没有记住的默认行为"
   },
   preview: {
+    playbackMode: "播放模式：{mode}（点击切换）",
+    playbackModes: { stop: "播完停止", 'repeat-one': "单曲循环", sequential: "顺序播放" },
+
     ffmpegRequired: "当前安装缺少可用的媒体组件，无法生成视频播放代理。请重新安装或修复 Serpent 后重试。",
     oiioRequired: "当前安装缺少 OpenImageIO，无法解码此图像格式。请安装或配置 oiiotool 后重试。",
     sharpUnavailable: "图像解码组件不可用，无法生成预览。请重新安装应用后重试。",
@@ -2554,6 +2558,7 @@ export const zhCN = {
     copyFolderPathFailed: "复制文件夹路径失败。",
     folderCopyDone: "文件夹已复制到系统剪贴板。",
     folderCopyFailed: "复制文件夹到系统剪贴板失败。",
+    clipboardSourceRetained: "{count} 个源文件未能移除，已保留在原处。",
     assetCopyDone: "资产已复制到系统剪贴板。",
     assetCopyDoneMany: "已将 {count} 项资产复制到系统剪贴板。",
     assetCopyFailed: "复制资产到系统剪贴板失败。",

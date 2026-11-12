@@ -32,6 +32,7 @@ const FOLDER_SHORTCUT_COMMAND_IDS = [
   "folder.open-in-file-manager",
   "folder.create-subfolder",
   "folder.rename",
+  "folder.cut",
   "folder.copy",
   "folder.copy-path",
   "folder.paste",
@@ -69,10 +70,12 @@ export type UseFolderCommandShortcutsArgs = {
   readonly selectedFolderCardIds: readonly string[];
   readonly selectedAssetCount: number;
   readonly resolveManagedFolderName: (folderId: string) => string | undefined;
+  readonly canCutFolder?: (folderId: string) => boolean;
   readonly canRenameFolder?: (folderId: string) => boolean;
   readonly canOpenFolder?: (folderId: string) => boolean;
   readonly openFolderInFileManager: (folderId: string) => void;
   readonly createSubfolder: (parentFolderId: string | null) => void;
+  readonly cutFolders?: (folderIds: string[]) => void;
   readonly copyFolder: (folderId: string) => void;
   readonly copyFolderPath: (folderId: string) => void;
   readonly pasteIntoFolder: (folderId: string | null) => void;
@@ -99,8 +102,10 @@ export function useFolderCommandShortcuts(
     selectedFolderCardIds,
     selectedAssetCount,
     resolveManagedFolderName,
+    canCutFolder,
     canRenameFolder,
     createSubfolder,
+    cutFolders,
     copyFolder,
     copyFolderPath,
     pasteIntoFolder,
@@ -140,6 +145,7 @@ export function useFolderCommandShortcuts(
           selectedFolderCardIds,
           selectedAssetCount,
           resolveManagedFolderName,
+          canCutFolder,
           canRenameFolder,
           canOpenFolder,
         });
@@ -163,6 +169,10 @@ export function useFolderCommandShortcuts(
         }
         if (action.type === "create-subfolder") {
           createSubfolder(action.parentFolderId);
+          return;
+        }
+        if (action.type === 'cut-folders') {
+          cutFolders?.(action.folderIds);
           return;
         }
         if (action.type === "copy-folder") {
@@ -222,8 +232,10 @@ export function useFolderCommandShortcuts(
     selectedFolderCardIds,
     selectedAssetCount,
     resolveManagedFolderName,
+    canCutFolder,
     canRenameFolder,
     createSubfolder,
+    cutFolders,
     copyFolder,
     copyFolderPath,
     pasteIntoFolder,

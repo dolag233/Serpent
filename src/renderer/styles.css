@@ -6372,6 +6372,16 @@ body.serpent-modal-open .app-shell {
   pointer-events: none;
   transform: translateY(calc(100% + 24px));
 }
+/* In fullscreen, a stationary pointer or retained keyboard focus cannot pin
+   any player chrome on screen after the one-second idle deadline. */
+.workspace-viewer-transition:fullscreen .workspace-viewer.is-chrome-idle .preview-chrome-fade,
+.workspace-viewer-transition:fullscreen .workspace-viewer.is-chrome-idle .preview-chrome-fade:focus-visible,
+.workspace-viewer:fullscreen.is-chrome-idle .preview-chrome-fade,
+.workspace-viewer-transition:fullscreen .workspace-viewer.is-chrome-idle .preview-video-progress-rail,
+.workspace-viewer:fullscreen.is-chrome-idle .preview-video-progress-rail {
+  opacity: 0;
+  pointer-events: none;
+}
 .preview-zoom-controls,
 .model-viewer-toolbar {
   transition: transform 220ms ease, opacity 220ms ease;
@@ -11965,6 +11975,18 @@ select.ai-config-input.ai-config-languages {
   opacity: 0.78;
 }
 
+.folder-card-rename {
+  width: 100%;
+  min-width: 0;
+}
+
+.folder-card .folder-card-rename-input {
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  text-align: center;
+}
+
 .folder-card-caption {
   display: flex;
   min-width: 0;
@@ -12449,17 +12471,24 @@ select.ai-config-input.ai-config-languages {
   z-index: 1;
 }
 
-/* Hover scrub: frosted capsule on the frame. Dark theme uses a brighter
-   white frost so the bar stays readable; light keeps the approved 50% fill. */
+/* Cut files stay interactive; the selection outline remains fully visible. */
+.asset-card.is-cut .asset-preview {
+  opacity: 0.42;
+}
+
+.asset-card.is-cut .asset-caption {
+  opacity: 0.65;
+}
+
+/* Edge timeline: a quiet rail inside the preview mask, with an accent playhead.
+   Seeking uses the whole card, so the slim rail needs no separate hit target. */
 .asset-card-hover-progress {
   position: absolute;
-  left: 16px;
-  right: 16px;
-  bottom: 14px;
-  height: 10px;
+  inset: auto 0 0;
+  height: 3px;
   overflow: hidden;
-  border-radius: 999px;
-  background: rgb(255 255 255 / 35%);
+  background: rgb(0 0 0 / 22%);
+  box-shadow: 0 -1px 0 rgb(255 255 255 / 12%);
   pointer-events: none;
   z-index: 3;
 }
@@ -12467,16 +12496,8 @@ select.ai-config-input.ai-config-languages {
 .asset-card-hover-progress-fill {
   display: block;
   height: 100%;
-  border-radius: inherit;
-  background: rgb(255 255 255 / 70%);
-}
-
-[data-theme="light"] .asset-card-hover-progress {
-  background: rgb(255 255 255 / 25%);
-}
-
-[data-theme="light"] .asset-card-hover-progress-fill {
-  background: rgb(255 255 255 / 50%);
+  border-radius: 0 999px 999px 0;
+  background: var(--accent);
 }
 
 /* Serpent hover 音频: hover 播放只需出声，不显示播放控件。 */
@@ -12533,7 +12554,7 @@ select.ai-config-input.ai-config-languages {
 }
 
 
-/* Solid theme chips keep labels legible without a per-card backdrop blur.
+/* Translucent theme chips keep labels legible without a per-card backdrop blur.
    Dense video grids otherwise spend most scroll frames rebuilding blur layers.
    Serpent-i07: duration bottom-left; extension bottom-right (non-images). */
 .asset-extension {
@@ -12542,7 +12563,7 @@ select.ai-config-input.ai-config-languages {
   right: 6px;
   padding: 2px 6px;
   border-radius: calc(5px * var(--ui-radius-scale, 1));
-  background: var(--raised-2);
+  background: color-mix(in srgb, var(--raised-2) 80%, transparent);
   color: var(--secondary);
   font-family: "IBM Plex Mono", monospace;
   font-size: calc(9px * var(--ui-font-scale));
@@ -12558,7 +12579,7 @@ select.ai-config-input.ai-config-languages {
   left: 6px;
   padding: 2px 6px;
   border-radius: calc(5px * var(--ui-radius-scale, 1));
-  background: var(--raised-2);
+  background: color-mix(in srgb, var(--raised-2) 80%, transparent);
   color: var(--text);
   font-family: "IBM Plex Mono", monospace;
   font-size: calc(9px * var(--ui-font-scale));
@@ -12636,7 +12657,7 @@ select.ai-config-input.ai-config-languages {
   right: 6px;
   padding: 2px 6px;
   border-radius: calc(5px * var(--ui-radius-scale, 1));
-  background: var(--raised-2);
+  background: color-mix(in srgb, var(--raised-2) 80%, transparent);
   color: var(--text);
   font-family: "IBM Plex Mono", monospace;
   font-size: calc(9px * var(--ui-font-scale));
@@ -12737,7 +12758,7 @@ select.ai-config-input.ai-config-languages {
   max-width: calc(100% - 28px);
   padding: 2px 6px;
   border-radius: calc(5px * var(--ui-radius-scale, 1));
-  background: var(--raised-2);
+  background: color-mix(in srgb, var(--raised-2) 80%, transparent);
   color: var(--secondary);
   font-size: calc(9px * var(--ui-font-scale));
   line-height: 1.45;
@@ -14601,11 +14622,6 @@ select.ai-config-input.ai-config-languages {
   font-family: var(--font-ui-unified);
 }
 
-:root[data-platform="windows"] .app-shell[data-shell-layout="islands"] .inspector-content .micro-label {
-  font-size: calc(12px * var(--ui-font-scale));
-  letter-spacing: 0.01em;
-  color: var(--secondary);
-}
 
 :root[data-platform="windows"] .app-shell[data-shell-layout="islands"] :is(
     .nav-section-heading,
@@ -16382,7 +16398,6 @@ html.serpent-window-square .window-edge-resize-layer.is-disabled {
 :root {
   --island-gap: 12px;
   --island-radius: calc(22px * var(--ui-radius-scale, 1));
-  --island-backdrop: color-mix(in srgb, var(--ui-surface-pane) 82%, var(--ui-surface-raised));
   --island-border: rgb(0 0 0 / 5%);
   --island-shadow: 0 1px 2px rgb(0 0 0 / 4%), 0 4px 16px -6px rgb(0 0 0 / 8%);
   --island-select: color-mix(in srgb, var(--accent) 16%, transparent);
@@ -16395,7 +16410,6 @@ html.serpent-window-square .window-edge-resize-layer.is-disabled {
   --island-tab-fill: color-mix(in srgb, var(--ui-surface-raised) 72%, var(--ui-surface-canvas));
 }
 :root[data-theme="dark"] {
-  --island-backdrop: color-mix(in srgb, var(--ui-surface-canvas) 78%, black);
   --island-border: rgb(255 255 255 / 7%);
   --island-shadow: 0 6px 20px -8px rgb(0 0 0 / 45%);
   --island-select: color-mix(in srgb, var(--accent) 28%, transparent);
@@ -16932,7 +16946,6 @@ html.serpent-window-square .window-edge-resize-layer.is-disabled {
    is synthesized here so theme presets remain visible. */
 .app-shell[data-shell-layout="islands"] {
   --island-side: var(--ui-surface-pane);
-  --island-backdrop: color-mix(in srgb, var(--ui-surface-pane) 55%, var(--ui-surface-canvas));
   --island-border: color-mix(in srgb, var(--ui-content-primary) 8%, transparent);
   --island-hairline: color-mix(in srgb, var(--ui-content-primary) 9%, transparent);
   --island-shadow: 0 1px 2px color-mix(in srgb, var(--ui-content-primary) 4%, transparent),
@@ -16945,7 +16958,6 @@ html.serpent-window-square .window-edge-resize-layer.is-disabled {
   background-color: var(--island-backdrop);
 }
 :root[data-theme="dark"] .app-shell[data-shell-layout="islands"] {
-  --island-backdrop: color-mix(in srgb, var(--ui-surface-canvas) 70%, black);
   --island-border: color-mix(in srgb, white 7%, transparent);
   --island-hairline: color-mix(in srgb, white 8%, transparent);
   --island-shadow: 0 6px 20px -10px rgb(0 0 0 / 50%);
@@ -17332,7 +17344,6 @@ html.serpent-window-square .window-edge-resize-layer.is-disabled {
   --island-shadow: none;
 
   /* Stronger surface ladder: deep backdrop → opaque sides → bright canvas */
-  --island-backdrop: color-mix(in srgb, var(--ui-surface-canvas) 82%, var(--ui-content-primary));
   --island-side: var(--ui-surface-pane);
   --island-canvas: var(--ui-surface-raised);
   --island-toolstrip-bg: color-mix(in srgb, var(--ui-surface-pane) 55%, var(--ui-surface-raised));
@@ -17359,7 +17370,6 @@ html.serpent-window-square .window-edge-resize-layer.is-disabled {
   --island-border: color-mix(in srgb, white 7%, transparent);
   --island-hairline: color-mix(in srgb, white 5%, transparent);
   --island-shadow: none;
-  --island-backdrop: color-mix(in srgb, black 45%, var(--ui-surface-canvas));
   --island-toolstrip-bg: color-mix(in srgb, var(--ui-surface-pane) 70%, black);
   --island-tab-fill: var(--island-toolstrip-bg);
   --island-surface-soft: color-mix(in srgb, var(--ui-surface-raised) 88%, white);
@@ -17637,11 +17647,13 @@ html.serpent-window-square .window-edge-resize-layer.is-disabled {
 }
 .app-shell[data-shell-layout="islands"] .inspector-section-label,
 .app-shell[data-shell-layout="islands"] .inspector-content .micro-label {
-  font-size: calc(10.5px * var(--ui-font-scale));
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-family: var(--font-ui);
+  font-size: calc(12px * var(--ui-font-scale));
+  line-height: 1.5;
+  text-transform: none;
+  letter-spacing: 0.01em;
   font-weight: 600;
-  color: var(--ui-content-tertiary);
+  color: var(--ui-content-secondary);
 }
 .app-shell[data-shell-layout="islands"] .inspector-quick-row,
 .app-shell[data-shell-layout="islands"] .inspector-quick-row + .editor-field,
@@ -17708,7 +17720,6 @@ html.serpent-window-square .window-edge-resize-layer.is-disabled {
 
 .app-shell[data-shell-layout="islands"] {
   /* 1) Backdrop toward pane; canvas closer to sides */
-  --island-backdrop: color-mix(in srgb, var(--ui-surface-pane) 78%, var(--ui-surface-canvas));
   --island-canvas: color-mix(in srgb, var(--ui-surface-raised) 45%, var(--ui-surface-pane));
   --island-side: var(--ui-surface-pane);
   --island-toolstrip-bg: color-mix(in srgb, var(--ui-surface-pane) 70%, var(--island-canvas));
@@ -17717,7 +17728,6 @@ html.serpent-window-square .window-edge-resize-layer.is-disabled {
 }
 
 :root[data-theme="dark"] .app-shell[data-shell-layout="islands"] {
-  --island-backdrop: color-mix(in srgb, var(--ui-surface-pane) 55%, var(--ui-surface-canvas));
   --island-canvas: color-mix(in srgb, var(--ui-surface-raised) 55%, var(--ui-surface-pane));
   --island-toolstrip-bg: color-mix(in srgb, var(--ui-surface-pane) 75%, var(--island-canvas));
   --island-tab-fill: var(--island-toolstrip-bg);
@@ -17785,24 +17795,14 @@ html.serpent-window-square .window-edge-resize-layer.is-disabled {
 .app-shell[data-shell-layout="islands"] > .navigation-pane,
 .app-shell[data-shell-layout="islands"] > .inspector-pane,
 .app-shell[data-shell-layout="islands"] > .workspace {
-  border: var(--island-hairline-w) solid var(--island-border);
+  border: var(--island-panel-stroke-width) solid var(--island-panel-stroke);
   border-radius: var(--island-radius);
   box-shadow: none;
 }
 
-/* ==== a47: clean center-island perimeter (match side islands) ============
-   a46 fixed tab-seam chew but TL/TR corners stayed pitted: transparent top
-   border + gradient stroke fought L/R --island-border at 16px radius under
-   overflow:hidden. Side islands use one uniform 1px border all around — do
-   the same for .workspace. Hole under active tab covered with tab-fill only
-   (no divider). Tab SVG keeps soft --island-tab-stroke; a45 backdrop kept. */
-
-.app-shell[data-shell-layout="islands"] {
-  --island-tab-stroke: color-mix(in srgb, var(--island-border) 55%, var(--island-backdrop));
-}
-:root[data-theme="dark"] .app-shell[data-shell-layout="islands"] {
-  --island-tab-stroke: color-mix(in srgb, var(--island-border) 55%, var(--island-backdrop));
-}
+/* Tab and panel share an opaque stroke and its 1px geometry. The SVG
+   scoop tips meet the panel's top border; the mask removes only the span
+   underneath the tab, leaving one continuous perimeter. */
 
 .app-shell[data-shell-layout="islands"] .workspace-tab,
 .app-shell[data-shell-layout="islands"] .workspace-tab:not(.is-active),
@@ -17841,7 +17841,7 @@ html.serpent-window-square .window-edge-resize-layer.is-disabled {
 .app-shell[data-shell-layout="islands"] .workspace-tab-outline-path {
   fill: none;
   stroke: var(--island-tab-stroke);
-  stroke-width: var(--island-hairline-w);
+  stroke-width: var(--island-panel-stroke-width);
   stroke-linecap: butt;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
@@ -17851,7 +17851,7 @@ html.serpent-window-square .window-edge-resize-layer.is-disabled {
    radius corners AA cleanly. Semi-transparent border still shows through a
    background hole — cover under-tab with an opaque ::after ON TOP of the border. */
 .app-shell[data-shell-layout="islands"]:has(.workspace-tab-outline) > .workspace {
-  border: var(--island-hairline-w) solid var(--island-border);
+  border: var(--island-panel-stroke-width) solid var(--island-panel-stroke);
   border-radius: var(--island-radius);
   background-color: var(--island-canvas);
   background-image: none;
@@ -17861,10 +17861,10 @@ html.serpent-window-square .window-edge-resize-layer.is-disabled {
   content: "";
   position: absolute;
   /* Absolute containing block is the padding edge — sit on the top border. */
-  top: calc(-1 * var(--island-hairline-w));
-  left: calc(var(--tab-seam-hole-left, 0px) - var(--island-hairline-w));
+  top: calc(-1 * var(--island-panel-stroke-width));
+  left: calc(var(--tab-seam-hole-left, 0px) - var(--island-panel-stroke-width));
   width: calc(var(--tab-seam-hole-right, 0px) - var(--tab-seam-hole-left, 0px));
-  height: var(--island-hairline-w);
+  height: var(--island-panel-stroke-width);
   background: var(--island-tab-fill);
   pointer-events: none;
   z-index: 4;
@@ -17880,23 +17880,6 @@ html.serpent-window-square .window-edge-resize-layer.is-disabled {
    Scrollbar consumed the right inset (CSS pad 12/12 → visual 12 vs 22).
    scrollbar-gutter: stable both-edges on .inspector-content equalizes. */
 
-/* ==== a45: deeper backdrop + soft tab stroke ==============================
-   Backdrop one more subtle step darker. Tab/seam stroke pulls border ink
-   toward backdrop (less contrast than full --island-border). */
-.app-shell[data-shell-layout="islands"] {
-  --island-backdrop: color-mix(
-    in srgb,
-    color-mix(in srgb, var(--ui-surface-pane) 78%, var(--ui-surface-canvas)) 93%,
-    var(--ui-content-primary)
-  );
-}
-:root[data-theme="dark"] .app-shell[data-shell-layout="islands"] {
-  --island-backdrop: color-mix(
-    in srgb,
-    color-mix(in srgb, var(--ui-surface-pane) 55%, var(--ui-surface-canvas)) 93%,
-    black
-  );
-}
 
 /* ==== a67: vertically center tag remove × ================================
    a66 label centering kept (name translateY 0.5px). Remove × with the same
@@ -18087,13 +18070,14 @@ html.serpent-window-square .window-edge-resize-layer.is-disabled {
   --island-hairline-w: 0.5px;
   --island-border: color-mix(in srgb, var(--ui-content-primary) 6%, transparent);
   --island-hairline: color-mix(in srgb, var(--ui-content-primary) 4%, transparent);
-  /* Tab stroke follows quieter border */
-  --island-tab-stroke: color-mix(in srgb, var(--island-border) 45%, var(--island-backdrop));
+  --island-panel-stroke-width: 1px;
+  --island-panel-stroke: color-mix(in srgb, var(--ui-content-primary) 9%, var(--island-side));
+  --island-tab-stroke: var(--island-panel-stroke);
 }
 :root[data-theme="dark"] .app-shell[data-shell-layout="islands"] {
   --island-border: color-mix(in srgb, white 6%, transparent);
   --island-hairline: color-mix(in srgb, white 4%, transparent);
-  --island-tab-stroke: color-mix(in srgb, var(--island-border) 45%, var(--island-backdrop));
+  --island-tab-stroke: var(--island-panel-stroke);
 }
 
 /* Cards / chips / fields: quieter default strokes (selection accent stays loud). */
@@ -18639,16 +18623,15 @@ body.platform-darwin .app-shell[data-shell-layout="islands"] .toolbar-nav-cluste
   margin: 0;
 }
 
-/* ==== a85: island/backdrop contrast ====================================
-   Backdrop anchored to the side-panel surface so every theme gets the same
-   small step (was ≈4 L* light / ≈3 L* dark; vscode & onedark dark were ~0
-   or inverted). Now ≈ +1.5–2 L* more separation. */
+/* Shared backdrop calibration. Keep this as the only derived definition;
+   explicit custom window colors below still take precedence. The light
+   Serpent backdrop resolves to approximately RGB(237, 237, 239). */
 .app-shell[data-shell-layout="islands"] {
-  --island-backdrop: color-mix(in oklab, var(--ui-surface-pane) 95%, black);
+  --island-backdrop: color-mix(in oklab, var(--ui-surface-pane) 98%, black);
   background-color: var(--island-backdrop);
 }
 :root[data-theme="dark"] .app-shell[data-shell-layout="islands"] {
-  --island-backdrop: color-mix(in oklab, var(--ui-surface-pane) 83%, black);
+  --island-backdrop: color-mix(in oklab, var(--ui-surface-pane) 88%, black);
   background-color: var(--island-backdrop);
 }
 
@@ -19202,6 +19185,7 @@ body.platform-darwin .app-shell[data-shell-layout="islands"] .toolbar-nav-cluste
 
 :root[style*="--ui-island-border:"] .app-shell[data-shell-layout="islands"]:is(*, #a93-island) {
   --island-border: var(--ui-island-border);
+  --island-panel-stroke: var(--ui-island-border);
 }
 
 :root[style*="--ui-island-card:"] .app-shell[data-shell-layout="islands"] .asset-card .asset-preview:is(*, #a93-island) {
@@ -20021,3 +20005,9 @@ body.platform-darwin .app-shell[data-shell-layout="islands"] .toolbar-nav-cluste
   background: var(--danger-muted);
   color: var(--danger);
 }
+
+/* Cut keeps the selection outline intact while fading its contents. */
+.folder-card.is-cut .folder-card-cover { opacity: .42; }
+.folder-card.is-cut .folder-card-caption { opacity: .65; }
+.nav-row.is-cut > :not(.nav-row-selection) { opacity: .42; }
+.asset-card.is-hover-playing, .asset-card.is-hover-playing * { cursor: none !important; }

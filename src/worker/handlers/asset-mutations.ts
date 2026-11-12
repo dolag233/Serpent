@@ -257,7 +257,7 @@ export async function executeAssetMutationWorkerCommand(
           assetStates: request.command.automationPlan.assetStates,
         });
       }
-      const { movedCount, skippedCount, operationId, assets } = libraryService.moveAssets(request.command);
+      const { movedCount, skippedCount, operationId, assets } = await libraryService.moveAssetsIncludingLinked(request.command);
       const historyEntryId = recordDesktopAssetHistory(libraryService, request.command, {
         count: movedCount,
         operationId,
@@ -284,7 +284,7 @@ export async function executeAssetMutationWorkerCommand(
       return { ok: true, type: 'asset.trash-undone', restoredCount, skippedCount, assets };
     }
     case 'asset.copy': {
-      const { copiedCount, skippedCount, operationId, assets, outputAssetIdsBySource } = libraryService.copyAssets(request.command);
+      const { copiedCount, skippedCount, operationId, assets, outputAssetIdsBySource } = libraryService.copyAssetsIncludingLinked(request.command);
       const historyEntryId = recordDesktopAssetHistory(libraryService, request.command, {
         count: copiedCount,
         operationId,

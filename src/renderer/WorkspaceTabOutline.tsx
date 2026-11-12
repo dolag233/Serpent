@@ -18,8 +18,8 @@ function readPx(raw: string, fallback: number): number {
 
 /**
  * Active-tab chrome: SVG fill (covers panel top border under tab) + open
- * stroke for scoops/sides/top. Center-island perimeter is a uniform CSS
- * border matching side islands; under-tab hole covered by fill + ::after.
+ * stroke for scoops/sides/top. Tab and panel share the same 1px stroke;
+ * the seam mask ends at the SVG tip centers so their horizontal edges meet.
  */
 export function WorkspaceTabOutline(): ReactNode {
   const [host, setHost] = useState<SVGSVGElement | null>(null);
@@ -33,10 +33,10 @@ export function WorkspaceTabOutline(): ReactNode {
   useLayoutEffect(() => {
     const tab = host?.parentElement;
     if (!tab) return;
+    const tabs = tab.closest(".workspace-tabs");
 
     const measure = () => {
       const cs = getComputedStyle(tab);
-      const tabs = tab.closest(".workspace-tabs");
       const tcs = tabs ? getComputedStyle(tabs) : null;
       // The scoop is a calc() (scaled by the corner-radius tier), so resolve
       // it through layout instead of parsing the custom property text.
@@ -60,8 +60,8 @@ export function WorkspaceTabOutline(): ReactNode {
       if (workspace) {
         const wr = workspace.getBoundingClientRect();
         faceH = Math.max(wr.top + 0.5 - rect.top, scoop + 1);
-        const leftTip = rect.left - scoop - wr.left;
-        const rightTip = rect.right + scoop - wr.left;
+        const leftTip = rect.left - scoop + STROKE_INSET - wr.left;
+        const rightTip = rect.right + scoop - STROKE_INSET - wr.left;
         workspace.style.setProperty(
           "--tab-seam-hole-left",
           `${Math.max(0, leftTip)}px`,
@@ -86,16 +86,22 @@ export function WorkspaceTabOutline(): ReactNode {
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(tab);
+    if (tabs) ro.observe(tabs);
     const workspace = tab
       .closest(".app-shell")
       ?.querySelector(":scope > .workspace") as HTMLElement | null;
     if (workspace) ro.observe(workspace);
+    // Scrolling the strip moves the tab without changing its size.
+    tabs?.addEventListener("scroll", measure, true);
+    window.addEventListener("resize", measure);
     // Corner-radius tier changes restyle the tab without resizing it.
     const mo = new MutationObserver(measure);
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-radius"] });
     return () => {
       ro.disconnect();
       mo.disconnect();
+      tabs?.removeEventListener("scroll", measure, true);
+      window.removeEventListener("resize", measure);
       workspace?.style.removeProperty("--tab-seam-hole-left");
       workspace?.style.removeProperty("--tab-seam-hole-right");
     };

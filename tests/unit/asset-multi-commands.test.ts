@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   assetMultiCommandDefinitions,
@@ -436,6 +436,7 @@ describe('注册表完整性', () => {
       'assets.ai-analyze-pending',
       'assets.ai-analyze',
       'assets.clear-ai-content',
+      'assets.cut',
       'assets.copy',
       'assets.paste',
       'assets.move-to-folder',
@@ -486,4 +487,28 @@ describe('注册表完整性', () => {
     const { ctx } = makeCtx();
     expect(resolveIds(ctx)).not.toContain('assets.ai-analyze-pending');
   });
+});
+
+it('exposes cut with its shortcut and passes the entire available selection', () => {
+  const { ctx, calls } = makeCtx();
+  const ids: string[][] = [];
+  const context = { ...ctx, actions: { ...ctx.actions, cutFiles: (values: string[]) => { ids.push(values); } } };
+  const item = registry.resolveMenu(context).find(item => item.id === 'assets.cut');
+  expect(item?.shortcutLabel).toBeTruthy();
+  registry.get('assets.cut')!.run(context);
+  expect(ids).toEqual([[...ctx.availableAssetIds]]);
+  expect(calls).toEqual([]);
+});
+
+
+it('enables cut for a folders-only selection and passes mixed clipboard ids together', () => {
+  const { ctx } = makeCtx();
+  const cut = vi.fn();
+  const foldersOnly = { ...ctx, availableAssetIds: [], cutFolderIds: ['folder-a', 'folder-b'], actions: { ...ctx.actions, cutFiles: cut } };
+  expect(registry.resolveMenu(foldersOnly).find(item => item.id === 'assets.cut')?.disabled).toBe(false);
+  registry.get('assets.cut')!.run(foldersOnly);
+  expect(cut).toHaveBeenLastCalledWith([], ['folder-a', 'folder-b']);
+  const mixed = { ...foldersOnly, availableAssetIds: ['asset'] };
+  registry.get('assets.cut')!.run(mixed);
+  expect(cut).toHaveBeenLastCalledWith(['asset'], ['folder-a', 'folder-b']);
 });

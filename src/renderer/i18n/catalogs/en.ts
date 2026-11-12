@@ -550,6 +550,7 @@ export const en = {
       showInLibraryFolder: "Show in Containing Folder",
       findSimilar: "Find similar",
       copyFilePath: "Copy file path",
+      cut: "Cut",
       copy: "Copy",
       paste: "Paste",
       rename: "Rename…",
@@ -1664,7 +1665,7 @@ export const en = {
     themeProfileAsh: "Ash",
     themeProfileNotion: "Notion",
     themeProfileOnedark: "One Dark",
-    themeProfileCode: "VS Code Dark+/Light+",
+    themeProfileCode: "VS Code Cyan Blue",
     themeProfileAzure: "Azure",
     themeProfileTeal: "Teal",
     themeProfileJade: "Jade",
@@ -2175,6 +2176,9 @@ export const en = {
     importConflictRememberEmpty: "No remembered defaults"
   },
   preview: {
+    playbackMode: "Playback mode: {mode} (click to switch)",
+    playbackModes: { stop: "Stop after current", 'repeat-one': "Repeat one", sequential: "Sequential" },
+
     ffmpegRequired: "This install is missing the media component needed for a video playback proxy. Reinstall or repair Serpent and try again.",
     oiioRequired: "This install is missing OpenImageIO, so this image format cannot be decoded. Install or configure oiiotool and try again.",
     sharpUnavailable: "The image decoder is unavailable, so a preview cannot be generated. Reinstall the app and try again.",
@@ -2572,6 +2576,7 @@ export const en = {
     copyFolderPathFailed: "Failed to copy the folder path.",
     folderCopyDone: "Folder copied to the system clipboard.",
     folderCopyFailed: "Failed to copy the folder to the system clipboard.",
+    clipboardSourceRetained: "{count} source files could not be removed and remain in place.",
     assetCopyDone: "Asset copied to the system clipboard.",
     assetCopyDoneMany: "Copied {count} assets to the system clipboard.",
     assetCopyFailed: "Failed to copy assets to the system clipboard.",

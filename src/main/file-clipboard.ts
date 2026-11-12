@@ -9,7 +9,7 @@
 
 import path from "node:path";
 
-import { writeWin32FileClipboard } from "./win32-file-clipboard";
+import { readWin32FileClipboard, writeWin32FileClipboard } from "./win32-file-clipboard";
 
 export type FileClipboardPlatform = "darwin" | "win32" | "other";
 
@@ -25,7 +25,8 @@ export type FileClipboardDeps = {
    * Windows-only native clipboard writer (standard CF_HDROP, ID 15). Injected
    * so unit tests can stub it; defaults to the koffi implementation.
    */
-  readonly writeNativeWin32?: (filePaths: readonly string[]) => boolean;
+  readonly writeNativeWin32?: (filePaths: readonly string[], operation?: 'copy' | 'cut') => boolean;
+  readonly readNativeWin32?: typeof readWin32FileClipboard;
 };
 
 export function detectFileClipboardPlatform(
@@ -56,6 +57,7 @@ export function createFileClipboardDeps(): FileClipboardDeps {
     clear: () => clipboard.clear(),
     writeText: (text) => clipboard.writeText(text),
     writeNativeWin32: writeWin32FileClipboard,
+    readNativeWin32: readWin32FileClipboard,
   };
 }
 
@@ -120,7 +122,7 @@ export function parseCfHdrop(buffer: Buffer): string[] {
   if (buffer.length < 20) return [];
   const pFiles = buffer.readUInt32LE(0);
   const fWide = buffer.readUInt32LE(16) !== 0;
-  if (pFiles >= buffer.length) return [];
+  if (pFiles < 20 || pFiles >= buffer.length) return [];
   const payload = buffer.subarray(pFiles);
   const text = fWide
     ? payload.toString("utf16le")
@@ -131,6 +133,7 @@ export function parseCfHdrop(buffer: Buffer): string[] {
 export function writeFilePathsToClipboard(
   filePaths: readonly string[],
   deps: FileClipboardDeps,
+  operation: 'copy' | 'cut' = 'copy',
 ): boolean {
   const absolute = filePaths
     .map((entry) => entry.trim())
@@ -169,11 +172,14 @@ export function writeFilePathsToClipboard(
       // Explorer/PureRef/Get-Clipboard -Format FileDropList can read it;
       // Electron's writeBuffer('CF_HDROP') registers a custom format with the
       // same name, which external apps cannot see.
-      if (deps.writeNativeWin32?.(absolute)) return true;
+      if (deps.writeNativeWin32?.(absolute, operation)) return true;
       deps.writeBuffer("CF_HDROP", buildCfHdrop(absolute));
       // FileNameW: first path, UCS-2, double-null terminated.
       const first = `${absolute[0]!}\0\0`;
       deps.writeBuffer("FileNameW", Buffer.from(first, "ucs2"));
+      const effect = Buffer.alloc(4);
+      effect.writeUInt32LE(operation === 'cut' ? 2 : 1);
+      deps.writeBuffer('Preferred DropEffect', effect);
       return true;
     }
     // Unsupported platform: text-only fallback so paste-in-app can still work
@@ -203,6 +209,7 @@ export function readFilePathsFromClipboard(deps: FileClipboardDeps): string[] {
       return [];
     }
     if (deps.platform === "win32") {
+      if (deps.readNativeWin32) return (deps.readNativeWin32()?.paths ?? []).filter(isAbs);
       if (deps.hasFormat("CF_HDROP")) {
         return parseCfHdrop(deps.readBuffer("CF_HDROP")).filter(isAbs);
       }
@@ -219,6 +226,18 @@ export function readFilePathsFromClipboard(deps: FileClipboardDeps): string[] {
   } catch {
     return [];
   }
+}
+
+export function readFileClipboard(deps: FileClipboardDeps): { paths: string[]; operation: 'copy' | 'cut'; sequence?: number; unavailable?: boolean } {
+  if (deps.platform === 'win32') {
+    if (deps.readNativeWin32) return deps.readNativeWin32() ?? { paths: [], operation: 'copy', unavailable: true };
+    const effect = deps.readBuffer('Preferred DropEffect');
+    return {
+      paths: readFilePathsFromClipboard(deps),
+      operation: effect.length >= 4 && (effect.readUInt32LE(0) & 2) !== 0 ? 'cut' : 'copy',
+    };
+  }
+  return { paths: readFilePathsFromClipboard(deps), operation: 'copy' };
 }
 
 function pathToFileUrl(absolutePath: string): string {

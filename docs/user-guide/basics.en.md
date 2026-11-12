@@ -100,6 +100,10 @@ A folder can use a chosen cover, or return to the automatic one. The library roo
 
 Supports marquee selection, `⌘`/`Ctrl` click to add, and `Shift` range selection; press `F2` to rename inline.
 
+- **Cut, copy, and paste**: Select one or more assets, press `Ctrl+X` or `Ctrl+C`, open the destination folder, and press `Ctrl+V`. On macOS use `⌘X`, `⌘C`, and `⌘V`. The asset context menu and main menu offer the same actions. Cut assets are dimmed while their selection outlines remain visible; pasting or copying again restores the appearance. Managed folders also support cut, alone, in batches, or together with assets. Cutting within one library retains folder structure, tags, and asset identities. Pasting a cut selection into its original folder does nothing. Successful cut moves show no import notification; copying creates new assets.
+- **Paste files from Windows**: Copy or cut multiple files in File Explorer, then paste in the destination folder in Serpent. Copy retains the source files; cut removes each source after its destination is saved. Skipped files remain in place. A source changed during import is retained with a notification.
+- **Rename folders on the canvas**: Select a folder card and press `F2`, or choose **Rename** from its context menu. Edit the name on the card, press `Enter` to save or `Esc` to cancel. The sidebar tree can remain collapsed.
+
 ![Library, Inspector, filters, and AI overview](../assets/ui/Serpent-Preview.png)
 
 ![Browse settings](../assets/ui/settings-browse.en.png)
@@ -113,6 +117,8 @@ Double-click an asset to open the fullscreen viewer (press `Esc` to exit):
 - **Navigation**: Use arrow keys `←` / `→` to navigate smoothly between assets in the current view.
 - **Media playback & transforms**:
   - Videos and audio play automatically on open;
+  - Playback defaults to **Repeat one**. The playback mode button cycles through **Stop after current**, **Repeat one**, and **Sequential**, and remembers the choice. Sequential playback follows the current list order, selects the next video or audio in the same folder, skips other files, and stops after the last item.
+  - During fullscreen playback, player controls and the cursor hide after one second without mouse movement. Moving the mouse shows them again;
   - Images and videos can be panned by dragging with the left or middle mouse button;
   - 3D models support mouse drag rotation, zoom, and HDRI lighting switching;
   - The toolbar provides 90° clockwise rotation, horizontal/vertical flip, fit-to-view (numpad `.`), and fullscreen.
@@ -183,7 +189,7 @@ Adjust the interface in **Settings → Appearance**. The switch on the theme row
 | Rename | F2 | F2 |
 | Move to Trash | ⌘⌫ | Delete |
 | Delete from disk | ⌥⌘Delete | Shift+Delete |
-| Copy / Paste | ⌘C / ⌘V | Ctrl+C / Ctrl+V |
+| Cut / Copy / Paste | ⌘X / ⌘C / ⌘V | Ctrl+X / Ctrl+C / Ctrl+V |
 | Fit viewer | Numpad `.` | Numpad `.` |
 
 ![Shortcut settings](../assets/ui/settings-shortcuts.en.png)

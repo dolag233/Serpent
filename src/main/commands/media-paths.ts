@@ -112,6 +112,7 @@ export function executeMediaPathMainCommand(
         type: "media.get-asset-paths",
         libraryId: request.libraryId,
         assetIds: request.assetIds,
+        ...(request.folderIds?.length ? { folderIds: request.folderIds } : {}),
       };
     case "asset.retry-artifact.request":
       return {

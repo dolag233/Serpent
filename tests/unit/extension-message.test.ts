@@ -15,6 +15,9 @@ import {
   type SaveIntent,
   type SaveUploadRequest,
 } from '../../src/main/extension-server';
+import { mapWorkerSaveFailure } from '../../src/main/extension-save-disposition';
+import { parseWorkerRequest } from '../../src/shared/protocol/requests';
+import type { WorkerResult } from '../../src/shared/protocol/responses';
 
 const TEST_PORT = 30_000 + (process.pid % 10_000);
 
@@ -447,6 +450,21 @@ describe('createExtensionServer', () => {
     });
   });
 
+  it('returns a duplicate disposition from a completed save intent', async () => {
+    server = await startServer({
+      onSaveIntent: async () => ({ accepted: true, duplicate: true }),
+    });
+
+    const res = await post(server.port, {
+      kind: 'image',
+      sourcePageUrl: 'https://example.com/gallery',
+      mediaUrl: 'https://example.com/photo.png',
+    });
+
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual({ status: 'accepted', duplicate: true });
+  });
+
   it('returns folder list for GET /folders', async () => {
     server = await startServer({
       port: TEST_PORT,
@@ -814,7 +832,10 @@ describe('createExtensionServer', () => {
         });
 
         const payload = Buffer.from('fake-image-bytes');
-        const res = await postUpload(server.port, payload, validUploadHeaders);
+        const res = await postUpload(server.port, payload, {
+          ...validUploadHeaders,
+          'X-Serpent-Expected-Library-Id': encodeURIComponent('library-original'),
+        });
 
         expect(res.status).toBe(202);
         expect(res.body).toEqual({ status: 'accepted' });
@@ -826,12 +847,33 @@ describe('createExtensionServer', () => {
           contentType: 'image/png',
           filename: 'photo.png',
           byteLength: payload.length,
+          expectedLibraryId: 'library-original',
         });
         expect(uploads[0]).not.toHaveProperty('targetCollectionId');
 
         const fileContent = await readFile(uploads[0]!.stagedFilePath);
         expect(fileContent).toEqual(payload);
         await rm(uploads[0]!.stagingDirectory, { recursive: true, force: true });
+      } finally {
+        await rm(stagingRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('returns a duplicate disposition for a completed upload', async () => {
+      const stagingRoot = path.join(os.tmpdir(), `serpent-ext-test-${randomUUID()}`);
+      await mkdir(stagingRoot, { recursive: true });
+      try {
+        server = await startServer({
+          port: TEST_PORT,
+          uploadStagingRoot: stagingRoot,
+          onSaveUpload: async (upload) => {
+            await rm(upload.stagingDirectory, { recursive: true, force: true });
+            return { accepted: true, duplicate: true };
+          },
+        });
+        const res = await postUpload(server.port, Buffer.from('fake-image-bytes'), validUploadHeaders);
+        expect(res.status).toBe(202);
+        expect(res.body).toEqual({ status: 'accepted', duplicate: true });
       } finally {
         await rm(stagingRoot, { recursive: true, force: true });
       }
@@ -866,6 +908,42 @@ describe('createExtensionServer', () => {
       }
     });
 
+    it('keeps a typed pre-import video validation failure in the upload response', async () => {
+      const stagingRoot = path.join(os.tmpdir(), `serpent-ext-test-${randomUUID()}`);
+      await mkdir(stagingRoot, { recursive: true });
+      try {
+        const workerFailure = {
+          ok: false,
+          error: {
+            code: 'INVALID_IMPORT_SOURCE',
+            message: 'Choose readable local files or a folder without symbolic links.',
+          },
+          errorCode: 'SEGMENTED_SOURCE_VALIDATION',
+        } satisfies Extract<WorkerResult, { ok: false }>;
+        const disposition = mapWorkerSaveFailure(workerFailure);
+        expect(disposition).toEqual({
+          accepted: false,
+          status: 422,
+          reason: 'INVALID_IMPORT_SOURCE',
+          failureKind: 'source-invalid',
+        });
+        server = await startServer({
+          port: TEST_PORT,
+          uploadStagingRoot: stagingRoot,
+          onSaveUpload: () => disposition,
+        });
+        const res = await postUpload(server.port, Buffer.from('mp4-bytes'), validUploadHeaders);
+        expect(res.status).toBe(422);
+        expect(res.body).toEqual({
+          status: 'rejected',
+          reason: 'INVALID_IMPORT_SOURCE',
+          failureKind: 'source-invalid',
+        });
+      } finally {
+        await rm(stagingRoot, { recursive: true, force: true });
+      }
+    });
+
     it('returns 400 when required upload headers are missing', async () => {
       server = await startServer({ port: TEST_PORT });
 
@@ -875,6 +953,70 @@ describe('createExtensionServer', () => {
 
       expect(res.status).toBe(400);
       expect(res.body).toEqual({ status: 'rejected', reason: 'invalid source page url' });
+    });
+
+    it('accepts fetched blob metadata only when its origin matches the source frame page', async () => {
+      const uploads: SaveUploadRequest[] = [];
+      const stagingRoot = path.join(os.tmpdir(), `serpent-ext-test-${randomUUID()}`);
+      await mkdir(stagingRoot, { recursive: true });
+      try {
+        server = await startServer({
+          port: TEST_PORT,
+          uploadStagingRoot: stagingRoot,
+          onSaveUpload: async (upload) => {
+            const workerRequest = parseWorkerRequest({
+              requestId: randomUUID(),
+              command: {
+                type: 'extension.save-from-file',
+                kind: upload.kind,
+                libraryId: 'library-test',
+                sourcePageUrl: upload.sourcePageUrl,
+                mediaUrl: upload.mediaUrl,
+                stagedFilePath: upload.stagedFilePath,
+                contentType: upload.contentType,
+                filename: upload.filename,
+              },
+            });
+            expect(workerRequest.command).toMatchObject({ sourcePageUrl, mediaUrl: blobUrl });
+            uploads.push(upload);
+            return { accepted: true };
+          },
+        });
+
+        const sourcePageUrl = 'https://frame.example.com/watch/42';
+        const blobUrl = 'blob:https://frame.example.com/f03a6ed0-7fa5-4e76-9eb9-176a39f65e47';
+        const metadataHeaders = {
+          ...validUploadHeaders,
+          'X-Serpent-Source-Page-Url': encodeURIComponent(sourcePageUrl),
+          'X-Serpent-Media-Url': encodeURIComponent(blobUrl),
+        };
+        const accepted = await postUpload(server.port, Buffer.from('fetched-media-bytes'), metadataHeaders);
+
+        expect(accepted.status).toBe(202);
+        expect(uploads).toHaveLength(1);
+        expect(uploads[0]).toMatchObject({ sourcePageUrl, mediaUrl: blobUrl });
+        const invalidMediaUrls = [
+          'blob:https://attacker.example/id',
+          'blob:null/id',
+          'blob:chrome-extension://extension-id/id',
+          'data:image/png;base64,AAAA',
+          'file:///tmp/photo.png',
+          'https://user:secret@frame.example.com/photo.png',
+          `https://frame.example.com/${'x'.repeat(8_200)}`,
+        ];
+        for (const mediaUrl of invalidMediaUrls) {
+          const rejected = await postUpload(server.port, Buffer.from('fetched-media-bytes'), {
+            ...metadataHeaders,
+            'X-Serpent-Media-Url': encodeURIComponent(mediaUrl),
+          });
+          expect(rejected.status, mediaUrl).toBe(400);
+          expect(rejected.body, mediaUrl).toEqual({ status: 'rejected', reason: 'invalid media url' });
+        }
+        expect(uploads).toHaveLength(1);
+        await rm(uploads[0]!.stagingDirectory, { recursive: true, force: true });
+      } finally {
+        await rm(stagingRoot, { recursive: true, force: true });
+      }
     });
 
     it('accepts a local-file upload without URL metadata', async () => {

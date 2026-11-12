@@ -68,7 +68,7 @@ export function sampleThemeColors(): SampledThemeColors | null {
     canvas: cssColorToHex(canvas) ?? '#ffffff',
     card: cssColorToHex(card, cssColorToHex(canvas) ?? '#ffffff') ?? '#ffffff',
     // Island borders are translucent ink; show them as seen on the panels.
-    border: cssColorToHex(probe(host, 'var(--island-border, var(--ui-border-subtle))'), sideHex) ?? '#cccccc',
+    border: cssColorToHex(probe(host, 'var(--island-panel-stroke, var(--island-border, var(--ui-border-subtle)))'), sideHex) ?? '#cccccc',
     select: cssColorToHex(probe(host, 'var(--island-select, var(--ui-action-accent-soft))'), sideHex) ?? sideHex,
     tool: realTool ? (cssColorToHex(getComputedStyle(realTool).backgroundColor, canvasHex) ?? canvasHex) : canvasHex,
     field: realField ? (cssColorToHex(getComputedStyle(realField).backgroundColor, sideHex) ?? sideHex) : sideHex,

@@ -8,6 +8,7 @@ import {
   parseCfHdrop,
   parseNsFilenamesPlist,
   readFilePathsFromClipboard,
+  readFileClipboard,
   writeFilePathsToClipboard,
   type FileClipboardDeps,
 } from "../../src/main/file-clipboard";
@@ -100,7 +101,7 @@ describe("file-clipboard (Serpent-vgp)", () => {
     const deps = makeDeps({ platform: "win32", writeNativeWin32: native });
     const target = "C:\\Library\\Assets\\Folder";
     expect(writeFilePathsToClipboard([target], deps)).toBe(true);
-    expect(native).toHaveBeenCalledWith([target]);
+    expect(native).toHaveBeenCalledWith([target], "copy");
     // Electron fallback formats are not written when the native path succeeds.
     expect(deps.hasFormat("CF_HDROP")).toBe(false);
     expect(deps.hasFormat("FileNameW")).toBe(false);
@@ -112,4 +113,26 @@ describe("file-clipboard (Serpent-vgp)", () => {
     expect(writeFilePathsToClipboard([], deps)).toBe(false);
     expect(writeBuffer).not.toHaveBeenCalled();
   });
+});
+
+it('reads every native Explorer file before considering FileNameW, including move intent', () => {
+  const deps = makeDeps({ platform: 'win32', readNativeWin32: () => ({ paths: ['C:\\a.png', 'C:\\b.png'], operation: 'cut', sequence: 42 }) });
+  deps.buffers.set('FileNameW', Buffer.from('C:\\a.png\0', 'utf16le'));
+  expect(readFilePathsFromClipboard(deps)).toEqual(['C:\\a.png', 'C:\\b.png']);
+  expect(readFileClipboard(deps)).toEqual({ paths: ['C:\\a.png', 'C:\\b.png'], operation: 'cut', sequence: 42 });
+});
+
+it('writes Preferred DropEffect for cut and copy in the compatibility path', () => {
+  const deps = makeDeps({ platform: 'win32' });
+  expect(writeFilePathsToClipboard(['C:\\a.png', 'C:\\b.png'], deps, 'cut')).toBe(true);
+  expect(readFileClipboard(deps).operation).toBe('cut');
+  expect(readFileClipboard(deps).paths).toHaveLength(2);
+  expect(writeFilePathsToClipboard(['C:\\a.png'], deps, 'copy')).toBe(true);
+  expect(readFileClipboard(deps).operation).toBe('copy');
+});
+
+it('does not silently import only FileNameW when the native clipboard is busy', () => {
+  const deps = makeDeps({ platform: 'win32', readNativeWin32: () => null });
+  deps.buffers.set('FileNameW', Buffer.from('C:\\first-only.png\0', 'utf16le'));
+  expect(readFilePathsFromClipboard(deps)).toEqual([]);
 });

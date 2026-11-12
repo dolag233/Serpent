@@ -58,6 +58,7 @@ export function BrowseLayoutPreview({
   loadImmediately = true,
   deferUntilVisible = false,
   syncStatus,
+  cut = false,
 }: {
   entry: BrowseLayoutEntry;
   libraryId: string;
@@ -69,6 +70,7 @@ export function BrowseLayoutPreview({
   /** Keep source/artifact URLs off the virtual overscan runway. */
   deferUntilVisible?: boolean;
   syncStatus?: SyncCardStatus;
+  cut?: boolean;
 }) {
   const { locale } = useLocale();
   const t = useT();
@@ -95,7 +97,7 @@ export function BrowseLayoutPreview({
   return (
     <div
       aria-hidden="true"
-      className="asset-card is-layout-preview"
+      className={`asset-card is-layout-preview${cut ? ' is-cut' : ''}`}
       data-asset-id={entry.assetId}
     >
       <div className="asset-preview">

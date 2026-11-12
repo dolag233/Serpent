@@ -109,6 +109,7 @@ const UNBOUNDED_WORKER_COMMANDS = new Set([
   // A local file upload has no remote network deadline. The URL variant
   // remains bounded by the download policy below.
   'extension.save-from-file',
+  'extension.save-segmented-video',
 ]);
 
 // These requests cross a provider/network boundary and already have their

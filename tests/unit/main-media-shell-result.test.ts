@@ -77,3 +77,27 @@ test("asset.copy-file-path writes the Worker path to the clipboard", async () =>
   });
   expect(writeClipboardText).toHaveBeenCalledWith("C:\\libraries\\studio\\a.png");
 });
+
+test('cut keeps the entire batch and operation in the OS clipboard and Main identity cache', async () => {
+  const deps = runtime({ rememberAssetClipboard: vi.fn() });
+  const assetIds = ['one', 'two'];
+  const absolutePaths = ['C:\\one.png', 'C:\\two.png'];
+  expect(await tryHandleMediaShellWorkerResult(
+    { type: 'asset.copy-files.request', libraryId: 'lib', assetIds, operation: 'cut' },
+    { ok: true, type: 'media.asset-paths', assetIds, absolutePaths },
+    deps,
+  )).toEqual({ ok: true, type: 'asset.copy-files.requested', assetIds });
+  expect(deps.writeClipboardFilePaths).toHaveBeenCalledWith(absolutePaths, 'cut');
+  expect(deps.rememberAssetClipboard).toHaveBeenCalledWith('lib', assetIds, 'cut');
+});
+
+
+test('writes a folder-only cut to the native clipboard and keeps its folder identity in Main', async () => {
+  const deps = runtime({ rememberAssetClipboard: vi.fn() });
+  const result = await tryHandleMediaShellWorkerResult(
+    { type: 'asset.copy-files.request', libraryId: 'lib', assetIds: [], folderIds: ['folder'], operation: 'cut' },
+    { ok: true, type: 'media.asset-paths', assetIds: [], folderIds: ['folder'], absolutePaths: ['C:\\Library\\Folder'] }, deps);
+  expect(result).toEqual({ ok: true, type: 'asset.copy-files.requested', assetIds: [], folderIds: ['folder'] });
+  expect(deps.writeClipboardFilePaths).toHaveBeenCalledWith(['C:\\Library\\Folder'], 'cut');
+  expect(deps.rememberAssetClipboard).toHaveBeenCalledWith('lib', [], 'cut', ['folder']);
+});

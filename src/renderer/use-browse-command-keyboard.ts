@@ -11,6 +11,7 @@
 import { useEffect, type RefObject } from "react";
 
 import type { AssetSummary } from "../shared/asset-types";
+import { clipboardSelectionIds } from './clipboard-selection';
 import type { ShortcutEventLike } from "../shared/shortcut-resolution";
 import { shouldForwardBrowseShortcut } from "../shared/browse-shortcut-dedupe";
 import {
@@ -38,6 +39,8 @@ export type UseBrowseCommandKeyboardArgs = {
   readonly busy: boolean;
   readonly selectedAsset: AssetSummary | undefined;
   readonly selectedAssets: readonly AssetSummary[];
+  readonly selectedAssetIds?: readonly string[];
+  readonly selectedFolderIds?: readonly string[];
   readonly pasteDestinationFolderId: string | null | undefined;
   readonly diskDeleteAssetIds: readonly string[];
   readonly diskDeleteFolderIds: readonly string[];
@@ -45,6 +48,7 @@ export type UseBrowseCommandKeyboardArgs = {
   readonly onOpenExternal: (assetId: string) => void;
   readonly onTrashManaged: (assetIds: string[]) => void;
   readonly onRename: (assetId: string) => void;
+  readonly onCutFiles?: (assetIds: string[], folderIds?: string[]) => void;
   readonly onCopyFiles: (assetIds: string[]) => void;
   readonly onCopyFilePath: (assetId: string) => void;
   readonly onPasteIntoFolder: (folderId: string | null) => void;
@@ -72,6 +76,8 @@ export function useBrowseCommandKeyboard(
     busy,
     selectedAsset,
     selectedAssets,
+    selectedAssetIds,
+    selectedFolderIds,
     pasteDestinationFolderId,
     diskDeleteAssetIds,
     diskDeleteFolderIds,
@@ -80,6 +86,7 @@ export function useBrowseCommandKeyboard(
     onTrashManaged,
     onRename,
     onCopyFiles,
+    onCutFiles,
     onCopyFilePath,
     onPasteIntoFolder,
     onRevealInFolder,
@@ -279,19 +286,15 @@ export function useBrowseCommandKeyboard(
       }
 
       if (
-        matchAssetActionKeyboardCommand("asset.copy", shortcutInput, platform) &&
+        (matchAssetActionKeyboardCommand("asset.copy", shortcutInput, platform) || (onCutFiles && matchAssetActionKeyboardCommand("asset.cut", shortcutInput, platform))) &&
         !showTrash &&
         libraryOpen
       ) {
-        const copyIds = selectedAssets
-          .filter(
-            (asset) =>
-              asset.availability === "available" && !asset.deletedAt,
-          )
-          .map((asset) => asset.assetId);
-        if (copyIds.length > 0) {
+        const copyIds = clipboardSelectionIds(selectedAssetIds ?? selectedAssets.map(asset => asset.assetId), selectedAssets);
+        if (copyIds.length > 0 || (onCutFiles && selectedFolderIds?.length && matchAssetActionKeyboardCommand("asset.cut", shortcutInput, platform))) {
           event.preventDefault();
-          onCopyFiles(copyIds);
+          if (matchAssetActionKeyboardCommand('asset.cut', shortcutInput, platform)) onCutFiles?.(copyIds, [...(selectedFolderIds ?? [])]);
+          else onCopyFiles(copyIds);
           return;
         }
       }
@@ -328,6 +331,8 @@ export function useBrowseCommandKeyboard(
     busy,
     selectedAsset,
     selectedAssets,
+    selectedAssetIds,
+    selectedFolderIds,
     pasteDestinationFolderId,
     diskDeleteAssetIds,
     diskDeleteFolderIds,
@@ -336,6 +341,7 @@ export function useBrowseCommandKeyboard(
     onTrashManaged,
     onRename,
     onCopyFiles,
+    onCutFiles,
     onCopyFilePath,
     onPasteIntoFolder,
     onRevealInFolder,

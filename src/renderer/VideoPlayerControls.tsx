@@ -1,3 +1,5 @@
+import { MediaPlaybackModeButton } from './MediaPlaybackModeButton';
+import type { MediaPlaybackMode } from './media-playback-mode';
 import { useCallback, useEffect, useRef, useState, type RefObject, type SyntheticEvent } from "react";
 
 import { Icon } from "./Icons";
@@ -51,6 +53,9 @@ type RendererWindow = Window & {
 };
 
 export interface VideoPlayerControlsProps {
+  playbackMode?: MediaPlaybackMode;
+  onPlaybackModeChange?: (mode: MediaPlaybackMode) => void;
+  onEnded?: () => void;
   /** Optional probe fps for editorial frame steps (falls back to 30). */
   frameRateFps?: number | null;
   isFullscreen?: boolean;
@@ -109,6 +114,9 @@ function waitForVideoSeeked(video: HTMLVideoElement): Promise<void> {
  * on every pointermove (Serpent-jh2).
  */
 export function VideoPlayerControls({
+  playbackMode = 'repeat-one',
+  onPlaybackModeChange,
+  onEnded,
   frameRateFps = null,
   isFullscreen = false,
   autoPlay = true,
@@ -427,9 +435,9 @@ export function VideoPlayerControls({
   }, [src]);
 
   useEffect(() => {
-    const slot = playbackHandleRef;
-    if (!slot) return;
-    slot.current = {
+    const handleRef = playbackHandleRef;
+    if (!handleRef) return;
+    handleRef.current = {
       stepRate(direction) {
         applyPlaybackRate(stepVideoPlaybackRate(playbackRateRef.current, direction));
       },
@@ -456,7 +464,7 @@ export function VideoPlayerControls({
       },
     };
     return () => {
-      slot.current = null;
+      handleRef.current = null;
     };
   }, [applyPlaybackRate, playbackHandleRef]);
 
@@ -574,11 +582,11 @@ export function VideoPlayerControls({
         <video
           autoPlay={autoPlay}
           className="preview-video"
-          loop
+          loop={playbackMode === 'repeat-one'}
           onDurationChange={(event) =>
             setDuration(event.currentTarget.duration || 0)
           }
-          onEnded={() => setPaused(true)}
+          onEnded={() => { setPaused(true); if (autoPlay && playbackMode === 'sequential') onEnded?.(); }}
           onLoadedMetadata={(event) => {
             const video = event.currentTarget;
             video.playbackRate = playbackRate;
@@ -749,6 +757,7 @@ export function VideoPlayerControls({
           onInteract={onUserActivity}
           value={playbackRate}
         />
+        {onPlaybackModeChange && <MediaPlaybackModeButton mode={playbackMode} onChange={onPlaybackModeChange} onInteract={onUserActivity} />}
         <ViewerVolumeControls
           muted={muted}
           onInteract={onUserActivity}

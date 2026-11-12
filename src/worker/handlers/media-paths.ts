@@ -1,3 +1,4 @@
+import { LIBRARY_ROOT_FOLDER_ID } from '../../shared/library-root-folder';
 import type { WorkerRequest } from '../../shared/protocol/requests';
 import type { WorkerResult } from '../../shared/protocol/responses';
 import { handleFbxConvertCommand } from '../fbx/convert-command';
@@ -145,14 +146,17 @@ export async function executeMediaPathWorkerCommand(
     }
     case 'media.get-asset-paths': {
       // Main-only consumer (OS clipboard); paths never reach the Renderer.
-      const { libraryId, assetIds } = request.command;
+      const { libraryId, assetIds, folderIds = [] } = request.command;
+      if (folderIds.includes(LIBRARY_ROOT_FOLDER_ID)) throw new LibraryServiceError('FOLDER_NOT_FOUND');
       const absolutePaths = assetIds.map((assetId) =>
         libraryService.resolveAssetPath(libraryId, assetId),
       );
+      absolutePaths.push(...folderIds.map(folderId => libraryService.resolveFolderPath(libraryId, folderId)));
       return {
         ok: true,
         type: 'media.asset-paths',
         assetIds,
+        ...(folderIds.length ? { folderIds } : {}),
         absolutePaths,
       };
     }

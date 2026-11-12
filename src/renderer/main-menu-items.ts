@@ -48,6 +48,7 @@ export type MainMenuCommandState = {
 };
 
 const APPLICATION_MENU_ITEM_COMMANDS: Readonly<Record<string, ApplicationMenuCommand>> = {
+  "edit.cut": "edit.cut",
   "edit.copy-selection": "copy-selection",
   "edit.invert-selection": "invert-selection",
   "file.import-files": "file.import-files",
@@ -115,6 +116,7 @@ export type MainMenuActions = {
   readonly toggleShowMissingLinkedFiles: () => void;
   readonly undo: () => void;
   readonly redo: () => void;
+  readonly cutSelection?: () => void;
   readonly copySelection: () => void;
   readonly paste: () => void;
   readonly selectAll: () => void;
@@ -142,6 +144,7 @@ export type MainMenuState = {
   readonly undoLabel?: string;
   readonly redoLabel?: string;
   readonly hasSelectedAssets: boolean;
+  readonly hasSelectedFolders?: boolean;
   readonly hasPasteTarget: boolean;
   readonly hasBrowseAssets: boolean;
   /** Linked-folder rows whose source file is missing. Default on. */
@@ -181,7 +184,7 @@ export function buildMainMenuSections({
 }: MainMenuBuilderInput): MainMenuSection[] {
   const libraryDisabled = !state.libraryOpen || state.busy;
   const appDisabled = state.busy;
-  const selectionDisabled = !state.hasSelectedAssets || state.busy;
+  const selectionDisabled = !(state.hasSelectedAssets || state.hasSelectedFolders) || state.busy;
   const selectDisabled = !state.hasBrowseAssets || state.busy;
 
   return [
@@ -234,6 +237,13 @@ export function buildMainMenuSections({
           shortcut: shortcut("edit.redo", platform),
           disabled: !state.hasRedoableOperation || state.busy,
           onSelect: actions.redo,
+        },
+        {
+          id: "edit.cut",
+          label: label(locale, "shell.mainMenuCut"),
+          shortcut: shortcut("asset.cut", platform),
+          disabled: selectionDisabled,
+          onSelect: () => actions.cutSelection?.(),
         },
         {
           id: "edit.copy-selection",

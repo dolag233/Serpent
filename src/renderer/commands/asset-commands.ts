@@ -24,6 +24,7 @@ export interface AssetCommandActions {
   readonly findSimilar: (assetId: string) => void;
   /** OS file clipboard (Finder/Explorer interoperable). */
   readonly copyFiles: (assetIds: string[]) => void;
+  readonly cutFiles?: (assetIds: string[]) => void;
   /** Paste OS clipboard into a managed folder (reuse folder.paste). */
   readonly pasteIntoFolder: (folderId: string | null) => void;
   readonly copyFilePath: (assetId: string) => void;
@@ -193,6 +194,18 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
       ctx.locationKind === 'managed' &&
       ctx.assetAvailable,
     run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.moveToFolder([id])),
+  },
+  {
+    id: 'asset.cut',
+    title: (ctx) => t(ctx, 'command.asset.cut'),
+    group: 'organize',
+    shortcut: {
+      mac: { label: '⌘X', key: 'x', metaKey: true },
+      windows: { label: 'Ctrl+X', key: 'x', ctrlKey: true },
+    },
+    visible: (ctx) => !ctx.assetDeleted && ctx.actions.cutFiles !== undefined,
+    disabledReason: unavailableReason,
+    run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.cutFiles?.([id])),
   },
   {
     id: 'asset.copy',

@@ -373,6 +373,15 @@ export const SHORTCUT_ACTIONS: readonly ShortcutActionDefinition[] = Object.free
     surfaces: rendererAndContext,
   },
   {
+    id: "asset.cut",
+    labelKey: "command.asset.cut",
+    category: "asset",
+    scopes: ["browse"],
+    defaults: { mac: [command("x", "mac")], windows: [command("x", "windows")] },
+    customizable: true,
+    surfaces: ["renderer", "context-menu", "app-menu", "native-menu", "hidden-accelerator", "before-input"],
+  },
+  {
     id: "asset.copy",
     labelKey: "command.asset.copy",
     category: "asset",
@@ -389,6 +398,15 @@ export const SHORTCUT_ACTIONS: readonly ShortcutActionDefinition[] = Object.free
     defaults: { mac: [command("v", "mac")], windows: [command("v", "windows")] },
     customizable: true,
     surfaces: ["renderer", "context-menu", "app-menu", "native-menu", "hidden-accelerator", "before-input"],
+  },
+  {
+    id: "folder.cut",
+    labelKey: "command.asset.cut",
+    category: "folder",
+    scopes: ["sidebar.folder"],
+    defaults: { mac: [command("x", "mac")], windows: [command("x", "windows")] },
+    customizable: false,
+    surfaces: rendererAndContext,
   },
   {
     id: "folder.copy",

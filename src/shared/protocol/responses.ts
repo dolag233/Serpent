@@ -221,6 +221,8 @@ export const automationImportPlanSchema = z.strictObject({
 export type AutomationImportPlan = z.infer<typeof automationImportPlanSchema>;
 
 export const importCompletionSchema = z.strictObject({
+  pasteAction: z.enum(['copy', 'move', 'noop']).optional(),
+  sourceRetainedCount: z.number().int().nonnegative().optional(),
   importedCount: z.number().int().nonnegative(),
   fileCount: z.number().int().nonnegative(),
   assetCount: z.number().int().nonnegative(),
@@ -1563,6 +1565,7 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('extension.asset-saved'),
     asset: assetSummarySchema,
+    duplicate: z.literal(true).optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -1663,7 +1666,14 @@ const assetOperationSuccessSchemas = [
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('asset.copy-files.requested'),
-    assetIds: z.array(nonBlankString).min(1),
+    assetIds: z.array(nonBlankString),
+    folderIds: z.array(nonBlankString).optional(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.clipboard-state'),
+    cutAssetIds: z.array(nonBlankString),
+    cutFolderIds: z.array(nonBlankString).optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -1793,6 +1803,12 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
     ok: z.literal(true),
     type: z.literal('library.list'),
     libraries: z.array(internalLibrarySummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('extension.segmented-video.cancelled'),
+    transferId: nonBlankString,
+    active: z.boolean(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -2034,8 +2050,9 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('media.asset-paths'),
-    assetIds: z.array(nonBlankString).min(1),
+    assetIds: z.array(nonBlankString),
     absolutePaths: z.array(nonBlankString).min(1),
+    folderIds: z.array(nonBlankString).optional(),
   }),
   // Worker→Main only: a Main cache preheats native drag inputs before a
   // renderer dragstart event. These paths never enter a renderer result.
@@ -2315,6 +2332,7 @@ export const workerResultSchema = z.union([
   z.strictObject({
     ok: z.literal(false),
     error: publicErrorSchema,
+    errorCode: z.enum(['SEGMENTED_SOURCE_VALIDATION']).optional(),
   }),
 ]);
 

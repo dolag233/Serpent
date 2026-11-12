@@ -203,7 +203,7 @@ export interface SerpentShellApi {
   setShowMissingLinkedFiles(show: boolean): Promise<void>;
   /** 请求 Main 对当前 webContents 执行原生 copy（文本框 ⌘C）。 */
   nativeEditCopy(): Promise<void>;
-  nativeEditCommand(command: "paste" | "select-all"): Promise<void>;
+  nativeEditCommand(command: "cut" | "paste" | "select-all"): Promise<void>;
   /**
    * Enable Main `before-input-event` capture for video D/F/X/C (VIEWER-018).
    * Required on Windows when IME swallows unmodified letter keydowns.

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Icon } from "./Icons";
 import { coverSrc } from "./asset-card-hover-preview";
@@ -7,10 +7,17 @@ import { useT } from "./i18n";
 import type { FolderBrowseEntry } from "../shared/asset-types";
 import { CardSurface } from "./ui/surfaces";
 
+import type { InlineFolderEditState } from './inline-folder-edit';
+
 interface FolderCardProps {
+  rename?: Extract<InlineFolderEditState, { kind: 'rename' }> | null;
+  onRenameChange?: (value: string) => void;
+  onRenameCommit?: () => void;
+  onRenameCancel?: () => void;
   entry: FolderBrowseEntry;
   libraryId: string;
   selected: boolean;
+  cut?: boolean;
   /** REQ-DND-006 / Serpent-12mb: external file drop target highlight. */
   dropActive?: boolean;
   onClick: (folderId: string, event: React.MouseEvent) => void;
@@ -18,12 +25,12 @@ interface FolderCardProps {
   onContextMenu: (entry: FolderBrowseEntry, event: React.MouseEvent) => void;
   /** Mirrors the asset card's button-guard convention (useAssetSelection). */
   onMouseDown: (event: React.MouseEvent) => void;
-  onDragEnter?: (event: React.DragEvent<HTMLButtonElement>) => void;
-  onDragLeave?: (event: React.DragEvent<HTMLButtonElement>) => void;
-  onDragOver?: (event: React.DragEvent<HTMLButtonElement>) => void;
-  onDrop?: (event: React.DragEvent<HTMLButtonElement>) => void;
+  onDragEnter?: (event: React.DragEvent<HTMLDivElement>) => void;
+  onDragLeave?: (event: React.DragEvent<HTMLDivElement>) => void;
+  onDragOver?: (event: React.DragEvent<HTMLDivElement>) => void;
+  onDrop?: (event: React.DragEvent<HTMLDivElement>) => void;
   draggable?: boolean;
-  onDragStart?: (event: React.DragEvent<HTMLButtonElement>) => void;
+  onDragStart?: (event: React.DragEvent<HTMLDivElement>) => void;
   /** Trash tombstone card; double-click enters hierarchy (Serpent-6pcd). */
   trashed?: boolean;
   /** Matches inside this folder while a discovery filter is active. */
@@ -38,8 +45,13 @@ interface FolderCardProps {
  */
 export function FolderCard({
   entry,
+  rename,
+  onRenameChange,
+  onRenameCommit,
+  onRenameCancel,
   libraryId,
   selected,
+  cut = false,
   dropActive = false,
   onClick,
   onDoubleClick,
@@ -55,6 +67,13 @@ export function FolderCard({
   filteredCount,
 }: FolderCardProps) {
   const t = useT();
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const renaming = Boolean(rename);
+  useEffect(() => {
+    if (!renaming) return;
+    renameInputRef.current?.focus();
+    renameInputRef.current?.select();
+  }, [renaming]);
   const customCover = entry.hasCustomCover ? folderCoverImageSrc(libraryId, entry) : null;
   const [failedSrcs, setFailedSrcs] = useState<ReadonlySet<string>>(() => new Set());
   const [failedFor, setFailedFor] = useState(entry.folderId);
@@ -82,14 +101,16 @@ export function FolderCard({
 
   return (
     <CardSurface
-      as="button"
+      as="div"
+      role="button"
+      tabIndex={0}
       aria-pressed={selected}
-      className={`folder-card${selected ? " is-selected" : ""}${dropActive ? " is-drop-target" : ""}${trashed ? " is-trashed-folder" : ""}`}
+      className={`folder-card${cut ? " is-cut" : ""}${selected ? " is-selected" : ""}${dropActive ? " is-drop-target" : ""}${trashed ? " is-trashed-folder" : ""}`}
       data-folder-id={entry.folderId}
       draggable={draggable}
       onClick={(event) => onClick(entry.folderId, event)}
       onContextMenu={(event) => onContextMenu(entry, event)}
-      onDoubleClick={() => onDoubleClick(entry.folderId)}
+      onDoubleClick={() => { if (!rename) onDoubleClick(entry.folderId); }}
       onDragEnter={onDragEnter}
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
@@ -97,7 +118,11 @@ export function FolderCard({
       onDrop={onDrop}
       onMouseDown={onMouseDown}
       data-hover-tip={entry.name}
-      type="button"
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget || rename) return;
+        if (event.key === 'Enter') { event.preventDefault(); onDoubleClick(entry.folderId); }
+        if (event.key === ' ') { event.preventDefault(); event.currentTarget.click(); }
+      }}
     >
       <div className="folder-card-cover">
         <div className="folder-card-shell" aria-hidden="true">
@@ -199,9 +224,28 @@ export function FolderCard({
         </div>
       </div>
       <div className="folder-card-caption">
-        <strong className="folder-card-name" data-hover-tip={entry.name}>
+        {rename ? (
+          <div className="folder-card-rename" onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()} onMouseDown={event => event.stopPropagation()}>
+            <input
+              aria-label={t('command.folder.rename')}
+              className="text-field folder-card-rename-input"
+              ref={renameInputRef}
+              value={rename.value}
+              disabled={rename.submitting}
+              onChange={event => onRenameChange?.(event.target.value)}
+              onBlur={() => { if (!rename.error) onRenameCommit?.(); }}
+              onKeyDown={event => {
+                event.stopPropagation();
+                if (event.nativeEvent.isComposing) return;
+                if (event.key === 'Enter') { event.preventDefault(); onRenameCommit?.(); }
+                if (event.key === 'Escape') { event.preventDefault(); onRenameCancel?.(); }
+              }}
+            />
+            {rename.error && <span className="asset-inline-rename-error" role="alert">{rename.error}</span>}
+          </div>
+        ) : <strong className="folder-card-name" data-hover-tip={entry.name}>
           {entry.name}
-        </strong>
+        </strong>}
         <span className="folder-card-count">
           {t("common.itemCount", {
             count: filteredCount === undefined

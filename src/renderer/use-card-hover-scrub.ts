@@ -54,6 +54,24 @@ export function useCardHoverScrub(input: {
     let currentRatio = 0;
     let currentIntent: CardHoverScrubIntent = "seek";
     let settleTimer = 0;
+    let cursorTimer = 0;
+    let lastPointer: { x: number; y: number } | null = null;
+    const root = resolvePointerRoot(hostRef.current);
+    const media = mediaRef.current;
+    let stationary = false;
+    let pointerInside = true;
+    let playing = Boolean(media && !media.paused && media.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA);
+    const updateCursor = () => {
+      root?.classList.toggle('is-hover-playing', playing && pointerInside && stationary && currentIntent === 'play' && Boolean(media && !media.error && !media.paused && !media.ended));
+    };
+    const onPlaying = () => { playing = true; updateCursor(); };
+    const onStopped = () => { playing = false; updateCursor(); };
+    const wakeCursor = () => {
+      stationary = false;
+      root?.classList.remove('is-hover-playing');
+      window.clearTimeout(cursorTimer);
+      cursorTimer = window.setTimeout(() => { stationary = true; updateCursor(); }, CARD_HOVER_SCRUB_SETTLE_MS);
+    };
 
     const apply = (nextIntent: CardHoverScrubIntent, nextRatio: number) => {
       currentRatio = nextRatio;
@@ -67,6 +85,7 @@ export function useCardHoverScrub(input: {
           intent: nextIntent,
         });
       }
+      updateCursor();
     };
 
     const seekFromClientX = (clientX: number) => {
@@ -83,7 +102,11 @@ export function useCardHoverScrub(input: {
       }, CARD_HOVER_SCRUB_SETTLE_MS);
     };
 
+    const onLeave = () => { pointerInside = false; window.clearTimeout(cursorTimer); root?.classList.remove("is-hover-playing"); };
     const onPointer = (event: PointerEvent) => {
+      pointerInside = true;
+      if (!lastPointer || event.clientX !== lastPointer.x || event.clientY !== lastPointer.y) wakeCursor();
+      lastPointer = { x: event.clientX, y: event.clientY };
       const clientX = event.clientX;
       lastClientXRef.current = clientX;
       const significant =
@@ -98,11 +121,15 @@ export function useCardHoverScrub(input: {
       apply(currentIntent, currentRatio);
     };
 
-    const root = resolvePointerRoot(hostRef.current);
+    root?.addEventListener("pointerleave", onLeave);
     root?.addEventListener("pointermove", onPointer);
     root?.addEventListener("pointerenter", onPointer);
-    const media = mediaRef.current;
     media?.addEventListener("loadedmetadata", onMeta);
+    media?.addEventListener('playing', onPlaying);
+    media?.addEventListener('pause', onStopped);
+    media?.addEventListener('ended', onStopped);
+    media?.addEventListener('error', onStopped);
+    wakeCursor();
 
     if (lastClientXRef.current !== null) {
       lastSignificantX = lastClientXRef.current;
@@ -111,6 +138,13 @@ export function useCardHoverScrub(input: {
 
     return () => {
       window.clearTimeout(settleTimer);
+      window.clearTimeout(cursorTimer);
+      root?.classList.remove('is-hover-playing');
+      root?.removeEventListener('pointerleave', onLeave);
+      media?.removeEventListener('playing', onPlaying);
+      media?.removeEventListener('pause', onStopped);
+      media?.removeEventListener('ended', onStopped);
+      media?.removeEventListener('error', onStopped);
       root?.removeEventListener("pointermove", onPointer);
       root?.removeEventListener("pointerenter", onPointer);
       media?.removeEventListener("loadedmetadata", onMeta);
