@@ -29,7 +29,7 @@ Import, browse, search, tag, collect, preview 3D models (FBX/OBJ/GLB and more), 
 + **New UI.** Appearance settings switch between the New UI and the legacy layout, and can edit themes plus background and panel opacity.
 + **Semantic search (experimental).** Find images and text by meaning, and find similar assets.
 + **WebDAV cloud sync.** Two-way library sync across machines, with auto-sync and a configurable poll interval.
-+ **Browser extension:** [Serpent-Extension](https://github.com/dolag233/Serpent-Extension) supports batch saving web media, capturing webpage screenshots, and saving some hotlink-protected media through the browser session.
++ **Comprehensive browser extension.** [Serpent-Extension](https://github.com/dolag233/Serpent-Extension) supports batch downloads, source-first saving of original media with preview fallback, and webpage screenshots.
 + **External libraries.** Open Eagle / Billfish libraries directly and browse and search them seamlessly after conversion.
 
 <div align="center">
