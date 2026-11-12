@@ -30,6 +30,7 @@ export type AssetActionKeyboardCommand =
   | "asset.move-to-trash"
   | "asset.rename"
   | "asset.copy"
+  | "asset.cut"
   | "asset.copy-file-path"
   | "asset.paste"
   | "asset.reveal-in-folder"

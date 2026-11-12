@@ -25,6 +25,7 @@ export interface AssetMultiCommandActions {
   readonly openAssignTagPicker: (assetIds: string[]) => void;
   readonly openRemoveTagPicker: (assetIds: string[]) => void;
   readonly copyFiles: (assetIds: string[]) => void;
+  readonly cutFiles?: (assetIds: string[], folderIds?: string[]) => void;
   readonly pasteIntoFolder: (folderId: string | null) => void;
   readonly moveToFolder: (
     assetIds: string[],
@@ -76,6 +77,7 @@ export interface AssetMultiCommandContext extends CommandContext {
   /** Managed folder cards included in trash / disk-delete process counts. */
   readonly folderCount: number;
   readonly processFolderIds: readonly string[];
+  readonly cutFolderIds?: readonly string[];
   /** 对应原 allTrashed：选中资产全部在回收站时切换为回收站分支。 */
   readonly trashedAll: boolean;
   readonly managedAssetIds: readonly string[];
@@ -179,6 +181,18 @@ export const assetMultiCommandDefinitions: readonly AssetMultiCommandDefinition[
       run: (ctx) => ctx.actions.clearAiContent?.([...ctx.selectedAssetIds]),
     },
     // ---- 组织 ----
+    {
+      id: 'assets.cut',
+      title: (ctx) => t(ctx, 'command.asset.cut'),
+      group: 'organize',
+      shortcut: {
+        mac: { label: '⌘X', key: 'x', metaKey: true },
+        windows: { label: 'Ctrl+X', key: 'x', ctrlKey: true },
+      },
+      visible: (ctx) => !ctx.trashedAll && ctx.actions.cutFiles !== undefined,
+      disabledReason: (ctx) => ctx.availableAssetIds.length + (ctx.cutFolderIds?.length ?? 0) === 0 ? t(ctx, 'command.reason.unavailable') : null,
+      run: (ctx) => ctx.actions.cutFiles?.([...ctx.availableAssetIds], [...(ctx.cutFolderIds ?? [])]),
+    },
     {
       id: 'assets.copy',
       title: (ctx) =>

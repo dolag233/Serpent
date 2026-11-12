@@ -1283,17 +1283,23 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   }),
   // Clarification #5 / Serpent-bkef: OS file clipboard for asset files.
   z.strictObject({
+    type: z.literal('asset.clipboard-state.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('asset.copy-files.request'),
+    operation: z.enum(['copy', 'cut']).optional(),
     libraryId: identifierSchema,
     assetIds: z
       .array(identifierSchema)
-      .min(1)
+      .min(0)
       .max(10_000)
       .refine(
         (assetIds) => new Set(assetIds).size === assetIds.length,
         { message: 'assetIds must not contain duplicates.' },
       ),
-  }),
+    folderIds: z.array(identifierSchema).min(1).max(10_000).refine(ids => new Set(ids).size === ids.length).optional(),
+  }).refine(input => input.assetIds.length + (input.folderIds?.length ?? 0) > 0, { message: 'Select at least one asset or folder.' }),
   z.strictObject({
     type: z.literal('asset.retry-artifact.request'),
     libraryId: identifierSchema,
@@ -1866,6 +1872,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('asset.import.prepare'),
+    moveSourceFiles: z.boolean().optional(),
     libraryId: identifierSchema,
     targetFolderId: optionalIdentifierSchema,
     sourceKind: z.enum(['files', 'folder']),
@@ -2855,13 +2862,14 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     assetIds: z
       .array(identifierSchema)
-      .min(1)
+      .min(0)
       .max(10_000)
       .refine(
         (assetIds) => new Set(assetIds).size === assetIds.length,
         { message: 'assetIds must not contain duplicates.' },
       ),
-  }),
+    folderIds: z.array(identifierSchema).min(1).max(10_000).refine(ids => new Set(ids).size === ids.length).optional(),
+  }).refine(input => input.assetIds.length + (input.folderIds?.length ?? 0) > 0, { message: 'Select at least one asset or folder.' }),
   // Main-only cache primer for OS-native asset drag. The Worker resolves the
   // paths before dragstart, so Main can start the platform drag synchronously.
   z.strictObject({

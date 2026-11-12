@@ -2510,17 +2510,37 @@ export const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: undefined };
   },
 
+  async getClipboardCutAssets({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<string[]>> {
+    const result = await request({ type: 'asset.clipboard-state.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.clipboard-state') throw new Error('Unexpected clipboard state response.');
+    return { ok: true, value: result.cutAssetIds };
+  },
+
+  async getClipboardCutSelection({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<{ assetIds: string[]; folderIds: string[] }>> {
+    const result = await request({ type: 'asset.clipboard-state.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.clipboard-state') throw new Error('Unexpected clipboard state response.');
+    return { ok: true, value: { assetIds: result.cutAssetIds, folderIds: result.cutFolderIds ?? [] } };
+  },
+
   async copyAssetFiles({
     libraryId,
     assetIds,
+    folderIds,
+    operation,
   }: {
     libraryId: string;
     assetIds: string[];
+    folderIds?: string[];
+    operation?: 'copy' | 'cut';
   }): Promise<LibraryApiResult<void>> {
     const result = await request({
       type: 'asset.copy-files.request',
+      operation,
       libraryId,
       assetIds,
+      ...(folderIds?.length ? { folderIds } : {}),
     });
     if (!result.ok) return failure(result);
     return { ok: true, value: undefined };

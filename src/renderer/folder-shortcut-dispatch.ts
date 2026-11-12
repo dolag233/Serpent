@@ -10,6 +10,7 @@ export type FolderShortcutCommandId =
   | "folder.create-subfolder"
   | "folder.open-in-file-manager"
   | "folder.rename"
+  | "folder.cut"
   | "folder.copy"
   | "folder.copy-path"
   | "folder.paste"
@@ -24,6 +25,7 @@ export type FocusedNavFolder = {
 export type FolderShortcutAction =
   | { readonly type: "create-subfolder"; readonly parentFolderId: string | null }
   | { readonly type: "open-in-file-manager"; readonly folderId: string }
+  | { readonly type: "cut-folders"; readonly folderIds: string[] }
   | { readonly type: "copy-folder"; readonly folderId: string }
   | { readonly type: "copy-folder-path"; readonly folderId: string }
   | { readonly type: "paste-into-folder"; readonly folderId: string | null }
@@ -56,6 +58,7 @@ export type FolderShortcutResolveInput = {
   readonly selectedAssetCount: number;
   readonly resolveManagedFolderName: (folderId: string) => string | undefined;
   /** Optional availability guard for managed and linked folders. */
+  readonly canCutFolder?: (folderId: string) => boolean;
   readonly canRenameFolder?: (folderId: string) => boolean;
   /** Optional guard for opening a folder in the OS file manager. */
   readonly canOpenFolder?: (folderId: string) => boolean;
@@ -120,6 +123,14 @@ export function resolveFolderShortcutAction(
 
   if (commandId === "folder.open-in-file-manager") {
     return resolveOpenFolderShortcut(input, canOpenFolder);
+  }
+
+  if (commandId === "folder.cut") {
+    if (focusedNav?.locationKind === 'linked' || (!focusedNav && selectedAssetCount > 0)) return { type: 'none' };
+    const ids = focusedNav && !selectedFolderCardIds.includes(focusedNav.folderId)
+      ? [focusedNav.folderId] : [...selectedFolderCardIds];
+    const folderIds = ids.filter(id => resolveManagedFolderName(id) !== undefined && (!input.canCutFolder || input.canCutFolder(id)));
+    return folderIds.length ? { type: 'cut-folders', folderIds } : { type: 'none' };
   }
 
   if (commandId === "folder.copy") {

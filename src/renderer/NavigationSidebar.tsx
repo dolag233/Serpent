@@ -146,6 +146,7 @@ function NavRow({
   navFolderKind,
   navCollectionId,
   multiSelected,
+  cut,
   insertEdge,
 }: {
   icon: IconName;
@@ -175,6 +176,7 @@ function NavRow({
   navFolderKind?: "managed" | "linked";
   /** Serpent-d7acfa: row participates in the sidebar multi-folder selection. */
   multiSelected?: boolean;
+  cut?: boolean;
   /** Focus target for collection keyboard shortcuts. */
   navCollectionId?: string;
   /** Custom-order drop insertion edge (Serpent: folder 自定义 sort). */
@@ -201,7 +203,7 @@ function NavRow({
       ) : null}
       {disclosure ?? <span className="nav-disclosure-spacer" aria-hidden="true" />}
       <button
-        className={`nav-row${active ? " is-active" : ""}${multiSelected ? " is-multi-selected" : ""}${dropActive ? " is-drop-target" : ""}`}
+        className={`nav-row${cut ? " is-cut" : ""}${active ? " is-active" : ""}${multiSelected ? " is-multi-selected" : ""}${dropActive ? " is-drop-target" : ""}`}
         data-nav-folder-id={navFolderId}
         data-nav-folder-kind={navFolderKind}
         data-nav-collection-id={navCollectionId}
@@ -890,6 +892,7 @@ export interface NavigationSidebarProps {
   } | null;
 
   // --- Data ---
+  cutFolderIds?: ReadonlySet<string>;
   allAssetCount: number;
   /** Assets stored directly under the library root (distinct from all assets). */
   rootAssetCount: number;
@@ -2150,6 +2153,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             label={entry.name}
             navFolderId={entry.folderId}
             navFolderKind="managed"
+            cut={props.cutFolderIds?.has(entry.folderId)}
             multiSelected={selectedFolderIds.includes(entry.folderId)}
             insertEdge={
               folderInsertEdge?.folderId === entry.folderId

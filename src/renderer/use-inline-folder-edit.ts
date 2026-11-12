@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import type { SerpentLibraryApi } from "../shared/library-api";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
@@ -74,6 +74,7 @@ export function useInlineFolderEdit({
   onRenameSuccess,
 }: UseInlineFolderEditParams): UseInlineFolderEditResult {
   const t = useT();
+  const committing = useRef<InlineFolderEditState | null>(null);
   const { locale } = useLocale();
   const [inlineFolderEdit, setInlineFolderEdit] =
     useState<InlineFolderEditState | null>(null);
@@ -118,7 +119,8 @@ export function useInlineFolderEdit({
       setInlineFolderEdit(null);
       return;
     }
-    if (!api || !library) return;
+    if (!api || !library || committing.current === session) return;
+    committing.current = session;
     setInlineFolderEdit((current) =>
       current && isSameInlineFolderEditSession(current, session)
         ? markInlineFolderEditSubmitting(current)
@@ -213,6 +215,8 @@ export function useInlineFolderEdit({
       await reloadCurrentContent({ navigationPriority: "mutation" });
     } catch (caught) {
       settleFailure(toMessage(caught, failureFallback, locale));
+    } finally {
+      if (committing.current === session) committing.current = null;
     }
   }, [
     api,

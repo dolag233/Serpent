@@ -225,9 +225,12 @@ import type {
 import { resolveNativeDialogCopy } from '../shared/native-dialog-i18n';
 
 import { popupEditContextMenu } from "./edit-context-menu";
+import { assetClipboard, completeInternalClipboardMove, completeFileClipboardMove, pendingClipboardMoves, rememberClipboardMove, type FileClipboardSnapshot } from './asset-clipboard';
+import { readWin32ClipboardSequenceNumber } from './win32-file-clipboard';
 import {
   createFileClipboardDeps,
   readFilePathsFromClipboard,
+  readFileClipboard,
   writeFilePathsToClipboard,
 } from "./file-clipboard";
 import {
@@ -3641,6 +3644,9 @@ async function commandFor(
     case "asset.retry-artifact.request": {
       return executeMediaPathMainCommand(request);
     }
+    case 'asset.clipboard-state.request':
+      // Clipboard state is resolved in Main before commandFor dispatch.
+      return undefined;
     case "sync.servers.list.request":
     case "sync.servers.upsert.request":
     case "sync.servers.delete.request":
@@ -3704,6 +3710,8 @@ async function handleLibraryRequest(
   let operation: "create" | "open" | "import" | "open-eagle" | "open-billfish" | undefined;
   let lifecyclePublished = false;
   let clipboardStageDirectory: string | undefined;
+  let pastedAssetClipboardSnapshot: FileClipboardSnapshot | undefined;
+  let pastedFileClipboardMoveSnapshot: FileClipboardSnapshot | undefined;
   let command: WorkerCommand | undefined;
   let retainExternalSource = false;
   let deleteFromDiskLibraryId: string | undefined;
@@ -3955,11 +3963,18 @@ async function handleLibraryRequest(
         },
         clipboardAvailableFormats: () => clipboard.availableFormats(),
         readClipboardFilePaths: () => readFilePathsFromClipboard(createFileClipboardDeps()),
+        readFileClipboard: () => readFileClipboard(createFileClipboardDeps()),
+        readClipboardSequence: readWin32ClipboardSequenceNumber,
+        onCutPasteCompleted: (snapshot, assetIds, folderIds) => completeInternalClipboardMove(snapshot, assetIds, folderIds, {
+          read: () => readFileClipboard(createFileClipboardDeps()), clear: () => clipboard.clear(),
+        }),
       });
       if (ingestion?.kind === "result") return ingestion.result;
       if (ingestion?.kind === "command") {
         command = ingestion.command;
         clipboardStageDirectory = ingestion.clipboardStageDirectory;
+        pastedAssetClipboardSnapshot = ingestion.assetClipboardSnapshot;
+        pastedFileClipboardMoveSnapshot = ingestion.fileClipboardMoveSnapshot;
       } else {
         command = await commandFor(
           request,
@@ -4076,6 +4091,24 @@ async function handleLibraryRequest(
         }
         return result;
       })();
+    const clipboardImportId = request.type === 'asset.import.resolve' || request.type === 'asset.import.skip-source-failure' || request.type === 'asset.import.abandon'
+      ? request.importId : undefined;
+    const fileMoveSnapshot = pastedFileClipboardMoveSnapshot ?? (clipboardImportId ? pendingClipboardMoves.get(clipboardImportId) : undefined);
+    if (fileMoveSnapshot && workerResult.ok) {
+      if (workerResult.type === 'asset.import.conflicts' || workerResult.type === 'asset.import.source-failure') {
+        rememberClipboardMove(workerResult.plan.importId, fileMoveSnapshot);
+      } else if (workerResult.type === 'asset.import.completed') {
+        completeFileClipboardMove(fileMoveSnapshot, {
+          read: () => readFileClipboard(createFileClipboardDeps()),
+          exists: existsSync,
+          write: (paths) => writeFilePathsToClipboard(paths, createFileClipboardDeps(), 'cut'),
+          clear: () => clipboard.clear(),
+        });
+        if (clipboardImportId) pendingClipboardMoves.delete(clipboardImportId);
+      }
+    }
+    if (request.type === 'asset.import.abandon') pendingClipboardMoves.delete(request.importId);
+
     if (navigationTrace) {
       navigationTrace.workerReturnedAt = performance.now();
       logNavigationStage("worker-returned", {
@@ -4206,8 +4239,11 @@ async function handleLibraryRequest(
       writeClipboardText: (text) => {
         clipboard.writeText(text);
       },
-      writeClipboardFilePaths: (absolutePaths) =>
-        writeFilePathsToClipboard(absolutePaths, createFileClipboardDeps()),
+      writeClipboardFilePaths: (absolutePaths, operation) =>
+        writeFilePathsToClipboard(absolutePaths, createFileClipboardDeps(), operation),
+      rememberAssetClipboard: (libraryId, assetIds, operation, folderIds) => {
+        assetClipboard.remember(libraryId, assetIds, readFileClipboard(createFileClipboardDeps()), operation, folderIds);
+      },
       openWith: (absolutePath) =>
         openPathWithOtherApplication(
           absolutePath,
@@ -4215,6 +4251,24 @@ async function handleLibraryRequest(
         ),
     });
     if (mediaShellResult) return mediaShellResult;
+
+    if (request.type === 'folder.paste.request' && workerResult.ok &&
+      (workerResult.type === 'asset.moved' || workerResult.type === 'asset.copied')) {
+      if (workerResult.type === 'asset.moved' && command.type === 'asset.move' && workerResult.skippedCount === 0) {
+        const snapshot = readFileClipboard(createFileClipboardDeps());
+        const current = assetClipboard.read(snapshot);
+        if (current?.libraryId === command.libraryId && JSON.stringify(current.snapshot) === JSON.stringify(pastedAssetClipboardSnapshot)) {
+          assetClipboard.completed(command);
+          if (!snapshot.unavailable && !assetClipboard.read(snapshot)) clipboard.clear();
+        }
+      }
+      const count = workerResult.type === 'asset.moved' ? workerResult.movedCount : workerResult.copiedCount;
+      return { ok: true, type: 'asset.import.completed', completion: {
+        pasteAction: count === 0 && workerResult.type === 'asset.moved' ? 'noop' : workerResult.type === 'asset.moved' ? 'move' : 'copy',
+        importedCount: count, fileCount: count, assetCount: count,
+        replacedCount: 0, skippedCount: workerResult.skippedCount, assets: workerResult.assets,
+      } } satisfies RendererResult;
+    }
 
     const importPostProcess = await applyImportWorkerResult(request, workerResult, {
       pendingImportLibraries,
@@ -7319,6 +7373,7 @@ async function startApplication(): Promise<void> {
     if (!mainWindow || event.sender !== mainWindow.webContents) return;
     if (input === "paste") event.sender.paste();
     if (input === "select-all") event.sender.selectAll();
+    if (input === "cut") event.sender.cut();
   });
 
   // Bootstrap dialog locale from OS before Renderer syncs (Serpent-bwb).

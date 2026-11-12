@@ -1,3 +1,7 @@
+import { readFocusedNavFolder } from "./folder-shortcut-dispatch";
+import { useAssetCutState } from './use-asset-cut-state';
+import { clipboardSelectionIds } from './clipboard-selection';
+import { useMediaPlayback } from './use-media-playback';
 import { LocalConfirmationHost, useLocalConfirmation, requestConfirmation } from "./local-confirmation";
 import {
   useCallback,
@@ -436,7 +440,7 @@ import {
   MANAGED_FOLDERS_DRAG_TYPE,
   resolveDraggedFolderIds,
 } from "./folder-drag-drop";
-import { importSummaryMessage } from "./import-summary";
+import { importSummaryMessage, shouldNotifyImportCompletion } from "./import-summary";
 import { automationCommandToast } from "./automation-command-toast";
 import {
   resolveDialogEscapeAction,
@@ -4477,6 +4481,17 @@ function AppInner() {
       });
     }
   }, [navHistoryRef, selectionAnchorRef, setNavHistoryUi, syncActiveWorkspaceTabLocation]);
+
+  const mediaPlayback = useMediaPlayback({
+    api: api ?? null,
+    libraryId: library?.libraryId ?? null,
+    current: previewAsset,
+    shuffleSeed,
+    getOrderedIds: fetchBrowseScopeAssetIds,
+    ensureLoaded: (rank) => ensureBrowseVisibleIndices([rank]),
+    navigate: navigateAssetPreview,
+    setError,
+  });
 
   useEffect(() => {
     const pendingPreview = pendingWorkspacePreviewRef.current;
@@ -8748,6 +8763,8 @@ function AppInner() {
     },
   });
 
+  const assetCutState = useAssetCutState(api ?? null, library?.libraryId ?? null);
+
   const {
     handleOpenExternal,
     handleRevealInFolder,
@@ -8761,7 +8778,24 @@ function AppInner() {
     library,
     setError,
     setNotice,
+    onClipboardChanged: assetCutState.refresh,
   });
+
+  const copyClipboardSelection = useCallback((operation: 'copy' | 'cut') => {
+    if (!library || showTrash || previewAsset || busy) return false;
+    const focused = readFocusedNavFolder(document.activeElement);
+    const folderIds = focused
+      ? selectedFolderIds.includes(focused.folderId) ? selectedFolderIds : [focused.folderId]
+      : selectedFolderIds;
+    const managedIds = folderIds.filter(id => folders.some(folder => folder.folderId === id));
+    const assetIds = focused ? [] : clipboardSelectionIds(selectedAssetIds, selectedAssets);
+    if (assetIds.length + managedIds.length === 0) return false;
+    void handleCopyAssetFiles(assetIds, operation, managedIds);
+    return true;
+  }, [busy, folders, handleCopyAssetFiles, library, previewAsset, selectedAssetIds, selectedAssets, selectedFolderIds, showTrash]);
+
+  const copyClipboardSelectionRef = useRef(copyClipboardSelection);
+  copyClipboardSelectionRef.current = copyClipboardSelection;
 
   const browsePasteDestination = resolveBrowsePasteDestination({
     libraryOpen: Boolean(library),
@@ -8801,9 +8835,9 @@ function AppInner() {
       const now = Date.now();
       if (now - osClipboardPasteAtRef.current < 400) return;
       osClipboardPasteAtRef.current = now;
-      void pasteIntoFolder(folderId);
+      void pasteIntoFolder(folderId).finally(assetCutState.refresh);
     },
-    [pasteIntoFolder],
+    [pasteIntoFolder, assetCutState.refresh],
   );
 
   const {
@@ -9177,7 +9211,9 @@ function AppInner() {
     selectedFolderCardIds: selectedFolderIds,
     selectedAssetCount: selectedAssetIds.length,
     resolveManagedFolderName,
+    canCutFolder: (id) => folders.some(folder => folder.folderId === id),
     canRenameFolder: (folderId) =>
+      (parseLinkedVirtualFolderId(folderId) !== null && linkedFolders.some(folder => folder.folderId === parseLinkedVirtualFolderId(folderId)?.linkedFolderId && folder.status === "available")) ||
       folders.some((folder) => folder.folderId === folderId) ||
       linkedFolders.some(
         (folder) => folder.folderId === folderId && folder.status === "available",
@@ -9197,6 +9233,7 @@ function AppInner() {
       cancelInlineSmartCollectionEdit();
       openInlineFolderCreate(parentFolderId);
     },
+    cutFolders: (folderIds) => { void handleCopyAssetFiles([], "cut", folderIds); },
     copyFolder: (folderId) => {
       void handleCopyFolder(folderId);
     },
@@ -10075,7 +10112,7 @@ function AppInner() {
         },
       });
       if (!completion) return;
-      setNotice(importSummaryMessage(completion, locale));
+      if (shouldNotifyImportCompletion(completion)) setNotice(importSummaryMessage(completion, locale));
       await revealAfterImport(completion);
       offerPostImportImageSequences(completion.assets);
       playTaskCompletionSound(startedAt);
@@ -10108,7 +10145,7 @@ function AppInner() {
         }
         throw new LibraryOperationError(result.error);
       }
-      setNotice(importSummaryMessage(result.value, locale));
+      if (shouldNotifyImportCompletion(result.value)) setNotice(importSummaryMessage(result.value, locale));
       setFolderBrowseRefreshToken((token) => token + 1);
       await reloadCurrentContent({ blockingNavigation: true });
       playTaskCompletionSound(startedAt);
@@ -10140,7 +10177,7 @@ function AppInner() {
         }
         throw new LibraryOperationError(result.error);
       }
-      setNotice(importSummaryMessage(result.value, locale));
+      if (shouldNotifyImportCompletion(result.value)) setNotice(importSummaryMessage(result.value, locale));
       setFolderBrowseRefreshToken((token) => token + 1);
       await reloadCurrentContent({ blockingNavigation: true });
       playTaskCompletionSound(startedAt);
@@ -10248,7 +10285,7 @@ function AppInner() {
         },
       });
       if (!completion) return;
-      setNotice(importSummaryMessage(completion, locale));
+      if (shouldNotifyImportCompletion(completion)) setNotice(importSummaryMessage(completion, locale));
       await revealAfterImport(completion);
       const nextSequenceIndex = input.sequenceIndex + 1;
       if (
@@ -10295,7 +10332,7 @@ function AppInner() {
       clearImportConflictsUi();
       setImportProgress(null);
       setLibraryTransferKind("import");
-      setNotice(importSummaryMessage(result.value, locale));
+      if (shouldNotifyImportCompletion(result.value)) setNotice(importSummaryMessage(result.value, locale));
       await revealAfterImport(result.value);
       playTaskCompletionSound(startedAt);
     } catch (caught) {
@@ -10362,7 +10399,7 @@ function AppInner() {
       clearImportSourceFailureUi();
       setImportProgress(null);
       setLibraryTransferKind("import");
-      setNotice(importSummaryMessage(completion, locale));
+      if (shouldNotifyImportCompletion(completion)) setNotice(importSummaryMessage(completion, locale));
       await revealAfterImport(completion);
       playTaskCompletionSound(startedAt);
     } catch (caught) {
@@ -12419,6 +12456,7 @@ function AppInner() {
     busy,
     selectedAsset: previewAsset ?? selectedAsset,
     selectedAssets: previewAsset ? [previewAsset] : selectedAssets,
+    selectedAssetIds: previewAsset ? [previewAsset.assetId] : selectedAssetIds,
     pasteDestinationFolderId: browsePasteDestination,
     diskDeleteAssetIds: diskDeleteKeyboardTargets.assetIds,
     diskDeleteFolderIds: diskDeleteKeyboardTargets.folderIds,
@@ -12433,6 +12471,8 @@ function AppInner() {
       });
     },
     onRename: openAssetRename,
+    onCutFiles: (assetIds, folderIds) => { void handleCopyAssetFiles(assetIds, "cut", folderIds); },
+    selectedFolderIds: selectedFolderIds.filter(id => folders.some(folder => folder.folderId === id)),
     onCopyFiles: (assetIds) => {
       void handleCopyAssetFiles(assetIds);
     },
@@ -12517,13 +12557,7 @@ function AppInner() {
         void shellApi.nativeEditCopy();
         return;
       }
-      const copyIds = selectedAssets
-        .filter(
-          (asset) => asset.availability === "available" && !asset.deletedAt,
-        )
-        .map((asset) => asset.assetId);
-      if (copyIds.length > 0) {
-        void handleCopyAssetFiles(copyIds);
+      if (copyClipboardSelection("copy")) {
         return;
       }
       void shellApi.nativeEditCopy();
@@ -12534,7 +12568,9 @@ function AppInner() {
     showTrash,
     library,
     selectedAssets,
+    selectedAssetIds,
     handleCopyAssetFiles,
+    copyClipboardSelection,
   ]);
 
   // Capture-phase Escape guard: when context menu is open, stop
@@ -13787,6 +13823,7 @@ function AppInner() {
         ? undefined
         : t("shell.mainMenuRedoCount", { count: operationHistory.redoTop.affectedCount }),
       hasSelectedAssets: selectedAssetIds.length > 0,
+      hasSelectedFolders: selectedFolderIds.some(id => folders.some(folder => folder.folderId === id)),
       hasPasteTarget: browsePasteDestination !== undefined,
       hasBrowseAssets: browseScopeAssetIds.length > 0,
       showMissingLinkedFiles,
@@ -13834,11 +13871,11 @@ function AppInner() {
       },
       undo: () => void undoLastFileOp(),
       redo: () => void redoLastOperation(),
+      cutSelection: () => {
+        copyClipboardSelection("cut");
+      },
       copySelection: () => {
-        const copyIds = selectedAssets
-          .filter((asset) => asset.availability === "available" && !asset.deletedAt)
-          .map((asset) => asset.assetId);
-        if (copyIds.length > 0) void handleCopyAssetFiles(copyIds);
+        copyClipboardSelection("copy");
       },
       paste: () => {
         if (browsePasteDestination !== undefined) {
@@ -13915,6 +13952,15 @@ function AppInner() {
         command === "window.toggle-fullscreen" &&
         (textEditingFocused || hasActiveModalDialog())
       ) return;
+      if (command === 'edit.cut' && !textEditingFocused && readFocusedNavFolder(activeElement)?.locationKind === 'managed' &&
+        !hasActiveModalDialog() && !previewAssetRef.current) {
+        copyClipboardSelectionRef.current('cut');
+        return;
+      }
+      if (textEditingFocused && command === "edit.cut") {
+        void shellApi.nativeEditCommand("cut");
+        return;
+      }
       if (textEditingFocused && command === "edit.paste") {
         void shellApi.nativeEditCommand("paste");
         return;
@@ -14087,8 +14133,13 @@ function AppInner() {
     >
       {folderRowEntries.map((entry) => (
         <FolderCard
+          cut={assetCutState.cutFolderIds.has(entry.folderId)}
           draggable={!showTrash}
           entry={entry}
+          rename={inlineFolderEdit?.kind === 'rename' && inlineFolderEdit.folderId === entry.folderId ? inlineFolderEdit : null}
+          onRenameChange={changeInlineFolderEdit}
+          onRenameCommit={() => void commitInlineFolderEdit()}
+          onRenameCancel={cancelInlineFolderEdit}
           key={entry.folderId}
           libraryId={library.libraryId}
           trashed={showTrash}
@@ -14614,6 +14665,7 @@ function AppInner() {
         ) : null}
       </header>
       <NavigationSidebar
+        cutFolderIds={assetCutState.cutFolderIds}
         library={library}
         assetScope={assetScope}
         showTrash={showTrash}
@@ -14772,7 +14824,7 @@ function AppInner() {
           cancelInlineFolderEdit();
           openInlineSmartCollectionCreate();
         }}
-        inlineFolderEdit={inlineFolderEdit}
+        inlineFolderEdit={inlineFolderEdit?.kind === 'rename' && folderRowEntries.some(entry => entry.folderId === inlineFolderEdit.folderId) ? null : inlineFolderEdit}
         onInlineFolderEditChange={changeInlineFolderEdit}
         onInlineFolderEditCommit={(onCreateSuccess) =>
           void commitInlineFolderEdit((folderId, parentFolderId) => {
@@ -15469,7 +15521,7 @@ function AppInner() {
                       aria-label={canvasPrefs.fields.name ? undefined : asset.displayName}
                       data-hover-tip={canvasPrefs.fields.name ? undefined : asset.displayName}
                       aria-pressed={selectedIdSet.has(asset.assetId)}
-                      className={`asset-card${selectedIdSet.has(asset.assetId) ? " is-selected" : ""}${asset.availability === "missing" ? " is-missing" : ""}${corruptAsset ? " is-corrupt" : ""}${asset.deletedAt ? " is-trashed" : ""}${renamingThisAsset ? " is-renaming" : ""}`}
+                      className={`asset-card${assetCutState.cutAssetIds.has(asset.assetId) ? " is-cut" : ""}${selectedIdSet.has(asset.assetId) ? " is-selected" : ""}${asset.availability === "missing" ? " is-missing" : ""}${corruptAsset ? " is-corrupt" : ""}${asset.deletedAt ? " is-trashed" : ""}${renamingThisAsset ? " is-renaming" : ""}`}
                       data-asset-id={asset.assetId}
                       data-asset-name={asset.displayName}
                       data-media-type={asset.mediaType}
@@ -16021,6 +16073,7 @@ function AppInner() {
                             renderLayoutPreview={(entry, renderOptions) =>
                               library ? (
                                 <BrowseLayoutPreview
+                                  cut={assetCutState.cutAssetIds.has(entry.assetId)}
                                   entry={entry}
                                   fields={canvasPrefs.fields}
                                   libraryId={library.libraryId}
@@ -16058,6 +16111,7 @@ function AppInner() {
                             renderLayoutPreview={(entry, renderOptions) =>
                               library ? (
                                 <BrowseLayoutPreview
+                                  cut={assetCutState.cutAssetIds.has(entry.assetId)}
                                   entry={entry}
                                   fields={canvasPrefs.fields}
                                   libraryId={library.libraryId}
@@ -16162,6 +16216,9 @@ function AppInner() {
         {previewAsset && library && api && (
           <>
           <AssetPreviewModal
+            mediaPlaybackMode={mediaPlayback.mode}
+            onMediaPlaybackModeChange={mediaPlayback.changeMode}
+            onMediaEnded={(assetId) => void mediaPlayback.ended(assetId)}
             ref={previewModalRef}
             api={api}
             asset={previewAsset}
@@ -17310,6 +17367,8 @@ function AppInner() {
           void runFindSimilar(assetId);
         }}
         onCopyFilePath={(assetId) => { void handleCopyFilePath(assetId); }}
+        onCutAssetFiles={(assetIds, folderIds) => { void handleCopyAssetFiles(assetIds, "cut", folderIds); }}
+        onCutFolders={(folderIds) => { void handleCopyAssetFiles([], "cut", folderIds); }}
         onCopyAssetFiles={(assetIds) => {
           void handleCopyAssetFiles(assetIds);
         }}

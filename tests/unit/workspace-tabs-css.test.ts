@@ -24,10 +24,11 @@ describe("workspace tab chrome", () => {
     expect(css).not.toContain(".workspace-tab:not(.is-active)::after");
   });
 
-  it("keeps the add button a space-1 from the last tab", () => {
+  it("keeps the add button outside the scrolling viewport", () => {
     expect(css).toContain(
-      "margin-inline-start: calc(-1 * var(--workspace-tab-scoop) + var(--ui-space-1))",
+      "margin-inline-start: var(--ui-space-1)",
     );
+    expect(css).not.toContain("margin-inline-start: calc(-1 * var(--workspace-tab-scoop)");
   });
 
   it("measures the tab width budget in the tab's own font size", () => {

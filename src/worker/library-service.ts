@@ -21,6 +21,7 @@ import {
   rmSync,
   statSync,
   utimesSync,
+  unlinkSync,
   watch,
   writeFileSync,
   writeSync,
@@ -4062,6 +4063,7 @@ interface BatchRelinkMatch {
 }
 
 interface ImportSourceEntry {
+  clipboardMoveSource?: string;
   byteSize: number;
   destinationRelativePath: string;
   /** Metadata projected from an Eagle item; absent for ordinary imports. */
@@ -4136,6 +4138,7 @@ interface ManagedRelinkPlacedMarkerV1 {
 }
 
 interface PendingImport {
+  moveSourceFiles?: boolean;
   directories: string[];
   entries: ImportSourceEntry[];
   createImageSequence?: boolean;
@@ -37424,6 +37427,67 @@ export class LibraryService {
     throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
   }
 
+  /** Clipboard moves also accept linked sources; delete only verified, committed copies. */
+  async moveAssetsIncludingLinked(input: Parameters<LibraryService['moveAssets']>[0]): Promise<ReturnType<LibraryService['moveAssets']>> {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const sources = this.listAssetSummariesByIds(openLibrary, input.assetIds);
+    if (!sources.some(asset => asset.locationKind === 'linked')) return this.moveAssets(input);
+    if (sources.length !== input.assetIds.length) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    let movedCount = 0;
+    let skippedCount = 0;
+    const assets: AssetSummary[] = [];
+    for (const source of sources) {
+      if (source.locationKind === 'managed') {
+        const moved = this.moveAssets({ ...input, assetIds: [source.assetId] });
+        movedCount += moved.movedCount;
+        skippedCount += moved.skippedCount;
+        assets.push(...moved.assets);
+        continue;
+      }
+      // Pasting a cut back into its own folder is a no-op.
+      const target = input.targetFolderId ? this.linkedFolderRowForImport(openLibrary, input.targetFolderId) : null;
+      const parent = path.posix.dirname(source.relativeFilePath);
+      if (target && target.folder_id === source.linkedFolderId && (target.relative_path || '.') === parent) {
+        skippedCount += 1;
+        continue;
+      }
+      const sourcePath = this.resolveAssetPath(input.libraryId, source.assetId);
+      const snapshot = sourceSnapshot(lstatSync(sourcePath, { bigint: true }));
+      const sha256 = sha256FileAtPath(sourcePath);
+      const copied = this.copyAssets({ ...input, assetIds: [source.assetId] });
+      if (copied.copiedCount !== 1 || copied.assets.length !== 1) {
+        skippedCount += 1;
+        continue;
+      }
+      const destination = copied.assets[0]!;
+      if (!this.finishClipboardMoveSource({
+        sourcePath, clipboardMoveSource: sourcePath, sourceSnapshot: snapshot,
+        byteSize: source.byteSize, destinationRelativePath: destination.relativeFilePath, sha256,
+      }, this.resolveAssetPath(input.libraryId, destination.assetId))) {
+        skippedCount += 1;
+        continue;
+      }
+      await this.deleteLinkedAssets({ libraryId: input.libraryId, assetIds: [source.assetId], deleteSourceFile: false });
+      movedCount += 1;
+      assets.push(destination);
+    }
+    return { movedCount, skippedCount, operationId: null, assets };
+  }
+
+  copyAssetsIncludingLinked(input: Parameters<LibraryService['copyAssets']>[0]): ReturnType<LibraryService['copyAssets']> {
+    const sources = this.listAssetSummariesByIds(this.requireOpenLibrary(input.libraryId), input.assetIds);
+    if (!sources.some(asset => asset.locationKind === 'linked') || !sources.some(asset => asset.locationKind === 'managed')) return this.copyAssets(input);
+    if (sources.length !== input.assetIds.length) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    const results = sources.map(asset => this.copyAssets({ ...input, assetIds: [asset.assetId] }));
+    return {
+      copiedCount: results.reduce((count, result) => count + result.copiedCount, 0),
+      skippedCount: results.reduce((count, result) => count + result.skippedCount, 0),
+      operationId: null,
+      assets: results.flatMap(result => result.assets),
+      outputAssetIdsBySource: results.flatMap(result => result.outputAssetIdsBySource),
+    };
+  }
+
   moveAssets(input: {
     libraryId: string;
     assetIds: string[];
@@ -43578,6 +43642,7 @@ export class LibraryService {
     relativePath?: string;
     sourceKind: 'files' | 'folder';
     sourcePaths: string[];
+    moveSourceFiles?: boolean;
     expandImageSequences?: boolean;
     imageSequenceFps?: number;
   }): ImportCompletion {
@@ -43620,6 +43685,7 @@ export class LibraryService {
 
     const occupied = new Set<string>();
     const written: string[] = [];
+    const movedEntries: Array<{ entry: ImportSourceEntry; destination: string }> = [];
     try {
       for (const entry of entries) {
         const originalRelative = normalizeRelativeAssetPath(
@@ -43663,6 +43729,7 @@ export class LibraryService {
         mkdirSync(path.dirname(destination), { recursive: true });
         copyFileSync(entry.sourcePath, destination, constants.COPYFILE_EXCL);
         written.push(relativeDestination);
+        if (input.moveSourceFiles) movedEntries.push({ entry: { ...entry, clipboardMoveSource: entry.sourcePath }, destination });
         occupied.add(portablePathIdentity(relativeDestination));
       }
     } catch (error) {
@@ -43691,7 +43758,15 @@ export class LibraryService {
     }).filter((asset) =>
       identities.has(portablePathIdentity(asset.relativeFilePath)),
     );
+    let sourceRetainedCount = 0;
+    if (assets.length === written.length) {
+      for (const item of movedEntries) {
+        if (!this.finishClipboardMoveSource(item.entry, item.destination)) sourceRetainedCount += 1;
+      }
+    } else sourceRetainedCount = movedEntries.length;
     return {
+      ...(input.moveSourceFiles ? { pasteAction: 'move' as const } : {}),
+      ...(sourceRetainedCount ? { sourceRetainedCount } : {}),
       importedCount: assets.length,
       fileCount: assets.length,
       assetCount: assets.length,
@@ -44141,6 +44216,7 @@ export class LibraryService {
     targetFolderId?: string;
     sourceKind: 'files' | 'folder';
     sourcePaths: string[];
+    moveSourceFiles?: boolean;
     expandImageSequences?: boolean;
     imageSequenceFps?: number;
     createImageSequence?: boolean;
@@ -44184,6 +44260,9 @@ export class LibraryService {
           ...(input.sourcePageUrl === undefined ? {} : { sourcePageUrl: input.sourcePageUrl }),
         });
     const { directories, entries } = enumerated;
+    if (input.moveSourceFiles) {
+      for (const entry of entries) entry.clipboardMoveSource = entry.sourcePath;
+    }
     const importId = randomUUID();
     const operationPath = path.join(
       openLibrary.summary.libraryPath,
@@ -44583,6 +44662,7 @@ export class LibraryService {
     const pending: PendingImport = {
       directories,
       entries: stagedEntries,
+      ...(input.moveSourceFiles ? { moveSourceFiles: true } : {}),
       libraryId: input.libraryId,
       operationPath,
       ...(context.skippedSources && context.skippedSources.length > 0
@@ -44626,6 +44706,7 @@ export class LibraryService {
     targetFolderId?: string;
     sourceKind: 'files' | 'folder';
     sourcePaths: string[];
+    moveSourceFiles?: boolean;
     expandImageSequences?: boolean;
     imageSequenceFps?: number;
     createImageSequence?: boolean;
@@ -44653,6 +44734,7 @@ export class LibraryService {
         relativePath: linked.relative_path,
         sourceKind: input.sourceKind,
         sourcePaths: input.sourcePaths,
+        moveSourceFiles: input.moveSourceFiles,
         expandImageSequences: input.expandImageSequences === true,
         imageSequenceFps: input.imageSequenceFps,
       });
@@ -44697,6 +44779,7 @@ export class LibraryService {
         relativePath: linked.relative_path,
         sourceKind: input.sourceKind,
         sourcePaths: input.sourcePaths,
+        moveSourceFiles: input.moveSourceFiles,
         expandImageSequences: input.expandImageSequences === true,
         imageSequenceFps: input.imageSequenceFps,
       });
@@ -46138,12 +46221,23 @@ export class LibraryService {
     };
 
     const affectedAssetIds: string[] = [];
+    const committedMoveSources: ImportAction[] = [];
+    let sourceRetainedCount = 0;
+    let moveSourcesSettled = false;
     let importedCount = 0;
     let replacedCount = 0;
     let committed = false;
     let destinationGuardFailed = false;
 
     const completeCommittedImport = (): ImportCompletion => {
+      if (!moveSourcesSettled) {
+        moveSourcesSettled = true;
+        for (const action of committedMoveSources) {
+          if (!this.finishClipboardMoveSource(action.entry, this.folderPath(openLibrary, action.destinationRelativePath))) {
+            sourceRetainedCount += 1;
+          }
+        }
+      }
       const affected = [...new Set([...affectedAssetIds, ...mergedAssetIds])];
       let assetCount = new Set(affectedAssetIds).size;
       try {
@@ -46173,6 +46267,8 @@ export class LibraryService {
       }
 
       return {
+        ...(pending.moveSourceFiles ? { pasteAction: 'move' as const } : {}),
+        ...(sourceRetainedCount ? { sourceRetainedCount } : {}),
         importedCount,
         fileCount: importedCount,
         assetCount,
@@ -46473,6 +46569,7 @@ export class LibraryService {
         })();
         if (committedAssetId) {
           affectedAssetIds.push(committedAssetId);
+          if (action.entry.clipboardMoveSource) committedMoveSources.push(action);
           if (action.entry.eagleMetadata && committedRevisionId) {
             if (bulkCommit) {
               deferredThumbnails.push({
@@ -49860,6 +49957,24 @@ export class LibraryService {
       contentFingerprint: hashes.contentFingerprint,
       sourcePath: input.stagedPath,
     };
+  }
+
+  private finishClipboardMoveSource(entry: ImportSourceEntry, destinationPath: string): boolean {
+    const sourcePath = entry.clipboardMoveSource;
+    if (!sourcePath) return true;
+    try {
+      if (this.transferPathKey(sourcePath) === this.transferPathKey(destinationPath)) return true;
+      const current = lstatSync(sourcePath, { bigint: true });
+      if (!current.isFile() || !sameSourceSnapshot(entry.sourceSnapshot, sourceSnapshot(current))) return false;
+      const expectedHash = entry.sha256 ?? sha256FileAtPath(destinationPath);
+      if (sha256FileAtPath(sourcePath) !== expectedHash || sha256FileAtPath(destinationPath) !== expectedHash) return false;
+      if (!sameSourceSnapshot(entry.sourceSnapshot, sourceSnapshot(lstatSync(sourcePath, { bigint: true })))) return false;
+      unlinkSync(sourcePath);
+      return true;
+    } catch (error) {
+      this.diagnose('clipboard.move.source-retained', error);
+      return false;
+    }
   }
 
   private stageImportSourceEntries(input: {

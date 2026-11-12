@@ -36,6 +36,7 @@ export interface SidebarCommandActions {
   readonly copyFolderPath: (folderId: string) => void;
   /** OS file clipboard copy (clarification #5). */
   readonly copyFolder: (folderId: string) => void;
+  readonly cutFolders?: (folderIds: string[]) => void;
   /** Paste OS clipboard files into this folder (managed or linked). */
   readonly pasteIntoFolder: (folderId: string) => void;
   /** Duplicate a managed folder as sibling. */
@@ -201,6 +202,15 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
     visible: (ctx) => ctx.menuKind === 'folder',
     disabledReason: offlineReason,
     run: (ctx) => ctx.actions.copyFolderPath(revealFolderId(ctx)),
+  },
+  {
+    id: 'folder.cut',
+    title: (ctx) => translateForLocale(ctx.locale, 'command.asset.cut'),
+    group: 'organize',
+    shortcut: { mac: { label: '⌘X', key: 'x', metaKey: true }, windows: { label: 'Ctrl+X', key: 'x', ctrlKey: true } },
+    visible: (ctx) => ctx.menuKind === 'folder' && ctx.locationKind === 'managed' && !ctx.isLibraryRoot && ctx.actions.cutFolders !== undefined,
+    disabledReason: offlineReason,
+    run: (ctx) => ctx.actions.cutFolders?.([revealFolderId(ctx)]),
   },
   {
     id: 'folder.copy',

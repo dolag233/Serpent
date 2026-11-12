@@ -42,7 +42,7 @@ import {
   type DragDropMode,
 } from "./asset-drag-drop";
 import { useLocale, useT } from "./i18n";
-import { importSummaryMessage } from "./import-summary";
+import { importSummaryMessage, shouldNotifyImportCompletion } from "./import-summary";
 
 export type UseExternalImportHandlersParams = {
   api: SerpentLibraryApi | null;
@@ -230,7 +230,7 @@ export function useExternalImportHandlers({
         setImageSequenceImportOffer(result.value);
         return;
       }
-      setNotice(importSummaryMessage(result.value, locale));
+      if (shouldNotifyImportCompletion(result.value)) setNotice(importSummaryMessage(result.value, locale));
       await onImportCompleted(result.value);
     },
     [
@@ -336,7 +336,7 @@ export function useExternalImportHandlers({
         } else if (isImageSequenceImportOffer(result.value)) {
           setImageSequenceImportOffer(result.value);
         } else {
-          setNotice(importSummaryMessage(result.value, locale));
+          if (shouldNotifyImportCompletion(result.value)) setNotice(importSummaryMessage(result.value, locale));
           await onImportCompleted(result.value);
         }
       } catch (caught) {
@@ -557,7 +557,7 @@ export function useExternalImportHandlers({
   const createFolderCardDropHandlers = useCallback(
     (folderId: string) => ({
       dropActive: folderCardDropTarget === folderId,
-      onDragEnter: (event: DragEvent<HTMLButtonElement>) => {
+      onDragEnter: (event: DragEvent<HTMLElement>) => {
         if (
           supportsExternalImportTransfer(event.dataTransfer) ||
           supportsManagedFolderDrag(event.dataTransfer) ||
@@ -566,7 +566,7 @@ export function useExternalImportHandlers({
           setFolderCardDropTarget(folderId);
         }
       },
-      onDragLeave: (event: DragEvent<HTMLButtonElement>) => {
+      onDragLeave: (event: DragEvent<HTMLElement>) => {
         // Serpent-4gyr: cross-app drags often report relatedTarget=null while
         // still hovering; clearing here kills the highlight when unfocused.
         if (event.relatedTarget == null) return;
@@ -577,7 +577,7 @@ export function useExternalImportHandlers({
           current === folderId ? null : current,
         );
       },
-      onDragOver: (event: DragEvent<HTMLButtonElement>) => {
+      onDragOver: (event: DragEvent<HTMLElement>) => {
         // Serpent-4gyr: keep target warm on dragover — unfocused windows may
         // skip a stable dragenter or only deliver over events.
         if (supportsManagedFolderDrag(event.dataTransfer)) {
@@ -603,7 +603,7 @@ export function useExternalImportHandlers({
         }
         handleTargetExternalDragOver(event);
       },
-      onDrop: (event: DragEvent<HTMLButtonElement>) => {
+      onDrop: (event: DragEvent<HTMLElement>) => {
         const assetIds =
           parseManagedAssetDrag(event.dataTransfer) ??
           (getManagedAssetDragIds

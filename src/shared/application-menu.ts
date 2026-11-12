@@ -66,6 +66,7 @@ export type ApplicationMenuCommand =
   | "file.paste-image"
   | "edit.undo"
   | "edit.redo"
+  | "edit.cut"
   | "edit.paste"
   | "edit.select-all"
   | "edit.clear-selection"
@@ -267,7 +268,7 @@ export function buildApplicationMenuTemplate(
         shortcutItem("edit.undo", "shell.mainMenuUndo", "edit.undo"),
         shortcutItem("edit.redo", "shell.mainMenuRedo", "edit.redo"),
         { type: "separator" },
-        { role: "cut", labelKey: "shell.mainMenuCut" },
+        shortcutItem("asset.cut", "shell.mainMenuCut", "edit.cut"),
         // Serpent-166q: do not use role:copy — it steals ⌘C from asset file copy.
         shortcutItem("asset.copy", "shell.mainMenuCopySelection", "copy-selection"),
         shortcutItem("asset.paste", "shell.mainMenuPaste", "edit.paste"),

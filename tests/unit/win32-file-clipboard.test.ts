@@ -4,13 +4,13 @@
 // 本测试用 PowerShell Get-Clipboard -Format FileDropList 验证（与 Explorer
 // 相同的读取路径），非 Windows 平台跳过。
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { writeWin32FileClipboard } from "../../src/main/win32-file-clipboard";
+import { readWin32FileClipboard, writeWin32FileClipboard } from "../../src/main/win32-file-clipboard";
 
 describe("win32-file-clipboard", () => {
   it.skipIf(process.platform !== "win32")(
@@ -39,4 +39,21 @@ describe("win32-file-clipboard", () => {
       expect(out).toContain(file);
     },
   );
+});
+
+it.skipIf(process.platform !== 'win32')('reads all native CF_HDROP paths and the Explorer cut/copy effect', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'serpent-native-clipboard-'));
+  try {
+    const files = ['多个文件.txt', 'second.txt'].map(name => path.join(root, name));
+    files.forEach(file => writeFileSync(file, 'clipboard fixture'));
+    expect(writeWin32FileClipboard(files, 'cut')).toBe(true);
+    const cut = readWin32FileClipboard();
+    expect(cut?.paths).toEqual(files);
+    expect(cut?.operation).toBe('cut');
+    expect(writeWin32FileClipboard(files, 'copy')).toBe(true);
+    const copy = readWin32FileClipboard();
+    expect(copy?.paths).toEqual(files);
+    expect(copy?.operation).toBe('copy');
+    expect(copy?.sequence).not.toBe(cut?.sequence);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

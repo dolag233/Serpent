@@ -36,6 +36,16 @@ describe("workspaceTabOutlinePath", () => {
     expect(d).toContain("A 17.5 17.5 0 0 0 137.5 40");
     expect(d.includes("Z")).toBe(false);
   });
+
+  it("keeps the same stroke inset and tip alignment for square tabs", () => {
+    const d = workspaceTabOutlinePath(120, 40, 18, 0, 0.5);
+    expect(d).toContain("M -17.5 40");
+    expect(d).toContain("L 0.5 0.5 L 119.5 0.5");
+    expect(d).toContain("A 17.5 17.5 0 0 0 137.5 40");
+    const fill = workspaceTabOutlineFillPath(120, 40, 18, 0, 0.5, 1);
+    expect(fill).toContain("M -17.5 41");
+    expect(fill).toContain("L 0.5 0.5 L 119.5 0.5");
+  });
 });
 
 describe("workspaceTabOutlineFillPath", () => {

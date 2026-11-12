@@ -655,7 +655,7 @@ describe('删除命令的确认由界面动作统一处理', () => {
 });
 
 describe('注册表完整性', () => {
-  it('22 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
+  it('23 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
     expect(registry.list().map((def) => def.id)).toEqual([
       'folder.open-in-file-manager',
       'folder.create-subfolder',
@@ -665,6 +665,7 @@ describe('注册表完整性', () => {
       'folder.rename',
       'folder.linked-rules',
       'folder.copy-path',
+      'folder.cut',
       'folder.copy',
       'folder.paste',
       'folder.clone',
@@ -700,4 +701,18 @@ describe('注册表完整性', () => {
       'delete',
     ]);
   });
+});
+
+
+it('offers managed-folder cut with matching shortcuts and hides it for linked folders and the library root', () => {
+  const { ctx } = makeCtx({ platform: 'windows' });
+  const cut = vi.fn();
+  const context = { ...ctx, actions: { ...ctx.actions, cutFolders: cut } };
+  const item = registry.resolveMenu(context).find(item => item.id === 'folder.cut');
+  expect(item?.disabled).toBe(false);
+  expect(item?.shortcutLabel).toBe('Ctrl+X');
+  registry.get('folder.cut')!.run(context);
+  expect(cut).toHaveBeenCalledWith([ctx.subjectId]);
+  expect(registry.resolveMenu({ ...context, isLibraryRoot: true }).some(item => item.id === 'folder.cut')).toBe(false);
+  expect(registry.resolveMenu({ ...context, locationKind: 'linked' }).some(item => item.id === 'folder.cut')).toBe(false);
 });

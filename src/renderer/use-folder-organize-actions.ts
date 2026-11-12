@@ -1,4 +1,5 @@
-import { useCallback } from "react";
+import { importSummaryMessage, shouldNotifyImportCompletion } from './import-summary';
+import { useCallback, useRef } from "react";
 
 import type { SerpentLibraryApi } from "../shared/library-api";
 import type {
@@ -56,11 +57,12 @@ export function useFolderOrganizeActions({
   onPasteSequenceOffer,
 }: UseFolderOrganizeActionsParams) {
   const t = useT();
+  const pasteInFlight = useRef(false);
 
   const pasteIntoFolder = useCallback(
     async (folderId: string | null) => {
-      if (!api || !libraryId) return;
-      setUiState("loading");
+      if (!api || !libraryId || pasteInFlight.current) return;
+      pasteInFlight.current = true;
       try {
         const run = runImportRpc ?? (async (work) => work());
         const result = await run(() => api.pasteIntoFolder({
@@ -80,17 +82,18 @@ export function useFolderOrganizeActions({
           onPasteConflict?.(result.value);
           return;
         }
+        if (result.value.pasteAction === 'noop') return;
         if (onPasteCompleted) {
           await onPasteCompleted(result.value);
         } else {
           await reloadCurrentContent();
         }
-        setNotice(t("toast.folderPasteDone"));
+        if (shouldNotifyImportCompletion(result.value)) setNotice(importSummaryMessage(result.value, locale));
       } catch (caught) {
         if (shouldSuppressClipboardPasteFeedback(caught)) return;
         setError(toMessage(caught, t("toast.folderPasteFailed"), locale));
       } finally {
-        setUiState("ready");
+        pasteInFlight.current = false;
       }
     },
     [
@@ -105,7 +108,6 @@ export function useFolderOrganizeActions({
       runImportRpc,
       setError,
       setNotice,
-      setUiState,
       t,
     ],
   );

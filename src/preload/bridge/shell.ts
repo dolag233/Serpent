@@ -303,7 +303,7 @@ export const shell: SerpentShellApi = Object.freeze({
     const commands: readonly ApplicationMenuCommand[] = [
       'invert-selection', 'copy-selection',
       'file.import-files', 'file.import-folder', 'file.import-linked-folder',
-      'edit.undo', 'edit.redo', 'edit.paste', 'edit.select-all', 'edit.clear-selection',
+      'edit.undo', 'edit.redo', 'edit.cut', 'edit.paste', 'edit.select-all', 'edit.clear-selection',
       'canvas.zoom-in', 'canvas.zoom-out', 'canvas.zoom-reset', 'window.toggle-fullscreen',
       'library.create', 'library.open', 'library.open-recent', 'library.close', 'library.remove',
       'library.delete-from-disk', 'library.import', 'library.import-eagle', 'library.export', 'library.settings',
@@ -348,7 +348,7 @@ export const shell: SerpentShellApi = Object.freeze({
   async nativeEditCopy(): Promise<void> {
     await ipcRenderer.invoke(NATIVE_EDIT_COPY_CHANNEL);
   },
-  async nativeEditCommand(command: "paste" | "select-all"): Promise<void> {
+  async nativeEditCommand(command: "cut" | "paste" | "select-all"): Promise<void> {
     await ipcRenderer.invoke(NATIVE_EDIT_COMMAND_CHANNEL, command);
   },
   setViewerVideoShortcutsActive(active: boolean, scope: ViewerShortcutScope = 'viewer.video'): void {

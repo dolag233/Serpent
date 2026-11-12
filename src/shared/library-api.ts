@@ -917,10 +917,15 @@ export interface SerpentLibraryApi {
   openWith(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
   revealInFolder(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
   copyFilePath(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
+  /** Cut selection in this library; absolute clipboard paths stay in Main. */
+  getClipboardCutAssets(input: { libraryId: string }): Promise<LibraryApiResult<string[]>>;
+  getClipboardCutSelection(input: { libraryId: string }): Promise<LibraryApiResult<{ assetIds: string[]; folderIds: string[] }>>;
   /** OS file clipboard copy for one or more assets (Finder/Explorer interoperable). */
   copyAssetFiles(input: {
     libraryId: string;
     assetIds: string[];
+    folderIds?: string[];
+    operation?: 'copy' | 'cut';
   }): Promise<LibraryApiResult<void>>;
   /** Start an OS-native file drag from the current dragstart event. */
   startAssetDrag(input: {

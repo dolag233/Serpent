@@ -390,3 +390,14 @@ describe("readFocusedNavFolder", () => {
   });
 
 });
+
+
+it('cuts multiple managed folder cards and lets a mixed selection reach the batch clipboard handler', () => {
+  const input = { commandId: 'folder.cut' as const, focusedNav: null, browseManagedFolderId: null,
+    selectedFolderCardIds: ['folder-a', 'folder-b', 'linked-1'], selectedAssetCount: 0,
+    resolveManagedFolderName: resolveName, canCutFolder: (id: string) => id !== 'linked-1' };
+  expect(resolveFolderShortcutAction(input)).toEqual({ type: 'cut-folders', folderIds: ['folder-a', 'folder-b'] });
+  expect(resolveFolderShortcutAction({ ...input, selectedAssetCount: 1 })).toEqual({ type: 'none' });
+  expect(resolveFolderShortcutAction({ ...input, focusedNav: { folderId: 'folder-b', locationKind: 'managed' } })).toEqual({ type: 'cut-folders', folderIds: ['folder-a', 'folder-b'] });
+  expect(resolveFolderShortcutAction({ ...input, focusedNav: { folderId: 'linked-1', locationKind: 'linked' } })).toEqual({ type: 'none' });
+});

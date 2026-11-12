@@ -22,7 +22,7 @@ export function workspaceTabOutlinePath(
   const H = Math.max(height, scoop + 1);
   const S = Math.max(scoop, 1);
   const R = Math.min(Math.max(radius, 0), W / 2, Math.max(H - S, 0));
-  const i = Math.max(0, Math.min(strokeInset, S - 0.5, R > 0 ? R - 0.5 : 0));
+  const i = Math.max(0, Math.min(strokeInset, S - 0.5, W / 2));
 
   const x0 = i;
   const x1 = W - i;
@@ -62,7 +62,7 @@ export function workspaceTabOutlineFillPath(
   const H = Math.max(height, scoop + 1);
   const S = Math.max(scoop, 1);
   const R = Math.min(Math.max(radius, 0), W / 2, Math.max(H - S, 0));
-  const i = Math.max(0, Math.min(strokeInset, S - 0.5, R > 0 ? R - 0.5 : 0));
+  const i = Math.max(0, Math.min(strokeInset, S - 0.5, W / 2));
   const extra = Math.max(0, bottomExtra);
 
   const x0 = i;

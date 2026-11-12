@@ -10,6 +10,7 @@ export type UseShellFileActionsParams = {
   library: RendererLibrarySummary | null;
   setError: (message: string | null) => void;
   setNotice: (message: string) => void;
+  onClipboardChanged?: () => void | Promise<void>;
 };
 
 /**
@@ -21,6 +22,7 @@ export function useShellFileActions({
   library,
   setError,
   setNotice,
+  onClipboardChanged,
 }: UseShellFileActionsParams) {
   const t = useT();
   const { locale } = useLocale();
@@ -84,12 +86,14 @@ export function useShellFileActions({
   );
 
   const handleCopyAssetFiles = useCallback(
-    async (assetIds: string[]) => {
-      if (!api || !library || assetIds.length === 0) return;
+    async (assetIds: string[], operation: 'copy' | 'cut' = 'copy', folderIds: string[] = []) => {
+      if (!api || !library || assetIds.length + folderIds.length === 0) return;
       try {
         const result = await api.copyAssetFiles({
           libraryId: library.libraryId,
           assetIds,
+          ...(folderIds.length ? { folderIds } : {}),
+          operation,
         });
         if (!result.ok) {
           setError(
@@ -97,6 +101,8 @@ export function useShellFileActions({
           );
           return;
         }
+        await onClipboardChanged?.();
+        if (operation === 'cut') return;
         setNotice(
           assetIds.length === 1
             ? t("toast.assetCopyDone")
@@ -106,7 +112,7 @@ export function useShellFileActions({
         setError(toMessage(caught, t("toast.assetCopyFailed"), locale));
       }
     },
-    [api, library, locale, setError, setNotice, t],
+    [api, library, locale, onClipboardChanged, setError, setNotice, t],
   );
 
   const handleOpenFolderInFileManager = useCallback(

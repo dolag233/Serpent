@@ -7,6 +7,9 @@ export type IconName =
   | "chevron"
   | "chevron-left"
   | "chevron-right"
+  | "scissors"
+  | "repeat-one"
+  | "list-play"
   | "clipboard"
   | "check"
   | "clock"
@@ -81,6 +84,9 @@ export type IconName =
   | "align-right";
 
 const iconPaths: Record<IconName, ReactNode> = {
+  scissors: <><circle cx="6" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><path d="m8.2 8.2 12.6 12.6M8.2 15.8 20.8 3.2M14 12l-2-2" /></>,
+  'repeat-one': <><path d="m17 2 4 4-4 4M3 11V8a2 2 0 0 1 2-2h16M7 22l-4-4 4-4M21 13v3a2 2 0 0 1-2 2H3M11 10h1v4" /></>,
+  'list-play': <><path d="M4 5h16M4 11h8M4 17h8m4-7 6 4-6 4z" /></>,
   activity: <path d="M22 12h-4l-3 9L9 3l-3 9H2" />,
   archive: (
     <>

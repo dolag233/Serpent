@@ -335,7 +335,7 @@ describe("macOS product menu mirror (Serpent-q0b1)", () => {
     }
   });
 
-  it("keeps native Cut and Paste-and-Match-Style roles outside custom accelerators", () => {
+  it("routes Cut through the asset command while retaining native Paste-and-Match-Style", () => {
     const template = buildApplicationMenuTemplate({
       platform: "darwin",
       showDevTools: false,
@@ -353,8 +353,8 @@ describe("macOS product menu mirror (Serpent-q0b1)", () => {
       return undefined;
     };
 
-    expect(findRole(template, "cut")).toMatchObject({ role: "cut" });
-    expect(findRole(template, "cut")?.accelerator).toBeUndefined();
+    expect(findRole(template, "cut")).toBeUndefined();
+    expect(commandsOf(template)).toContain("edit.cut");
     expect(findRole(template, "pasteAndMatchStyle")).toMatchObject({
       role: "pasteAndMatchStyle",
     });

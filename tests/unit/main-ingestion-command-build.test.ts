@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { assetClipboard } from '../../src/main/asset-clipboard';
 import { expect, test, vi } from "vitest";
 
 import {
@@ -13,10 +17,9 @@ function runtime(overrides?: Partial<IngestionCommandRuntime>): IngestionCommand
     isUnpackagedE2e: () => false,
     e2eEnv: () => undefined,
     workerAvailable: () => true,
-    requestWorker: vi.fn(async () => ({
-      ok: false as const,
-      error: { code: "INTERNAL_ERROR" as const, message: "unused" },
-    })),
+    requestWorker: vi.fn(async (command) => command.type === 'folder.get-path'
+      ? { ok: true as const, type: 'folder.path' as const, folderId: command.folderId, absolutePath: 'C:\\Target' }
+      : { ok: false as const, error: { code: "INTERNAL_ERROR" as const, message: "unused" } }),
     logInfo: vi.fn(),
     logError: vi.fn(),
     getPendingSequenceOffer: () => undefined,
@@ -152,4 +155,44 @@ test("import.abandon drops the pending collection destination", async () => {
     },
   )).resolves.toBeUndefined();
   expect(pendingImportCollections.size).toBe(0);
+});
+
+test('file-list paste takes precedence over a bitmap and keeps the complete cut batch', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'serpent-paste-command-'));
+  try {
+    const files = ['one.png', 'two.png'].map(name => path.join(root, name));
+    files.forEach(file => writeFileSync(file, 'data'));
+    const deps = runtime({ readClipboardFilePaths: () => files, readFileClipboard: () => ({ paths: files, operation: 'cut', sequence: 123 }) });
+    expect(await tryBuildIngestionCommand({ type: 'asset.import-clipboard.request', libraryId: 'lib' }, deps)).toMatchObject({ kind: 'result', result: { ok: false, error: { code: 'CLIPBOARD_IMAGE_NOT_FOUND' } } });
+    expect(await tryBuildIngestionCommand({ type: 'folder.paste.request', libraryId: 'lib', folderId: null }, deps)).toMatchObject({ kind: 'command', command: { type: 'asset.import.prepare', sourcePaths: files, moveSourceFiles: true } });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('internal paste preserves asset ids and dispatches copy/move rather than an import', async () => {
+  const snapshot = { paths: ['C:\\one.png', 'C:\\two.png'], operation: 'copy' as const, sequence: 234 };
+  const deps = runtime({ readFileClipboard: () => snapshot });
+  for (const operation of ['copy', 'cut'] as const) {
+    assetClipboard.remember('lib', ['one', 'two'], snapshot, operation);
+    expect(await tryBuildIngestionCommand({ type: 'folder.paste.request', libraryId: 'lib', folderId: 'target' }, deps)).toMatchObject({ kind: 'command', command: { type: operation === 'cut' ? 'asset.move' : 'asset.copy', assetIds: ['one', 'two'], targetFolderId: 'target', conflictStrategy: 'keep-both' } });
+  }
+  assetClipboard.read({ paths: [], operation: 'copy', sequence: 235 });
+});
+
+test('cut state exposes only asset identities from the requested library and follows OS clipboard changes', async () => {
+  const snapshot = { paths: ['C:\\source.png'], operation: 'cut' as const, sequence: 45 };
+  assetClipboard.remember('lib', ['asset'], snapshot, 'cut');
+  const deps = runtime({ readFileClipboard: () => snapshot });
+  expect(await tryBuildIngestionCommand({ type: 'asset.clipboard-state.request', libraryId: 'lib' }, deps)).toEqual({ kind: 'result', result: { ok: true, type: 'asset.clipboard-state', cutAssetIds: ['asset'] } });
+  expect(await tryBuildIngestionCommand({ type: 'asset.clipboard-state.request', libraryId: 'other' }, deps)).toMatchObject({ result: { cutAssetIds: [] } });
+  expect(await tryBuildIngestionCommand({ type: 'asset.clipboard-state.request', libraryId: 'lib' }, runtime({ readFileClipboard: () => ({ paths: [], operation: 'copy', sequence: 46 }) }))).toMatchObject({ result: { cutAssetIds: [] } });
+});
+
+test('cut appearance polls the native change token without decoding the complete file list', async () => {
+  const snapshot = { paths: ['C:\\source.png'], operation: 'cut' as const, sequence: 90 };
+  assetClipboard.remember('lib', ['asset'], snapshot, 'cut');
+  const readFileClipboard = vi.fn(() => snapshot);
+  const deps = runtime({ readClipboardSequence: () => 90, readFileClipboard });
+  expect(await tryBuildIngestionCommand({ type: 'asset.clipboard-state.request', libraryId: 'lib' }, deps)).toMatchObject({ result: { cutAssetIds: ['asset'] } });
+  expect(readFileClipboard).not.toHaveBeenCalled();
+  expect(await tryBuildIngestionCommand({ type: 'asset.clipboard-state.request', libraryId: 'lib' }, { ...deps, readClipboardSequence: () => 91 })).toMatchObject({ result: { cutAssetIds: [] } });
 });

@@ -1,3 +1,4 @@
+import type { MediaPlaybackMode } from './media-playback-mode';
 import {
   forwardRef,
   useCallback,
@@ -96,6 +97,9 @@ import { isMacPlatform } from "./commands/command-types";
 import { isBakeableStillImageFile } from "../shared/bakeable-still-image";
 
 interface AssetPreviewModalProps {
+  mediaPlaybackMode?: MediaPlaybackMode;
+  onMediaPlaybackModeChange?: (mode: MediaPlaybackMode) => void;
+  onMediaEnded?: (assetId: string) => void;
   api: SerpentLibraryApi;
   asset: AssetSummary;
   /** When on, quarter-turns of bakeable stills are written into the file. */
@@ -233,6 +237,9 @@ const AssetPreviewModalContent = forwardRef<
 >(function AssetPreviewModal(
   {
     api,
+    mediaPlaybackMode = 'repeat-one',
+    onMediaPlaybackModeChange,
+    onMediaEnded,
     asset,
     bakeImageRotation = false,
     chromeIdle,
@@ -1257,6 +1264,9 @@ const AssetPreviewModalContent = forwardRef<
             />
           ) : ready && resolution?.mediaType === "video" && resolution.url ? (
             <VideoPlayerControls
+              playbackMode={mediaPlaybackMode}
+              onPlaybackModeChange={onMediaPlaybackModeChange}
+              onEnded={() => { if (!preloadOnly) onMediaEnded?.(asset.assetId); }}
               autoPlay={!preloadOnly}
               playbackHandleRef={playbackHandleRef}
               key={`${asset.assetId}:${resolution.url}:${playbackRetryGeneration}`}
@@ -1316,6 +1326,9 @@ const AssetPreviewModalContent = forwardRef<
             />
           ) : ready && resolution?.mediaType === "audio" && resolution.url ? (
             <AudioPlayerControls
+              playbackMode={mediaPlaybackMode}
+              onPlaybackModeChange={onMediaPlaybackModeChange}
+              onEnded={() => { if (!preloadOnly) onMediaEnded?.(asset.assetId); }}
               key={resolution.url}
               autoPlay={!preloadOnly}
               keyboardShortcutsDisabled={preloadOnly}

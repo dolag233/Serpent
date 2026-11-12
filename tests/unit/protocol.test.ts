@@ -3280,3 +3280,12 @@ describe('library deletion deferred-cleanup protocol (Serpent-65d837)', () => {
     } }).result).toMatchObject({ type: 'semantic.index.prepared', kind: 'video', mimeType: 'video/mp4' });
   });
 });
+
+
+it('accepts folder-only and mixed clipboard selections, but rejects an empty selection', () => {
+  expect(parseRendererRequest({ type: 'asset.copy-files.request', libraryId: 'lib', assetIds: [], folderIds: ['folder'], operation: 'cut' })).toMatchObject({ folderIds: ['folder'] });
+  expect(parseRendererRequest({ type: 'asset.copy-files.request', libraryId: 'lib', assetIds: ['asset'], folderIds: ['folder'], operation: 'cut' })).toMatchObject({ assetIds: ['asset'], folderIds: ['folder'] });
+  expect(() => parseRendererRequest({ type: 'asset.copy-files.request', libraryId: 'lib', assetIds: [] })).toThrow();
+  expect(() => parseRendererRequest({ type: 'asset.copy-files.request', libraryId: 'lib', assetIds: [], folderIds: ['folder', 'folder'] })).toThrow();
+  expect(parseRendererResult({ ok: true, type: 'asset.clipboard-state', cutAssetIds: [], cutFolderIds: ['folder'] })).toMatchObject({ cutFolderIds: ['folder'] });
+});

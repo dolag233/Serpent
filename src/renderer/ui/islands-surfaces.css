@@ -251,3 +251,12 @@ body.serpent-modal-open .ui-shell-style-scope > [data-modal-popover="true"] {
   justify-content: center;
   text-align: center;
 }
+
+/* Fields sit one small step above their panel, including hover and focus. */
+.app-shell[data-shell-layout="islands"] {
+  --island-input-fill: color-mix(in srgb, var(--ui-surface-canvas) 28%, var(--island-side));
+}
+.app-shell[data-shell-layout="islands"] :is(.text-field, .inspector-input, .inspector-textarea, .filter-tag-expression-input, .search-control-wrap):not(:disabled),
+.app-shell[data-shell-layout="islands"] :is(.text-field, .inspector-input, .inspector-textarea, .filter-tag-expression-input, .search-control-wrap):not(:disabled):is(:hover, :focus, :focus-within) {
+  background: var(--island-input-fill);
+}
