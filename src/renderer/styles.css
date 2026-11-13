@@ -6753,13 +6753,12 @@ body.serpent-modal-open .app-shell {
 .preview-nav {
   position: absolute;
   z-index: 2;
-  top: 0;
-  bottom: 0;
+  top: 22%;
+  bottom: 22%;
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  width: 22%;
-  max-width: 320px;
+  width: clamp(56px, 8%, 80px);
   height: auto;
   padding: 0 12px;
   border: 0;
@@ -16310,12 +16309,11 @@ html.serpent-window-square .window-edge-resize-layer.is-disabled {
 }
 
 .preview-nav {
-  top: 0;
-  bottom: 0;
+  top: 22%;
+  bottom: 22%;
   display: flex;
   align-items: center;
-  width: 22%;
-  max-width: 320px;
+  width: clamp(56px, 8%, 80px);
   height: auto;
   padding: 0 12px;
   border-radius: 0;
