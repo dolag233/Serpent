@@ -18576,14 +18576,39 @@ html.serpent-window-square {
   line-height: calc(14px * var(--ui-font-scale));
 }
 
-/* Inspector tags use a simple rectangle; editing removal is a corner action. */
+/* Compact rounded Inspector tags; editing removal remains a corner action. */
+.app-shell[data-shell-layout="islands"] .inspector-tags-section .tag-chips-container {
+  gap: 6px;
+}
 .app-shell[data-shell-layout="islands"] .tag-chip.inspector-tag-chip {
-  padding: 0 6px;
-  border: 1px solid transparent !important;
-  border-radius: calc(5px * var(--ui-radius-scale, 1)) !important;
+  --tag-base: color-mix(in oklab, var(--ui-content-primary) 6%, var(--ui-surface-raised));
+  --tag-fill-tint: 12%;
+  --tag-fill-tint-hover: 17%;
+  --inspector-tag-pigment: var(--tag-chip-color, var(--ui-content-primary));
+  --tag-fill-solid: color-mix(in oklab, var(--inspector-tag-pigment) var(--tag-fill-tint), var(--tag-base));
+  --tag-chip-fill: var(--tag-fill-solid);
+  min-height: calc(22px * var(--ui-font-scale));
+  line-height: calc(20px * var(--ui-font-scale));
+  padding: 0 5px;
+  gap: 4px;
+  border: 1px solid color-mix(in oklab, var(--inspector-tag-pigment) 14%, transparent) !important;
+  border-radius: calc(7px * var(--ui-radius-scale, 1)) !important;
   background: var(--tag-chip-fill) !important;
+  color: var(--ui-content-primary);
+  font-weight: 400;
   box-shadow: none !important;
   filter: none;
+}
+.app-shell[data-shell-layout="islands"] .tag-chip.inspector-tag-chip:hover {
+  --tag-fill-solid: color-mix(in oklab, var(--inspector-tag-pigment) var(--tag-fill-tint-hover), var(--tag-base));
+  border-color: color-mix(in oklab, var(--inspector-tag-pigment) 25%, transparent) !important;
+}
+.app-shell[data-shell-layout="islands"] .inspector-tag-chip .tag-chip-name {
+  transform: none;
+}
+.app-shell[data-shell-layout="islands"] .inspector-tag-chip > .inspector-ai-badge-inline {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
 }
 .app-shell[data-shell-layout="islands"] .tag-chip.inspector-tag-chip::before,
 .app-shell[data-shell-layout="islands"] .tag-chip.inspector-tag-chip::after {
@@ -18599,6 +18624,10 @@ html.serpent-window-square {
   border-color: var(--divider-soft);
 }
 :root[data-theme="dark"] .app-shell[data-shell-layout="islands"] .tag-chip.inspector-tag-chip {
+  --tag-base: var(--ui-surface-raised);
+  --inspector-tag-pigment: var(--ui-content-primary);
+  --tag-fill-tint: 7%;
+  --tag-fill-tint-hover: 11%;
   --tag-fill-solid: color-mix(in oklab, var(--ui-content-primary) var(--tag-fill-tint), var(--tag-base));
   filter: none;
 }
