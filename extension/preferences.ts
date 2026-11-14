@@ -2,6 +2,12 @@ export const NOTIFICATIONS_ENABLED_KEY = 'serpentNotificationsEnabled';
 export const FOCUS_APP_AFTER_SAVE_KEY = 'serpentFocusAppAfterSave';
 export const REVEAL_IN_LIBRARY_AFTER_SAVE_KEY = 'serpentRevealInLibraryAfterSave';
 export const DRAG_RADIAL_MENU_ENABLED_KEY = 'serpentDragRadialMenuEnabled';
+export const PREFER_ORIGINAL_IMAGES_KEY = 'serpentPreferOriginalImages';
+
+/** Original downloads are opt-in because page-provided original links can be large. */
+export function preferOriginalImagesFromStored(value: unknown): boolean {
+  return value === true;
+}
 
 /** Default on so first-time users still see save feedback. */
 export function notificationsEnabledFromStored(value: unknown): boolean {
@@ -27,6 +33,7 @@ export type ExtensionSaveBehavior = {
   notificationsEnabled: boolean;
   focusAppAfterSave: boolean;
   revealInLibraryAfterSave: boolean;
+  preferOriginalImages: boolean;
 };
 
 export function readExtensionSaveBehavior(): Promise<ExtensionSaveBehavior> {
@@ -36,6 +43,7 @@ export function readExtensionSaveBehavior(): Promise<ExtensionSaveBehavior> {
         NOTIFICATIONS_ENABLED_KEY,
         FOCUS_APP_AFTER_SAVE_KEY,
         REVEAL_IN_LIBRARY_AFTER_SAVE_KEY,
+        PREFER_ORIGINAL_IMAGES_KEY,
       ],
       (values) => {
         void chrome.runtime.lastError;
@@ -48,6 +56,9 @@ export function readExtensionSaveBehavior(): Promise<ExtensionSaveBehavior> {
           ),
           revealInLibraryAfterSave: revealInLibraryAfterSaveFromStored(
             values[REVEAL_IN_LIBRARY_AFTER_SAVE_KEY],
+          ),
+          preferOriginalImages: preferOriginalImagesFromStored(
+            values[PREFER_ORIGINAL_IMAGES_KEY],
           ),
         });
       },
@@ -105,6 +116,15 @@ export function readDragRadialMenuEnabled(): Promise<boolean> {
 export function writeDragRadialMenuEnabled(enabled: boolean): Promise<void> {
   return new Promise((resolve) => {
     chrome.storage.sync.set({ [DRAG_RADIAL_MENU_ENABLED_KEY]: enabled }, () => {
+      void chrome.runtime.lastError;
+      resolve();
+    });
+  });
+}
+
+export function writePreferOriginalImages(enabled: boolean): Promise<void> {
+  return new Promise((resolve) => {
+    chrome.storage.sync.set({ [PREFER_ORIGINAL_IMAGES_KEY]: enabled }, () => {
       void chrome.runtime.lastError;
       resolve();
     });

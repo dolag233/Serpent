@@ -1,4 +1,10 @@
-import { isFileUrl, mediaFromElement, resolveMediaTargetFromDragEvent } from './media-target';
+import {
+  isFileUrl,
+  mediaFromElement,
+  resolveMediaTargetAtPoint,
+  resolveMediaTargetFromDragEvent,
+} from './media-target';
+import { matchingContextMedia, type ContextMediaSnapshot } from './context-media';
 import {
   DRAG_RADIAL_MENU_ENABLED_KEY,
   dragRadialMenuEnabledFromStored,
@@ -15,6 +21,11 @@ import { showSaveToast } from './save-bubble';
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || typeof message !== 'object') return;
   const type = Reflect.get(message, 'type');
+  if (type === 'serpent-context-media-request') {
+    const srcUrl = Reflect.get(message, 'srcUrl');
+    sendResponse(matchingContextMedia(contextMediaSnapshot, srcUrl));
+    return;
+  }
   if (type === 'serpent-local-context-save-request') {
     void (async () => {
       const mediaUrl = Reflect.get(message, 'mediaUrl');
@@ -68,6 +79,22 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   sendResponse({ ok: true });
 });
+
+let contextMediaSnapshot: ContextMediaSnapshot | null = null;
+
+document.addEventListener('contextmenu', (event) => {
+  contextMediaSnapshot = null;
+  const media = resolveMediaTargetAtPoint(document, event.clientX, event.clientY, event.composedPath());
+  if (!media || media.kind !== 'image') return;
+  const image = event.composedPath().find((node): node is HTMLImageElement =>
+    node instanceof HTMLImageElement);
+  contextMediaSnapshot = {
+    media,
+    sourceUrls: [media.mediaUrl, image?.src, image?.currentSrc]
+      .filter((value): value is string => Boolean(value)),
+    at: Date.now(),
+  };
+}, true);
 
 // 右键保存走 Chrome 扩展原生 contextMenus（background.ts），不拦截页面右键，
 // 避免浮层菜单替换整站原生菜单（Serpent-ak94 / 用户反馈 2026-07-26）。

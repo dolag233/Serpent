@@ -18,6 +18,7 @@ const defaultSaveBehavior: ExtensionSaveBehavior = {
   notificationsEnabled: true,
   focusAppAfterSave: true,
   revealInLibraryAfterSave: true,
+  preferOriginalImages: false,
 };
 
 const imageIntent: SaveIntent = {
@@ -300,6 +301,52 @@ describe('browser extension save client', () => {
     });
   });
 
+  it('downloads the original image when enabled and uploads its actual URL', async () => {
+    const intent = {
+      ...imageIntent,
+      originalMediaUrl: 'https://cdn.example.com/full.png',
+    };
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(mockFetchResponse({
+        status: 200, contentType: 'image/png', body: new Uint8Array([1, 2]).buffer,
+      }))
+      .mockResolvedValueOnce(mockFetchResponse({ status: 202 }));
+    await expect(saveMediaViaBrowser(intent, {
+      ...defaultSaveBehavior, preferOriginalImages: true,
+    }, fetchFn)).resolves.toEqual({ kind: 'accepted' });
+    expect(fetchFn.mock.calls[0]?.[0]).toBe(intent.originalMediaUrl);
+    expect(fetchFn.mock.calls[1]?.[1]?.headers['X-Serpent-Media-Url']).toBe(
+      encodeURIComponent(intent.originalMediaUrl),
+    );
+  });
+
+  it('keeps the visible image when original downloads are off', async () => {
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(mockFetchResponse({
+        status: 200, contentType: 'image/png', body: new Uint8Array([1]).buffer,
+      }))
+      .mockResolvedValueOnce(mockFetchResponse({ status: 202 }));
+    await saveMediaViaBrowser({ ...imageIntent, originalMediaUrl: 'https://cdn.example.com/full.png' },
+      defaultSaveBehavior, fetchFn);
+    expect(fetchFn.mock.calls[0]?.[0]).toBe(imageIntent.mediaUrl);
+  });
+
+  it('falls back to the visible image when the original is unavailable', async () => {
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(mockFetchResponse({ status: 404 }))
+      .mockResolvedValueOnce(mockFetchResponse({
+        status: 200, contentType: 'image/png', body: new Uint8Array([1]).buffer,
+      }))
+      .mockResolvedValueOnce(mockFetchResponse({ status: 202 }));
+    const intent = { ...imageIntent, originalMediaUrl: 'https://cdn.example.com/full.png' };
+    await expect(saveMediaViaBrowser(intent, {
+      ...defaultSaveBehavior, preferOriginalImages: true,
+    }, fetchFn)).resolves.toEqual({ kind: 'accepted', fallbackToVisible: true });
+    expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
+      intent.originalMediaUrl, intent.mediaUrl, 'http://127.0.0.1:19876/save-upload',
+    ]);
+  });
+
   it('probes Serpent via /ping and /folders without a token', async () => {
     const fetchFn = vi
       .fn()
@@ -343,6 +390,10 @@ describe('browser extension save client', () => {
     expect(notificationForOutcome({ kind: 'accepted' })).toEqual({
       title: '已发送到 Serpent',
       message: 'Serpent 已接收保存请求。',
+    });
+    expect(notificationForOutcome({ kind: 'accepted', fallbackToVisible: true })).toEqual({
+      title: '已发送到 Serpent',
+      message: '原图下载失败，已保存当前图片。',
     });
     expect(
       notificationForOutcome({

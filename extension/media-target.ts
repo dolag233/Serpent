@@ -1,6 +1,8 @@
 export interface MediaTarget {
   kind: 'image' | 'video';
   mediaUrl: string;
+  /** Explicit full-resolution source, when the page exposes one. */
+  originalMediaUrl?: string;
   /** Local file pages need the rendered element to create an upload payload. */
   sourceElement?: HTMLImageElement | HTMLVideoElement;
   /** Some Chromium file-page drags expose the original File in DataTransfer. */
@@ -124,6 +126,50 @@ export function mediaUrlFromImage(img: HTMLImageElement): string | undefined {
   return undefined;
 }
 
+function absoluteHttpUrl(raw: string | null, baseUrl: string): string | undefined {
+  if (!raw) return undefined;
+  try {
+    const url = new URL(raw, baseUrl).href;
+    return isHttpUrl(url) ? url : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Only use sources which explicitly describe a full image or link to a media file. */
+export function originalMediaUrlFromImage(img: HTMLImageElement): string | undefined {
+  const attributes = [
+    'data-original', 'data-original-src', 'data-orig-img', 'data-full',
+    'data-full-src', 'data-fullsize', 'data-image-url', 'data-pin-media',
+  ];
+  for (const name of attributes) {
+    const candidate = absoluteHttpUrl(img.getAttribute(name), img.baseURI);
+    if (candidate && candidate !== mediaUrlFromImage(img)) return candidate;
+  }
+
+  const link = img.closest('a[href]');
+  if (link) {
+    const href = absoluteHttpUrl(link.getAttribute('href'), img.baseURI);
+    if (href && looksLikeImagePath(href) && href !== mediaUrlFromImage(img)) return href;
+  }
+
+  // Pinterest serves the same image key under size-specific and original paths.
+  const visible = mediaUrlFromImage(img);
+  if (visible) {
+    try {
+      const url = new URL(visible);
+      if (url.hostname === 'i.pinimg.com' && /^\/(?:\d+x|originals)\//u.test(url.pathname)) {
+        const original = new URL(visible);
+        original.pathname = url.pathname.replace(/^\/(?:\d+x|originals)\//u, '/originals/');
+        if (original.href !== visible) return original.href;
+      }
+    } catch {
+      // Keep the visible source when the URL cannot be parsed.
+    }
+  }
+  return undefined;
+}
+
 export function mediaUrlFromVideo(video: HTMLVideoElement): string | undefined {
   const current =
     video.currentSrc ||
@@ -152,9 +198,12 @@ export function mediaFromElement(element: Element): MediaTarget | null {
   if (element instanceof HTMLImageElement) {
     const mediaUrl = mediaUrlFromImage(element);
     if (!mediaUrl) return null;
+    const originalMediaUrl = isHttpUrl(mediaUrl)
+      ? originalMediaUrlFromImage(element)
+      : undefined;
     return isFileUrl(mediaUrl)
       ? { kind: 'image', mediaUrl, sourceElement: element }
-      : { kind: 'image', mediaUrl };
+      : { kind: 'image', mediaUrl, ...(originalMediaUrl ? { originalMediaUrl } : {}) };
   }
 
   if (element instanceof HTMLVideoElement) {
@@ -435,6 +484,15 @@ function looksLikeMediaPath(value: string): boolean {
   try {
     const pathname = new URL(value).pathname.toLowerCase();
     return /\.(?:avif|bmp|gif|heic|jpeg?|jxl|png|svg|tiff?|webp|avi|m4v|mkv|mov|mp4|mpeg|webm|wmv)(?:$|\.)/u.test(pathname);
+  } catch {
+    return false;
+  }
+}
+
+function looksLikeImagePath(value: string): boolean {
+  try {
+    return /\.(?:avif|bmp|gif|heic|jpeg?|jxl|png|svg|tiff?|webp)(?:$|\.)/u
+      .test(new URL(value).pathname.toLowerCase());
   } catch {
     return false;
   }

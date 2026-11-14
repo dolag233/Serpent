@@ -5,11 +5,14 @@ import {
   focusAppAfterSaveFromStored,
   NOTIFICATIONS_ENABLED_KEY,
   notificationsEnabledFromStored,
+  PREFER_ORIGINAL_IMAGES_KEY,
+  preferOriginalImagesFromStored,
   REVEAL_IN_LIBRARY_AFTER_SAVE_KEY,
   revealInLibraryAfterSaveFromStored,
   writeDragRadialMenuEnabled,
   writeFocusAppAfterSave,
   writeNotificationsEnabled,
+  writePreferOriginalImages,
   writeRevealInLibraryAfterSave,
 } from './preferences';
 
@@ -25,6 +28,9 @@ const revealInLibraryCheckbox = document.getElementById(
 ) as HTMLInputElement | null;
 const dragRadialMenuCheckbox = document.getElementById(
   'drag-radial-menu-enabled',
+) as HTMLInputElement | null;
+const preferOriginalImagesCheckbox = document.getElementById(
+  'prefer-original-images',
 ) as HTMLInputElement | null;
 
 function setStatus(message: string, kind?: 'success' | 'error'): void {
@@ -44,6 +50,7 @@ function loadPreferences(): void {
       FOCUS_APP_AFTER_SAVE_KEY,
       REVEAL_IN_LIBRARY_AFTER_SAVE_KEY,
       DRAG_RADIAL_MENU_ENABLED_KEY,
+      PREFER_ORIGINAL_IMAGES_KEY,
     ],
     (values) => {
       void chrome.runtime.lastError;
@@ -67,6 +74,11 @@ function loadPreferences(): void {
           values[DRAG_RADIAL_MENU_ENABLED_KEY],
         );
       }
+      if (preferOriginalImagesCheckbox) {
+        preferOriginalImagesCheckbox.checked = preferOriginalImagesFromStored(
+          values[PREFER_ORIGINAL_IMAGES_KEY],
+        );
+      }
     },
   );
 }
@@ -87,5 +99,6 @@ bindToggle(notificationsCheckbox, writeNotificationsEnabled);
 bindToggle(focusAppCheckbox, writeFocusAppAfterSave);
 bindToggle(revealInLibraryCheckbox, writeRevealInLibraryAfterSave);
 bindToggle(dragRadialMenuCheckbox, writeDragRadialMenuEnabled);
+bindToggle(preferOriginalImagesCheckbox, writePreferOriginalImages);
 
 loadPreferences();

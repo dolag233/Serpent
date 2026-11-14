@@ -10,6 +10,7 @@ export interface SaveIntent {
   kind: 'image' | 'video';
   sourcePageUrl: string;
   mediaUrl: string;
+  originalMediaUrl?: string;
   targetFolderId?: string | null;
 }
 
@@ -31,7 +32,7 @@ export interface ContextMenuMediaInfo {
 }
 
 export type SaveOutcome =
-  | { kind: 'accepted' }
+  | { kind: 'accepted'; fallbackToVisible?: boolean }
   | { kind: 'rejected'; status: number; reason: string }
   | { kind: 'unreachable' }
   | { kind: 'fetch_failed'; reason: string };
@@ -448,11 +449,25 @@ export async function saveMediaViaBrowser(
   behavior: ExtensionSaveBehavior,
   fetchFn: FetchFunction = fetch,
 ): Promise<SaveOutcome> {
-  const fetched = await fetchMediaInBrowser(intent, fetchFn);
+  const originalUrl = intent.kind === 'image' && behavior.preferOriginalImages
+    && isHttpUrl(intent.originalMediaUrl) && intent.originalMediaUrl !== intent.mediaUrl
+    ? intent.originalMediaUrl
+    : undefined;
+  let actualIntent = originalUrl ? { ...intent, mediaUrl: originalUrl } : intent;
+  let fetched = await fetchMediaInBrowser(actualIntent, fetchFn);
+  let fallbackToVisible = false;
+  if (originalUrl && ('error' in fetched || !fetched.contentType.startsWith('image/'))) {
+    actualIntent = intent;
+    fetched = await fetchMediaInBrowser(intent, fetchFn);
+    fallbackToVisible = true;
+  }
   if ('error' in fetched) {
     return { kind: 'fetch_failed', reason: fetched.error };
   }
-  return deliverSaveUpload(intent, fetched, behavior, fetchFn);
+  const outcome = await deliverSaveUpload(actualIntent, fetched, behavior, fetchFn);
+  return outcome.kind === 'accepted' && fallbackToVisible
+    ? { kind: 'accepted', fallbackToVisible: true }
+    : outcome;
 }
 
 export function notificationForOutcome(outcome: SaveOutcome): UserNotification {
@@ -460,7 +475,9 @@ export function notificationForOutcome(outcome: SaveOutcome): UserNotification {
     case 'accepted':
       return {
         title: '已发送到 Serpent',
-        message: 'Serpent 已接收保存请求。',
+        message: outcome.fallbackToVisible
+          ? '原图下载失败，已保存当前图片。'
+          : 'Serpent 已接收保存请求。',
       };
     case 'rejected':
       return {

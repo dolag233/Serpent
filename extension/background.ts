@@ -12,8 +12,9 @@ import {
   type SaveMenuTreeFolder,
 } from './folder-menu';
 import { saveMenuTitle } from './connection-ui';
+import { readContextMedia } from './context-media';
 import { installHotlinkRules } from './hotlink-sites';
-import { isFileUrl } from './media-target';
+import { isFileUrl, isHttpUrl } from './media-target';
 import { readExtensionSaveBehavior } from './preferences';
 import {
   fetchSerpentFolders,
@@ -326,8 +327,11 @@ async function rememberRecentFolder(
   );
 }
 
-async function saveIntentAndNotify(intent: SaveIntent): Promise<UserNotification> {
-  const behavior = await readExtensionSaveBehavior();
+async function saveIntentAndNotify(
+  intent: SaveIntent,
+  behavior?: Awaited<ReturnType<typeof readExtensionSaveBehavior>>,
+): Promise<UserNotification> {
+  behavior ??= await readExtensionSaveBehavior();
   const outcome = await saveMediaViaBrowser(intent, behavior);
   if (outcome.kind === 'accepted') {
     const foldersOutcome = await fetchSerpentFolders();
@@ -480,10 +484,17 @@ async function handleContextMenuClick(
   }
 
   notifySaveFeedback(info.tab, { state: 'saving' });
+  const behavior = await readExtensionSaveBehavior();
+  const pageMedia = behavior.preferOriginalImages && intent.kind === 'image'
+    ? await readContextMedia(info.tab?.id, info.srcUrl, info.frameId)
+    : null;
   const notification = await saveIntentAndNotify({
     ...intent,
+    ...((pageMedia?.originalMediaUrl || pageMedia?.mediaUrl)
+      ? { originalMediaUrl: pageMedia.originalMediaUrl ?? pageMedia.mediaUrl }
+      : {}),
     targetFolderId,
-  });
+  }, behavior);
   notifySaveFeedback(info.tab, {
     state: 'done',
     title: notification.title,
@@ -572,6 +583,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       const kind = Reflect.get(intentValue, 'kind');
       const sourcePageUrl = Reflect.get(intentValue, 'sourcePageUrl');
       const mediaUrl = Reflect.get(intentValue, 'mediaUrl');
+      const originalMediaUrl = Reflect.get(intentValue, 'originalMediaUrl');
       const targetFolderId = Reflect.get(intentValue, 'targetFolderId');
       if (
         (kind !== 'image' && kind !== 'video') ||
@@ -591,6 +603,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         kind,
         sourcePageUrl,
         mediaUrl,
+        ...(typeof originalMediaUrl === 'string' && isHttpUrl(originalMediaUrl)
+          ? { originalMediaUrl } : {}),
         targetFolderId:
           targetFolderId === null || typeof targetFolderId === 'string'
             ? targetFolderId

@@ -3,6 +3,7 @@ interface SerpentContextMenuClickData {
   mediaType?: 'image' | 'video' | 'audio';
   pageUrl?: string;
   srcUrl?: string;
+  frameId?: number;
   tab?: { id?: number };
 }
 
@@ -73,7 +74,13 @@ interface SerpentChromeApi {
     };
   };
   tabs: {
-    sendMessage(tabId: number, message: unknown, callback?: () => void): void;
+    sendMessage(tabId: number, message: unknown, callback?: (response?: unknown) => void): void;
+    sendMessage(
+      tabId: number,
+      message: unknown,
+      options: { frameId: number },
+      callback?: (response?: unknown) => void,
+    ): void;
   };
   notifications: {
     create(
