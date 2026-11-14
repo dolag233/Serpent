@@ -10,6 +10,7 @@ import type { EntityAppearance } from "../shared/entity-appearance";
 import type { FolderBrowseEntry } from "../shared/asset-types";
 import { FolderInspectorBody } from "./folder-inspector";
 import { Icon } from "./Icons";
+import { RatingStars } from "./RatingStars";
 import { ContextMenuProvider } from "./context-menu";
 import { useInspectorTagEdit } from "./use-inspector-tag-edit";
 import { copyTagNames, readTagNames, useInspectorTagClipboard } from "./use-inspector-tag-clipboard";
@@ -1513,20 +1514,12 @@ export function InspectorPanel(props: InspectorPanelProps) {
                           AI
                         </span>
                       )}
-                      {[1, 2, 3, 4, 5].map((star) => (
-                        <button
-                          aria-pressed={star <= displayRating || undefined}
-                          className="rating-star"
-                          data-active={star <= displayRating || undefined}
-                          disabled={!ratingEditable || !metadataReady}
-                          key={star}
-                          onClick={() => handleRatingClick(star)}
-                          type="button"
-                          {...iconActionAttrs(t("inspector.starAria", { star }))}
-                        >
-                          <Icon name="star" size={16} />
-                        </button>
-                      ))}
+                      <RatingStars
+                        key={inspectorSelectedAssetIds.join(":")}
+                        value={displayRating}
+                        disabled={!ratingEditable || !metadataReady}
+                        onChange={handleRatingClick}
+                      />
                       {metadataReady && editRating > 0 && (
                         <button
                           className="rating-clear"

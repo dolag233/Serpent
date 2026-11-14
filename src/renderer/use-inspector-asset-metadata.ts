@@ -352,7 +352,9 @@ export function useInspectorAssetMetadata({
           if (selectedAssetIdRef.current === targetAssetId) {
             setAssetMetadata(result.value);
           }
-          setNotice(t("toast.metadataSaved"), result.value.historyEntryId);
+          if (Object.keys(fields).some(field => field !== "rating")) {
+            setNotice(t("toast.metadataSaved"), result.value.historyEntryId);
+          }
         } catch (caught) {
           setError(toMessage(caught, t("toast.metadataSaveFailed"), locale));
         }

@@ -13714,6 +13714,12 @@ select.ai-config-input.ai-config-languages {
   cursor: default;
 }
 
+.rating-stars {
+  display: inline-flex;
+  align-items: center;
+  gap: inherit;
+}
+
 .rating-star {
   display: grid;
   padding: 2px;

@@ -1947,3 +1947,5 @@
 | SEQ-PANEL-001 / `Serpent-866c20` | 序列帧确认面板标题与播放预览 | 人类验收通过 | ① 导入一组连续编号图片触发确认面板；② 看标题与主按钮文案；③ 改「帧范围」与「帧率」，观察面板内预览是否立刻跟着变；④ 确认导入后看序列范围是否符合设置 | 标题为陈述式「导入序列帧」、主按钮「导入为序列帧」，两路（导入中 / 导入后成组）一致；预览按当前范围与帧率循环播放，改范围 / 帧率立即生效；预览不把范围外的帧写进浏览队列 | 工单 `Serpent-866c20` / [开发日志](../development/2026-09-19-p1-ticket-batch-development-log.md) / [E2E](../../../tests/e2e/image-sequence-import-preview.test.ts) / [单测](../../../tests/unit/image-sequence-preview.test.ts) | 2026-09-19 实现；预览暂无暂停 / 当前帧控件（工单里为可选项）。 |
 
 | TAG-VISUAL-018 | 人类验收通过 | 在亮色和暗色主题检查 Inspector 标签：文字清楚、间距舒适、AI 标识保留颜色，选中仍有明确描边 | CSS 样式微调；Renderer 定向 4 项通过，真实应用视觉待验 | development/2026-11-15-tag-visual-polish.md |
+
+| RATING-UX-019 / Serpent-1fef5e | 人类验收通过 | 对单项和多项资产修改评分：悬停第四星应点亮前四星，向左移动减少预览星数，移出恢复实际评分；点击设置或清除后无成功通知 | Renderer 定向 2 项通过，错误和批量跳过反馈保留，真实应用待验 | [开发记录](../development/2026-11-15-rating-preview-and-notices.md) |
