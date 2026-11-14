@@ -13946,11 +13946,25 @@ select.ai-config-input.ai-config-languages {
 
 /* Tag chips container (REQ-TAG-003) */
 .tag-chips-container {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
   align-items: center;
   min-height: 22px;
+}
+
+.tag-selection-marquee {
+  position: absolute;
+  z-index: 3;
+  display: none;
+  border: 1px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  pointer-events: none;
+}
+
+.inspector-tags-section .tag-chips-container {
+  user-select: none;
 }
 
 /* Tag chip */
@@ -14148,6 +14162,19 @@ select.ai-config-input.ai-config-languages {
 
 .inspector-tag-chip {
   position: relative;
+}
+
+.tag-chip.inspector-tag-chip {
+  border-color: var(--tag-chip-color, var(--divider-soft));
+}
+
+.inspector-tag-chip .tag-chip-dot {
+  background: var(--tag-chip-color, var(--secondary));
+}
+
+.inspector-tag-chip.is-selected {
+  border-color: var(--accent);
+  outline: 1px solid var(--accent);
 }
 
 .inspector-tag-label {
@@ -18547,6 +18574,37 @@ html.serpent-window-square {
 .app-shell[data-shell-layout="islands"] .tag-chip > .inspector-ai-badge-inline {
   border-radius: calc(3px * var(--ui-radius-scale, 1));
   line-height: calc(14px * var(--ui-font-scale));
+}
+
+/* Inspector tags use a simple rectangle; editing removal is a corner action. */
+.app-shell[data-shell-layout="islands"] .tag-chip.inspector-tag-chip {
+  padding: 0 6px;
+  border: 1px solid transparent !important;
+  border-radius: calc(5px * var(--ui-radius-scale, 1)) !important;
+  background: var(--tag-chip-fill) !important;
+  box-shadow: none !important;
+  filter: none;
+}
+.app-shell[data-shell-layout="islands"] .tag-chip.inspector-tag-chip::before,
+.app-shell[data-shell-layout="islands"] .tag-chip.inspector-tag-chip::after {
+  content: none !important;
+}
+.app-shell[data-shell-layout="islands"] .tag-chip.inspector-tag-chip.is-selected {
+  border-color: var(--accent) !important;
+  outline: none;
+}
+
+/* Only the tag background becomes neutral in dark themes. */
+:root[data-theme="dark"] .tag-chip.inspector-tag-chip {
+  border-color: var(--divider-soft);
+}
+:root[data-theme="dark"] .app-shell[data-shell-layout="islands"] .tag-chip.inspector-tag-chip {
+  --tag-fill-solid: color-mix(in oklab, var(--ui-content-primary) var(--tag-fill-tint), var(--tag-base));
+  filter: none;
+}
+:root[data-theme="dark"] .app-shell[data-shell-layout="islands"] .tag-chip.inspector-tag-chip:hover {
+  --tag-fill-solid: color-mix(in oklab, var(--ui-content-primary) var(--tag-fill-tint-hover), var(--tag-base));
+  filter: none;
 }
 
 /* ==== a83: island shadow actually paints ===================================

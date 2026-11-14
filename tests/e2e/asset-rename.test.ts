@@ -110,6 +110,12 @@ test("renames an asset file from the context menu and renames the real file on d
       true,
     );
     expect(existsSync(path.join(libraryPath, "Assets", "hero.png"))).toBe(false);
+
+    await renamedCard.locator(".asset-caption-filename").dblclick();
+    const doubleClickInput = renamedCard.locator(".asset-inline-rename-input");
+    await expect(doubleClickInput).toBeVisible();
+    await expect(window.locator(".workspace-viewer")).toHaveCount(0);
+    await doubleClickInput.press("Escape");
   } finally {
     await application.close();
     rmSync(temporaryRoot, { recursive: true, force: true });

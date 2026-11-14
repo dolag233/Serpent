@@ -9,6 +9,7 @@
  */
 
 import { useEffect, type RefObject } from "react";
+import { dispatchFocusedTagClipboardCommand, inspectorTagShortcutScope } from "./inspector-tag-shortcuts";
 
 import type { AssetSummary } from "../shared/asset-types";
 import { clipboardSelectionIds } from './clipboard-selection';
@@ -101,6 +102,16 @@ export function useBrowseCommandKeyboard(
     if (!enabled) return;
 
     const onShortcutInput = (shortcutInput: ShortcutEventLike, event: KeyboardEvent | MouseEvent) => {
+      if (event.defaultPrevented) return;
+      if (inspectorTagShortcutScope(document.activeElement)) {
+        const command = matchesRuntimeShortcut("asset.copy", shortcutInput, platform) ? "copy"
+          : matchesRuntimeShortcut("asset.paste", shortcutInput, platform) ? "paste" : null;
+        if (command && dispatchFocusedTagClipboardCommand(command)) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
       if (isEditableAssetActionKeyboardTarget(event.target)) return;
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
       if (previewOpen) {

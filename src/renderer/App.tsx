@@ -599,6 +599,7 @@ import {
 } from "./plugin-context-state";
 import { createPluginMenuContributionContext } from "./plugin-contribution-context";
 import { InspectorPanel } from "./InspectorPanel";
+import { dispatchFocusedTagClipboardCommand } from "./inspector-tag-shortcuts";
 import {
   assetCaptionAlignClass,
   nextCanvasCaptionAlign,
@@ -12558,6 +12559,7 @@ function AppInner() {
   useEffect(() => {
     if (!shellApi) return;
     return shellApi.onCopySelection(() => {
+      if (dispatchFocusedTagClipboardCommand("copy")) return;
       const target = document.activeElement;
       if (
         target instanceof HTMLInputElement ||
@@ -13942,6 +13944,7 @@ function AppInner() {
       return undefined;
     };
     return shellApi.onApplicationMenuCommand(({ command, payload }) => {
+      if (command === "edit.paste" && dispatchFocusedTagClipboardCommand("paste")) return;
       const currentMenuSections = mainMenuSectionsRef.current;
       const globalZoomAction = command === "canvas.zoom-in"
         ? "in"
@@ -14155,6 +14158,7 @@ function AppInner() {
           onRenameChange={changeInlineFolderEdit}
           onRenameCommit={() => void commitInlineFolderEdit()}
           onRenameCancel={cancelInlineFolderEdit}
+          onRenameRequest={(folderId, currentName) => openInlineFolderRename(folderId, currentName)}
           key={entry.folderId}
           libraryId={library.libraryId}
           trashed={showTrash}
@@ -16040,7 +16044,12 @@ function AppInner() {
                                   ) : null}
                                 </span>
                               ) : (
-                                <strong className="asset-caption-filename" data-hover-tip={asset.displayName}>
+                                <strong className="asset-caption-filename" data-hover-tip={asset.displayName}
+                                  onDoubleClick={event => {
+                                    if (showTrash) return;
+                                    event.stopPropagation();
+                                    openAssetRename(asset.assetId);
+                                  }}>
                                   {renderMiddleEllipsisFilename(asset.displayName, searchValue)}
                                 </strong>
                               )}

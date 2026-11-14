@@ -86,7 +86,10 @@ export function TagManagementWorkspace({
   const mergeInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (renamingId) renameInputRef.current?.focus();
+    if (renamingId) {
+      renameInputRef.current?.focus({ preventScroll: true });
+      renameInputRef.current?.select();
+    }
   }, [renamingId]);
 
   useEffect(() => {
