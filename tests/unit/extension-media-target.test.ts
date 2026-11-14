@@ -7,8 +7,6 @@ import {
   findMediaElementFromDragEvent,
   isFileUrl,
   isHttpUrl,
-  mediaFromElement,
-  originalMediaUrlFromImage,
   pickLargestSrcsetUrl,
   resolveMediaTargetFromDragEvent,
   resolveMediaTargetFromHitElements,
@@ -61,45 +59,6 @@ describe('extension media target helpers', () => {
       ),
     ).toBe('https://cdn.example.com/layer.png');
     expect(extractHttpUrlFromCssBackgroundImage('none')).toBeUndefined();
-  });
-
-  it('uses an explicit original image source for both save entry points', () => {
-    const image = document.createElement('img');
-    image.src = 'https://cdn.example.com/thumb.jpg';
-    image.setAttribute('data-original', 'https://cdn.example.com/full.jpg');
-    document.body.append(image);
-    expect(originalMediaUrlFromImage(image)).toBe('https://cdn.example.com/full.jpg');
-    expect(mediaFromElement(image)).toEqual({
-      kind: 'image',
-      mediaUrl: 'https://cdn.example.com/thumb.jpg',
-      originalMediaUrl: 'https://cdn.example.com/full.jpg',
-    });
-    image.remove();
-  });
-
-  it('accepts direct image links but ignores gallery links and unsafe schemes', () => {
-    const anchor = document.createElement('a');
-    const image = document.createElement('img');
-    image.src = 'https://cdn.example.com/preview.webp';
-    anchor.append(image);
-    document.body.append(anchor);
-    anchor.href = 'https://cdn.example.com/full.png';
-    expect(originalMediaUrlFromImage(image)).toBe(anchor.href);
-    anchor.href = 'https://example.com/gallery/42';
-    expect(originalMediaUrlFromImage(image)).toBeUndefined();
-    anchor.href = 'https://cdn.example.com/trailer.mp4';
-    expect(originalMediaUrlFromImage(image)).toBeUndefined();
-    image.setAttribute('data-original', 'javascript:alert(1)');
-    expect(originalMediaUrlFromImage(image)).toBeUndefined();
-    anchor.remove();
-  });
-
-  it('tries the Pinterest originals path only when it differs from the visible URL', () => {
-    const image = document.createElement('img');
-    image.src = 'https://i.pinimg.com/736x/ab/cd/photo.jpg';
-    expect(originalMediaUrlFromImage(image)).toBe(
-      'https://i.pinimg.com/originals/ab/cd/photo.jpg',
-    );
   });
 });
 
@@ -196,25 +155,6 @@ describe('resolveMediaTargetFromDragEvent', () => {
     });
     expect(findMediaElementFromDragEvent(document, event)).toBe(image);
     link.remove();
-  });
-
-  it('carries an explicit original image URL through drag resolution', () => {
-    const image = document.createElement('img');
-    image.src = 'https://cdn.example.com/thumb.jpg';
-    image.setAttribute('data-full-src', 'https://cdn.example.com/original.jpg');
-    document.body.append(image);
-    const event = {
-      composedPath: () => [image, document.body, document.documentElement, document],
-      dataTransfer: null,
-      clientX: 0,
-      clientY: 0,
-    } as unknown as DragEvent;
-    expect(resolveMediaTargetFromDragEvent(document, event)).toEqual({
-      kind: 'image',
-      mediaUrl: 'https://cdn.example.com/thumb.jpg',
-      originalMediaUrl: 'https://cdn.example.com/original.jpg',
-    });
-    image.remove();
   });
 
   it('uses uri-list drag data when the site drags a proxy element', () => {

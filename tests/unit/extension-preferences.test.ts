@@ -7,8 +7,6 @@ import {
   FOCUS_APP_AFTER_SAVE_KEY,
   notificationsEnabledFromStored,
   NOTIFICATIONS_ENABLED_KEY,
-  PREFER_ORIGINAL_IMAGES_KEY,
-  preferOriginalImagesFromStored,
   revealInLibraryAfterSaveFromStored,
   REVEAL_IN_LIBRARY_AFTER_SAVE_KEY,
 } from '../../extension/preferences';
@@ -33,12 +31,6 @@ describe('extension save preferences', () => {
     expect(dragRadialMenuEnabledFromStored(false)).toBe(false);
   });
 
-  it('requires an explicit opt-in for original image downloads', () => {
-    expect(preferOriginalImagesFromStored(undefined)).toBe(false);
-    expect(preferOriginalImagesFromStored(false)).toBe(false);
-    expect(preferOriginalImagesFromStored(true)).toBe(true);
-  });
-
   it('uses stable storage keys', () => {
     expect(NOTIFICATIONS_ENABLED_KEY).toBe('serpentNotificationsEnabled');
     expect(FOCUS_APP_AFTER_SAVE_KEY).toBe('serpentFocusAppAfterSave');
@@ -46,6 +38,5 @@ describe('extension save preferences', () => {
       'serpentRevealInLibraryAfterSave',
     );
     expect(DRAG_RADIAL_MENU_ENABLED_KEY).toBe('serpentDragRadialMenuEnabled');
-    expect(PREFER_ORIGINAL_IMAGES_KEY).toBe('serpentPreferOriginalImages');
   });
 });

@@ -837,7 +837,6 @@ async function requestSave(
     kind: media.kind,
     sourcePageUrl: window.location.href,
     mediaUrl: media.mediaUrl,
-    ...(media.originalMediaUrl ? { originalMediaUrl: media.originalMediaUrl } : {}),
     targetFolderId,
   };
   const response = await sendRuntimeMessage<SaveResponse>({

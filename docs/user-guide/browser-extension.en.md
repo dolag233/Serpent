@@ -41,9 +41,6 @@ Right-click the extension icon → Options to toggle:
 - Focus Serpent after saving
 - Reveal the saved asset in the library
 - The drag-and-drop tree menu on web images/videos
-- Prefer original images when saving (off by default; applies to context-menu and drag saves)
-
-When enabled, the extension prefers an original image URL exposed by the page or a direct image link. If that download fails, it saves the displayed image and tells you. If the page exposes no original URL, it uses the available image. Video saves are unchanged.
 
 ## Troubleshooting
 
