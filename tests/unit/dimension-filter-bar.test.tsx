@@ -9,6 +9,7 @@ import {
   type DimensionFilterBarProps,
 } from "../../src/renderer/DimensionFilterBar";
 import { LocaleProvider } from "../../src/renderer/i18n";
+import { clearTagDiscoveryFilter } from "../../src/renderer/active-discovery-filters";
 
 const range = () => ({ min: "", max: "", exclude: false });
 
@@ -106,6 +107,45 @@ describe("DimensionFilterBar hover opening", () => {
     container?.remove();
     container = undefined;
     document.body.querySelector("[data-dimension-filter-popover]")?.remove();
+  });
+
+  it("clears expression tag chips through the shared tag dimension and leaves other filters intact", async () => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    const options = props();
+    options.snapshot = { ...options.snapshot, tagFilterMode: "expression",
+      tagFilterExpression: '"Fixture"', tagFilterLastValidExpression: '"Fixture"',
+      tagFilter: "Fixture", excludedTagFilter: "Old exclusion", excludeTagFilter: true,
+      ratingFilter: "4" };
+    let activeTagId: string | null = "fixture";
+    options.onClearFilter = vi.fn(id => {
+      if (id === "tag") clearTagDiscoveryFilter({
+        setTagFilter: value => { options.snapshot.tagFilter = value; },
+        setTagFilterExpression: value => { options.snapshot.tagFilterExpression = value; },
+        setTagFilterLastValidExpression: value => { options.snapshot.tagFilterLastValidExpression = value; },
+        setExcludeTagFilter: value => { options.snapshot.excludeTagFilter = value; },
+        setExcludedTagFilter: value => { options.snapshot.excludedTagFilter = value; },
+        setActiveTagId: value => { activeTagId = value; },
+      });
+    });
+    const render = () => act(() => root!.render(createElement(LocaleProvider,
+      { children: null, initialPreference: "en" }, createElement(DimensionFilterBar, options))));
+    await render();
+    const chip = [...container.querySelectorAll<HTMLButtonElement>(".dimension-active-chip")]
+      .find(el => el.textContent?.includes('"Fixture"'))!;
+    expect(chip.textContent).not.toContain("tag-expression");
+    await act(() => chip.querySelector("svg")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(options.onClearFilter).toHaveBeenCalledWith("tag");
+    expect(activeTagId).toBeNull();
+    expect(options.snapshot.tagFilterExpression).toBe("");
+    expect(options.snapshot.tagFilterLastValidExpression).toBe("");
+    expect(options.snapshot.tagFilter).toBe("");
+    expect(options.snapshot.excludedTagFilter).toBe("");
+    expect(options.snapshot.excludeTagFilter).toBe(false);
+    await render();
+    expect(container.querySelectorAll(".dimension-active-chip:not(.is-clear-all)")).toHaveLength(1);
+    expect(options.snapshot.ratingFilter).toBe("4");
   });
 
   it("waits 500ms for pointer hover but opens immediately on focus", async () => {

@@ -427,6 +427,18 @@ test("renames a folder inline from the context menu and keeps its assets visible
     // The asset is still listed from the all-assets (DB) view as well.
     await window.getByRole("button", { name: "所有资产", exact: true }).click();
     await expect(assetCard).toBeVisible({ timeout: 10_000 });
+
+    // The canvas caption offers the same inline rename as the sidebar.
+    await window.getByRole("button", { name: "资源库根目录" }).click();
+    const folderCard = window.locator(".folder-card", { hasText: "角色原画" });
+    await expect(folderCard).toBeVisible();
+    await folderCard.locator(".folder-card-name").dblclick();
+    const cardRenameInput = window.locator(".folder-card-rename-input");
+    await expect(cardRenameInput).toBeVisible();
+    await expect(cardRenameInput).toBeFocused();
+    await cardRenameInput.press("Escape");
+    await folderCard.locator(".folder-card-cover").dblclick();
+    await expect(window.locator(".scope-crumb-label.is-current")).toHaveText("角色原画");
   } finally {
     await application.close();
     rmSync(temporaryRoot, { recursive: true, force: true });

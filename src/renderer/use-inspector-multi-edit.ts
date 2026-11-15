@@ -316,7 +316,7 @@ export function useInspectorMultiEdit({
           assetIds: [...appliedIds],
           rating,
         });
-        setNotice(
+        if (result.value.skipped.length > 0) setNotice(
           formatBatchRatingNotice(
             rating,
             assetIds.length - result.value.skipped.length,

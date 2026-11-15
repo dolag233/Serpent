@@ -4688,6 +4688,12 @@ body.serpent-modal-open .app-shell {
   flex: 1;
 }
 
+.tag-filter-shortcut {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .context-menu-item-shortcut {
   margin-left: auto;
   color: var(--tertiary, var(--tertiary));
@@ -6753,13 +6759,12 @@ body.serpent-modal-open .app-shell {
 .preview-nav {
   position: absolute;
   z-index: 2;
-  top: 0;
-  bottom: 0;
+  top: 22%;
+  bottom: 22%;
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  width: 22%;
-  max-width: 320px;
+  width: clamp(56px, 8%, 80px);
   height: auto;
   padding: 0 12px;
   border: 0;
@@ -13715,6 +13720,12 @@ select.ai-config-input.ai-config-languages {
   cursor: default;
 }
 
+.rating-stars {
+  display: inline-flex;
+  align-items: center;
+  gap: inherit;
+}
+
 .rating-star {
   display: grid;
   padding: 2px;
@@ -13947,11 +13958,25 @@ select.ai-config-input.ai-config-languages {
 
 /* Tag chips container (REQ-TAG-003) */
 .tag-chips-container {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
   align-items: center;
   min-height: 22px;
+}
+
+.tag-selection-marquee {
+  position: absolute;
+  z-index: 3;
+  display: none;
+  border: 1px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  pointer-events: none;
+}
+
+.inspector-tags-section .tag-chips-container {
+  user-select: none;
 }
 
 /* Tag chip */
@@ -14149,6 +14174,35 @@ select.ai-config-input.ai-config-languages {
 
 .inspector-tag-chip {
   position: relative;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.inspector-tag-chip .tag-chip-name {
+  max-width: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.4;
+}
+
+.inspector-tag-chip > .inspector-ai-badge-inline {
+  flex-shrink: 0;
+}
+
+.tag-chip.inspector-tag-chip {
+  border-color: var(--tag-chip-color, var(--divider-soft));
+}
+
+.inspector-tag-chip .tag-chip-dot {
+  background: var(--tag-chip-color, var(--secondary));
+}
+
+.inspector-tag-chip.is-selected {
+  border-color: var(--accent);
+  outline: 1px solid var(--accent);
 }
 
 .inspector-tag-label {
@@ -16310,12 +16364,11 @@ html.serpent-window-square .window-edge-resize-layer.is-disabled {
 }
 
 .preview-nav {
-  top: 0;
-  bottom: 0;
+  top: 22%;
+  bottom: 22%;
   display: flex;
   align-items: center;
-  width: 22%;
-  max-width: 320px;
+  width: clamp(56px, 8%, 80px);
   height: auto;
   padding: 0 12px;
   border-radius: 0;
@@ -18349,6 +18402,15 @@ html.serpent-window-square {
 .app-shell[data-shell-layout="islands"] > .inspector-pane {
   margin: 0 var(--island-outer-gap) var(--island-outer-gap) 0;
 }
+.app-shell[data-shell-layout="islands"] > .panel-resizer-nav {
+  transform: translateX(calc(var(--island-gap) / 2));
+}
+.app-shell[data-shell-layout="islands"] > .panel-resizer-inspector {
+  transform: translateX(calc(var(--island-gap) / -2));
+}
+.app-shell[data-shell-layout="islands"]:not(.right-collapsed) .toolbar-inspector-cluster {
+  padding-left: 0;
+}
 .app-shell[data-shell-layout="islands"].left-collapsed > .navigation-pane,
 .app-shell[data-shell-layout="islands"].right-collapsed > .inspector-pane {
   margin: 0;
@@ -18549,6 +18611,68 @@ html.serpent-window-square {
 .app-shell[data-shell-layout="islands"] .tag-chip > .inspector-ai-badge-inline {
   border-radius: calc(3px * var(--ui-radius-scale, 1));
   line-height: calc(14px * var(--ui-font-scale));
+}
+
+/* Compact rounded Inspector tags; editing removal remains a corner action. */
+.app-shell[data-shell-layout="islands"] .inspector-tags-section .tag-chips-container {
+  gap: 6px;
+}
+.app-shell[data-shell-layout="islands"] .tag-chip.inspector-tag-chip {
+  --tag-base: color-mix(in oklab, var(--ui-content-primary) 6%, var(--ui-surface-raised));
+  --tag-fill-tint: 12%;
+  --tag-fill-tint-hover: 17%;
+  --inspector-tag-pigment: var(--tag-chip-color, var(--ui-content-primary));
+  --tag-fill-solid: color-mix(in oklab, var(--inspector-tag-pigment) var(--tag-fill-tint), var(--tag-base));
+  --tag-chip-fill: var(--tag-fill-solid);
+  min-height: calc(22px * var(--ui-font-scale));
+  line-height: calc(20px * var(--ui-font-scale));
+  padding: 0 5px;
+  gap: 4px;
+  border: 1px solid color-mix(in oklab, var(--inspector-tag-pigment) 14%, transparent) !important;
+  border-radius: calc(7px * var(--ui-radius-scale, 1)) !important;
+  background: var(--tag-chip-fill) !important;
+  color: var(--ui-content-primary);
+  font-weight: 400;
+  box-shadow: none !important;
+  filter: none;
+}
+.app-shell[data-shell-layout="islands"] .tag-chip.inspector-tag-chip:hover {
+  --tag-fill-solid: color-mix(in oklab, var(--inspector-tag-pigment) var(--tag-fill-tint-hover), var(--tag-base));
+  border-color: color-mix(in oklab, var(--inspector-tag-pigment) 25%, transparent) !important;
+}
+.app-shell[data-shell-layout="islands"] .inspector-tag-chip .tag-chip-name {
+  display: block;
+  line-height: 1.4;
+  transform: none;
+}
+.app-shell[data-shell-layout="islands"] .inspector-tag-chip > .inspector-ai-badge-inline {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+.app-shell[data-shell-layout="islands"] .tag-chip.inspector-tag-chip::before,
+.app-shell[data-shell-layout="islands"] .tag-chip.inspector-tag-chip::after {
+  content: none !important;
+}
+.app-shell[data-shell-layout="islands"] .tag-chip.inspector-tag-chip.is-selected {
+  border-color: var(--accent) !important;
+  outline: none;
+}
+
+/* Only the tag background becomes neutral in dark themes. */
+:root[data-theme="dark"] .tag-chip.inspector-tag-chip {
+  border-color: var(--divider-soft);
+}
+:root[data-theme="dark"] .app-shell[data-shell-layout="islands"] .tag-chip.inspector-tag-chip {
+  --tag-base: var(--ui-surface-raised);
+  --inspector-tag-pigment: var(--ui-content-primary);
+  --tag-fill-tint: 7%;
+  --tag-fill-tint-hover: 11%;
+  --tag-fill-solid: color-mix(in oklab, var(--ui-content-primary) var(--tag-fill-tint), var(--tag-base));
+  filter: none;
+}
+:root[data-theme="dark"] .app-shell[data-shell-layout="islands"] .tag-chip.inspector-tag-chip:hover {
+  --tag-fill-solid: color-mix(in oklab, var(--ui-content-primary) var(--tag-fill-tint-hover), var(--tag-base));
+  filter: none;
 }
 
 /* ==== a83: island shadow actually paints ===================================

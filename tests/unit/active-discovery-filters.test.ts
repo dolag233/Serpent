@@ -31,6 +31,7 @@ describe("buildActiveFilterChips", () => {
   it("does not expose stale selection chips after an expression is cleared", () => {
     const chips = buildActiveFilterChips({
       ...empty, tagFilterMode: "expression", tagFilter: "old-tag", tagFilterExpression: "",
+      excludedTagFilter: "old-exclusion",
     });
     expect(chips).toEqual([]);
   });

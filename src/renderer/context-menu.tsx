@@ -581,7 +581,7 @@ export function ContextMenuItem({
 }: {
   icon?: ReactNode;
   label: string;
-  shortcut?: string;
+  shortcut?: ReactNode;
   danger?: boolean;
   disabled?: boolean;
   checked?: boolean;

@@ -1,8 +1,8 @@
 // REQ-FILTER-002: describe active discovery filters as removable toolbar chips.
-// Pure helpers — DimensionFilterBar / App stay thin.
+// Shared filter descriptors and clearing — DimensionFilterBar / App stay thin.
 
 export type ActiveFilterChip = {
-  id: string;
+  id: Exclude<ClearableFilterId, "all">;
   /** i18n key under filter.* or a preformatted label via `label` */
   labelKey?: string;
   label?: string;
@@ -112,8 +112,8 @@ export function buildActiveFilterChips(
     ...excludedDetail.map((name) => `−${name}`),
   ].join(", ");
   if (snapshot.tagFilterMode === "expression" && snapshot.tagFilterExpression?.trim()) {
-    chips.push({ id: "tag-expression", labelKey: "filter.tagField", detail: snapshot.tagFilterExpression });
-  } else if (tagDetail.length > 0) {
+    chips.push({ id: "tag", labelKey: "filter.tagField", detail: snapshot.tagFilterExpression });
+  } else if (snapshot.tagFilterMode !== "expression" && tagDetail.length > 0) {
     chips.push({
       id: "tag",
       labelKey: "filter.tagField",
@@ -225,3 +225,20 @@ export type ClearableFilterId =
   | "height"
   | "duration"
   | "all";
+
+/** Both expression and selection modes own the same removable tag dimension. */
+export function clearTagDiscoveryFilter(actions: {
+  setTagFilter: (value: string) => void;
+  setTagFilterExpression: (value: string) => void;
+  setTagFilterLastValidExpression: (value: string) => void;
+  setExcludeTagFilter: (value: boolean) => void;
+  setExcludedTagFilter: (value: string) => void;
+  setActiveTagId: (value: null) => void;
+}): void {
+  actions.setTagFilter("");
+  actions.setTagFilterExpression("");
+  actions.setTagFilterLastValidExpression("");
+  actions.setExcludeTagFilter(false);
+  actions.setExcludedTagFilter("");
+  actions.setActiveTagId(null);
+}

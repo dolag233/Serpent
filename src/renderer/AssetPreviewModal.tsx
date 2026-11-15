@@ -60,6 +60,7 @@ import { useViewerVolume } from "./use-viewer-volume";
 import { ZoomableImage } from "./zoomable-preview-image";
 import { useViewerChromeContrast } from "./use-viewer-chrome-contrast";
 import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
+import { viewerNavigationSide } from "./viewer-navigation-hit-zone";
 import { ImageSequencePlayer } from "./ImageSequencePlayer";
 import { GifViewerPlayer } from "./GifViewerPlayer";
 import { isGifDisplayName } from "./gif-player-controls";
@@ -141,24 +142,6 @@ interface AssetPreviewModalProps {
   onDiskDeleteAsset?: () => void;
   onRemoveFromCollection?: () => void;
   onPermanentDelete?: () => void;
-}
-
-const NAV_APPROACH_EDGE_RATIO = 0.22;
-const NAV_APPROACH_EDGE_MAX_PX = 320;
-const NAV_APPROACH_BOTTOM_PX = 64;
-
-function navApproachSide(
-  bounds: DOMRect,
-  clientX: number,
-  clientY: number,
-): "prev" | "next" | null {
-  const x = clientX - bounds.left;
-  const y = clientY - bounds.top;
-  const edge = Math.min(bounds.width * NAV_APPROACH_EDGE_RATIO, NAV_APPROACH_EDGE_MAX_PX);
-  if (y > bounds.height - NAV_APPROACH_BOTTOM_PX) return null;
-  if (x <= edge) return "prev";
-  if (bounds.width - x <= edge) return "next";
-  return null;
 }
 
 export type AssetPreviewModalHandle = {
@@ -1749,7 +1732,7 @@ export const AssetPreviewModal = forwardRef<
     if (!navArrowsOnApproach) return null;
     const host = fullscreenRootRef.current;
     if (!host) return null;
-    return navApproachSide(host.getBoundingClientRect(), clientX, clientY);
+    return viewerNavigationSide(host.getBoundingClientRect(), clientX, clientY);
   }, [navArrowsOnApproach]);
 
   const readPointerBands = useCallback((clientX: number, clientY: number) => {

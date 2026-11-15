@@ -475,6 +475,7 @@ import { DimensionFilterBar } from "./DimensionFilterBar";
 import { buildTagFilterClauses, resolveTagFilterSets } from "./dimension-filter-selection";
 import {
   buildActiveFilterChips,
+  clearTagDiscoveryFilter,
   type ClearableFilterId,
 } from "./active-discovery-filters";
 import { resolveBrowseEmptyState, resolveImportMenuCopy } from "./browse-empty-state";
@@ -599,6 +600,7 @@ import {
 } from "./plugin-context-state";
 import { createPluginMenuContributionContext } from "./plugin-contribution-context";
 import { InspectorPanel } from "./InspectorPanel";
+import { dispatchFocusedTagClipboardCommand } from "./inspector-tag-shortcuts";
 import {
   assetCaptionAlignClass,
   nextCanvasCaptionAlign,
@@ -6629,12 +6631,9 @@ function AppInner() {
     setExcludeFormatFilter(false);
     setColorFilter("");
     setExcludeColorFilter(false);
-    setTagFilter("");
-    setTagFilterExpression("");
-    setTagFilterLastValidExpression("");
+    clearTagDiscoveryFilter({ setTagFilter, setTagFilterExpression,
+      setTagFilterLastValidExpression, setExcludeTagFilter, setExcludedTagFilter, setActiveTagId });
     setTagFilterMode("expression");
-    setExcludeTagFilter(false);
-    setExcludedTagFilter("");
     setIncludeAiTagFilter(true);
     setRatingFilter("");
     setExcludeRatingFilter(false);
@@ -6665,10 +6664,8 @@ function AppInner() {
         setExcludeFormatFilter(false);
         return;
       case "tag":
-        setTagFilter("");
-        setExcludeTagFilter(false);
-        setExcludedTagFilter("");
-        setActiveTagId(null);
+        clearTagDiscoveryFilter({ setTagFilter, setTagFilterExpression,
+          setTagFilterLastValidExpression, setExcludeTagFilter, setExcludedTagFilter, setActiveTagId });
         return;
       case "rating":
         setRatingFilter("");
@@ -12558,6 +12555,7 @@ function AppInner() {
   useEffect(() => {
     if (!shellApi) return;
     return shellApi.onCopySelection(() => {
+      if (dispatchFocusedTagClipboardCommand("copy")) return;
       const target = document.activeElement;
       if (
         target instanceof HTMLInputElement ||
@@ -13942,6 +13940,7 @@ function AppInner() {
       return undefined;
     };
     return shellApi.onApplicationMenuCommand(({ command, payload }) => {
+      if (command === "edit.paste" && dispatchFocusedTagClipboardCommand("paste")) return;
       const currentMenuSections = mainMenuSectionsRef.current;
       const globalZoomAction = command === "canvas.zoom-in"
         ? "in"
@@ -14155,6 +14154,7 @@ function AppInner() {
           onRenameChange={changeInlineFolderEdit}
           onRenameCommit={() => void commitInlineFolderEdit()}
           onRenameCancel={cancelInlineFolderEdit}
+          onRenameRequest={(folderId, currentName) => openInlineFolderRename(folderId, currentName)}
           key={entry.folderId}
           libraryId={library.libraryId}
           trashed={showTrash}
@@ -16040,7 +16040,12 @@ function AppInner() {
                                   ) : null}
                                 </span>
                               ) : (
-                                <strong className="asset-caption-filename" data-hover-tip={asset.displayName}>
+                                <strong className="asset-caption-filename" data-hover-tip={asset.displayName}
+                                  onDoubleClick={event => {
+                                    if (showTrash) return;
+                                    event.stopPropagation();
+                                    openAssetRename(asset.assetId);
+                                  }}>
                                   {renderMiddleEllipsisFilename(asset.displayName, searchValue)}
                                 </strong>
                               )}
@@ -17412,8 +17417,7 @@ function AppInner() {
         <div
           aria-label={t("shell.resizeNav")}
           aria-orientation="vertical"
-          className={`panel-resizer${panelResizing === "nav" ? " is-active" : ""}`}
-          data-hover-tip={t("shell.resizeNav")}
+          className={`panel-resizer panel-resizer-nav${panelResizing === "nav" ? " is-active" : ""}`}
           onDoubleClick={() => {
             capturePanelResizeAnchor(false);
             resetPanelWidth("nav");
@@ -17432,7 +17436,6 @@ function AppInner() {
           aria-label={t("shell.restoreNavEdge")}
           aria-orientation="vertical"
           className={`panel-resizer panel-resizer-edge${panelResizing === "nav" ? " is-active" : ""}`}
-          data-hover-tip={t("shell.restoreNavEdge")}
           onPointerDown={(event) => {
             event.preventDefault();
             capturePanelResizeAnchor();
@@ -17447,8 +17450,7 @@ function AppInner() {
         <div
           aria-label={t("shell.resizeInspector")}
           aria-orientation="vertical"
-          className={`panel-resizer${panelResizing === "inspector" ? " is-active" : ""}`}
-          data-hover-tip={t("shell.resizeInspector")}
+          className={`panel-resizer panel-resizer-inspector${panelResizing === "inspector" ? " is-active" : ""}`}
           onDoubleClick={() => {
             capturePanelResizeAnchor(false);
             resetPanelWidth("inspector");
@@ -17467,7 +17469,6 @@ function AppInner() {
           aria-label={t("shell.restoreInspectorEdge")}
           aria-orientation="vertical"
           className={`panel-resizer panel-resizer-edge${panelResizing === "inspector" ? " is-active" : ""}`}
-          data-hover-tip={t("shell.restoreInspectorEdge")}
           onPointerDown={(event) => {
             event.preventDefault();
             capturePanelResizeAnchor();

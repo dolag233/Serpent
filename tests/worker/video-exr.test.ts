@@ -1,8 +1,10 @@
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, truncateSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import sharp from 'sharp';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -17,7 +19,14 @@ import {
 } from '../../src/worker/library-service';
 import { mediaResourceGuard } from '../../src/worker/media-resource-guard';
 import { MEDIA_FFMPEG_MEMORY_THRESHOLD_BYTES } from '../../src/worker/media-memory-concurrency';
+import { resolveOiiotoolPath } from '../../src/worker/binary-resolver';
 import { extractRawEmbeddedJpegThumbnail } from '../../src/worker/raw-embedded-thumbnail';
+import {
+  rawViewerCdfDistance,
+  rawViewerCdfFromProbe,
+  rawViewerLuminanceCdf,
+  rawViewerProbeArgs,
+} from '../../src/worker/raw-viewer-color-match';
 import { AUDIO_FORCED_WAVEFORM_GENERATOR_MARK, AUDIO_WAVEFORM_COVER_GENERATOR_TAG } from '../../src/shared/audio-media';
 import { importNoConflict as sharedImportNoConflict } from './import-no-conflict';
 
@@ -2483,7 +2492,7 @@ describe('EXR/TGA (oiiotool)', () => {
     service.closeAll();
   });
 
-  it('uses a bounded embedded RAW JPEG for the card and reserves OIIO for the viewer', async () => {
+  it('uses the embedded RAW JPEG for the card and matches the full viewer to its tones', async () => {
     process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
     const root = temporaryRoot();
     const invocations: string[][] = [];
@@ -2498,14 +2507,25 @@ describe('EXR/TGA (oiiotool)', () => {
       },
       spawnFn: async (_command, args) => {
         invocations.push(args);
+        if (args.includes('--rangecheck')) {
+          const counts = Array.from({ length: 64 }, (_, index) =>
+            `0 < 0\n0 > 1\n${(index + 1) / 64 >= 0.2 ? 100 : 0} within range`,
+          ).join('\n');
+          return { stdout: Buffer.from(counts), stderr: '', exitCode: 0 };
+        }
+        const outputPath = args.at(-1);
+        if (outputPath?.endsWith('.jpg')) {
+          mkdirSync(path.dirname(outputPath), { recursive: true });
+          writeFileSync(outputPath, Buffer.from('fake-image-data'));
+        }
         return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
       },
     });
     const created = service.createLibrary({ displayName: 'RawEmbedded', selectedParentPath: root });
     const sourcePath = path.join(root, 'embedded.ARW');
-    const embeddedJpeg = await (require('sharp') as (input: Buffer) => {
-      jpeg(options?: { quality?: number }): { toBuffer(): Promise<Buffer> };
-    })(VALID_1X1_PNG).jpeg().toBuffer();
+    const embeddedJpeg = await sharp({
+      create: { width: 1, height: 1, channels: 3, background: { r: 90, g: 70, b: 55 } },
+    }).jpeg().toBuffer();
     writeFileSync(sourcePath, buildRawWithEmbeddedJpeg(embeddedJpeg));
     expect(extractRawEmbeddedJpegThumbnail(sourcePath)).toEqual(embeddedJpeg);
     importNoConflict(service, created.libraryId, sourcePath);
@@ -2539,6 +2559,20 @@ describe('EXR/TGA (oiiotool)', () => {
       metadata(): Promise<{ width?: number; height?: number }>;
     })(artifactPath).metadata();
     expect(outputMetadata).toMatchObject({ width: 1, height: 1 });
+
+    const viewer = await service.resolvePreviewArtifact(created.libraryId, asset.assetId);
+    expect(viewer).toMatchObject({ status: 'ready', mimeType: 'image/jpeg' });
+    const probe = invocations.find((args) => args.includes('--rangecheck'));
+    const fullDecode = invocations.find((args) => args.includes('--powc') && args.includes('-o'));
+    expect(probe).toEqual(expect.arrayContaining(['raw:half_size', '1']));
+    expect(probe?.filter((arg) => arg === '--rangecheck')).toHaveLength(64);
+    expect(fullDecode).toEqual(expect.arrayContaining(['--compression', 'jpeg:95']));
+    const gain = Number(fullDecode?.[fullDecode.indexOf('--mulc') + 1]);
+    const power = Number(fullDecode?.[fullDecode.indexOf('--powc') + 1]);
+    expect(gain).toBeGreaterThanOrEqual(0.5);
+    expect(gain).toBeLessThanOrEqual(3);
+    expect(power).toBeGreaterThanOrEqual(0.4);
+    expect(power).toBeLessThanOrEqual(2);
     service.closeAll();
   });
 
@@ -2912,9 +2946,9 @@ describe('EXR/TGA (oiiotool)', () => {
       spawnFn: async (_command, args) => {
         invocations.push(args);
         const outputPath = args.at(-1);
-        if (outputPath?.endsWith('.png')) {
+        if (outputPath?.endsWith('.png') || outputPath?.endsWith('.jpg')) {
           mkdirSync(path.dirname(outputPath), { recursive: true });
-          writeFileSync(outputPath, Buffer.from('fake-png-data'));
+          writeFileSync(outputPath, Buffer.from('fake-image-data'));
         }
         return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
       },
@@ -2934,6 +2968,8 @@ describe('EXR/TGA (oiiotool)', () => {
     expect(first).toMatchObject({ mediaType: 'image', status: 'ready' });
     expect(second).toMatchObject({ mediaType: 'image', status: 'ready' });
     expect(first.artifactId).toBe(second.artifactId);
+    const reopened = await service.resolvePreviewArtifact(created.libraryId, asset.assetId);
+    expect(reopened.artifactId).toBe(first.artifactId);
     const viewerDecodes = invocations.filter((args) =>
       args.some((argument) => argument.toLowerCase().endsWith('.arw'))
       && !args.includes('--info'),
@@ -2941,11 +2977,69 @@ describe('EXR/TGA (oiiotool)', () => {
     expect(viewerDecodes).toHaveLength(2);
     expect(viewerDecodes[0]).toContain('--fit');
     expect(viewerDecodes[0]).toContain('512x512');
+    expect(viewerDecodes[0]).not.toContain('raw:auto_bright');
+    expect(viewerDecodes[0]).not.toContain('raw:Demosaic');
     expect(viewerDecodes[1]).not.toContain('--fit');
+    expect(viewerDecodes[1]).toEqual(expect.arrayContaining(['--compression', 'jpeg:95']));
+    expect(viewerDecodes[1]).toEqual(expect.arrayContaining(['--iconfig', 'raw:auto_bright', '0']));
+    expect(viewerDecodes[1]).toEqual(expect.arrayContaining(['--iconfig', 'raw:Demosaic', 'PPG']));
+    expect(viewerDecodes[1]).not.toContain('--powc');
     expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'viewer_image'))
-      .toMatchObject({ status: 'ready', mimeType: 'image/png' });
+      .toMatchObject({ status: 'ready', mimeType: 'image/jpeg' });
     service.closeAll();
   });
+
+  it.skipIf(!process.env['SERPENT_REAL_RAW_TEST_FILE'])(
+    'decodes a real RAW into a reusable full-size JPEG viewer artifact',
+    async () => {
+      const sourcePath = process.env['SERPENT_REAL_RAW_TEST_FILE']!;
+      const root = temporaryRoot();
+      const service = new LibraryService({
+        rawImageMetadataParser: { parse: async () => ({}) },
+      });
+      try {
+        const created = service.createLibrary({ displayName: 'RawViewerReal', selectedParentPath: root });
+        importNoConflict(service, created.libraryId, sourcePath);
+        const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+        await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId });
+
+        const first = await service.resolvePreviewArtifact(created.libraryId, asset.assetId);
+        const viewer = service.getCurrentArtifact(created.libraryId, asset.assetId, 'viewer_image');
+        expect(first).toMatchObject({ status: 'ready', mimeType: 'image/jpeg' });
+        expect(viewer).toMatchObject({ status: 'ready', mimeType: 'image/jpeg' });
+        expect(viewer!.filePath).toMatch(/\.jpg$/u);
+        expect(viewer!.generatorVersion).toContain('raw-viewer-full-jpeg95-ppg-neutral-histogram1-srgb');
+        const metadata = await sharp(
+          service.getArtifactAbsolutePath(created.libraryId, viewer!.artifactId),
+        ).metadata();
+        expect(metadata).toMatchObject({ format: 'jpeg', channels: 3 });
+        expect(Math.max(metadata.width!, metadata.height!)).toBeGreaterThan(4000);
+
+        const card = service.getCurrentArtifact(created.libraryId, asset.assetId, 'thumbnail');
+        expect(card).toMatchObject({ status: 'ready', mimeType: 'image/jpeg' });
+        const [cardBitmap, viewerBitmap] = await Promise.all([
+          sharp(service.getArtifactAbsolutePath(created.libraryId, card!.artifactId))
+            .resize(128, 85, { fit: 'fill' }).raw().toBuffer({ resolveWithObject: true }),
+          sharp(service.getArtifactAbsolutePath(created.libraryId, viewer!.artifactId))
+            .resize(128, 85, { fit: 'fill' }).raw().toBuffer({ resolveWithObject: true }),
+        ]);
+        const cardCdf = rawViewerLuminanceCdf(cardBitmap.data, cardBitmap.info.channels)!;
+        const viewerCdf = rawViewerLuminanceCdf(viewerBitmap.data, viewerBitmap.info.channels)!;
+        const neutralCdf = rawViewerCdfFromProbe(execFileSync(
+          resolveOiiotoolPath(), rawViewerProbeArgs(sourcePath), { encoding: 'utf8' },
+        ))!;
+        expect(rawViewerCdfDistance(cardCdf, viewerCdf)).toBeLessThan(0.06);
+        expect(rawViewerCdfDistance(cardCdf, viewerCdf))
+          .toBeLessThan(rawViewerCdfDistance(cardCdf, neutralCdf));
+
+        const second = await service.resolvePreviewArtifact(created.libraryId, asset.assetId);
+        expect(second.artifactId).toBe(first.artifactId);
+      } finally {
+        service.closeAll();
+      }
+    },
+    90_000,
+  );
 
   it('retries a stale failed RAW viewer artifact after the decoder is repaired', async () => {
     process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
@@ -2955,9 +3049,9 @@ describe('EXR/TGA (oiiotool)', () => {
       spawnFn: async (_command, args) => {
         invocations.push(args);
         const outputPath = args.at(-1);
-        if (outputPath?.endsWith('.png')) {
+        if (outputPath?.endsWith('.png') || outputPath?.endsWith('.jpg')) {
           mkdirSync(path.dirname(outputPath), { recursive: true });
-          writeFileSync(outputPath, Buffer.from('fake-png-data'));
+          writeFileSync(outputPath, Buffer.from('fake-image-data'));
         }
         return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
       },
@@ -2991,7 +3085,7 @@ describe('EXR/TGA (oiiotool)', () => {
     const preview = await service.resolvePreviewArtifact(created.libraryId, asset.assetId);
     expect(preview).toMatchObject({ mediaType: 'image', status: 'ready' });
     expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'viewer_image'))
-      .toMatchObject({ status: 'ready', mimeType: 'image/png' });
+      .toMatchObject({ status: 'ready', mimeType: 'image/jpeg' });
     expect(invocations.some((args) =>
       args.some((argument) => argument.toLowerCase().endsWith('.arw')) && !args.includes('--resize'),
     )).toBe(true);

@@ -1237,7 +1237,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
               <button
                 className="dimension-active-chip"
                 key={chip.id}
-                onClick={() => onClearFilter(chip.id as ClearableFilterId)}
+                onClick={() => onClearFilter(chip.id)}
                 type="button"
                 data-hover-tip={t("filter.clearChip")}
               >

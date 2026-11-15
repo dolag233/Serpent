@@ -22,6 +22,7 @@ interface FolderCardProps {
   dropActive?: boolean;
   onClick: (folderId: string, event: React.MouseEvent) => void;
   onDoubleClick: (folderId: string) => void;
+  onRenameRequest?: (folderId: string, currentName: string) => void;
   onContextMenu: (entry: FolderBrowseEntry, event: React.MouseEvent) => void;
   /** Mirrors the asset card's button-guard convention (useAssetSelection). */
   onMouseDown: (event: React.MouseEvent) => void;
@@ -55,6 +56,7 @@ export function FolderCard({
   dropActive = false,
   onClick,
   onDoubleClick,
+  onRenameRequest,
   onContextMenu,
   onMouseDown,
   onDragEnter,
@@ -243,7 +245,12 @@ export function FolderCard({
             />
             {rename.error && <span className="asset-inline-rename-error" role="alert">{rename.error}</span>}
           </div>
-        ) : <strong className="folder-card-name" data-hover-tip={entry.name}>
+        ) : <strong className="folder-card-name" data-hover-tip={entry.name}
+          onDoubleClick={event => {
+            if (trashed || !onRenameRequest) return;
+            event.stopPropagation();
+            onRenameRequest(entry.folderId, entry.name);
+          }}>
           {entry.name}
         </strong>}
         <span className="folder-card-count">

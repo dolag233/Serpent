@@ -91,4 +91,29 @@ describe("TagManagementWorkspace create flow", () => {
     });
     expect(onCreate).toHaveBeenNthCalledWith(2, "alpha");
   });
+
+  it("selects the full tag name when rename begins", async () => {
+    const props: TagManagementWorkspaceProps = {
+      busy: false,
+      onCreate: async () => true,
+      onDeleteMany: async () => true,
+      onMerge: async () => true,
+      onOpenTag: () => undefined,
+      onRename: async () => true,
+      onSearchTags: () => undefined,
+      tags: [{ tagId: "one", name: "Long tag name", assetCount: 1 }],
+    };
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(createElement(LocaleProvider, null,
+      createElement(TagManagementWorkspace, props))));
+    const chip = container.querySelector<HTMLElement>(".tag-management-chip")!;
+    await act(async () => chip.click());
+    await act(async () => chip.dispatchEvent(new KeyboardEvent("keydown", { key: "F2", bubbles: true })));
+    const input = container.querySelector<HTMLInputElement>(".tag-management-chip-rename");
+    expect(input).not.toBeNull();
+    expect(input?.selectionStart).toBe(0);
+    expect(input?.selectionEnd).toBe("Long tag name".length);
+  });
 });
