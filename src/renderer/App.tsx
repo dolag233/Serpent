@@ -17417,8 +17417,7 @@ function AppInner() {
         <div
           aria-label={t("shell.resizeNav")}
           aria-orientation="vertical"
-          className={`panel-resizer${panelResizing === "nav" ? " is-active" : ""}`}
-          data-hover-tip={t("shell.resizeNav")}
+          className={`panel-resizer panel-resizer-nav${panelResizing === "nav" ? " is-active" : ""}`}
           onDoubleClick={() => {
             capturePanelResizeAnchor(false);
             resetPanelWidth("nav");
@@ -17437,7 +17436,6 @@ function AppInner() {
           aria-label={t("shell.restoreNavEdge")}
           aria-orientation="vertical"
           className={`panel-resizer panel-resizer-edge${panelResizing === "nav" ? " is-active" : ""}`}
-          data-hover-tip={t("shell.restoreNavEdge")}
           onPointerDown={(event) => {
             event.preventDefault();
             capturePanelResizeAnchor();
@@ -17452,8 +17450,7 @@ function AppInner() {
         <div
           aria-label={t("shell.resizeInspector")}
           aria-orientation="vertical"
-          className={`panel-resizer${panelResizing === "inspector" ? " is-active" : ""}`}
-          data-hover-tip={t("shell.resizeInspector")}
+          className={`panel-resizer panel-resizer-inspector${panelResizing === "inspector" ? " is-active" : ""}`}
           onDoubleClick={() => {
             capturePanelResizeAnchor(false);
             resetPanelWidth("inspector");
@@ -17472,7 +17469,6 @@ function AppInner() {
           aria-label={t("shell.restoreInspectorEdge")}
           aria-orientation="vertical"
           className={`panel-resizer panel-resizer-edge${panelResizing === "inspector" ? " is-active" : ""}`}
-          data-hover-tip={t("shell.restoreInspectorEdge")}
           onPointerDown={(event) => {
             event.preventDefault();
             capturePanelResizeAnchor();

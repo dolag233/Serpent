@@ -18402,6 +18402,15 @@ html.serpent-window-square {
 .app-shell[data-shell-layout="islands"] > .inspector-pane {
   margin: 0 var(--island-outer-gap) var(--island-outer-gap) 0;
 }
+.app-shell[data-shell-layout="islands"] > .panel-resizer-nav {
+  transform: translateX(calc(var(--island-gap) / 2));
+}
+.app-shell[data-shell-layout="islands"] > .panel-resizer-inspector {
+  transform: translateX(calc(var(--island-gap) / -2));
+}
+.app-shell[data-shell-layout="islands"]:not(.right-collapsed) .toolbar-inspector-cluster {
+  padding-left: 0;
+}
 .app-shell[data-shell-layout="islands"].left-collapsed > .navigation-pane,
 .app-shell[data-shell-layout="islands"].right-collapsed > .inspector-pane {
   margin: 0;
