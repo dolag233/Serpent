@@ -475,6 +475,7 @@ import { DimensionFilterBar } from "./DimensionFilterBar";
 import { buildTagFilterClauses, resolveTagFilterSets } from "./dimension-filter-selection";
 import {
   buildActiveFilterChips,
+  clearTagDiscoveryFilter,
   type ClearableFilterId,
 } from "./active-discovery-filters";
 import { resolveBrowseEmptyState, resolveImportMenuCopy } from "./browse-empty-state";
@@ -6630,12 +6631,9 @@ function AppInner() {
     setExcludeFormatFilter(false);
     setColorFilter("");
     setExcludeColorFilter(false);
-    setTagFilter("");
-    setTagFilterExpression("");
-    setTagFilterLastValidExpression("");
+    clearTagDiscoveryFilter({ setTagFilter, setTagFilterExpression,
+      setTagFilterLastValidExpression, setExcludeTagFilter, setExcludedTagFilter, setActiveTagId });
     setTagFilterMode("expression");
-    setExcludeTagFilter(false);
-    setExcludedTagFilter("");
     setIncludeAiTagFilter(true);
     setRatingFilter("");
     setExcludeRatingFilter(false);
@@ -6666,10 +6664,8 @@ function AppInner() {
         setExcludeFormatFilter(false);
         return;
       case "tag":
-        setTagFilter("");
-        setExcludeTagFilter(false);
-        setExcludedTagFilter("");
-        setActiveTagId(null);
+        clearTagDiscoveryFilter({ setTagFilter, setTagFilterExpression,
+          setTagFilterLastValidExpression, setExcludeTagFilter, setExcludedTagFilter, setActiveTagId });
         return;
       case "rating":
         setRatingFilter("");

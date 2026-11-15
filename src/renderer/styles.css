@@ -4688,6 +4688,12 @@ body.serpent-modal-open .app-shell {
   flex: 1;
 }
 
+.tag-filter-shortcut {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .context-menu-item-shortcut {
   margin-left: auto;
   color: var(--tertiary, var(--tertiary));
@@ -14168,6 +14174,22 @@ select.ai-config-input.ai-config-languages {
 
 .inspector-tag-chip {
   position: relative;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.inspector-tag-chip .tag-chip-name {
+  max-width: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.4;
+}
+
+.inspector-tag-chip > .inspector-ai-badge-inline {
+  flex-shrink: 0;
 }
 
 .tag-chip.inspector-tag-chip {
@@ -18610,6 +18632,8 @@ html.serpent-window-square {
   border-color: color-mix(in oklab, var(--inspector-tag-pigment) 25%, transparent) !important;
 }
 .app-shell[data-shell-layout="islands"] .inspector-tag-chip .tag-chip-name {
+  display: block;
+  line-height: 1.4;
   transform: none;
 }
 .app-shell[data-shell-layout="islands"] .inspector-tag-chip > .inspector-ai-badge-inline {

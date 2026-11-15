@@ -82,7 +82,15 @@ test("copies selected Inspector tags to another asset", async () => {
       Math.max(first.y + first.height, middle.y + middle.height, last.y + last.height) - 1, { steps: 6 });
     await window.mouse.up();
     await expect(labels.nth(1)).toHaveAttribute("aria-pressed", "true");
-    await labels.nth(1).click({ modifiers: [process.platform === "darwin" ? "Meta" : "Control"] });
+    // Modifier-click now filters; modifier-drag still toggles tag selection.
+    const toggleModifier = process.platform === "darwin" ? "Meta" : "Control";
+    await window.keyboard.down(toggleModifier);
+    try {
+      await window.mouse.move(middle.x + 1, middle.y + 1);
+      await window.mouse.down();
+      await window.mouse.move(middle.x + middle.width - 1, middle.y + middle.height - 1, { steps: 6 });
+      await window.mouse.up();
+    } finally { await window.keyboard.up(toggleModifier); }
     await expect(labels.nth(1)).toHaveAttribute("aria-pressed", "false");
     await expect(labels.nth(0)).toHaveAttribute("aria-pressed", "true");
     await expect(labels.nth(2)).toHaveAttribute("aria-pressed", "true");

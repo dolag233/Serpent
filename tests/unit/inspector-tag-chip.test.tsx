@@ -6,7 +6,34 @@ import { InspectorTagChip } from '../../src/renderer/InspectorTagChip';
 import { ContextMenuProvider } from '../../src/renderer/context-menu';
 import { LocaleProvider } from '../../src/renderer/i18n';
 
-it('selects tags in normal mode and keeps filtering in the context menu', async () => {
+it('uses Command-click on macOS for filtering and keeps modifier+Shift range selection', async () => {
+  const userAgent = vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Macintosh');
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  const onSelect = vi.fn();
+  const onFilter = vi.fn();
+  try {
+    await act(() => root.render(createElement(LocaleProvider, null,
+      createElement(ContextMenuProvider, null, createElement(InspectorTagChip, {
+        id: 'fixture', name: 'Fixture', showAiBadge: false, editing: false, onSelect, onFilter,
+      })))));
+    const label = host.querySelector('.inspector-tag-label')!;
+    await act(() => label.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true })));
+    expect(onFilter).toHaveBeenCalledOnce();
+    expect(onSelect).not.toHaveBeenCalled();
+    await act(() => label.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true, shiftKey: true })));
+    expect(onSelect).toHaveBeenCalledOnce();
+    expect(onFilter).toHaveBeenCalledOnce();
+    await act(() => label.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true })));
+    const hint = document.querySelector('.tag-filter-shortcut')!;
+    expect(hint.textContent).toBe('⌘+');
+    expect(hint.getAttribute('aria-label')).toBe('⌘+left mouse click');
+    expect(hint.querySelector('svg')).not.toBeNull();
+  } finally { await act(() => root.unmount()); host.remove(); userAgent.mockRestore(); }
+});
+
+it('prioritizes Ctrl-click filtering over selection and retains menu and keyboard filtering', async () => {
   const host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host);
@@ -24,16 +51,20 @@ it('selects tags in normal mode and keeps filtering in the context menu', async 
     expect(onFilter).not.toHaveBeenCalled();
     await act(() => chip.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true })));
     await act(() => chip.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true })));
-    expect(onSelect).toHaveBeenCalledTimes(3);
-    expect(onFilter).not.toHaveBeenCalled();
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onFilter).toHaveBeenCalledTimes(2);
     await act(() => chip.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 10, clientY: 10 })));
     const actions = document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]');
     expect(actions).toHaveLength(3);
-    expect(actions[0]!.textContent).toContain('Show assets');
+    expect(actions[0]!.textContent).toContain('Apply tag filter');
+    const hint = actions[0]!.querySelector('.tag-filter-shortcut')!;
+    expect(hint.textContent).toBe('Ctrl+');
+    expect(hint.getAttribute('aria-label')).toBe('Ctrl+left mouse click');
+    expect(hint.querySelector('svg')).not.toBeNull();
     await act(() => actions[0]!.click());
-    expect(onFilter).toHaveBeenCalledTimes(1);
+    expect(onFilter).toHaveBeenCalledTimes(3);
     await act(() => chip.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, ctrlKey: true })));
-    expect(onFilter).toHaveBeenCalledTimes(2);
+    expect(onFilter).toHaveBeenCalledTimes(4);
     await act(() => chip.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, shiftKey: true })));
     expect(host.querySelector('.inspector-tag-rename')).toBeNull();
     await act(() => chip.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
@@ -48,11 +79,11 @@ it('selects tags in normal mode and keeps filtering in the context menu', async 
     await render(true);
     await act(() => host.querySelector<HTMLButtonElement>('.tag-chip-remove')!.click());
     expect(onRemove).toHaveBeenCalledTimes(1);
-    expect(onFilter).toHaveBeenCalledTimes(2);
+    expect(onFilter).toHaveBeenCalledTimes(4);
   } finally { await act(() => root.unmount()); host.remove(); }
 });
 
-it('selects tags in edit mode without invoking the filter action', async () => {
+it('retains Shift selection in edit mode while Ctrl-click filters', async () => {
   const host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host);
@@ -67,8 +98,10 @@ it('selects tags in edit mode without invoking the filter action', async () => {
     const chip = host.querySelector<HTMLButtonElement>('.inspector-tag-label')!;
     expect(chip.getAttribute('aria-pressed')).toBe('true');
     await act(() => chip.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true })));
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onFilter).toHaveBeenCalledOnce();
+    await act(() => chip.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true })));
     expect(onSelect).toHaveBeenCalledOnce();
-    expect(onFilter).not.toHaveBeenCalled();
   } finally { await act(() => root.unmount()); host.remove(); }
 });
 

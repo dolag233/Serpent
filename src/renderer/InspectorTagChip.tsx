@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type MouseEvent } from
 import { ContextMenu, ContextMenuBackdrop, ContextMenuItem, useContextMenu } from './context-menu';
 import { Icon } from './Icons';
 import { useLocale } from './i18n';
-import { resolveSelectionPlatform } from './selection-modifiers';
+import { isToggleSelectionModifier, resolveSelectionPlatform } from './selection-modifiers';
 import { isImeKeyboardEvent } from './ime-safe-dismiss';
 import { formatRuntimeShortcut } from './shortcut-runtime';
 
@@ -25,6 +25,7 @@ export interface InspectorTagChipProps {
 
 export function InspectorTagChip({ id, name, color, source, showAiBadge, editing, selected = false, onSelect, onContextSelect, onCopy, onPaste, onFilter, onRemove, onRename }: InspectorTagChipProps) {
   const { t } = useLocale();
+  const filterModifier = resolveSelectionPlatform(navigator.userAgent) === 'mac' ? '⌘' : 'Ctrl';
   const { active, open } = useContextMenu();
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(name);
@@ -67,7 +68,15 @@ export function InspectorTagChip({ id, name, color, source, showAiBadge, editing
           if (event.key === 'Escape') { event.preventDefault(); setRenaming(false); }
         }} /> : <button className="inspector-tag-label" type="button" data-hover-tip={name}
         aria-pressed={selected}
-        onClick={event => onSelect?.(event)}
+        onClick={event => {
+          if (!event.shiftKey && isToggleSelectionModifier(event, resolveSelectionPlatform(navigator.userAgent))) {
+            event.preventDefault();
+            event.stopPropagation();
+            onFilter?.();
+            return;
+          }
+          onSelect?.(event);
+        }}
           onDoubleClick={event => { if (!event.ctrlKey && !event.metaKey && !event.shiftKey) startRename(); }}
           onKeyDown={event => {
             const filterModifier = resolveSelectionPlatform(navigator.userAgent) === 'mac' ? event.metaKey : event.ctrlKey;
@@ -83,7 +92,11 @@ export function InspectorTagChip({ id, name, color, source, showAiBadge, editing
     {active?.descriptor.type === 'organization' && active.descriptor.id === id ? <ContextMenuBackdrop><ContextMenu ariaLabel={name} position={active.position}>
       {onCopy && <ContextMenuItem key="copy" label={t('inspector.copySelectedTags')} shortcut={formatRuntimeShortcut('asset.copy') ?? undefined} onAction={onCopy} />}
       {onPaste && <ContextMenuItem key="paste" label={t('inspector.pasteTags')} shortcut={formatRuntimeShortcut('asset.paste') ?? undefined} onAction={onPaste} />}
-      <ContextMenuItem key="filter" label={t('inspector.filterTag')} disabled={!onFilter} onAction={() => onFilter?.()} />
+      <ContextMenuItem key="filter" label={t('inspector.filterTag')}
+        shortcut={<span className="tag-filter-shortcut" role="img" aria-label={t('inspector.filterTagShortcut', { modifier: filterModifier })}>
+          {filterModifier}+<Icon name="mouse-left" size={14} />
+        </span>}
+        disabled={!onFilter} onAction={() => onFilter?.()} />
       <ContextMenuItem key="rename" label={t('tagMgmt.rename')} shortcut="F2" disabled={!onRename} onAction={startRename} />
       <ContextMenuItem key="remove" label={t('inspector.removeTag')} disabled={!onRemove} onAction={() => onRemove?.()} />
     </ContextMenu></ContextMenuBackdrop> : null}
