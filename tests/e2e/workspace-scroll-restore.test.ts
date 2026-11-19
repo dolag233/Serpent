@@ -91,7 +91,7 @@ async function readFrameProbe(window: Page) {
   });
 }
 
-test("a restored scroll offset is painted in the first content frame", async () => {
+async function withScrollableLibrary(run: (window: Page) => Promise<void>) {
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), "serpent-scroll-restore-"));
   const libraryName = "滚动恢复验收";
   const libraryPath = path.join(temporaryRoot, libraryName);
@@ -111,20 +111,34 @@ test("a restored scroll offset is painted in the first content frame", async () 
     await waitForNavigation(window);
     await window.getByRole("button", { name: "导入文件", exact: true }).first().click();
     await waitForNavigation(window);
+    await run(window);
+  } finally {
+    await application.close();
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+}
+
+async function scrollDeep(window: Page) {
+  const canvas = window.locator(".workspace-canvas");
+  await expect(window.locator(".asset-card").first()).toBeVisible({ timeout: 20_000 });
+  await expect.poll(
+    () => canvas.evaluate((el) => el.scrollHeight - el.clientHeight),
+    { timeout: 20_000 },
+  ).toBeGreaterThan(0);
+  await canvas.evaluate((el) => {
+    const extent = el.scrollHeight - el.clientHeight;
+    el.scrollTop = extent * 0.6;
+  });
+  const backTarget = await canvas.evaluate((el) => el.scrollTop);
+  expect(backTarget).toBeGreaterThan(0);
+  return canvas;
+}
+
+test("a restored scroll offset is painted in the first content frame", async () => {
+  await withScrollableLibrary(async (window) => {
     await createFolderViaApi(window, "空文件夹");
 
-    const canvas = window.locator(".workspace-canvas");
-    await expect(window.locator(".asset-card").first()).toBeVisible({ timeout: 20_000 });
-    await expect.poll(
-      () => canvas.evaluate((el) => el.scrollHeight - el.clientHeight),
-      { timeout: 20_000 },
-    ).toBeGreaterThan(0);
-    await canvas.evaluate((el) => {
-      const extent = el.scrollHeight - el.clientHeight;
-      el.scrollTop = extent * 0.6;
-    });
-    const backTarget = await canvas.evaluate((el) => el.scrollTop);
-    expect(backTarget).toBeGreaterThan(0);
+    const canvas = await scrollDeep(window);
 
     // --- Back restore ---
     await folderRow(window, "空文件夹").click();
@@ -159,8 +173,45 @@ test("a restored scroll offset is painted in the first content frame", async () 
     expect(tab.contentFrames).toBeGreaterThan(0);
     expect(tab.topFrames).toBe(0);
     expect(tab.first[0]?.[0]).toBeGreaterThan(0);
-  } finally {
-    await application.close();
-    await rm(temporaryRoot, { recursive: true, force: true });
-  }
+  });
+});
+
+test("returns from the viewer to the exact browse position", async () => {
+  await withScrollableLibrary(async (window) => {
+    const canvas = await scrollDeep(window);
+
+    // Open a card without moving the scrollport. Returning to an unchanged
+    // layout must preserve both the raw pixel offset and card screen position.
+    const visibleAssetId = await canvas.evaluate((el) => {
+      const viewport = el.getBoundingClientRect();
+      return [...el.querySelectorAll<HTMLElement>(".asset-card[data-asset-id]")]
+        .find((card) => {
+          const rect = card.getBoundingClientRect();
+          return rect.top >= viewport.top && rect.bottom <= viewport.bottom;
+        })?.dataset.assetId;
+    });
+    expect(visibleAssetId).toBeTruthy();
+    const card = canvas.locator(`.asset-card[data-asset-id="${visibleAssetId}"]`);
+    await card.click();
+    const browseView = () => canvas.evaluate((el, id) => {
+      const card = el.querySelector(`.asset-card[data-asset-id="${id}"]`);
+      const rect = card?.getBoundingClientRect();
+      return { scrollTop: el.scrollTop, scrollLeft: el.scrollLeft, top: rect?.top, left: rect?.left };
+    }, visibleAssetId);
+    const beforePreview = await browseView();
+    await window.keyboard.press("Enter");
+    const viewer = window.locator(".workspace-viewer");
+    await expect(viewer).toHaveClass(/is-text-viewer/);
+    await expect(viewer.getByRole("textbox", { name: "文本内容" })).toHaveValue(/asset \d+/);
+    await viewer.focus();
+    await window.keyboard.press("Enter");
+    await expect(viewer).toHaveCount(0);
+    await expect(window.locator(".workspace-canvas-host")).not.toHaveClass(/is-restoring/);
+    await canvas.evaluate(async () => {
+      for (let frame = 0; frame < 16; frame += 1) {
+        await new Promise(requestAnimationFrame);
+      }
+    });
+    expect(await browseView()).toEqual(beforePreview);
+  });
 });

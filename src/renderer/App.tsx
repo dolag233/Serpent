@@ -2416,6 +2416,7 @@ function AppInner() {
   // callback (which is created once and does not close over fresh state)
   // to skip the reflow-anchor logic while the viewer hides the canvas.
   const previewAssetRef = useRef<AssetSummary | null>(null);
+  const previewOpenedWithEnterRef = useRef(false);
   const previewRestoringRef = useRef(false);
   useLayoutEffect(() => {
     previewAssetRef.current = previewAsset;
@@ -4362,9 +4363,10 @@ function AppInner() {
 
   const openAssetPreview = useCallback((
     asset: AssetSummary,
-    options?: { recordHistory?: boolean },
+    options?: { recordHistory?: boolean; openedWithEnter?: boolean },
   ) => {
     if (asset.availability !== "available" || asset.deletedAt) return;
+    previewOpenedWithEnterRef.current = options?.openedWithEnter === true;
     previewAssetRef.current = asset;
     pendingViewportRestoreRef.current = null;
     if (
@@ -4541,6 +4543,7 @@ function AppInner() {
     const closingAsset = previewAsset;
     if (!closingAsset) return;
     if (closingPreviewRef.current === closingAsset.assetId) return;
+    previewOpenedWithEnterRef.current = false;
     // Serpent-b7e173：查看器被关闭时（无论 X/Esc 显式关还是导航触发），若当前
     // 历史条目仍是 preview 则硬移除——否则「从预览导航到别处」会残留一个已关闭
     // 的 preview，导致 back 回到它。back()/forward() 已移 index（当前非 preview）
@@ -12716,6 +12719,9 @@ function AppInner() {
       collectionEditor
     )
       return;
+    const requestViewerClose = () => {
+      void (previewModalRef.current?.requestClose() ?? closeAssetPreview());
+    };
     const onShortcutInput = (shortcutInput: ShortcutEventLike, event: KeyboardEvent | MouseEvent) => {
       const target = event.target;
       const keyboard = shortcutInput.kind === "mouse" ? null : shortcutInput;
@@ -12723,13 +12729,7 @@ function AppInner() {
       if (previewAsset) {
         if (keyboard?.key === "Escape" && !document.fullscreenElement) {
           event.preventDefault();
-          void (async () => {
-            if (previewModalRef.current) {
-              await previewModalRef.current.requestClose();
-            } else {
-              await closeAssetPreview();
-            }
-          })();
+          requestViewerClose();
           return;
         }
         if (
@@ -12739,6 +12739,16 @@ function AppInner() {
           (target instanceof HTMLElement &&
             (target.isContentEditable || target.closest('[role="dialog"]')))
         ) {
+          return;
+        }
+        if (
+          keyboard?.key === "Enter" && previewOpenedWithEnterRef.current &&
+          !keyboard.repeat && !keyboard.ctrlKey && !keyboard.metaKey && !keyboard.altKey && !keyboard.shiftKey &&
+          !event.defaultPrevented && !isImeKeyboardEvent(keyboard) &&
+          !(target instanceof HTMLElement && target.closest('button, a, [role="button"], [role="menuitem"]'))
+        ) {
+          event.preventDefault();
+          requestViewerClose();
           return;
         }
         const previous = matchesRuntimeShortcut("viewer.previous", shortcutInput, SHORTCUT_PLATFORM);
@@ -12777,7 +12787,7 @@ function AppInner() {
       )
         return;
       event.preventDefault();
-      openAssetPreview(selectedAsset);
+      openAssetPreview(selectedAsset, { openedWithEnter: keyboard.key === "Enter" });
     };
     const removeShortcutInputs = listenForShortcutInputs(document, onShortcutInput);
     return removeShortcutInputs;

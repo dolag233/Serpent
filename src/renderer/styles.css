@@ -10749,9 +10749,11 @@ select.ai-config-input.ai-config-languages {
    host as an absolute, full-size overlay instead of collapsing it to height 0:
    Chromium otherwise clamps the canvas scrollTop while the viewer is mounted,
    which makes rapid open/close land at the top before the anchor restore runs.
-   Keep `is-viewing` on the host during `previewRestoring` as well so the first
-   restore frames do not collapse the scroll extent. */
-.workspace-canvas-host.is-viewing {
+   Once the viewer unmounts, the host must return to flex layout before we
+   measure the restore anchor. The browse toolbar already occupies its normal
+   space during restore; measuring the absolute overlay would shift the anchor
+   by the toolbar height. */
+.workspace-canvas-host.is-viewing:not(.is-restoring) {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -10767,9 +10769,8 @@ select.ai-config-input.ai-config-languages {
   pointer-events: none;
 }
 
-/* Show the restored browse frame as soon as its deep scroll position is
-   reachable; keep the host geometry fixed until the existing two-frame
-   stability check completes. */
+/* Reveal the browse canvas after its saved position is reachable in the
+   restored layout. */
 .workspace-canvas-host.is-restoring.is-restore-visible > .workspace-canvas {
   visibility: visible;
   pointer-events: auto;

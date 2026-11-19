@@ -215,6 +215,48 @@ test("imports and pastes into the directory named by the blank canvas menu", asy
   });
 });
 
+test("Enter closes only an Enter-opened viewer and restores the browse selection", async () => {
+  await withApp(async ({ window }) => {
+    await submitLibraryName(window);
+    await expect(rootRow(window)).toBeVisible();
+    await rootRow(window).click();
+    await importFilesThroughBridge(window);
+    const card = window.locator(`[data-asset-name="${fileName}"]`);
+    const viewer = window.locator(".workspace-viewer");
+    const expectDecodedPreview = async () => {
+      await expect(viewer).toBeVisible();
+      await expect.poll(() => viewer.locator("img").evaluateAll((images) =>
+        images.some((image) => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0),
+      )).toBe(true);
+    };
+
+    await card.click();
+    await window.keyboard.down("Enter");
+    await expectDecodedPreview();
+    await window.keyboard.down("Enter");
+    await expect(viewer).toBeVisible();
+    await window.keyboard.up("Enter");
+    await window.keyboard.press("Enter");
+    await expect(viewer).toHaveCount(0);
+    await expect(card).toBeVisible();
+    await expect(card).toHaveAttribute("aria-pressed", "true");
+    await expect(window.getByRole("tab", { name: "资源库根目录", selected: true })).toBeVisible();
+
+    await card.dblclick();
+    await expectDecodedPreview();
+    await window.keyboard.press("Enter");
+    await expect(viewer).toBeVisible();
+    await window.keyboard.press("Escape");
+    await expect(viewer).toHaveCount(0);
+
+    await card.click();
+    await window.keyboard.press("Space");
+    await expectDecodedPreview();
+    await window.keyboard.press("Enter");
+    await expect(viewer).toBeVisible();
+  });
+});
+
 test("keeps the library overlay hidden while the native location picker is pending", async () => {
   await withApp(async ({ application, window, root }) => {
     const retryName = "Created Fixture";
