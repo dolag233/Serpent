@@ -380,6 +380,7 @@ interface AssetContextMenuProps {
   onCopyFolder: (folderId: string) => void;
   onCutFolders?: (folderIds: string[]) => void;
   onPasteIntoFolder: (folderId: string | null) => void;
+  onImportIntoFolder: (kind: "files" | "folder", folderId: string) => void;
   onCloneFolder: (folderId: string) => void;
   onMoveFolder: (folderIds: string[]) => void;
   onOpenLinkedRules: (folder: LinkedFolderSummary) => void;
@@ -496,6 +497,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onCopyFolder,
     onCutFolders,
     onPasteIntoFolder,
+    onImportIntoFolder,
     onCloneFolder,
     onMoveFolder,
     onOpenLinkedRules,
@@ -717,12 +719,11 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
   };
 
   if (!activeContextMenu) return null;
-  // Serpent-接管: the workspace canvas menu is a plugin extension point
-  // (PLUGIN-015). With no plugin contributions it would render an empty
-  // floating menu on blank-canvas right-click — suppress it entirely; the
-  // active descriptor stays set so a late async contribution still appears.
+  // Suppress a blank workspace menu when neither a built-in action nor a
+  // plugin contribution is available. Late contributions can still appear.
   if (
     activeContextMenu.descriptor.type === "workspace" &&
+    activeContextMenu.descriptor.folder === undefined &&
     pluginWorkspaceMenuItems.length === 0
   ) {
     return null;
@@ -794,17 +795,50 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           const desc = activeContextMenu.descriptor;
           if (desc.type !== "workspace") return null;
           const assetIds = desc.assetIds;
+          const folder = desc.folder;
           return (
-            <PluginMenuCommandsSection
-              items={pluginWorkspaceMenuItems}
-              label={t("contextMenu.pluginCommands")}
-              onRun={(item) => runPluginCommand(
-                item,
-                assetIds === undefined || assetIds.length === 0
-                  ? {}
-                  : { assetIds: [...assetIds] },
+            <>
+              {folder && (
+                <ContextMenuSection label={folder.name} labelCase="preserve">
+                  <ContextMenuItem
+                    icon={<Icon name="folder" size={14} />}
+                    label={t("command.folder.newFolder")}
+                    shortcut={formatRuntimeShortcut("folder.create-subfolder", isMac ? "mac" : "windows") ?? undefined}
+                    disabled={props.busy}
+                    onAction={() => onCreateSubfolder(folder.id)}
+                  />
+                  <ContextMenuItem
+                    icon={<Icon name="clipboard" size={14} />}
+                    label={t("command.folder.paste")}
+                    shortcut={formatRuntimeShortcut("asset.paste", isMac ? "mac" : "windows") ?? undefined}
+                    disabled={props.busy}
+                    onAction={() => onPasteIntoFolder(folder.id)}
+                  />
+                  <ContextMenuItem
+                    icon={<Icon name="file" size={14} />}
+                    label={`${t("toolbar.importFiles")}…`}
+                    disabled={props.busy}
+                    onAction={() => onImportIntoFolder("files", folder.id)}
+                  />
+                  <ContextMenuItem
+                    icon={<Icon name="folder" size={14} />}
+                    label={`${t("toolbar.importFolder")}…`}
+                    disabled={props.busy}
+                    onAction={() => onImportIntoFolder("folder", folder.id)}
+                  />
+                </ContextMenuSection>
               )}
-            />
+              <PluginMenuCommandsSection
+                items={pluginWorkspaceMenuItems}
+                label={t("contextMenu.pluginCommands")}
+                onRun={(item) => runPluginCommand(
+                  item,
+                  assetIds === undefined || assetIds.length === 0
+                    ? {}
+                    : { assetIds: [...assetIds] },
+                )}
+              />
+            </>
           );
         })()}
         {activeContextMenu.descriptor.type === "workspace-tab" && (() => {

@@ -132,10 +132,15 @@ function emitE2eBrowseSessionResponse(
 export const library: SerpentLibraryApi = Object.freeze({
   async create({
     displayName,
+    selectionToken,
   }: {
     displayName: string;
+    selectionToken?: string;
   }): Promise<LibraryApiResult<RendererLibrarySummary>> {
-    const result = await request({ type: 'library.create.request', displayName });
+    const result = await request({
+      type: 'library.create.request', displayName,
+      ...(selectionToken === undefined ? {} : { selectionToken }),
+    });
     if (!result.ok) return failure(result);
     if (result.type !== 'library.opened') throw new Error('Unexpected create-library response.');
     return { ok: true as const, value: result.library };
@@ -162,6 +167,15 @@ export const library: SerpentLibraryApi = Object.freeze({
       throw new Error('Unexpected choose-library-path response.');
     }
     return { ok: true as const, value: result.path };
+  },
+
+  async chooseCreateLocation(): Promise<LibraryApiResult<string | null>> {
+    const result = await request({ type: 'library.choose-create-location.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.create-location-chosen') {
+      throw new Error('Unexpected choose-create-location response.');
+    }
+    return { ok: true as const, value: result.selectionToken };
   },
 
   async cancelOpen(): Promise<LibraryApiResult<void>> {

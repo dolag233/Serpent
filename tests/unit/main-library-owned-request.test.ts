@@ -65,6 +65,25 @@ test("library.choose-path returns the selected directory", async () => {
   });
 });
 
+test("the create location picker returns a token without starting a library operation", async () => {
+  const selectDirectory = vi.fn(async () => "fixture-parent");
+  const result = await tryHandleLibraryOwnedRequest(
+    { type: "library.choose-create-location.request" },
+    runtime({ selectDirectory }),
+  );
+  expect(selectDirectory).toHaveBeenCalledExactlyOnceWith("createLibrary");
+  expect(result).toEqual({
+    ok: true, type: "library.create-location-chosen", selectionToken: expect.any(String),
+  });
+  expect(JSON.stringify(result)).not.toContain("fixture-parent");
+});
+
+test("cancelling the native create location picker returns null", async () => {
+  await expect(tryHandleLibraryOwnedRequest(
+    { type: "library.choose-create-location.request" }, runtime(),
+  )).resolves.toEqual({ ok: true, type: "library.create-location-chosen", selectionToken: null });
+});
+
 test("library.list-recent stays on the Main-owned store path", async () => {
   const libraries = [{
     path: "C:\\libraries\\studio",

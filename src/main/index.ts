@@ -3392,7 +3392,8 @@ async function commandFor(
     case "library.open-recent.request":
     case "library.forget-recent.request":
     case "library.open-cancel.request":
-    case "library.choose-path.request": {
+    case "library.choose-path.request":
+    case "library.choose-create-location.request": {
       return executeLibraryMainCommand(request, {
         selectDirectory,
         createNativeDialogHost,

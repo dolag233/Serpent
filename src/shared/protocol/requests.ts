@@ -181,6 +181,8 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('library.create.request'),
     displayName: displayNameSchema,
+    /** One-use authority returned by the Main-owned native create picker. */
+    selectionToken: identifierSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('library.open.request'),
@@ -198,6 +200,9 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('library.choose-path.request'),
+  }),
+  z.strictObject({
+    type: z.literal('library.choose-create-location.request'),
   }),
   z.strictObject({
     type: z.literal('library.open-cancel.request'),

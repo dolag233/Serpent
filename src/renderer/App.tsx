@@ -156,6 +156,7 @@ import {
 import {
   resolveBrowseCanvasBodyLayout,
   resolveFolderBrowseParentId,
+  resolveBrowseCreateFolderParentId,
   shouldShowFolderBrowseCards,
 } from "./folder-browse-canvas";
 import { useFolderInspector } from "./folder-inspector";
@@ -447,6 +448,7 @@ import {
   resolveDialogEscapeAction,
   type DialogEscapeSnapshot,
 } from "./dialog-escape-stack";
+import { beginInlineRenameTextSelection } from "./inline-rename-text-selection";
 import { splitAssetFileName, useAssetRename } from "./useAssetRename";
 import { useInlineFolderEdit } from "./use-inline-folder-edit";
 import { useInlineSmartCollectionEdit } from "./use-inline-smart-collection-edit";
@@ -1022,6 +1024,7 @@ function AppInner() {
   const libraryTransitionInlineOpeningRef = useRef<
     "open-eagle" | "open-billfish" | null
   >(null);
+  const libraryLocationOperationRef = useRef(false);
   const libraryWriteDepthRef = useRef(0);
   const libraryWriteInFlightRef = useRef(false);
   const [, forceLibraryWriteState] = useState(false);
@@ -6261,28 +6264,55 @@ function AppInner() {
   async function runLibraryOperation(kind: "create" | "open") {
     if (!api) return;
     if (kind === "open") {
-      // Pick the location first (dialog only) so the loading overlay and its
-      // timer start with the actual load, never while the picker is open
-      // (Serpent-565785 feedback).
       const chosen = await api.chooseLibraryPath();
       if (!chosen.ok || chosen.value === null) return;
+      const libraryPath = chosen.value;
       await runLibraryOpenPipeline(
         "opening",
-        () => api.open({ libraryPath: chosen.value! }),
+        () => api.open({ libraryPath }),
         t("toast.libraryOpFailed"),
         undefined,
         null,
-        { selectedLibraryPath: chosen.value },
+        { selectedLibraryPath: libraryPath },
       );
       return;
     }
-    await runLibraryOpenPipeline(
-      "creating",
-      () => api.create({ displayName: dialogValue.trim() }),
-      t("toast.libraryOpFailed"),
-      undefined,
-      dialogValue.trim() || null,
-    );
+    if (libraryLocationOperationRef.current) return;
+    libraryLocationOperationRef.current = true;
+    const displayName = dialogValue.trim();
+    try {
+      // Choosing a location does not start a library transition. Keep the
+      // current view intact until the native dialog has actually succeeded.
+      const chosen = await api.chooseCreateLocation();
+      if (!chosen.ok) {
+        if (chosen.error.code !== "CANCELLED") {
+          showBlockingError(
+            t("dialog.blockingError.libraryCreateFailed"),
+            toMessage(chosen.error, t("toast.libraryOpFailed"), locale),
+          );
+        }
+        return;
+      }
+      if (chosen.value === null) return;
+      const selection = chosen.value;
+      await runLibraryOpenPipeline(
+        "creating",
+        () => {
+          setDialog(null);
+          return api.create({ displayName, selectionToken: selection });
+        },
+        t("toast.libraryOpFailed"),
+        undefined,
+        displayName || null,
+      );
+    } catch (caught) {
+      showBlockingError(
+        t("dialog.blockingError.libraryCreateFailed"),
+        toMessage(caught, t("toast.libraryOpFailed"), locale),
+      );
+    } finally {
+      libraryLocationOperationRef.current = false;
+    }
   }
 
   async function runInlineLibraryOpening<T>(
@@ -9228,6 +9258,7 @@ function AppInner() {
       void handleOpenFolderInFileManager(folderId);
     },
     createSubfolder: (parentFolderId) => {
+      setLeftOpen(true);
       cancelInlineSmartCollectionEdit();
       openInlineFolderCreate(parentFolderId);
     },
@@ -10073,7 +10104,10 @@ function AppInner() {
 
   // --- Existing operations ---
 
-  async function importAssets(kind: "files" | "folder") {
+  async function importAssets(
+    kind: "files" | "folder",
+    targetFolderId: string | null | undefined = managedImportTargetFolderIdRef.current,
+  ) {
     if (!api || !library) return;
     const startedAt = Date.now();
     setUiState("importing");
@@ -10085,12 +10119,12 @@ function AppInner() {
         kind === "files"
           ? api.importFiles({
               libraryId: library.libraryId,
-              targetFolderId: managedImportTargetFolderIdRef.current,
+              targetFolderId: targetFolderId ?? undefined,
               ...sequenceFlags,
             })
           : api.importFolder({
               libraryId: library.libraryId,
-              targetFolderId: managedImportTargetFolderIdRef.current,
+              targetFolderId: targetFolderId ?? undefined,
               ...sequenceFlags,
             }),
       );
@@ -15386,9 +15420,28 @@ function AppInner() {
             }
             if (!library || previewAsset || showTagManagement || showPluginSidebarView) return;
             event.preventDefault();
+            const createParentId = resolveBrowseCreateFolderParentId({
+              assetScope,
+              showTrash,
+              activeTagId,
+              activeCollectionId,
+              activeSmartCollectionId,
+              folders,
+              linkedFolders,
+              searchActive: Boolean(searchValue.trim() || findSimilarSource),
+              writable: library.readOnly !== true,
+              interactionBlocked: busy || workspaceNavigationPending || previewRestoring,
+            });
+            const folderName = createParentId === null
+              ? t("scope.rootFolder")
+              : folders.find(folder => folder.folderId === createParentId)?.name
+                ?? linkedFolders.find(folder => folder.folderId === createParentId)?.displayName;
             openContextMenu(
               {
                 type: "workspace",
+                ...(createParentId === undefined || folderName === undefined
+                  ? {}
+                  : { folder: { id: createParentId ?? LIBRARY_ROOT_FOLDER_ID, name: folderName } }),
                 ...(selectedAssetIds.length > 0
                   ? { assetIds: [...selectedAssetIds] }
                   : {}),
@@ -15613,6 +15666,14 @@ function AppInner() {
                         if (draggedMemberId) event.preventDefault();
                       }}
                       onDragStart={(event) => {
+                        // Text selection can emit dragstart even when the
+                        // card itself is not draggable. Never hand an editor
+                        // gesture to the native file or collection drag path.
+                        if (renamingThisAsset) {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          return;
+                        }
                         // Collection member reorder keeps its own drag path.
                         if (activeCollectionId && !collectionRecursive) {
                           setDraggedMemberId(asset.assetId);
@@ -16030,7 +16091,7 @@ function AppInner() {
                                         cancelAssetRename();
                                       }
                                     }}
-                                    onMouseDown={(event) => event.stopPropagation()}
+                                    onMouseDown={beginInlineRenameTextSelection}
                                     value={assetRenameDialog.value}
                                   />
                                   {assetRenameDialog.error ? (
@@ -17000,7 +17061,6 @@ function AppInner() {
             void submitBillfishLibraryName();
             return;
           }
-          setDialog(null);
           void runLibraryOperation("create");
         }}
         onCancel={() => {
@@ -17219,6 +17279,7 @@ function AppInner() {
           requestDeleteCollection(id, name);
         }}
         onCreateSubfolder={(folderId) => {
+          setLeftOpen(true);
           cancelInlineSmartCollectionEdit();
           openInlineFolderCreate(isLibraryRootFolderId(folderId) ? null : folderId);
         }}
@@ -17255,6 +17316,9 @@ function AppInner() {
           // Serpent-316493 follow-up: the root sentinel means "the library
           // root", which paste/import APIs express as null.
           dispatchClipboardPaste(isLibraryRootFolderId(folderId) ? null : folderId);
+        }}
+        onImportIntoFolder={(kind, folderId) => {
+          void importAssets(kind, isLibraryRootFolderId(folderId) ? null : folderId);
         }}
         onCloneFolder={(folderId) => {
           void cloneFolder(folderId);

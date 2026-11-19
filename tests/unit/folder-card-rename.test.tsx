@@ -60,3 +60,45 @@ it('starts inline rename only when the folder name is double-clicked', async () 
     expect(open).toHaveBeenCalledWith('folder');
   } finally { await act(() => root.unmount()); container.remove(); }
 });
+
+it('keeps native text selection during rename and restores card drag after editing', async () => {
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  const drag = vi.fn();
+  const mouseDown = vi.fn();
+  const entry: FolderBrowseEntry = {
+    folderId: 'folder', parentFolderId: null, name: 'Materials', relativePath: 'Materials',
+    locationKind: 'managed', status: 'available', directAssetCount: 0, recursiveAssetCount: 0,
+    childFolderCount: 0, coverArtifactIds: [], coverAssetIds: [],
+  };
+  const rename = startInlineFolderRename(entry.folderId, entry.name);
+  if (rename.kind !== 'rename') throw new Error('Expected rename');
+  const render = (editing: boolean) => root.render(<LocaleProvider initialPreference="en"><FolderCard
+    entry={entry} libraryId="library" selected draggable rename={editing ? rename : null}
+    onClick={vi.fn()} onMouseDown={mouseDown} onContextMenu={vi.fn()} onDoubleClick={vi.fn()}
+    onDragStart={drag}
+  /></LocaleProvider>);
+  try {
+    await act(() => render(true));
+    const input = container.querySelector('input')!;
+    expect(container.querySelector('.folder-card')?.getAttribute('draggable')).toBe('false');
+    expect(input.selectionEnd).toBe(entry.name.length);
+    input.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, shiftKey: true }));
+    expect(input.selectionEnd).toBe(entry.name.length);
+    const down = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    input.dispatchEvent(down);
+    expect(down.defaultPrevented).toBe(false);
+    expect(input.selectionEnd).toBe(input.selectionStart);
+    expect(mouseDown).not.toHaveBeenCalled();
+    const selectionDrag = new Event('dragstart', { bubbles: true, cancelable: true });
+    input.dispatchEvent(selectionDrag);
+    expect(selectionDrag.defaultPrevented).toBe(true);
+    expect(drag).not.toHaveBeenCalled();
+    await act(() => render(false));
+    const card = container.querySelector('.folder-card')!;
+    expect(card.getAttribute('draggable')).toBe('true');
+    card.dispatchEvent(new Event('dragstart', { bubbles: true, cancelable: true }));
+    expect(drag).toHaveBeenCalledOnce();
+  } finally { await act(() => root.unmount()); container.remove(); }
+});

@@ -48,6 +48,27 @@ test('library.create maps a failed transport result through failure()', async ()
   expect(failure).toHaveBeenCalledWith(failed);
 });
 
+test('library.chooseCreateLocation forwards only the native chooser request and token', async () => {
+  for (const selectionToken of ['choice-token', null]) {
+    vi.mocked(request).mockResolvedValue({
+      ok: true, type: 'library.create-location-chosen', selectionToken,
+    } as never);
+    await expect(library.chooseCreateLocation()).resolves.toEqual({ ok: true, value: selectionToken });
+    expect(request).toHaveBeenLastCalledWith({ type: 'library.choose-create-location.request' });
+  }
+});
+
+test('library.create forwards the opaque selection token when the picker already succeeded', async () => {
+  const summary = { libraryId: 'lib-1', displayName: 'Studio' };
+  vi.mocked(request).mockResolvedValue({ ok: true, type: 'library.opened', library: summary } as never);
+  await expect(library.create({ displayName: 'Studio', selectionToken: 'choice-token' })).resolves.toEqual({
+    ok: true, value: summary,
+  });
+  expect(request).toHaveBeenLastCalledWith({
+    type: 'library.create.request', displayName: 'Studio', selectionToken: 'choice-token',
+  });
+});
+
 test('library.embeddingSearch preserves raw per-asset scores from transport', async () => {
   const response = {
     ok: true as const,

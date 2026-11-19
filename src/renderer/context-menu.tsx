@@ -75,6 +75,8 @@ export type ContextMenuDescriptor =
   | {
       /** Workspace canvas empty-area context menu (PLUGIN-015). */
       type: "workspace";
+      /** Current writable real folder; the root uses LIBRARY_ROOT_FOLDER_ID. */
+      folder?: { id: string; name: string };
       /** Current asset selection when the menu opens; omitted when empty. */
       assetIds?: string[];
     }

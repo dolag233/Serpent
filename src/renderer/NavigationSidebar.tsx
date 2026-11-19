@@ -11,6 +11,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { Icon, type IconName } from "./Icons";
+import { beginInlineRenameTextSelection } from "./inline-rename-text-selection";
 import { AppearanceGlyph } from "./AppearanceGlyph";
 import type { EntityAppearance } from "../shared/entity-appearance";
 import { IconActionButton } from "./icon-action-button";
@@ -53,6 +54,7 @@ import {
 import {
   inlineCreateRowIndex,
   inlineFolderEditDepth,
+  collapsedFolderIdsForInlineCreate,
   type InlineFolderEditState,
 } from "./inline-folder-edit";
 import {
@@ -331,6 +333,7 @@ function InlineFolderEditRow({
             onCancel();
           }
         }}
+        onMouseDown={beginInlineRenameTextSelection}
         ref={inputRef}
         value={state.value}
       />
@@ -1296,23 +1299,20 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
   // Creating under a collapsed parent must reveal the inline create row. Keep
   // this as derived view state: opening or cancelling an editor must not
   // mutate the user's persisted navigation preference.
-  const collapsedFolderIds = useMemo(() => {
-    if (inlineFolderEdit?.kind !== "create" || !inlineFolderEdit.parentFolderId) {
-      return persistedCollapsedFolderIds;
-    }
-    const next = new Set(persistedCollapsedFolderIds);
-    next.delete(inlineFolderEdit.parentFolderId);
-    return next;
-  }, [persistedCollapsedFolderIds, inlineFolderEdit]);
+  const collapsedFolderIds = useMemo(() => collapsedFolderIdsForInlineCreate(
+    persistedCollapsedFolderIds,
+    inlineFolderEdit,
+    [...folderDragFacts, ...linkedFolders],
+  ), [persistedCollapsedFolderIds, inlineFolderEdit, folderDragFacts, linkedFolders]);
 
-  function toggleFolderCollapsed(folderId: string) {
+  const toggleFolderCollapsed = useCallback((folderId: string) => {
     const nextIds = persistedCollapsedFolderIds.has(folderId)
       ? navTreePrefs.collapsedFolderIds.filter((id) => id !== folderId)
       : [...navTreePrefs.collapsedFolderIds, folderId];
     const next = withCollapsedFolderIds(navTreePrefs, nextIds);
     setNavTreePrefs(next);
     saveNavTreePreferences(next);
-  }
+  }, [persistedCollapsedFolderIds, navTreePrefs]);
 
   const unifiedDirectoryEntries = useMemo(() => {
     const entries = buildUnifiedDirectoryNavEntries(folders, linkedFolders);

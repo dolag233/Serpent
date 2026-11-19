@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   resolveBrowseCanvasBodyLayout,
+  resolveBrowseCreateFolderParentId,
+  type FolderBrowseCanvasContext,
   shouldShowFolderBrowseCards,
 } from "../../src/renderer/folder-browse-canvas";
 
@@ -32,6 +34,47 @@ describe("resolveBrowseCanvasBodyLayout (CANVAS-022 / Serpent-an1)", () => {
       showFolders: true,
       showAssetGrid: true,
     });
+  });
+});
+
+describe("blank-canvas folder creation scope", () => {
+  const context: FolderBrowseCanvasContext & { writable: boolean; interactionBlocked: boolean } = {
+    assetScope: "folder", writable: true, interactionBlocked: false,
+    showTrash: false, activeTagId: null, activeCollectionId: null, activeSmartCollectionId: null,
+    searchActive: false,
+    folders: [{
+      folderId: "folder", parentFolderId: null, name: "Materials", relativePath: "Materials",
+      directAssetCount: 0, childFolderCount: 0,
+    }],
+    linkedFolders: [{
+      folderId: "linked", displayName: "Linked", status: "available", assetCount: 0,
+      absoluteRootPath: "fixture-linked-root", relativePath: "",
+    }, {
+      folderId: "lfv:linked/deep", linkedFolderId: "linked", displayName: "deep", status: "available",
+      assetCount: 0, absoluteRootPath: "fixture-linked-root", relativePath: "deep", parentFolderId: "linked",
+    }],
+  };
+
+  it("uses the current real parent, including an empty library root and linked child", () => {
+    expect(resolveBrowseCreateFolderParentId(context)).toBe("folder");
+    expect(resolveBrowseCreateFolderParentId({ ...context, assetScope: "root", folders: [] })).toBeNull();
+    expect(resolveBrowseCreateFolderParentId({ ...context, assetScope: "linked" })).toBe("linked");
+    expect(resolveBrowseCreateFolderParentId({ ...context, assetScope: "lfv:linked/deep" })).toBe("lfv:linked/deep");
+  });
+
+  it.each([
+    { assetScope: "all" }, { assetScope: "missing" }, { showTrash: true },
+    { activeTagId: "tag" }, { activeCollectionId: "collection" }, { activeSmartCollectionId: "smart" },
+    { searchActive: true }, { writable: false }, { interactionBlocked: true },
+  ])("omits creation outside writable ordinary folder browsing: %j", overrides => {
+    expect(resolveBrowseCreateFolderParentId({ ...context, ...overrides })).toBeUndefined();
+  });
+
+  it("omits creation in offline linked directories", () => {
+    expect(resolveBrowseCreateFolderParentId({
+      ...context, assetScope: "linked",
+      linkedFolders: context.linkedFolders!.map(folder => ({ ...folder, status: "offline" })),
+    })).toBeUndefined();
   });
 });
 

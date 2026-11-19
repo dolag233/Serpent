@@ -238,7 +238,7 @@ export interface PluginJobStatus {
 }
 
 export interface SerpentLibraryApi {
-  create(input: { displayName: string }): Promise<LibraryApiResult<RendererLibrarySummary>>;
+  create(input: { displayName: string; selectionToken?: string }): Promise<LibraryApiResult<RendererLibrarySummary>>;
   open(input?: {
     libraryPath?: string;
     replaceExisting?: boolean;
@@ -249,6 +249,8 @@ export interface SerpentLibraryApi {
    * their loading UI only after the dialog closes.
    */
   chooseLibraryPath(): Promise<LibraryApiResult<string | null>>;
+  /** Choose a create location without opening a library; null means cancelled. */
+  chooseCreateLocation(): Promise<LibraryApiResult<string | null>>;
   /** Request cancellation of the active library open/create transition. */
   cancelOpen(): Promise<LibraryApiResult<void>>;
   /** Reveal a Main-owned recovery report without exposing its filesystem path. */

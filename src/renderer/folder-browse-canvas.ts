@@ -96,3 +96,19 @@ export function resolveFolderBrowseParentId(
   );
   return isLinkedFolderScope ? assetScope : undefined;
 }
+
+/** The blank-canvas create action follows the existing real-folder scope. */
+export function resolveBrowseCreateFolderParentId(
+  context: FolderBrowseCanvasContext & {
+    writable: boolean;
+    interactionBlocked: boolean;
+  },
+): string | null | undefined {
+  if (!context.writable || context.interactionBlocked) return undefined;
+  return resolveFolderBrowseParentId({
+    ...context,
+    // Linked directory creation is supported by the same inline editor as
+    // managed folders; offline linked directories cannot be written to.
+    linkedFolders: context.linkedFolders?.filter(folder => folder.status === "available"),
+  });
+}

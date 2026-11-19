@@ -259,15 +259,17 @@ export async function tryBuildIngestionCommand(
       };
     }
     case "asset.import-clipboard.request": {
+      const e2eClipboardImagePath = runtime.isUnpackagedE2e()
+        ? runtime.e2eEnv("SERPENT_E2E_CLIPBOARD_IMAGE_PATH")
+        : undefined;
       // Explorer can advertise a bitmap for a copied image as well as files.
       // The file list owns paste: importing the bitmap would lose the batch.
-      if (runtime.readClipboardFilePaths().length > 0) {
+      if (!e2eClipboardImagePath && runtime.readClipboardFilePaths().length > 0) {
         return { kind: 'result', result: { ok: false, error: createPublicError('CLIPBOARD_IMAGE_NOT_FOUND') } };
       }
       let image;
       try {
-        const e2eClipboardImagePath = runtime.e2eEnv("SERPENT_E2E_CLIPBOARD_IMAGE_PATH");
-        if (runtime.isUnpackagedE2e() && e2eClipboardImagePath) {
+        if (e2eClipboardImagePath) {
           image = runtime.createImageFromBuffer(
             runtime.readFileBuffer(e2eClipboardImagePath),
           );

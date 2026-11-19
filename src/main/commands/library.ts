@@ -2,6 +2,7 @@ import path from "node:path";
 
 import type { RendererRequest, WorkerCommand } from "../../shared/protocol/requests";
 import type { MaterializedExternalLibrarySource } from "../external-library-archive";
+import { consumeLibraryCreateLocation } from "../library-create-location";
 import {
   selectOpenDirectory,
   selectOpenFile,
@@ -36,7 +37,9 @@ export async function executeLibraryMainCommand(
 ): Promise<WorkerCommand | undefined> {
   switch (request.type) {
     case "library.create.request": {
-      const selectedParentPath = await runtime.selectDirectory("createLibrary");
+      const selectedParentPath = request.selectionToken === undefined
+        ? await runtime.selectDirectory("createLibrary")
+        : consumeLibraryCreateLocation(request.selectionToken);
       return selectedParentPath
         ? {
             type: "library.create",
@@ -189,6 +192,7 @@ export async function executeLibraryMainCommand(
       // Main-only request; handled before Worker dispatch.
       return undefined;
     case "library.choose-path.request":
+    case "library.choose-create-location.request":
       // Main-only request (native picker); handled before Worker dispatch.
       return undefined;
     default:
