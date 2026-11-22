@@ -302,6 +302,8 @@ serpent.assets.stageContent(assetId, dataBase64, options?): Promise<{
 serpent.assets.replaceContentBatch(items): Promise<{ operationId: string; items: unknown[] }>
 ```
 
+`assets.search` 的字符串与桌面工具栏共用语法：空格 AND、`|` OR、`-` 排除、引号短语和括号分组。`tag:` 按标签名包含匹配，`tag=` 按完整标签名匹配，例如 `(tag=角色 | tag=生物) -tag=草稿`。字符串最多 512 字符、32 个词项、8 层括号；无效语法返回参数错误。`null` 查询当前绑定资源库的非回收站资产。详见[脚本搜索参考](../scripts/api-reference.md#assetssearchinput)。
+
 `readContent` 有字节上限并可能返回 `truncated`；`replaceContent` 接受托管（managed）与链接（linked）可用资产，须 `content.write`，并经过计划确认。
 批量替换使用 staging 和 `expectedRevisionId` 做统一预检，不能假定多文件系统原子性。
 

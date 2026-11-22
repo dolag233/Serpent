@@ -139,13 +139,12 @@ serpent.assets.search({
   query: string | null,
   limit?: number,
   offset?: number,
-  filters?: readonly unknown[],
-  scope?: unknown,
-  sort?: unknown,
 }): Promise<Page<Asset> & { snippets?: readonly { assetId: string; text: string }[] }>
 ```
 
-脚本最稳定的用法是工具栏同款字符串，例如 `tag:抽象`、`name:rain | tag:rain`、`name:"hero concept" -tag:草稿`；支持空格 AND、`|` OR、`-` 排除、引号短语和字段别名（`name`/`filename`、`tag`/`tags`、`desc`/`description`、`source`/`url`/`link`、`author`、`path`/`folder`、`meta`/`metadata`）。`name:` 会归一为 `filename`。`null` 搜索当前资源库的非回收站资产。Registry 还接受结构化 `filters`/`scope`/`sort`，其完整 JSON Schema 由 Registry 生成；当前独立脚本声明对这些字段使用宽类型，不能假定未声明的字段形状。
+脚本最稳定的用法是工具栏同款字符串，例如 `(tag=角色 | tag=生物) name:"英雄概念" -tag=草稿`。支持空格 AND、`|` OR、`-` 排除、引号短语、括号分组和字段别名（`name`/`filename`、`tag`/`tags`、`desc`/`description`、`source`/`url`/`link`/`source_url`、`author`、`path`/`folder`/`folder_path`、`meta`/`metadata`/`metadata_text`）。`name:` 会归一为 `filename`；`tag:` 是包含匹配，`tag=` 或 `tags=` 匹配完整标签名。其他字段只支持冒号包含匹配。
+
+字符串最多 512 字符、32 个词项、8 层括号；无效语法会返回参数错误，脚本应修正查询后再调用。引号内用 `\"` 和 `\\` 表示双引号和反斜杠。`null` 搜索当前资源库的非回收站资产。完整语法见[搜索与过滤](../../user-guide/search-and-filters.md)。Registry 还接受结构化查询以及 `filters`/`scope`/`sort`，其 JSON Schema 由 Registry 生成；结构化表达式见[MCP 搜索参考](../mcp/api-reference.md#搜索)，不要将表达式树与旧 `clauses` / `groups` 混用。
 
 ### `assets.list(input?)`
 

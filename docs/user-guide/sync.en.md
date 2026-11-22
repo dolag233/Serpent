@@ -32,6 +32,8 @@ Open **Library settings** → **Sync**:
 - **Poll interval (seconds)**: how often remote changes are checked, 5 seconds by default. **For large libraries, consider a longer interval** to avoid frequent checks weighing on the network and disk.
 - **Save**: persists the binding; turning auto-sync on triggers a sync immediately.
 
+Sync settings can be saved while a transfer is running. Saving does not wait for the whole transfer to finish; later syncs use the updated configuration.
+
 ![Library sync settings](../assets/ui/library-sync.png)
 
 ## Sync behavior

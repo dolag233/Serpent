@@ -18,6 +18,8 @@ Serpent generates previews for many image, RAW, video, audio, and 3D formats. Co
 
 Different formats may use different preview methods; for example, video may use a compatible playback version and audio first gets a waveform. A corrupt or unsupported source cannot be fixed by retrying alone.
 
+A RAW file needs a clear preview generated on first open; seeing its existing thumbnail does not mean that full-resolution generation has finished. ARW brightness matching also depends on a readable embedded preview. See the [viewer guide](basics.en.md#raw-images).
+
 ## AI analysis fails or never starts
 
 In **Settings → AI**, verify the API format, model, and key, test the connection, and enable **Analyze new assets automatically** if you want import-time analysis. The switch is off by default; audio, text, and formats outside the image/video/model registry are not supported.
@@ -27,6 +29,8 @@ Video AI needs a contact sheet and 3D AI needs a four-view sheet. Retry media ge
 ## Searches miss imported assets
 
 Check active filter chips; Shift-selected values can intentionally narrow the result. Search remains within the current folder/collection scope, and hovering or focusing the `?` beside the field shows advanced syntax. Ignore rules affect browsing, search, and scanning; inspect **Library settings → Ignore rules**.
+
+If the field reports a syntax error, the last valid results remain visible. Close any unfinished quotes or parentheses and fill missing conditions before the results update. In search, `tag:` matches part of a name and `tag=` matches a whole tag; bare names in a tag condition match whole tags by default. See [Search and filters](search-and-filters.en.md) for examples.
 
 ## A plugin will not enable
 
@@ -38,6 +42,7 @@ For a script, open a library first and choose **More tools → Automation script
 
 ## A library will not open
 
+- **Unexpected interruption while running**: If the library's background process exits unexpectedly, Serpent tries to restart it and reopen the libraries that were open. Wait for recovery; if it fails or keeps happening, fully quit and reopen the app and check diagnostic logs. Check the outcome of an interrupted operation before retrying it.
 - **Version compatibility**: Serpent maintains forward data compatibility. Opening an older library with a newer version will automatically run database migrations. Older app versions opening a library created by a newer version will also open it in writable mode permissively, rather than locking it into a read-only state. If prompted that the version is unsupported, update to the latest Serpent release.
 - **"Library is already open" prompt**: The same library directory is already open in the current app instance, or was opened via different paths (e.g. network share path vs. mapped drive). Switch directly to the existing window.
 - **Automatic recovery and rescue**: If you see a database corruption prompt, do not manually delete the `.serpent/` directory. Serpent includes rotating backup mechanisms and will automatically attempt to restore from the latest valid backup. In extreme corruption scenarios, it enters an automatic asset rescue workflow in the `Assets/` directory, preserving as many source files and metadata as possible.

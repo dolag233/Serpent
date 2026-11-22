@@ -98,11 +98,13 @@ A folder can use a chosen cover, or return to the automatic one. The library roo
 - **Toolbar**: Search, advanced filters, sorting, and view controls.
 - **Inspector**: Displays information, tags, rating, favorite status, description, source URL, technical metadata, and AI analysis results for the selected asset.
 
-Supports marquee selection, `⌘`/`Ctrl` click to add, and `Shift` range selection; press `F2` to rename inline.
+Supports marquee selection, `⌘`/`Ctrl` click to add, and `Shift` range selection; press `F2` to rename inline. Double-click an asset card's file name to rename it, or its preview to open the viewer. While naming an item, Enter used to confirm an input-method candidate only confirms that candidate; press Enter again to save the name.
 
 - **Cut, copy, and paste**: Select one or more assets, press `Ctrl+X` or `Ctrl+C`, open the destination folder, and press `Ctrl+V`. On macOS use `⌘X`, `⌘C`, and `⌘V`. The asset context menu and main menu offer the same actions. Cut assets are dimmed while their selection outlines remain visible; pasting or copying again restores the appearance. Managed folders also support cut, alone, in batches, or together with assets. Cutting within one library retains folder structure, tags, and asset identities. Pasting a cut selection into its original folder does nothing. Successful cut moves show no import notification; copying creates new assets.
 - **Paste files from Windows**: Copy or cut multiple files in File Explorer, then paste in the destination folder in Serpent. Copy retains the source files; cut removes each source after its destination is saved. Skipped files remain in place. A source changed during import is retained with a notification.
 - **Rename folders on the canvas**: Select a folder card and press `F2`, or choose **Rename** from its context menu. Edit the name on the card, press `Enter` to save or `Esc` to cancel. The sidebar tree can remain collapsed.
+- **Copy file path**: Select an asset and press `Ctrl+Shift+C` (`⌥⌘C` on macOS), or choose **Copy file path** from the context menu. Sidebar folders also support copying their path. The shortcuts can be changed in Settings.
+- **Ratings and batch author edits**: Hovering a rating star previews that star and all preceding stars; moving away restores the saved rating. Successful rating saves show no notice; failures and skipped items are still reported. With multiple assets selected, the author is written to all of them only after you type an author value again.
 
 ![Library, Inspector, filters, and AI overview](../assets/ui/Serpent-Preview.png)
 
@@ -112,24 +114,46 @@ Supports marquee selection, `⌘`/`Ctrl` click to add, and `Shift` range selecti
 
 ## Viewer
 
-Double-click an asset to open the fullscreen viewer (press `Esc` to exit):
+Double-click an asset preview, or select an asset and press `Enter` / Space, to open the viewer. Press `Esc` to return to browsing at the position you opened it from. Fullscreen is a separate control on the viewer toolbar.
 
-- **Navigation**: Use arrow keys `←` / `→` to navigate smoothly between assets in the current view.
+- **Navigation**: Use arrow keys `←` / `→` or the arrows at the left and right edges to move through the current list. The arrows appear as the pointer approaches an edge; a side with no previous or next asset is gray.
 - **Media playback & transforms**:
   - Videos and audio play automatically on open;
   - Playback defaults to **Repeat one**. The playback mode button cycles through **Stop after current**, **Repeat one**, and **Sequential**, and remembers the choice. Sequential playback follows the current list order, selects the next video or audio in the same folder, skips other files, and stops after the last item.
   - During fullscreen playback, player controls and the cursor hide after one second without mouse movement. Moving the mouse shows them again;
+  - In **Settings → Browse → Seek step**, choose time or progress and enter the seconds or percentage per jump. The default is 2 seconds. The video and audio progress-track wheel and playback context menu use this setting. Hold `Ctrl+←` / `Ctrl+→` to keep seeking backward / forward, and release to stop (macOS also uses `Ctrl`);
   - Images and videos can be panned by dragging with the left or middle mouse button;
   - 3D models support mouse drag rotation, zoom, and HDRI lighting switching;
   - The toolbar provides 90° clockwise rotation, horizontal/vertical flip, fit-to-view (numpad `.`), and fullscreen.
 
+### 3D models
+
+The toolbar's **Double-sided** control shows the back of a single-sided mesh, including flat and wireframe modes. The choice persists when the viewer is reopened. The info button shows or hides model statistics; it starts off and also remembers the choice. Transparent regions in textures with an alpha channel show through, and model previews on browse cards follow the same rule.
+
 ![3D viewer and Inspector](../assets/ui/3D-inspector.png)
+
+### RAW images
+
+The viewer displays a full-resolution decoded RAW image, with an existing thumbnail available while it loads. The first generation may take time; later views reuse the generated preview. For ARW files, brightness is guided by the camera's embedded preview when it can be read. Other RAW formats use the decoder's default display rendering. Viewing does not change the RAW source file.
+
+### Text editing
+
+Edit supported text directly in the viewer, then click Save or press `Ctrl+S` / `⌘S`. Closing the viewer also saves pending edits. Markdown can switch between source and rendered preview. Text in a linked folder is saved back to its original source file, without a separate managed copy; confirm that the source is safe to overwrite before editing.
 
 ## Tags, collections, and smart collections
 
 - **Tags**: Add from the Inspector or context menu, with batch tagging across multiple assets; filter by tags in the search box or filter panel.
 - **Collections**: Curate assets across folders (an asset can belong to multiple collections); removing an asset from a collection or deleting a collection never deletes the underlying file. Opening a parent collection lets you toggle whether to include descendant assets.
 - **Smart collections**: Save custom search queries and structured filter criteria, automatically displaying matching assets whenever opened; right-click to edit rules.
+
+### Tags in the Inspector
+
+- **Select and copy**: Click a tag to select it, Shift-click to select a range, or drag a marquee. Choose **Copy selected tags**, or press `Ctrl+C` / `⌘C` with focus in the tag section, to copy plain text with one tag name per line.
+- **Paste**: Select the destination assets and choose **Paste tags**, or focus the tag section and press `Ctrl+V` / `⌘V`. You can paste copied tags or text with one name per line. Blank lines and duplicate names are ignored. For multiple assets, tags are added to the entire selection.
+- **Browse by tag**: Ctrl-click a tag (⌘-click on macOS), or choose **Apply tag filter** from its context menu. The condition appears in the filter bar; use its `×` to remove it.
+- **Rename**: Double-click a tag name, press `F2` with the tag focused, or use its context menu. Renaming changes the library tag wherever it is used. If the name already exists, choose another name.
+- **Remove and cancel**: Choose **Edit tags**, remove tags with their `×` buttons, then choose **Finish editing tags** to save the removals. Cancel restores those pending removals. Outside edit mode, **Remove this tag** in the context menu immediately removes the association from the selected assets.
+- **Multiple assets**: The Inspector shows only tags shared by the selection. Batch removal affects those assets without deleting the tag from the library.
 
 ![Collection with tags in the Inspector](../assets/ui/collections-inspector.en.png)
 
@@ -141,7 +165,7 @@ Double-click an asset to open the fullscreen viewer (press `Esc` to exit):
 
 ## Trash and deletion
 
-Normal `Delete` / macOS `⌘⌫` moves an asset or folder to Trash. Windows `Shift+Delete` and macOS `⌥⌘Delete` delete from disk after a confirmation. The undo icon in the notification can reverse the most recent undoable file operation and refreshes the current view.
+Normal `Delete` / macOS `⌘⌫` moves a managed asset or folder to Trash. Windows `Shift+Delete` and macOS `⌥⌘Delete` delete from disk after a confirmation. The same permanent-delete shortcut can delete a linked asset's original file, bypassing Serpent Trash. The undo icon in the notification can reverse the most recent undoable file operation and refreshes the current view.
 
 ## Linked folders
 
@@ -149,7 +173,7 @@ Normal `Delete` / macOS `⌘⌫` moves an asset or folder to Trash. Windows `Shi
 
 ## WebDAV cloud sync
 
-Serpent can sync a library across machines over WebDAV: configure servers globally, bind each library, set auto-sync and the poll interval, and open remote synced libraries. See [Sync and external libraries](sync.md).
+Serpent can sync a library across machines over WebDAV: configure servers globally, bind each library, set auto-sync and the poll interval, and open remote synced libraries. See [Sync and external libraries](sync.en.md).
 
 ## Appearance: New UI
 
@@ -185,15 +209,17 @@ Adjust the interface in **Settings → Appearance**. The switch on the theme row
 | Exit viewer to browse | Esc | Esc |
 | Open in external app | ⌘O | Ctrl+O |
 | Reveal in file manager | ⌘⇧S | Ctrl+Shift+S |
+| Copy file path | ⌥⌘C | Ctrl+Shift+C |
 | Focus search | ⌘F | Ctrl+F |
 | Rename | F2 | F2 |
 | Move to Trash | ⌘⌫ | Delete |
 | Delete from disk | ⌥⌘Delete | Shift+Delete |
 | Cut / Copy / Paste | ⌘X / ⌘C / ⌘V | Ctrl+X / Ctrl+C / Ctrl+V |
 | Fit viewer | Numpad `.` | Numpad `.` |
+| Seek video / audio backward, forward (hold to repeat) | Ctrl+← / Ctrl+→ | Ctrl+← / Ctrl+→ |
 
 ![Shortcut settings](../assets/ui/settings-shortcuts.en.png)
 
 *Settings → Shortcuts lets you search actions or keys, rebind them, and review modified or conflicting entries.*
 
-See [Search and filters](search-and-filters.md) for query examples and [AI analysis](ai.md) for AI setup and jobs.
+See [Search and filters](search-and-filters.en.md) for query examples and [AI analysis](ai.en.md) for AI setup and jobs.

@@ -45,6 +45,37 @@ MCP transport 仍可能有协议层 `Mcp-Session-Id`，但它只用于请求关�
 
 库内结果应包含实际 `libraryId`；资源库变更通过 logging notification 报告 `changeSequence`，通知不是完整快照。
 
+## 搜索
+
+`serpent_asset_search` 的 `query` 接收结构化查询或 `null`；不要直接传工具栏字符串。`null` 表示当前目标资源库的非回收站资产。以完整标签名查询为例：
+
+```json
+{
+  "libraryId": "<library-id>",
+  "query": {
+    "clauses": [],
+    "expression": {
+      "version": 1,
+      "root": {
+        "kind": "TERM",
+        "field": "tags",
+        "match": "exact_tag",
+        "value": "角色"
+      }
+    }
+  },
+  "limit": 50,
+  "offset": 0
+}
+```
+
+- `TERM` 的 `field` 可为 `filename`、`tags`、`description`、`source_url`、`author`、`folder_path`、`metadata_text` 或 `null`（全部可搜索字段）。`match: 'contains'` 是包含匹配；`exact_tag` 只可用于 `tags`。
+- `AND` / `OR` 使用 `children` 数组，至少两个子节点；`NOT` 使用一个 `child`。树最多 63 个节点、深度 16。空 `root: null` 表示没有文本条件。
+- 使用 `expression` 时，`clauses` 必须为 `[]`，不能同时提交 `groups`。旧 `clauses` / `groups` 查询仍受支持并保留原语义。可选 `expressionSource` 只保留编辑文字，必须与 `expression` 同时存在，不代替表达式树。
+- 标签组合过滤使用 `filters` 中的 `{ field: 'tag_expression', exclude: false, expression }`，树内仅允许标签词项，排除写成 `NOT`。可选 `includeAi` 控制是否把 AI 标签纳入匹配。
+
+搜索继续服从 `scope`、`filters` 和 `sort`；分页 `limit` 最大 200。每个参数的完整字段以连接后的 `tools/list` Schema 为准。桌面字符串写法及示例见[搜索与过滤](../../user-guide/search-and-filters.md)；脚本和插件的 `assets.search` 字符串由宿主解析后再进入同一搜索执行。
+
 ## 撤回与重做
 
 撤回/重做由资源库 Worker 持有，Desktop、脚本、MCP 和插件共享同一条每库线性历史。MCP 不保存自己的 session 撤回栈，也不把文件 `operationId` 当作可执行的恢复凭据。

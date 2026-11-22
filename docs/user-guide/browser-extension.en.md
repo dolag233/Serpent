@@ -33,6 +33,12 @@ Media is downloaded by the **browser** (with cookies and the page Referer) and u
 4. **Drag-and-drop save**: drag an image and a tree-shaped save menu opens — hover `›` on a folder with children to enter its level, `‹` to go back, release outside the panel or press `Esc` to cancel.
 5. A “Saving to Serpent” bubble shows progress on the page.
 
+### Segmented video
+
+Serpent 0.3.6 and later can receive HLS / DASH segmented video from a compatible extension. Update both the desktop app and the separately released browser extension to versions supporting this feature, then use **Save to Serpent** on the web video. After the extension downloads the segments, the desktop app combines them into one video asset. A video transfer is limited to 500 MB.
+
+Saving depends on the extension being able to read the page's playlist and segments, and on the video's encoding. It does not work with every web player. If saving fails, check the extension's feedback and confirm that both the app and extension are updated.
+
 ### Options page
 
 Right-click the extension icon → Options to toggle:
