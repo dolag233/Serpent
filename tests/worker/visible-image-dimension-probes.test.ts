@@ -232,7 +232,7 @@ describe('visible-window image dimension probes', () => {
     void operation.then(() => { settled = true; }, () => { settled = true; });
 
     try {
-      await waitForReadCount(2);
+      await waitForReadCount(4);
       await vi.waitFor(() => expect(ready).toEqual(expect.arrayContaining(
         fastAssets.map((asset) => asset.assetId),
       )), { timeout: 3_000, interval: 2 });

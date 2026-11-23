@@ -24,6 +24,7 @@ import {
 } from '../../src/shared/protocol/channels';
 import type { WorkerCommand } from '../../src/shared/protocol/requests';
 import type { WorkerResult } from '../../src/shared/protocol/responses';
+import { parseSearchExpressionDetailed } from '../../src/shared/search-expression';
 
 const roots: string[] = [];
 const libraryId = '11111111-1111-4111-8111-111111111111';
@@ -212,18 +213,14 @@ describe('Desktop Console automation IPC', () => {
       ok: true,
       result: { items: [], total: 0, limit: 100, offset: 2, hasMore: false },
     });
+    const parsedQuery = parseSearchExpressionDetailed('name:Ser tag:y2k | author:Jane');
+    expect(parsedQuery.ok).toBe(true);
     expect(worker.commands.at(-1)).toEqual({
       type: 'asset.search',
       libraryId,
       query: {
         clauses: [],
-        groups: [
-          [
-            { field: 'filename', values: ['Ser'], exclude: false },
-            { field: 'tags', values: ['y2k'], exclude: false },
-          ],
-          [{ field: 'author', values: ['Jane'], exclude: false }],
-        ],
+        expression: parsedQuery.ok ? parsedQuery.expression : null,
       },
       scopeMode: false,
       limit: 100,
