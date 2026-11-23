@@ -7,6 +7,8 @@
  * unavailable, uncompressed and RLE truecolor TGA still decode locally.
  */
 
+import { loadSharp } from '../../shared/load-sharp';
+
 import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -46,7 +48,7 @@ async function decodeWithOiio(
     const exitCode = await runOiio([input, '-d', 'uint8', '-o', output]);
     if (exitCode !== 0) return null;
     const png = await readFile(output);
-    const { default: sharp } = await import('sharp');
+    const sharp = loadSharp();
     const image = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
     if (image.info.channels !== 4 || image.info.width <= 0 || image.info.height <= 0) {
       return null;

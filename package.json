@@ -90,6 +90,7 @@
     "sharp": "^0.35.3",
     "sqlite-vec": "0.1.9",
     "three": "^0.185.1",
+    "typescript": "6.0.3",
     "yauzl": "3.4.0",
     "zod": "4.4.3"
   },
@@ -114,7 +115,6 @@
     "globals": "17.7.0",
     "happy-dom": "^20.0.11",
     "to-ico": "^1.1.5",
-    "typescript": "6.0.3",
     "typescript-eslint": "8.63.0",
     "vite": "8.1.4",
     "vitest": "4.1.10"

@@ -1,3 +1,5 @@
+import { loadSharp } from '../shared/load-sharp';
+
 const PASSTHROUGH_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const JPEG_QUALITIES = [85, 70, 55, 40] as const;
 const MIN_EDGE_PX = 64;
@@ -29,8 +31,7 @@ function requireDefaultSharp(): SemanticImageSharpFactory {
   try {
     // Resolved from node_modules at runtime. vite.main.config.ts keeps this
     // external so the bundler does not try to parse the platform `.node`.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const sharp = require("sharp") as SemanticImageSharpFactory & {
+    const sharp = loadSharp() as SemanticImageSharpFactory & {
       cache?: (options: { files: number }) => void;
     };
     sharp.cache?.({ files: 0 });

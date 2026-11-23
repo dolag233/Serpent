@@ -48,6 +48,7 @@ import { isIP } from 'node:net';
 import { hostname, tmpdir } from 'node:os';
 
 import BetterSqlite3 from 'better-sqlite3';
+import { loadSharp } from '../shared/load-sharp';
 
 import {
   resolveBundledFontPath,
@@ -362,8 +363,7 @@ let sharpModule: SharpModule | undefined;
 function requireSharp(): SharpModule {
   if (!sharpModule) {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      sharpModule = require('sharp') as SharpModule;
+      sharpModule = loadSharp() as SharpModule;
       // libvips keeps recently used input files open in its file cache. On
       // Windows an open handle blocks delete/rename, which breaks asset
       // trash/move/rename right after a thumbnail or palette was generated

@@ -1,8 +1,7 @@
 import { renameSync, rmSync, statfsSync, statSync } from "node:fs";
 import path from "node:path";
-import sharp from "sharp";
-
 import { isBakeableStillImageFile } from "../shared/bakeable-still-image";
+import { loadSharp } from "../shared/load-sharp";
 
 const SPACE_MARGIN_BYTES = 1_048_576n;
 
@@ -45,7 +44,7 @@ export async function rotateStillImageFile(
   );
   const angle = direction === "clockwise" ? 90 : -90;
   try {
-    let pipeline = sharp(absolutePath, { failOn: "none" }).rotate(angle);
+    let pipeline = loadSharp()(absolutePath, { failOn: "none" }).rotate(angle);
     const lower = extension.toLowerCase();
     if (lower === ".jpg" || lower === ".jpeg" || lower === ".jfif") {
       pipeline = pipeline.jpeg({ quality: 95 });

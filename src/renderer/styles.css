@@ -15257,6 +15257,7 @@ select.ai-config-input.ai-config-languages {
   max-height: min(720px, calc(100vh - 48px));
 }
 .plugin-ui-dialog .plugin-view-host {
+  width: 100%;
   height: var(--plugin-ui-dialog-frame-height, 280px);
   flex: 0 0 auto;
 }
