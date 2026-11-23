@@ -3108,7 +3108,12 @@ function AppInner() {
       setAiProgressBannerVisible(true);
     });
     // Progress events drive the banner; a status RPC would wait behind the queue.
-  }, [aiConnectionFailureGate.failedJobIds, onAiConnectionFailureRetry]);
+  }, [
+    aiConnectionFailureGate.failedJobIds,
+    aiJobs?.failed,
+    aiJobs?.succeeded,
+    onAiConnectionFailureRetry,
+  ]);
 
 
   const selectedFolderId =

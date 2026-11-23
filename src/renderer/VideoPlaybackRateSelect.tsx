@@ -1,6 +1,7 @@
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -44,10 +45,14 @@ export function VideoPlaybackRateSelect({
   const hostRef = useRef<HTMLDivElement>(null);
   const valueRef = useRef(value);
   const echoedValueRef = useRef(value);
-  if (value !== echoedValueRef.current) {
+  // The wheel listener accumulates on these refs between commits. Sync in
+  // layout, not render (react-hooks/refs) and not a passive effect: a passive
+  // effect can apply an older controlled value after a newer wheel step.
+  useLayoutEffect(() => {
+    if (value === echoedValueRef.current) return;
     valueRef.current = value;
     echoedValueRef.current = value;
-  }
+  });
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listId = useId();
   const rateLabel = t("preview.playbackRateOption", { rate: value });

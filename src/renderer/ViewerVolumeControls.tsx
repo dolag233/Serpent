@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
@@ -29,10 +29,14 @@ export function ViewerVolumeControls({
   const trackRef = useRef<HTMLDivElement>(null);
   const volumeRef = useRef(volume);
   const echoedVolumeRef = useRef(volume);
-  if (volume !== echoedVolumeRef.current) {
+  // The wheel listener accumulates on these refs between commits. Sync in
+  // layout, not render (react-hooks/refs) and not a passive effect: a passive
+  // effect can apply an older controlled value after a newer wheel step.
+  useLayoutEffect(() => {
+    if (volume === echoedVolumeRef.current) return;
     volumeRef.current = volume;
     echoedVolumeRef.current = volume;
-  }
+  });
   const scrubbingPointerId = useRef<number | null>(null);
   const [scrubRatio, setScrubRatio] = useState<number | null>(null);
   const [adjusting, setAdjusting] = useState(false);

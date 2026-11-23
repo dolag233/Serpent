@@ -87,12 +87,13 @@ function createHarness(options?: {
       marqueeLayoutKey: "masonry-test",
     });
 
+    const setAssetSelectionAnchor = selection.setAssetSelectionAnchor;
     useLayoutEffect(() => {
       if (gridRef.current) publishCanvasAssetLayout(gridRef.current, geometry);
       if (options?.restoredAnchor) {
-        selection.setAssetSelectionAnchor(options.restoredAnchor);
+        setAssetSelectionAnchor(options.restoredAnchor);
       }
-    }, []);
+    }, [setAssetSelectionAnchor]);
 
     snapshot = {
       selectedAssetIds,
