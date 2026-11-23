@@ -14243,7 +14243,7 @@ select.ai-config-input.ai-config-languages {
   box-sizing: border-box;
   padding: 0 2px;
   border: 0;
-  border-radius: 2px;
+  border-radius: calc(2px * var(--ui-radius-scale, 1));
   background: transparent;
   color: inherit;
   font: inherit;

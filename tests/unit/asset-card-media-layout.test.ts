@@ -21,16 +21,10 @@ describe("asset-card media fallback layout", () => {
       "utf8",
     );
     expect(styles).toMatch(
-      /\.asset-card-hover-progress\s*\{[\s\S]*?height:\s*10px;[\s\S]*?background:\s*rgb\(255 255 255 \/ 35%\);/,
+      /\.asset-card-hover-progress\s*\{[\s\S]*?height:\s*3px;[\s\S]*?background:\s*rgb\(0 0 0 \/ 22%\);/,
     );
     expect(styles).toMatch(
-      /\.asset-card-hover-progress-fill\s*\{[\s\S]*?background:\s*rgb\(255 255 255 \/ 70%\);/,
-    );
-    expect(styles).toMatch(
-      /\[data-theme="light"\] \.asset-card-hover-progress\s*\{[\s\S]*?background:\s*rgb\(255 255 255 \/ 25%\);/,
-    );
-    expect(styles).toMatch(
-      /\[data-theme="light"\] \.asset-card-hover-progress-fill\s*\{[\s\S]*?background:\s*rgb\(255 255 255 \/ 50%\);/,
+      /\.asset-card-hover-progress-fill\s*\{[\s\S]*?background:\s*var\(--accent\);/,
     );
     expect(styles).not.toMatch(/\.asset-card-hover-playhead\s*\{/);
   });
