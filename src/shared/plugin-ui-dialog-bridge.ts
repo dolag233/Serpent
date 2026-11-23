@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import {
+  pluginWidgetDialogWidthSchema,
   pluginWidgetEventSchema,
   pluginWidgetNodeSchema,
   type PluginWidgetNode,
@@ -30,6 +31,7 @@ export const pluginUiDialogRequestPayloadSchema = z.strictObject({
   sessionId: z.string().uuid().optional(),
   title: z.string().min(1).max(160).optional(),
   submitLabel: z.string().min(1).max(64).optional(),
+  width: pluginWidgetDialogWidthSchema.optional(),
   tree: pluginWidgetNodeSchema.optional(),
 }).superRefine((value, context) => {
   if (value.tree !== undefined) {

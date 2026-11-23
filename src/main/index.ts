@@ -5357,6 +5357,7 @@ async function startApplication(): Promise<void> {
               sessionId: input.sessionId,
               title: input.title,
               ...(input.submitLabel === undefined ? {} : { submitLabel: input.submitLabel }),
+              ...(input.width === undefined ? {} : { width: input.width }),
               tree: input.tree,
             });
             ensureRendererKeyboardFocus(window, {

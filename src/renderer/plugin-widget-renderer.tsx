@@ -13,6 +13,7 @@ import {
   TextField,
 } from './ui/primitives';
 import { SettingsCard } from './ui/patterns';
+import { Field, getFieldAriaProps, getFieldControlClassName, getFieldIds } from './ui/primitives/Field';
 
 function listCellText(value: PluginWidgetListCell): string {
   return typeof value === 'string'
@@ -64,20 +65,32 @@ function collectPendingInputIds(tree: PluginWidgetNode): Set<string> {
 }
 
 function PluginWidgetTextField({
-  description,
-  disabled,
-  id,
-  label,
+  node,
   onChange,
   value,
 }: {
-  readonly description?: string;
-  readonly disabled?: boolean;
-  readonly id: string;
-  readonly label: string;
+  readonly node: Extract<PluginWidgetNode, { type: 'text' }>;
   readonly onChange: (value: string) => void;
   readonly value: string;
 }): ReactNode {
+  const { description, disabled, id, label, multiline, readOnly, rows } = node;
+  if (multiline === true) {
+    return (
+      <Field description={description} htmlFor={id} label={label}>
+        <textarea
+          {...getFieldAriaProps(getFieldIds(id), { hasDescription: description !== undefined, hasError: false })}
+          className={getFieldControlClassName({ className: 'plugin-widget-textarea' })}
+          disabled={disabled}
+          id={id}
+          maxLength={8_192}
+          onChange={(event) => onChange(event.target.value)}
+          readOnly={readOnly}
+          rows={rows ?? 4}
+          value={value}
+        />
+      </Field>
+    );
+  }
   return (
     <TextField
       description={description}
@@ -85,6 +98,7 @@ function PluginWidgetTextField({
       id={id}
       label={label}
       onChange={(event) => onChange(event.target.value)}
+      readOnly={readOnly}
       value={value}
     />
   );
@@ -255,10 +269,7 @@ export function PluginWidgetRenderer({
     const value = String(fieldValue(tree, values));
     return (
       <PluginWidgetTextField
-        description={tree.description}
-        disabled={tree.disabled}
-        id={tree.id}
-        label={tree.label}
+        node={tree}
         onChange={(next) => onChange(tree.id, next)}
         value={value}
       />

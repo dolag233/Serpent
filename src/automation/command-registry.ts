@@ -33,7 +33,7 @@ import {
   workerResultSchema,
   type WorkerResult,
 } from '../shared/protocol/responses';
-import { pluginWidgetNodeSchema } from '../shared/plugin-widget-ir';
+import { pluginWidgetDialogWidthSchema, pluginWidgetNodeSchema } from '../shared/plugin-widget-ir';
 
 /**
  * The Automation API is intentionally versioned independently from the
@@ -546,6 +546,7 @@ export const automationCommandInputSchemas = {
       sessionId: z.string().uuid(),
       title: nonBlankString.max(160),
       submitLabel: z.string().min(1).max(64).optional(),
+      width: pluginWidgetDialogWidthSchema.optional(),
       tree: pluginWidgetNodeSchema,
     }),
   ]),

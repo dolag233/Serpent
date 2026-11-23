@@ -372,6 +372,7 @@ export const pluginManagerViewContributionSchema = z.strictObject({
   entryPath: z.string().min(1).max(1_024).optional(),
   url: z.url().optional(),
   themePackage: pluginThemePackageSchema.optional(),
+  receivesInspectorSelection: z.literal(true).optional(),
   target: z.enum([
     'sidebar.entries',
     'workspace.views',

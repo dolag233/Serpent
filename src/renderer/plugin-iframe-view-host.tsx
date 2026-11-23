@@ -194,6 +194,7 @@ function PluginIframeViewSession({
   const containerRef = useRef<HTMLDivElement>(null);
   const readyRef = useRef(false);
   const mountedRef = useRef(false);
+  const announcedStateRef = useRef<unknown>(undefined);
   const deliveredSubmitNonce = useRef(0);
   const lifecycleRef = useRef<PluginViewLifecycleState>('loading');
   const loadCountRef = useRef(0);
@@ -220,6 +221,7 @@ function PluginIframeViewSession({
   const announceMounted = useCallback(() => {
     if (mountedRef.current) return;
     mountedRef.current = true;
+    announcedStateRef.current = state;
     postToPluginIframe(frameRef.current, {
       type: 'plugin-ui.view-mounted',
       contributionId: view.id,
@@ -237,9 +239,10 @@ function PluginIframeViewSession({
     postPluginThemeToIframe(frameRef.current, { view, resolvedTheme: resolved, revision: themeRevision });
   }, [resolved, themeRevision, view]);
 
-  // Host view context changes push state without a reload.
-  useEffect(() => {
+  const announceStateChange = useCallback((force = false) => {
     if (!readyRef.current || !mountedRef.current) return;
+    if (!force && Object.is(announcedStateRef.current, state)) return;
+    announcedStateRef.current = state;
     postToPluginIframe(frameRef.current, {
       type: 'plugin-ui.view-state-changed',
       contributionId: view.id,
@@ -247,6 +250,11 @@ function PluginIframeViewSession({
       state,
     });
   }, [state, view]);
+
+  // Host view context changes push state without a reload.
+  useEffect(() => {
+    announceStateChange();
+  }, [announceStateChange]);
 
   // Debounced resize notifications via requestAnimationFrame.
   useEffect(() => {
@@ -303,9 +311,11 @@ function PluginIframeViewSession({
         });
         return;
       }
+      const needsStateSnapshot = lifecycleRef.current !== 'ready' && mountedRef.current && state !== undefined;
       readyRef.current = true;
       transition({ type: 'plugin-ready' });
       announceMounted();
+      announceStateChange(needsStateSnapshot);
       postPluginThemeToIframe(frame, { view, resolvedTheme: resolved, revision: themeRevision });
       if (view.viewType === 'dialog') {
         postToPluginIframe(frame, {

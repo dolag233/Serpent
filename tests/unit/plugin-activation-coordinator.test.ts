@@ -922,14 +922,14 @@ describe('PluginActivationCoordinator', () => {
     })).rejects.toThrow('The plugin command contribution is not active.');
   });
 
-  it('serves dialog HTML and sibling scripts through the plugin UI protocol', async () => {
+  it.each([false, true])('serves plugin UI assets and gates Inspector selection (permission: %s)', async (canInspect) => {
     const { createContributionRegistry } = await import('../../src/plugins/plugin-contributions');
     const contributions = createContributionRegistry();
     const pluginPackage = {
       lock: { pluginId: 'com.example.dialog', version: '1.0.0', packageHash: 'a'.repeat(64) },
       manifest: {
         runtime: { mode: 'restricted' as const, entry: 'dist/main.js', instanceScope: 'global' as const },
-        permissions: ['ui.dialogs' as const],
+        permissions: canInspect ? ['ui.dialogs', 'ui.inspector'] as const : ['ui.dialogs'] as const,
         contributes: {
           commands: [],
           menus: {},
@@ -938,7 +938,7 @@ describe('PluginActivationCoordinator', () => {
           inspector: [],
           viewerActions: [],
           shortcuts: [],
-          views: [],
+          views: [{ id: 'selection', title: 'Selection', location: 'inspector', entry: 'entry/ui/selection.html' }],
           hooks: [],
           jobs: [],
           providers: [],
@@ -983,6 +983,10 @@ describe('PluginActivationCoordinator', () => {
     const active = coordinator.listActiveInstances('library-1');
     const instanceId = active[0]?.instanceId;
     expect(instanceId).toEqual(expect.any(String));
+    const [inspector] = coordinator.listContributions({ libraryId: 'library-1', target: 'inspector.views' });
+    expect(inspector).toMatchObject({ kind: 'view', target: 'inspector.views' });
+    expect(inspector && 'receivesInspectorSelection' in inspector ? inspector.receivesInspectorSelection : undefined)
+      .toBe(canInspect ? true : undefined);
     const dialog = coordinator.listContributions({
       libraryId: 'library-1',
       target: 'dialogs',

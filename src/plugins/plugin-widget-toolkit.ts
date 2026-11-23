@@ -2,6 +2,7 @@ import {
   collectPluginWidgetValues,
   parsePluginWidgetTree,
   type PluginWidgetEvent,
+  type PluginWidgetDialogWidth,
   type PluginWidgetNode,
   type PluginWidgetOption,
   type PluginWidgetListCell,
@@ -48,7 +49,11 @@ export type PluginWidgetToolkit = {
     readonly rows: readonly (readonly PluginWidgetListCell[])[];
     readonly emptyText?: string;
   }): PluginWidgetNode;
-  text(spec: FieldSpec<string>): PluginWidgetNode;
+  text(spec: FieldSpec<string> & {
+    readonly multiline?: boolean;
+    readonly rows?: number;
+    readonly readOnly?: boolean;
+  }): PluginWidgetNode;
   number(spec: FieldSpec<number> & {
     readonly min?: number;
     readonly max?: number;
@@ -188,6 +193,9 @@ export function createPluginWidgetToolkit(): PluginWidgetToolkit {
       const value = rememberField(spec);
       return {
         type: 'text',
+        ...(spec.multiline === undefined ? {} : { multiline: spec.multiline }),
+        ...(spec.rows === undefined ? {} : { rows: spec.rows }),
+        ...(spec.readOnly === undefined ? {} : { readOnly: spec.readOnly }),
         id: spec.id,
         label: spec.label,
         value,
@@ -302,6 +310,7 @@ export function isPluginWidgetDialogInput(input: unknown): input is PluginWidget
 export type PluginWidgetDialogInput = {
   readonly title: string;
   readonly submitLabel?: string;
+  readonly width?: PluginWidgetDialogWidth;
   readonly render: (ui: PluginWidgetToolkit) => PluginWidgetChild;
 };
 
@@ -311,6 +320,7 @@ export type PluginWidgetDialogAdapters = {
     sessionId: string;
     title: string;
     submitLabel?: string;
+    width?: PluginWidgetDialogWidth;
     tree: PluginWidgetNode;
   }): Promise<unknown>;
   patch(input: { sessionId: string; tree: PluginWidgetNode }): Promise<void>;
@@ -347,6 +357,7 @@ export async function runPluginWidgetDialog(
     const raw = await adapters.open({
       sessionId,
       title: input.title,
+      ...(input.width === undefined ? {} : { width: input.width }),
       ...(typeof input.submitLabel === 'string' && input.submitLabel.length > 0
         ? { submitLabel: input.submitLabel }
         : {}),

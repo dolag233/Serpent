@@ -16434,6 +16434,7 @@ function AppInner() {
         onFilterTag={(tagId) => void chooseTag(tagId)}
         onRenameTag={handleRenameTagInManagement}
         selectedAsset={selectedAsset}
+        selectedAssetIds={selectedAssetIds}
         selectedAssets={selectedAssets}
         multiEdit={multiEdit}
         versionConflict={versionConflict}

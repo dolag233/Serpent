@@ -14177,10 +14177,10 @@ select.ai-config-input.ai-config-languages {
 
 .inspector-tag-chip .tag-chip-name {
   max-width: none;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  overflow: visible;
-  text-overflow: clip;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   line-height: 1.4;
 }
 
@@ -15273,15 +15273,27 @@ select.ai-config-input.ai-config-languages {
   background: transparent;
 }
 .plugin-ui-dialog--widget {
-  width: min(520px, calc(100vw - 48px));
+  --plugin-widget-dialog-width: 520px;
+  width: min(var(--plugin-widget-dialog-width), calc(100vw - var(--ui-space-6) * 2));
   -webkit-app-region: no-drag;
+}
+.plugin-ui-dialog--widget[data-widget-width="compact"] {
+  --plugin-widget-dialog-width: 400px;
+}
+.plugin-ui-dialog--widget[data-widget-width="wide"] {
+  --plugin-widget-dialog-width: 720px;
 }
 .ui-dialog-shell.plugin-ui-dialog--widget {
   max-height: calc(100dvh - var(--ui-space-6) - var(--ui-space-6));
 }
 .plugin-ui-dialog--widget input,
+.plugin-ui-dialog--widget textarea,
 .plugin-ui-dialog--widget button {
   -webkit-app-region: no-drag;
+}
+textarea.ui-field__control.plugin-widget-textarea {
+  resize: none;
+  overflow: auto;
 }
 .plugin-ui-dialog-stage {
   /* Extra class on `dialog-backdrop` so widget selects can detect the scrim.

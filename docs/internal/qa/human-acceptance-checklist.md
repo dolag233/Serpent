@@ -1,5 +1,13 @@
 # Serpent 人类功能验收清单
 
+## 2026-11-23 Inspector 插件与长标签
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| PLUGIN-INSPECTOR-100 / Serpent-b97393 | Inspector iframe 读取当前选中资产 | 自动化验收通过 | 在库中启用声明 `ui.inspector` 的 Inspector 视图，切换单选和多选 | 当前视图收到选中 ID 和主选中项 | Windows 后台 Electron 验证单选、切换、多选，单测验证权限与数量上限。[开发记录](../development/2026-11-23-github-100.md) | macOS、安装包及人工操作未执行 |
+| PLUGIN-WIDGET-100 / Serpent-b97393 | Widget 弹窗宽度及多行文本 | 自动化验收通过 | 打开宽档位的 Widget，输入有换行的提示词，再提交 | 弹窗使用宽档位，提交保留换行 | Windows 后台 Electron 验证宽档位与提交，单测验证行数边界与只读字段。[开发记录](../development/2026-11-23-github-100.md) | macOS、安装包及人工操作未执行 |
+| INSPECTOR-TAG-100 / Serpent-b97393 | 右侧长标签省略 | 人类验收通过 | 选中含长标签的资产，将鼠标停在标签上 | 标签单行显示，尾部省略，悬停显示完整名称 | Windows 后台 Electron 验证省略样式与实际溢出，截图验证悬停显示完整名称。[开发记录](../development/2026-11-23-github-100.md) | 用户查看默认和悬停截图后确认保留当前效果 |
+
 ## 2026-11-23 已发布版本回归
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
