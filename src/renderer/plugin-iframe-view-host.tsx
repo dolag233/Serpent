@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
   useRef,
   useState,
   type ReactNode,
@@ -149,18 +150,7 @@ function postPluginThemeToIframe(
  * a placeholder overlay so the surface never blinks blank; crashes surface a
  * retry affordance and dispose cleans up listeners and notifies the plugin.
  */
-export function PluginIframeViewHost({
-  view,
-  pluginApi,
-  libraryId,
-  className,
-  title,
-  state,
-  initialPayload,
-  onDialogComplete,
-  onDialogContentSize,
-  dialogSubmitNonce,
-}: {
+type PluginIframeViewHostProps = {
   view: PluginIframeViewDescriptor;
   pluginApi: SerpentPluginManagerApi | undefined;
   libraryId: string | undefined;
@@ -177,13 +167,35 @@ export function PluginIframeViewHost({
   onDialogContentSize?: (size: { width: number; height: number }) => void;
   /** Increment to ask a ready dialog iframe to submit its current form. */
   dialogSubmitNonce?: number;
-}): ReactNode {
+};
+
+export function PluginIframeViewHost(props: PluginIframeViewHostProps): ReactNode {
+  const { view, libraryId } = props;
+  const key = JSON.stringify([view.pluginId, view.pluginInstanceId, view.id, view.viewType,
+    view.scope, view.scope === 'library' ? libraryId : null, view.url]);
+  return <PluginIframeViewSession key={key} {...props} />;
+}
+
+function PluginIframeViewSession({
+  view,
+  pluginApi,
+  libraryId,
+  className,
+  title,
+  state,
+  initialPayload,
+  onDialogComplete,
+  onDialogContentSize,
+  dialogSubmitNonce,
+}: PluginIframeViewHostProps): ReactNode {
   const t = useT();
   const { resolved, themeRevision } = useTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const readyRef = useRef(false);
   const mountedRef = useRef(false);
+  const announcedStateRef = useRef<unknown>(undefined);
+  const deliveredSubmitNonce = useRef(0);
   const lifecycleRef = useRef<PluginViewLifecycleState>('loading');
   const loadCountRef = useRef(0);
   const [lifecycle, setLifecycleState] = useState<PluginViewLifecycleState>('loading');
@@ -193,19 +205,10 @@ export function PluginIframeViewHost({
     setLifecycleState(lifecycleRef.current);
   }
 
-  // Scope isolation: a view instance belongs to (contribution, scope, library).
-  // Changing the key rebuilds the frame document; the message-effect cleanup
-  // resets the handshake, and the fresh document's load event re-enters
-  // 'loading' naturally (no state reset in an effect here).
-  const instanceKey = `${view.id}:${view.scope}:${view.scope === 'library' ? (libraryId ?? 'none') : 'global'}`;
-
   useEffect(() => {
-    loadCountRef.current = 0;
-  }, [instanceKey]);
-
-  useEffect(() => {
-    if (dialogSubmitNonce === undefined || dialogSubmitNonce < 1) return;
+    if (dialogSubmitNonce === undefined || dialogSubmitNonce <= deliveredSubmitNonce.current) return;
     if (lifecycle !== 'ready') return;
+    deliveredSubmitNonce.current = dialogSubmitNonce;
     postToPluginIframe(frameRef.current, {
       type: 'plugin-ui.dialog-request-submit',
       contributionId: view.id,
@@ -218,6 +221,7 @@ export function PluginIframeViewHost({
   const announceMounted = useCallback(() => {
     if (mountedRef.current) return;
     mountedRef.current = true;
+    announcedStateRef.current = state;
     postToPluginIframe(frameRef.current, {
       type: 'plugin-ui.view-mounted',
       contributionId: view.id,
@@ -235,9 +239,10 @@ export function PluginIframeViewHost({
     postPluginThemeToIframe(frameRef.current, { view, resolvedTheme: resolved, revision: themeRevision });
   }, [resolved, themeRevision, view]);
 
-  // Host view context changes push state without a reload.
-  useEffect(() => {
+  const announceStateChange = useCallback((force = false) => {
     if (!readyRef.current || !mountedRef.current) return;
+    if (!force && Object.is(announcedStateRef.current, state)) return;
+    announcedStateRef.current = state;
     postToPluginIframe(frameRef.current, {
       type: 'plugin-ui.view-state-changed',
       contributionId: view.id,
@@ -245,6 +250,11 @@ export function PluginIframeViewHost({
       state,
     });
   }, [state, view]);
+
+  // Host view context changes push state without a reload.
+  useEffect(() => {
+    announceStateChange();
+  }, [announceStateChange]);
 
   // Debounced resize notifications via requestAnimationFrame.
   useEffect(() => {
@@ -274,142 +284,145 @@ export function PluginIframeViewHost({
     };
   }, [view]);
 
-  useEffect(() => {
+  const receiveMessage = useEffectEvent((event: MessageEvent<unknown>) => {
     const pluginOrigin = `serpent-plugin://${view.pluginId}`;
-    // Captured at effect time: the cleanup notifies the exact frame this
-    // effect served, even if the ref has moved on by then.
-    const servedFrame = frameRef.current;
-    const onMessage = (event: MessageEvent<unknown>) => {
-      const frame = frameRef.current;
-      if (frame === null || event.source !== frame.contentWindow) return;
-      if (!isTrustedPluginUiMessage({
-        origin: event.origin,
-        source: event.source,
-        expectedOrigin: 'null',
-        expectedPluginOrigin: pluginOrigin,
-        expectedSource: frame.contentWindow,
-      })) return;
-      let message;
-      try {
-        message = parsePluginUiIframeMessage(event.data);
-      } catch {
+    const frame = frameRef.current;
+    if (frame === null || event.source !== frame.contentWindow) return;
+    if (!isTrustedPluginUiMessage({
+      origin: event.origin,
+      source: event.source,
+      expectedOrigin: 'null',
+      expectedPluginOrigin: pluginOrigin,
+      expectedSource: frame.contentWindow,
+    })) return;
+    let message;
+    try {
+      message = parsePluginUiIframeMessage(event.data);
+    } catch {
+      return;
+    }
+    if (message.type === 'plugin-ui.ready') {
+      if (!pluginUiIframeReadyMatches(view, message)) {
+        console.warn('plugin-ui.ready-mismatch', {
+          expectedContributionId: view.id,
+          expectedInstanceId: view.pluginInstanceId,
+          receivedContributionId: message.contributionId,
+          receivedInstanceId: message.instanceId,
+        });
         return;
       }
-      if (message.type === 'plugin-ui.ready') {
-        if (!pluginUiIframeReadyMatches(view, message)) {
-          console.warn('plugin-ui.ready-mismatch', {
-            expectedContributionId: view.id,
-            expectedInstanceId: view.pluginInstanceId,
-            receivedContributionId: message.contributionId,
-            receivedInstanceId: message.instanceId,
-          });
-          return;
-        }
-        readyRef.current = true;
-        transition({ type: 'plugin-ready' });
-        announceMounted();
-        postPluginThemeToIframe(frame, { view, resolvedTheme: resolved, revision: themeRevision });
-        if (view.viewType === 'dialog') {
-          postToPluginIframe(frame, {
-            type: 'plugin-ui.dialog-payload',
-            contributionId: view.id,
-            instanceId: view.pluginInstanceId,
-            payload: initialPayload ?? null,
-          });
-        }
+      const needsStateSnapshot = lifecycleRef.current !== 'ready' && mountedRef.current && state !== undefined;
+      readyRef.current = true;
+      transition({ type: 'plugin-ready' });
+      announceMounted();
+      announceStateChange(needsStateSnapshot);
+      postPluginThemeToIframe(frame, { view, resolvedTheme: resolved, revision: themeRevision });
+      if (view.viewType === 'dialog') {
+        postToPluginIframe(frame, {
+          type: 'plugin-ui.dialog-payload',
+          contributionId: view.id,
+          instanceId: view.pluginInstanceId,
+          payload: initialPayload ?? null,
+        });
+      }
+      return;
+    }
+    if (view.viewType === 'dialog' && message.type === 'plugin-ui.dialog-content-size') {
+      onDialogContentSize?.(message);
+      return;
+    }
+    if (view.viewType === 'dialog' && onDialogComplete !== undefined) {
+      if (message.type === 'plugin-ui.dialog-complete') {
+        onDialogComplete(message.result ?? null);
         return;
       }
-      if (view.viewType === 'dialog' && message.type === 'plugin-ui.dialog-content-size') {
-        onDialogContentSize?.(message);
+      if (message.type === 'plugin-ui.dialog-cancelled') {
+        onDialogComplete(null);
         return;
       }
-      if (view.viewType === 'dialog' && onDialogComplete !== undefined) {
-        if (message.type === 'plugin-ui.dialog-complete') {
-          onDialogComplete(message.result ?? null);
-          return;
-        }
-        if (message.type === 'plugin-ui.dialog-cancelled') {
-          onDialogComplete(null);
-          return;
-        }
-      }
-      if (!readyRef.current || pluginApi === undefined || libraryId === undefined) return;
-      if (message.type === 'plugin-ui.invoke-command') {
-        void pluginApi.runPluginCommand({
-          type: 'plugin-manager.run-command',
+    }
+    if (!readyRef.current || pluginApi === undefined || libraryId === undefined) return;
+    if (message.type === 'plugin-ui.invoke-command') {
+      void pluginApi.runPluginCommand({
+        type: 'plugin-manager.run-command',
+        libraryId,
+        pluginId: view.pluginId,
+        commandId: message.commandId,
+        ...message.context,
+      }).then((result) => {
+        postToPluginIframe(frame, {
+          type: 'plugin-ui.command-result',
+          requestId: message.requestId,
+          ok: result.ok,
+          ...(result.ok ? {} : { errorCode: result.code }),
+        });
+      }).catch(() => {
+        postToPluginIframe(frame, {
+          type: 'plugin-ui.command-result',
+          requestId: message.requestId,
+          ok: false,
+          errorCode: 'operation-failed',
+        });
+      });
+      return;
+    }
+    if (message.type === 'plugin-ui.storage.get' || message.type === 'plugin-ui.storage.set') {
+      const storageRequest = message.type === 'plugin-ui.storage.get'
+        ? {
+          type: 'plugin-manager.ui-storage-get' as const,
           libraryId,
           pluginId: view.pluginId,
-          commandId: message.commandId,
-          ...message.context,
-        }).then((result) => {
-          postToPluginIframe(frame, {
-            type: 'plugin-ui.command-result',
-            requestId: message.requestId,
-            ok: result.ok,
-            ...(result.ok ? {} : { errorCode: result.code }),
-          });
-        }).catch(() => {
-          postToPluginIframe(frame, {
-            type: 'plugin-ui.command-result',
-            requestId: message.requestId,
-            ok: false,
-            errorCode: 'operation-failed',
-          });
+          pluginInstanceId: view.pluginInstanceId,
+          key: message.key,
+        }
+        : {
+          type: 'plugin-manager.ui-storage-set' as const,
+          libraryId,
+          pluginId: view.pluginId,
+          pluginInstanceId: view.pluginInstanceId,
+          key: message.key,
+          value: message.value,
+        };
+      void pluginApi.request(storageRequest).then((result) => {
+        const value = 'value' in result && result.value !== undefined ? result.value : null;
+        postToPluginIframe(frame, {
+          type: 'plugin-ui.storage.result',
+          requestId: message.requestId,
+          ok: result.ok,
+          ...(result.ok && message.type === 'plugin-ui.storage.get' ? { value } : {}),
+          ...(result.ok ? {} : { errorCode: result.code }),
         });
-        return;
-      }
-      if (message.type === 'plugin-ui.storage.get' || message.type === 'plugin-ui.storage.set') {
-        const storageRequest = message.type === 'plugin-ui.storage.get'
-          ? {
-            type: 'plugin-manager.ui-storage-get' as const,
-            libraryId,
-            pluginId: view.pluginId,
-            pluginInstanceId: view.pluginInstanceId,
-            key: message.key,
-          }
-          : {
-            type: 'plugin-manager.ui-storage-set' as const,
-            libraryId,
-            pluginId: view.pluginId,
-            pluginInstanceId: view.pluginInstanceId,
-            key: message.key,
-            value: message.value,
-          };
-        void pluginApi.request(storageRequest).then((result) => {
-          const value = 'value' in result && result.value !== undefined ? result.value : null;
-          postToPluginIframe(frame, {
-            type: 'plugin-ui.storage.result',
-            requestId: message.requestId,
-            ok: result.ok,
-            ...(result.ok && message.type === 'plugin-ui.storage.get' ? { value } : {}),
-            ...(result.ok ? {} : { errorCode: result.code }),
-          });
-        }).catch(() => {
-          postToPluginIframe(frame, {
-            type: 'plugin-ui.storage.result',
-            requestId: message.requestId,
-            ok: false,
-            errorCode: 'operation-failed',
-          });
+      }).catch(() => {
+        postToPluginIframe(frame, {
+          type: 'plugin-ui.storage.result',
+          requestId: message.requestId,
+          ok: false,
+          errorCode: 'operation-failed',
         });
-      }
-    };
+      });
+    }
+  });
+
+  const { id: contributionId, pluginInstanceId } = view;
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    const onMessage = (event: MessageEvent<unknown>) => receiveMessage(event);
     window.addEventListener('message', onMessage);
     return () => {
       window.removeEventListener('message', onMessage);
       // Deterministic disposal: notify the plugin and reset the handshake.
       if (readyRef.current || mountedRef.current) {
-        postToPluginIframe(servedFrame, {
+        postToPluginIframe(frame, {
           type: 'plugin-ui.view-unmounted',
-          contributionId: view.id,
-          instanceId: view.pluginInstanceId,
+          contributionId,
+          instanceId: pluginInstanceId,
         });
       }
       readyRef.current = false;
       mountedRef.current = false;
-      transition({ type: 'dispose' });
     };
-  }, [announceMounted, initialPayload, libraryId, onDialogComplete, onDialogContentSize, pluginApi, resolved, themeRevision, view]);
+  }, [contributionId, pluginInstanceId]);
 
   const showPlaceholder = lifecycle === 'loading' || lifecycle === 'reloading';
   const crashed = lifecycle === 'crashed';
@@ -418,7 +431,6 @@ export function PluginIframeViewHost({
     <div className="plugin-view-host" ref={containerRef}>
       <iframe
         className={className}
-        key={instanceKey}
         onError={() => transition({ type: 'frame-error' })}
         onLoad={() => {
           loadCountRef.current += 1;

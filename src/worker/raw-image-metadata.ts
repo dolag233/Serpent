@@ -331,3 +331,10 @@ export async function extractRawImageMetadata(
   const result = await extractRawImageMetadataDetailed(absoluteFilePath, parser);
   return result.status === 'metadata' ? result.metadata : null;
 }
+
+/** exifr may translate EXIF orientation into a human-readable rotation. */
+export function rawOrientationSwapsDimensions(value: number | string | null | undefined): boolean {
+  const number = typeof value === 'number' ? value : Number(value);
+  if (Number.isInteger(number) && number >= 5 && number <= 8) return true;
+  return typeof value === 'string' && /\brotate\s+(?:90|270)\b|transpose|transverse/i.test(value);
+}

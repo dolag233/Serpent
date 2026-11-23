@@ -82,7 +82,9 @@ Console 的脚本源最多 64 KiB；脚本输出逐行收集，单行最多 16 K
 
 ## 搜索语法
 
-`serpent.assets.search({ query })` 使用与工具栏相同的文本搜索语法；`query` 可为字符串或 `null`。`null` 表示当前资源库的非回收站资产。支持空格 AND、`|` OR、`-` 排除、引号短语和字段限定；字段别名包括 `name`/`filename`、`tag`/`tags`、`desc`/`description`、`source`/`url`/`link`/`source_url`、`author`、`path`/`folder`/`folder_path`、`meta`/`metadata`/`metadata_text`。搜索是包含匹配，例如 `rain` 可能命中 `rainbow`，要更严格请使用更长 token 或多字段组合。
+`serpent.assets.search({ query })` 使用与工具栏相同的文本搜索语法；`query` 可为字符串或 `null`。`null` 表示当前资源库的非回收站资产。空格表示 AND，`|` 表示 OR，`-` 排除词项或括号分组，双引号保留短语。字段别名包括 `name`/`filename`、`tag`/`tags`、`desc`/`description`、`source`/`url`/`link`/`source_url`、`author`、`path`/`folder`/`folder_path`、`meta`/`metadata`/`metadata_text`。普通搜索和 `字段:值` 是包含匹配，例如 `rain` 可能命中 `rainbow`；`tag=rain` 只匹配完整标签 rain。
+
+例如 `(tag=角色 | tag=生物) name:"英雄概念" -tag=草稿` 要求角色或生物标签、文件名含英雄概念，且没有草稿标签。字符串最多 512 字符、32 个词项、8 层括号，无效语法会作为参数错误拒绝。完整写法见[搜索与过滤](../../user-guide/search-and-filters.md)。
 
 当前 Console 还接受 Registry 的结构化搜索对象，由宿主归一化；若没有明确需要，优先用字符串查询。搜索仍只返回分页资产摘要和可选摘要，不返回磁盘路径。
 

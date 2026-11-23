@@ -18,6 +18,7 @@ export const APP_UPDATE_ERROR_CODES = [
   'asset-missing',
   'verification-failed',
   'download-failed',
+  'insufficient-space',
   'open-failed',
   'busy',
   'not-available',

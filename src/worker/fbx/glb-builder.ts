@@ -9,6 +9,7 @@ import type {
 } from './descriptor';
 import { decodeTextureToRgba } from './oiio-texture';
 import { appendRgbaTextureChunk } from '../../shared/fbx-rgba-chunk';
+import { loadSharp } from '../../shared/load-sharp';
 
 /**
  * glTF 2.0 GLB builder for the ufbx bridge descriptor.
@@ -116,7 +117,7 @@ async function compositeMetallicRoughness(
   roughness: ResolvedTexture,
 ): Promise<Buffer | null> {
   try {
-    const { default: sharp } = await import('sharp');
+    const sharp = loadSharp();
     const metadata = await sharp(metalness.bytes).metadata();
     const width = metadata.width ?? 0;
     const height = metadata.height ?? 0;

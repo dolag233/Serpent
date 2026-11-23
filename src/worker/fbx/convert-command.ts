@@ -63,7 +63,9 @@ export async function handleFbxConvertCommand(
   }
 
   const existing = inFlight.get(key);
-  if (existing) return await waitForConversion(existing, signal);
+  // A cancelled runtime may still be exiting. Its replacement must use a new
+  // conversion intent; the parser queue retains the thread-exit barrier.
+  if (existing && !existing.controller.signal.aborted) return await waitForConversion(existing, signal);
 
   const controller = new AbortController();
   const entry: InFlightConversion = {

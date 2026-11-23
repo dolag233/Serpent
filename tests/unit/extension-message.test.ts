@@ -1,6 +1,6 @@
 import * as http from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -9,6 +9,7 @@ import {
   createExtensionServer,
   extensionCollectionSummaries,
   MAX_EXTENSION_UPLOAD_BYTES,
+  reapExtensionUploadStaging,
   saveIntentSchema,
   type ExtensionServer,
   type ExtensionServerOptions,
@@ -816,17 +817,56 @@ describe('createExtensionServer', () => {
   });
 
   describe('POST /save-upload', () => {
+    it('rejects a request before writing when the staging volume is full', async () => {
+      const stagingRoot = path.join(os.tmpdir(), `serpent-ext-test-${randomUUID()}`);
+      await mkdir(stagingRoot);
+      try {
+        server = await startServer({
+          port: TEST_PORT,
+          uploadStagingRoot: stagingRoot,
+          probeUploadFreeBytes: async () => 1,
+          onSaveUpload: () => { throw new Error('The import should not start.'); },
+        });
+        const res = await postUpload(server.port, Buffer.from('payload'), validUploadHeaders);
+        expect(res.status).toBe(507);
+        expect(res.body).toMatchObject({ reason: 'insufficient disk space' });
+        expect(await readdir(stagingRoot)).toEqual([]);
+      } finally {
+        await rm(stagingRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('reaps only recognized extension tasks left in the profile', async () => {
+      const stagingRoot = path.join(os.tmpdir(), `serpent-ext-test-${randomUUID()}`);
+      const stale = [`serpent-ext-upload-${randomUUID()}`, `serpent-extension-download-${randomUUID()}`,
+        'serpent-extension-import-aB123c'];
+      try {
+        for (const name of stale) {
+          const directory = path.join(stagingRoot, name);
+          await mkdir(directory, { recursive: true });
+          await writeFile(path.join(directory, 'partial.png'), 'partial');
+        }
+        await mkdir(path.join(stagingRoot, 'serpent-extension-import-manual-folder'));
+        await reapExtensionUploadStaging(stagingRoot, (error) => { throw error; });
+        expect(await readdir(stagingRoot)).toEqual(['serpent-extension-import-manual-folder']);
+      } finally {
+        await rm(stagingRoot, { recursive: true, force: true });
+      }
+    });
+
     it('returns 202 for a valid upload and calls onSaveUpload', async () => {
       const uploads: SaveUploadRequest[] = [];
       const stagingRoot = path.join(os.tmpdir(), `serpent-ext-test-${randomUUID()}`);
       await mkdir(stagingRoot, { recursive: true });
 
+      let fileContent: Buffer | undefined;
       try {
         server = await startServer({
           port: TEST_PORT,
           uploadStagingRoot: stagingRoot,
           onSaveUpload: async (upload) => {
             uploads.push(upload);
+            fileContent = await readFile(upload.stagedFilePath);
             return { accepted: true };
           },
         });
@@ -851,9 +891,8 @@ describe('createExtensionServer', () => {
         });
         expect(uploads[0]).not.toHaveProperty('targetCollectionId');
 
-        const fileContent = await readFile(uploads[0]!.stagedFilePath);
         expect(fileContent).toEqual(payload);
-        await rm(uploads[0]!.stagingDirectory, { recursive: true, force: true });
+        expect(await readdir(stagingRoot)).toEqual([]);
       } finally {
         await rm(stagingRoot, { recursive: true, force: true });
       }
@@ -866,10 +905,7 @@ describe('createExtensionServer', () => {
         server = await startServer({
           port: TEST_PORT,
           uploadStagingRoot: stagingRoot,
-          onSaveUpload: async (upload) => {
-            await rm(upload.stagingDirectory, { recursive: true, force: true });
-            return { accepted: true, duplicate: true };
-          },
+          onSaveUpload: () => ({ accepted: true, duplicate: true }),
         });
         const res = await postUpload(server.port, Buffer.from('fake-image-bytes'), validUploadHeaders);
         expect(res.status).toBe(202);
@@ -902,7 +938,7 @@ describe('createExtensionServer', () => {
           targetFolderId: null,
           targetCollectionId: 'col/1',
         });
-        await rm(uploads[0]!.stagingDirectory, { recursive: true, force: true });
+        expect(await readdir(stagingRoot)).toEqual([]);
       } finally {
         await rm(stagingRoot, { recursive: true, force: true });
       }
@@ -939,6 +975,7 @@ describe('createExtensionServer', () => {
           reason: 'INVALID_IMPORT_SOURCE',
           failureKind: 'source-invalid',
         });
+        expect(await readdir(stagingRoot)).toEqual([]);
       } finally {
         await rm(stagingRoot, { recursive: true, force: true });
       }
@@ -1013,7 +1050,7 @@ describe('createExtensionServer', () => {
           expect(rejected.body, mediaUrl).toEqual({ status: 'rejected', reason: 'invalid media url' });
         }
         expect(uploads).toHaveLength(1);
-        await rm(uploads[0]!.stagingDirectory, { recursive: true, force: true });
+        expect(await readdir(stagingRoot)).toEqual([]);
       } finally {
         await rm(stagingRoot, { recursive: true, force: true });
       }
@@ -1046,7 +1083,7 @@ describe('createExtensionServer', () => {
         });
         expect(uploads[0]).not.toHaveProperty('sourcePageUrl');
         expect(uploads[0]).not.toHaveProperty('mediaUrl');
-        await rm(uploads[0]!.stagingDirectory, { recursive: true, force: true });
+        expect(await readdir(stagingRoot)).toEqual([]);
       } finally {
         await rm(stagingRoot, { recursive: true, force: true });
       }
@@ -1108,8 +1145,8 @@ describe('createExtensionServer', () => {
         );
 
         expect(res.status).toBe(202);
-        expect(uploads[0]?.stagingDirectory).toContain(stagingRoot);
-        await rm(uploads[0]!.stagingDirectory, { recursive: true, force: true });
+        expect(uploads[0]?.stagedFilePath).toContain(stagingRoot);
+        expect(await readdir(stagingRoot)).toEqual([]);
       } finally {
         await rm(stagingRoot, { recursive: true, force: true });
       }

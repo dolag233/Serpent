@@ -12,7 +12,7 @@ it.skipIf(process.env.SERPENT_LINKED_NAV_BENCHMARK !== '1')('records 150k linked
   const workspace = process.cwd();
   const disk = statfsSync(workspace);
   if (disk.bavail * disk.bsize < 2 * 1024 ** 3) throw new Error('Insufficient space for metadata benchmark.');
-  const root = mkdtempSync(path.join(workspace, 'tmp', 'issue75-nav-'));
+  const root = mkdtempSync(path.join(workspace, '.tmp-linked-nav-'));
   let navigationStages: unknown;
   const service = new LibraryService({
     observerFactory: () => ({ close() {} }),
@@ -82,6 +82,15 @@ it.skipIf(process.env.SERPENT_LINKED_NAV_BENCHMARK !== '1')('records 150k linked
       warm.push(performance.now() - began);
     }
     warm.sort((a, b) => a - b);
+    const createStarted = performance.now();
+    const created = service.createLinkedFolderDirectory({
+      libraryId: library.libraryId, linkedFolderId: linked.folderId, relativePath: '', name: 'new-empty',
+    });
+    const createMs = performance.now() - createStarted;
+    const refreshedStarted = performance.now();
+    const refreshed = await service.getLibraryNavigationSummaryAsync({ libraryId: library.libraryId });
+    expect(refreshed.linkedFolders.some(folder => folder.folderId === created.folderId)).toBe(true);
+    const refreshMs = performance.now() - refreshedStarted;
     console.log('linked navigation metadata benchmark:', JSON.stringify({
       assets: 150_000,
       emptyDirectories: 4_100,
@@ -90,6 +99,8 @@ it.skipIf(process.env.SERPENT_LINKED_NAV_BENCHMARK !== '1')('records 150k linked
       warmP95Ms: Math.round(warm[6]!),
       maxEventLoopGapMs: Math.round(Math.max(...gaps, 0)),
       navigationStages,
+      createMs: Math.round(createMs),
+      createToNavigationMs: Math.round(createMs + refreshMs),
     }));
   } finally {
     database?.close();

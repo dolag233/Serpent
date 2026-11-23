@@ -181,3 +181,22 @@ export function inlineCreateRowIndex(
   );
   return parentIndex >= 0 ? parentIndex + 1 : 0;
 }
+
+/** Reveal the create parent and its full ancestry without persisting expansion. */
+export function collapsedFolderIdsForInlineCreate(
+  collapsedIds: ReadonlySet<string>,
+  state: InlineFolderEditState | null,
+  folders: readonly { folderId: string; parentFolderId?: string | null }[],
+): ReadonlySet<string> {
+  if (state?.kind !== "create" || !state.parentFolderId) return collapsedIds;
+  const parents = new Map(folders.map(folder => [folder.folderId, folder.parentFolderId]));
+  const next = new Set(collapsedIds);
+  const seen = new Set<string>();
+  let cursor: string | null | undefined = state.parentFolderId;
+  while (cursor && !seen.has(cursor)) {
+    seen.add(cursor);
+    next.delete(cursor);
+    cursor = parents.get(cursor);
+  }
+  return next;
+}

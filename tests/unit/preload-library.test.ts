@@ -48,6 +48,27 @@ test('library.create maps a failed transport result through failure()', async ()
   expect(failure).toHaveBeenCalledWith(failed);
 });
 
+test('library.chooseCreateLocation forwards only the native chooser request and token', async () => {
+  for (const selectionToken of ['choice-token', null]) {
+    vi.mocked(request).mockResolvedValue({
+      ok: true, type: 'library.create-location-chosen', selectionToken,
+    } as never);
+    await expect(library.chooseCreateLocation()).resolves.toEqual({ ok: true, value: selectionToken });
+    expect(request).toHaveBeenLastCalledWith({ type: 'library.choose-create-location.request' });
+  }
+});
+
+test('library.create forwards the opaque selection token when the picker already succeeded', async () => {
+  const summary = { libraryId: 'lib-1', displayName: 'Studio' };
+  vi.mocked(request).mockResolvedValue({ ok: true, type: 'library.opened', library: summary } as never);
+  await expect(library.create({ displayName: 'Studio', selectionToken: 'choice-token' })).resolves.toEqual({
+    ok: true, value: summary,
+  });
+  expect(request).toHaveBeenLastCalledWith({
+    type: 'library.create.request', displayName: 'Studio', selectionToken: 'choice-token',
+  });
+});
+
 test('library.embeddingSearch preserves raw per-asset scores from transport', async () => {
   const response = {
     ok: true as const,
@@ -87,5 +108,67 @@ test('library.embeddingSearch preserves raw per-asset scores from transport', as
     libraryId: 'lib-1',
     modelId: 'embeddinggemma-2-compact',
     query: 'reflection',
+  });
+});
+
+test('media job summary projects the queue pause flag', async () => {
+  vi.mocked(request).mockResolvedValue({
+    ok: true,
+    type: 'media.job-summary.read',
+    libraryId: 'lib-1',
+    queued: 0,
+    running: 0,
+    succeeded: 3,
+    failed: 0,
+    paused: 0,
+    cancelled: 0,
+    queuePaused: true,
+  } as never);
+
+  await expect(library.getMediaJobSummary({ libraryId: 'lib-1' })).resolves.toEqual({
+    ok: true,
+    value: {
+      queued: 0,
+      running: 0,
+      succeeded: 3,
+      failed: 0,
+      paused: 0,
+      cancelled: 0,
+      queuePaused: true,
+    },
+  });
+});
+
+test('media job list projects the queue pause flag with its page', async () => {
+  vi.mocked(request).mockResolvedValue({
+    ok: true,
+    type: 'media.jobs.listed',
+    libraryId: 'lib-1',
+    queued: 0,
+    running: 0,
+    succeeded: 0,
+    failed: 0,
+    paused: 1,
+    cancelled: 0,
+    queuePaused: true,
+    jobs: [],
+    nextCursor: null,
+    hasMore: false,
+  } as never);
+
+  await expect(library.listMediaJobs({ libraryId: 'lib-1', limit: 10 })).resolves.toEqual({
+    ok: true,
+    value: {
+      queued: 0,
+      running: 0,
+      succeeded: 0,
+      failed: 0,
+      paused: 1,
+      cancelled: 0,
+      queuePaused: true,
+      jobs: [],
+      nextCursor: null,
+      hasMore: false,
+    },
   });
 });

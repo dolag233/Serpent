@@ -5,6 +5,8 @@ import {
   normalizeAiAnalysisImageEdgePx,
 } from '../../shared/ai-analysis-image';
 
+import { loadSharp } from '../../shared/load-sharp';
+
 interface ThumbnailArtifact {
   artifactId: string;
   mimeType: string;
@@ -52,8 +54,7 @@ function throwIfAborted(signal?: AbortSignal): void {
 }
 
 function requireDefaultSharp(): AiAnalysisSharpFactory {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const sharp = require('sharp') as AiAnalysisSharpFactory & {
+  const sharp = loadSharp() as AiAnalysisSharpFactory & {
     cache?: (options: { files: number }) => void;
   };
   sharp.cache?.({ files: 0 });

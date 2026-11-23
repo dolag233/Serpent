@@ -302,6 +302,8 @@ serpent.assets.stageContent(assetId, dataBase64, options?): Promise<{
 serpent.assets.replaceContentBatch(items): Promise<{ operationId: string; items: unknown[] }>
 ```
 
+`assets.search` 的字符串与桌面工具栏共用语法：空格 AND、`|` OR、`-` 排除、引号短语和括号分组。`tag:` 按标签名包含匹配，`tag=` 按完整标签名匹配，例如 `(tag=角色 | tag=生物) -tag=草稿`。字符串最多 512 字符、32 个词项、8 层括号；无效语法返回参数错误。`null` 查询当前绑定资源库的非回收站资产。详见[脚本搜索参考](../scripts/api-reference.md#assetssearchinput)。
+
 `readContent` 有字节上限并可能返回 `truncated`；`replaceContent` 接受托管（managed）与链接（linked）可用资产，须 `content.write`，并经过计划确认。
 批量替换使用 staging 和 `expectedRevisionId` 做统一预检，不能假定多文件系统原子性。
 
@@ -387,6 +389,9 @@ const { ffmpegPath, ffprobePath } = await serpent.media.getBinaryPaths();
 
 `openDialog({ title, render })` 需要 `ui.dialogs`，widget kit 是标准表单的默认路径。`render` 在插件进程里执行，产出有界
 widget 树；Host 用已有 primitive（`DialogShell` / `Field` / `Select` / `Switch` / `Slider` / `TextField`）绘制，页脚负责取消与提交。
+可用 `openDialog({ title, width: 'wide', render })` 调整标准弹窗宽度。档位为 `compact`（400 px）、`medium`（默认，520 px）和
+`wide`（720 px），Host 会根据窗口宽度收窄。长文本用 `ui.text({ id, label, value, multiline: true, rows: 6, readOnly: true })`。
+多行文本支持滚动与保留换行，`rows` 可选 2–12 行，默认 4 行。内容只供阅读和复制时设置 `readOnly`。
 需要展示多列对比或结果时，可使用 `ui.list({ columns, rows, emptyText })`；Host 会以统一的可滚动、交替行背景列表渲染，单元格支持换行。
 列表单元格也可以传入 `{ segments: [{ text, tone: 'match' | 'change' }] }`，用于统一显示匹配和改动标记。需要紧凑的二态选项时使用
 `ui.toggle({ id, label, value, description, onChange })`；控件会使用 Host 的标准按钮样式。
@@ -496,6 +501,10 @@ type Setting =
 
 iframe view 的 Host target 为 `sidebar.entries`、`workspace.views`、`inspector.views`、`viewer.overlays`、`settings.pages`；Manifest 对应
 `views[].location`。页面只能经 typed bridge 通信，不直接获得宿主 React、DOM 或 CSS；需要标准控件时使用下述 Host-rendered descriptor，而不是在 iframe 中猜测宿主样式。
+
+具有 `ui.inspector` 权限的 `inspector.views` 插件会在 `plugin-ui.view-mounted` 与 `plugin-ui.view-state-changed` 消息中收到
+`state: { selectedAssetIds: string[], primaryAssetId: string | null }`。选择改变时，Host 向当前视图发送新状态，无需重载 iframe。
+`selectedAssetIds` 最多提供 64 项并保留主选中项。清空选择时视图卸载。插件可用这些 ID 调用已授权的资产 API 查询所需元数据。
 
 Host-rendered Plugin UI Contract v1 通过 `contributes.ui` 提供 settings group、menu/submenu、notice、activity 和 job descriptor。
 设置组引用同一 manifest 的 `contributes.settings`，菜单复用现有 command/condition/placement 语义；descriptor 只接受版本化 JSON 数据，不接受函数、HTML、CSS 或宿主 DOM 引用。

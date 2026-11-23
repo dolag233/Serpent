@@ -72,6 +72,8 @@ export type CanvasAssetLayoutRect = {
  */
 export type CanvasAssetLayoutIndex = {
   total: number;
+  /** Resolve one published rectangle without materializing the full layout. */
+  assetRectAtIndex?: (index: number) => CanvasAssetLayoutRect | null;
   forEachIntersecting: (
     localBox: MarqueeRect,
     visit: (item: CanvasAssetLayoutRect) => void,

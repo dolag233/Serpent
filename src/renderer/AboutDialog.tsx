@@ -68,6 +68,7 @@ export function AboutDialog({
     }
     if (code === "verification-failed") return t("dialog.about.updateVerificationFailed");
     if (code === "download-failed") return t("dialog.about.updateDownloadFailed");
+    if (code === "insufficient-space") return t("dialog.about.updateInsufficientSpace");
     if (code === "open-failed") return t("dialog.about.updateOpenFailed");
     if (code === "cancelled") return t("dialog.about.updateDownloadCancelled");
     return t("dialog.about.updateFailed");

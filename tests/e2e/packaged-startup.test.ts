@@ -5,6 +5,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { _electron as electron, expect, test } from '@playwright/test';
+import sharp from 'sharp';
+import type { SerpentAutomationScriptApi } from '../../src/shared/automation-script-api';
+import type { SerpentLibraryApi } from '../../src/shared/library-api';
 
 test('the packaged application starts and completes a real Worker import', async () => {
   const executablePath = process.env.SERPENT_E2E_PACKAGED_EXECUTABLE;
@@ -63,6 +66,25 @@ test('the packaged application starts and completes a real Worker import', async
     await expect(window.getByText('packaged-worker.txt', { exact: true }).first()).toBeVisible();
     expect(existsSync(path.join(libraryPath, 'Assets', 'packaged-worker.txt'))).toBe(true);
 
+    const scriptResults = await window.evaluate(async () => {
+      const { automation, library } = (globalThis as typeof globalThis & {
+        serpent: { automation: SerpentAutomationScriptApi; library: SerpentLibraryApi };
+      }).serpent;
+      const opened = await library.listOpen();
+      if (!opened.ok || !opened.value[0]) throw new Error('Expected an open library.');
+      const results = [];
+      for (const source of ['const value: number = 96; return { value };', 'const value = 97; return { value };']) {
+        const started = await automation.start({ source, libraryId: opened.value[0].libraryId });
+        if (!started.ok) throw new Error(started.error.message);
+        results.push(await automation.execute({ executionId: started.executionId }));
+      }
+      return results;
+    });
+    expect(scriptResults).toMatchObject([
+      { ok: true, value: { value: 96 } },
+      { ok: true, value: { value: 97 } },
+    ]);
+
     const screenshotPath = test.info().outputPath('packaged-worker-import.png');
     await window.screenshot({ path: screenshotPath });
     await test.info().attach('packaged-worker-import', {
@@ -76,21 +98,22 @@ test('the packaged application starts and completes a real Worker import', async
 });
 
 test('the packaged application FTS5 search finds and filters imported assets', async () => {
+  test.setTimeout(90_000);
   const executablePath = process.env.SERPENT_E2E_PACKAGED_EXECUTABLE;
   if (!executablePath) {
     throw new Error('Set SERPENT_E2E_PACKAGED_EXECUTABLE after packaging.');
   }
 
-  const VALID_PNG = Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
-    'base64',
-  );
+  // Exceed direct-source limits so the card exercises the Worker's decoder.
+  const photo = await sharp({
+    create: { width: 2_200, height: 440, channels: 3, background: '#447799' },
+  }).png().toBuffer();
 
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-packaged-search-'));
   const libraryName = 'Packaged Search';
   const libraryPath = path.join(temporaryRoot, libraryName);
   const sourcePath = path.join(temporaryRoot, 'search-smoke-test.png');
-  writeFileSync(sourcePath, VALID_PNG);
+  writeFileSync(sourcePath, photo);
 
   const application = await electron.launch({
     executablePath,
@@ -132,6 +155,11 @@ test('the packaged application FTS5 search finds and filters imported assets', a
     await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
     await expect(window.getByText('search-smoke-test.png', { exact: true }).first()).toBeVisible();
     expect(existsSync(path.join(libraryPath, 'Assets', 'search-smoke-test.png'))).toBe(true);
+    const thumbnail = window.locator('.asset-card img[src^="serpent://preview/"]').first();
+    await expect(thumbnail).toBeAttached({ timeout: 25_000 });
+    await expect.poll(() => thumbnail.evaluate((image: HTMLImageElement) =>
+      image.complete && image.naturalWidth > 0 && image.naturalHeight > 0,
+    )).toBe(true);
 
     // FTS5 keyword search: matching keyword finds the asset
     await window.getByLabel('搜索资源库').fill('smoke');

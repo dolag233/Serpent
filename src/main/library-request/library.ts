@@ -5,6 +5,7 @@ import type { RendererResult } from "../../shared/protocol/responses";
 import { createPublicError } from "../../shared/protocol/errors";
 import type { RecentLibraryEntry } from "../../shared/recent-libraries";
 import type { LibraryCommandBuildOutcome } from "./command-outcome";
+import { chooseLibraryCreateLocation } from "../library-create-location";
 
 /**
  * Recent entries are opaque stored paths. `path.isAbsolute` follows the host
@@ -19,7 +20,7 @@ export type LibraryOwnedRequestRuntime = {
   getActiveLibraryOpenCancellation: () => { cancelled: boolean } | undefined;
   logInfo: (scope: string, message: string) => void;
   logError: (scope: string, error: unknown) => void;
-  selectDirectory: (dialogId: "openLibrary") => Promise<string | undefined>;
+  selectDirectory: (dialogId: "openLibrary" | "createLibrary") => Promise<string | undefined>;
   recentLibraryPath: () => string;
   readRecentLibraryEntries: (
     filePath: string,
@@ -69,6 +70,16 @@ export async function tryHandleLibraryOwnedRequest(
         ok: true,
         type: "library.choose-path",
         path: chosenPath ?? null,
+      } satisfies RendererResult;
+    }
+    case "library.choose-create-location.request": {
+      const selectionToken = await chooseLibraryCreateLocation(
+        () => runtime.selectDirectory("createLibrary"),
+      );
+      return {
+        ok: true,
+        type: "library.create-location-chosen",
+        selectionToken,
       } satisfies RendererResult;
     }
     case "library.list-recent.request":

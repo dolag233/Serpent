@@ -127,21 +127,18 @@ if (existsSync(sqliteNodePath)) {
 
 const asarPath = path.join(resourcesPath, 'app.asar');
 const asarFiles = asar.listPackage(asarPath);
+const normalizedAsarFiles = new Set(asarFiles.map((entry) => entry.replaceAll('\\', '/').replace(/^\/?(?:\.\/)?/u, '')));
 const requiredAsarEntries = [
-  'plugin_standard_host.js',
-  'plugin_trusted_host.js',
-  'script_runtime_utility.js',
+  '.vite/build/plugin_standard_host.js',
+  '.vite/build/plugin_trusted_host.js',
+  '.vite/build/script_runtime_utility.js',
+  'node_modules/typescript/lib/typescript.js',
+  'node_modules/quickjs-emscripten/package.json',
 ];
-const missingAsarEntries = requiredAsarEntries.filter((entry) => {
-  const normalized = entry.replaceAll('\\', '/');
-  return !asarFiles.some((candidate) => {
-    const file = String(candidate).replaceAll('\\', '/').replace(/^\.\//u, '');
-    return file === normalized || file.endsWith(`/${normalized}`);
-  });
-});
+const missingAsarEntries = requiredAsarEntries.filter((entry) => !normalizedAsarFiles.has(entry));
 if (missingAsarEntries.length > 0) {
   throw new Error(
-    `Package ASAR is missing plugin/script Host utilities:\n${missingAsarEntries.join('\n')}`,
+    `Package ASAR is missing plugin/script runtime files:\n${missingAsarEntries.join('\n')}`,
   );
 }
 
@@ -198,4 +195,4 @@ if (packagePlatform === 'darwin') {
 }
 
 console.log(`Verified packaged runtime files in ${resourcesPath}`);
-console.log(`Verified Host utilities in ASAR: ${requiredAsarEntries.join(', ')}`);
+console.log(`Verified plugin/script runtime files in ASAR: ${requiredAsarEntries.join(', ')}`);

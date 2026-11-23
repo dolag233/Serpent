@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icons";
 import { coverSrc } from "./asset-card-hover-preview";
 import { folderAutomaticCoverSrc, folderCoverImageSrc } from "./folder-cover";
+import { beginInlineRenameTextSelection } from "./inline-rename-text-selection";
 import { useT } from "./i18n";
 import type { FolderBrowseEntry } from "../shared/asset-types";
 import { CardSurface } from "./ui/surfaces";
@@ -109,14 +110,21 @@ export function FolderCard({
       aria-pressed={selected}
       className={`folder-card${cut ? " is-cut" : ""}${selected ? " is-selected" : ""}${dropActive ? " is-drop-target" : ""}${trashed ? " is-trashed-folder" : ""}`}
       data-folder-id={entry.folderId}
-      draggable={draggable}
+      draggable={draggable && !renaming}
       onClick={(event) => onClick(entry.folderId, event)}
       onContextMenu={(event) => onContextMenu(entry, event)}
       onDoubleClick={() => { if (!rename) onDoubleClick(entry.folderId); }}
       onDragEnter={onDragEnter}
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
-      onDragStart={onDragStart}
+      onDragStart={(event) => {
+        if (renaming) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        onDragStart?.(event);
+      }}
       onDrop={onDrop}
       onMouseDown={onMouseDown}
       data-hover-tip={entry.name}
@@ -235,6 +243,7 @@ export function FolderCard({
               value={rename.value}
               disabled={rename.submitting}
               onChange={event => onRenameChange?.(event.target.value)}
+              onMouseDown={beginInlineRenameTextSelection}
               onBlur={() => { if (!rename.error) onRenameCommit?.(); }}
               onKeyDown={event => {
                 event.stopPropagation();

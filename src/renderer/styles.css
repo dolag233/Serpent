@@ -2481,6 +2481,18 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   gap: 2px;
 }
 
+/* Only ordinary fixed-height rows qualify. Keep editors and collection
+   branches outside this boundary, and let focus/drag ink overflow normally. */
+.nav-item-row {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto var(--shell-control-height);
+}
+
+.nav-item-row:focus-within,
+.nav-item-row[data-insert-edge] {
+  content-visibility: visible;
+}
+
 /* Custom folder order drag insertion line (folder "自定义" sort). */
 .nav-folder-insert-line {
   position: absolute;
@@ -6280,17 +6292,6 @@ body.serpent-modal-open .app-shell {
   text-decoration: underline;
 }
 
-.html-viewer-loading {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--viewer-stage);
-  color: var(--tertiary);
-  font-size: calc(13px * var(--ui-font-scale));
-}
-
 .html-viewer-error {
   padding: 16px;
   color: var(--warning);
@@ -7008,6 +7009,18 @@ body.serpent-modal-open .app-shell {
   color: var(--secondary);
   font-size: calc(12px * var(--ui-font-scale));
   transform: translateX(-50%);
+}
+
+.viewer-loading-status {
+  z-index: var(--ui-layer-popover);
+  pointer-events: none;
+  will-change: opacity;
+  animation: viewer-loading-reveal var(--viewer-loading-delay) step-end both;
+}
+
+@keyframes viewer-loading-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .create-dialog {
@@ -8406,6 +8419,7 @@ select.ai-config-input.ai-config-languages {
   font-size: calc(12px * var(--ui-font-scale));
   line-height: 1.3;
   color: var(--text);
+  -webkit-user-select: text;
   user-select: text;
   cursor: text;
   pointer-events: auto;
@@ -10748,9 +10762,11 @@ select.ai-config-input.ai-config-languages {
    host as an absolute, full-size overlay instead of collapsing it to height 0:
    Chromium otherwise clamps the canvas scrollTop while the viewer is mounted,
    which makes rapid open/close land at the top before the anchor restore runs.
-   Keep `is-viewing` on the host during `previewRestoring` as well so the first
-   restore frames do not collapse the scroll extent. */
-.workspace-canvas-host.is-viewing {
+   Once the viewer unmounts, the host must return to flex layout before we
+   measure the restore anchor. The browse toolbar already occupies its normal
+   space during restore; measuring the absolute overlay would shift the anchor
+   by the toolbar height. */
+.workspace-canvas-host.is-viewing:not(.is-restoring) {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -10766,9 +10782,8 @@ select.ai-config-input.ai-config-languages {
   pointer-events: none;
 }
 
-/* Show the restored browse frame as soon as its deep scroll position is
-   reachable; keep the host geometry fixed until the existing two-frame
-   stability check completes. */
+/* Reveal the browse canvas after its saved position is reachable in the
+   restored layout. */
 .workspace-canvas-host.is-restoring.is-restore-visible > .workspace-canvas {
   visibility: visible;
   pointer-events: auto;
@@ -11990,6 +12005,9 @@ select.ai-config-input.ai-config-languages {
   min-width: 0;
   height: 26px;
   text-align: center;
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
 }
 
 .folder-card-caption {
@@ -13581,16 +13599,6 @@ select.ai-config-input.ai-config-languages {
   white-space: nowrap;
 }
 
-.preview-state.is-silent {
-  max-width: none;
-  min-height: 0;
-  padding: 0;
-  gap: 0;
-  /* Serpent-xkzf: no pulse, no copy — silent wait only. */
-  background: transparent;
-  color: transparent;
-}
-
 /* Compact info line (INSPECT-003) — 与文件名同一左缘的摘要行。 */
 .inspector-compact-info {
   flex-shrink: 0;
@@ -14181,10 +14189,10 @@ select.ai-config-input.ai-config-languages {
 
 .inspector-tag-chip .tag-chip-name {
   max-width: none;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  overflow: visible;
-  text-overflow: clip;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   line-height: 1.4;
 }
 
@@ -14585,6 +14593,8 @@ select.ai-config-input.ai-config-languages {
   background: transparent;
   box-shadow: none;
   font-size: calc(12px * var(--ui-font-scale));
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .nav-inline-edit:focus-within {
@@ -15259,6 +15269,7 @@ select.ai-config-input.ai-config-languages {
   max-height: min(720px, calc(100vh - 48px));
 }
 .plugin-ui-dialog .plugin-view-host {
+  width: 100%;
   height: var(--plugin-ui-dialog-frame-height, 280px);
   flex: 0 0 auto;
 }
@@ -15274,15 +15285,27 @@ select.ai-config-input.ai-config-languages {
   background: transparent;
 }
 .plugin-ui-dialog--widget {
-  width: min(520px, calc(100vw - 48px));
+  --plugin-widget-dialog-width: 520px;
+  width: min(var(--plugin-widget-dialog-width), calc(100vw - var(--ui-space-6) * 2));
   -webkit-app-region: no-drag;
+}
+.plugin-ui-dialog--widget[data-widget-width="compact"] {
+  --plugin-widget-dialog-width: 400px;
+}
+.plugin-ui-dialog--widget[data-widget-width="wide"] {
+  --plugin-widget-dialog-width: 720px;
 }
 .ui-dialog-shell.plugin-ui-dialog--widget {
   max-height: calc(100dvh - var(--ui-space-6) - var(--ui-space-6));
 }
 .plugin-ui-dialog--widget input,
+.plugin-ui-dialog--widget textarea,
 .plugin-ui-dialog--widget button {
   -webkit-app-region: no-drag;
+}
+textarea.ui-field__control.plugin-widget-textarea {
+  resize: none;
+  overflow: auto;
 }
 .plugin-ui-dialog-stage {
   /* Extra class on `dialog-backdrop` so widget selects can detect the scrim.

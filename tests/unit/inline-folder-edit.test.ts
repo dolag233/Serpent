@@ -5,6 +5,7 @@ import {
   changeInlineFolderEditValue,
   failInlineFolderEdit,
   inlineCreateRowIndex,
+  collapsedFolderIdsForInlineCreate,
   inlineFolderEditDepth,
   isSameInlineFolderEditSession,
   markInlineFolderEditSubmitting,
@@ -26,6 +27,20 @@ const managedEntry = (
   depth,
   parentFolderId,
   directAssetCount: 0,
+});
+
+describe("inline create ancestor visibility", () => {
+  it("temporarily expands the full ancestry and restores the original collapse preferences on cancel", () => {
+    const collapsed = new Set(["parent", "child", "other"]);
+    const state = startInlineFolderCreate("child", "New folder");
+    const folders = [
+      { folderId: "child", parentFolderId: "parent" },
+      { folderId: "parent", parentFolderId: null },
+    ];
+    expect([...collapsedFolderIdsForInlineCreate(collapsed, state, folders)]).toEqual(["other"]);
+    expect([...collapsed]).toEqual(["parent", "child", "other"]);
+    expect(collapsedFolderIdsForInlineCreate(collapsed, null, folders)).toBe(collapsed);
+  });
 });
 
 describe("startInlineFolderCreate", () => {

@@ -10,7 +10,8 @@ import { z } from 'zod';
 export const fbxConvertErrorCodeSchema = z.enum([
   'FBX_SOURCE_NOT_FOUND', // asset source file missing/unreadable
   'FBX_NOT_FBX', // not a parseable FBX (or unsupported FBX flavor)
-  'FBX_LIMIT_EXCEEDED', // an explicitly requested conversion limit was hit
+  'FBX_LIMIT_EXCEEDED', // requested limit or converter address-space capacity was hit
+  'FBX_RESOURCE_EXHAUSTED', // host resource pressure; retry after the shared cooldown
   'FBX_WASM_UNAVAILABLE', // resources/ufbx module missing or failed to load
   'FBX_NO_MESHES', // valid FBX but nothing convertible (no triangle geometry)
   'FBX_CONVERSION_FAILED', // internal conversion failure

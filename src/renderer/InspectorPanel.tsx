@@ -168,6 +168,7 @@ export interface AiContent {
 
 export interface InspectorPanelProps {
   selectedAsset: AssetSummary | undefined;
+  selectedAssetIds?: readonly string[];
   /** Full multi-selection in canvas order; primary is still `selectedAsset`. */
   selectedAssets?: AssetSummary[];
   library: RendererLibrarySummary | null;
@@ -1457,7 +1458,9 @@ export function InspectorPanel(props: InspectorPanelProps) {
           <PluginInspectorViews
             libraryId={libraryId ?? library?.libraryId}
             pluginApi={pluginApi}
+            primaryAssetId={selectedAsset.assetId}
             refreshKey={pluginContributionRefreshKey}
+            selectedAssetIds={props.selectedAssetIds ?? inspectorSelectedAssetIds}
           />
 
           {/* --- Asset metadata editor (compact) --- */}

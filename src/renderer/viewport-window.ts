@@ -1,5 +1,6 @@
 import {
   useLayoutEffect,
+  useRef,
   useState,
   type RefObject,
 } from "react";
@@ -33,23 +34,37 @@ export function viewportOverscanPx(
   );
 }
 
-export function useCanvasLocalViewport(
-  containerRef: RefObject<HTMLElement | null>,
-  cardSizePx: number = 0,
-): {
+export type CanvasLocalViewportRange = {
   /** Overscan window kept mounted for scroll continuity. */
   start: number;
   end: number;
-  /** Actual canvas viewport used for network/decode priority decisions. */
+  /** Actual viewport used for media priority, without overscan. */
   visibleStart: number;
   visibleEnd: number;
-} {
+};
+
+export function useCanvasLocalViewport(
+  containerRef: RefObject<HTMLElement | null>,
+  cardSizePx: number = 0,
+  /** Equal keys must imply identical mounted slots and media priorities. */
+  renderKey?: (viewport: CanvasLocalViewportRange) => string,
+): CanvasLocalViewportRange {
   const [viewport, setViewport] = useState({
     start: 0,
     end: 8000,
     visibleStart: 0,
     visibleEnd: 800,
   });
+  const renderKeyRef = useRef(renderKey);
+  const publishRef = useRef<((resetRenderKey?: boolean) => void) | null>(null);
+
+  useLayoutEffect(() => {
+    // Geometry changes replace this callback frequently. Publish with the
+    // committed callback and cached origin, without rebuilding DOM observers
+    // or forcing style/layout between the parent's writes and the next paint.
+    renderKeyRef.current = renderKey;
+    publishRef.current?.(true);
+  }, [renderKey]);
 
   useLayoutEffect(() => {
     const element = containerRef.current;
@@ -57,10 +72,16 @@ export function useCanvasLocalViewport(
     const canvas = element.closest<HTMLElement>(".workspace-canvas");
     if (!canvas) return;
 
+    let lastRenderKey: string | undefined;
     let snapshot: CanvasLocalViewportSnapshot | null = null;
-    const publish = () => {
+    const publish = (resetRenderKey = false) => {
       if (!snapshot) return;
-      const scrollTop = canvas.scrollTop;
+      // Equal keys from different geometry versions are not comparable: the
+      // parent may have rendered the new model with an older pixel range.
+      if (resetRenderKey) lastRenderKey = undefined;
+      // Even scrollTop can synchronize style after a React DOM commit. A new
+      // geometry callback uses the position captured by scroll/resize instead.
+      const scrollTop = resetRenderKey ? snapshot.scrollTop : canvas.scrollTop;
       snapshot.scrollTop = scrollTop;
       const next = canvasLocalViewportFromSnapshot(
         snapshot,
@@ -68,17 +89,20 @@ export function useCanvasLocalViewport(
         viewportOverscanPx(snapshot.height, cardSizePx),
       );
       const visible = canvasLocalViewportFromSnapshot(snapshot, scrollTop, 0);
+      const nextViewport = { ...next, visibleStart: visible.start, visibleEnd: visible.end };
+      const currentRenderKey = renderKeyRef.current;
+      if (currentRenderKey) {
+        const key = currentRenderKey(nextViewport);
+        if (key === lastRenderKey) return;
+        lastRenderKey = key;
+      }
       setViewport((previous) =>
         previous.start === next.start
           && previous.end === next.end
           && previous.visibleStart === visible.start
           && previous.visibleEnd === visible.end
           ? previous
-          : {
-              ...next,
-              visibleStart: visible.start,
-              visibleEnd: visible.end,
-            },
+          : nextViewport,
       );
     };
     const measure = () => {
@@ -100,6 +124,7 @@ export function useCanvasLocalViewport(
       publish();
     };
 
+    publishRef.current = publish;
     measure();
     canvas.addEventListener("scroll", onScroll, { passive: true });
     const observer = new ResizeObserver((entries) => {
@@ -136,6 +161,7 @@ export function useCanvasLocalViewport(
       observer.disconnect();
       mutationObserver.disconnect();
       canvasLocalViewportSnapshots.delete(element);
+      if (publishRef.current === publish) publishRef.current = null;
     };
   }, [containerRef, cardSizePx]);
 

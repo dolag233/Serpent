@@ -39,6 +39,17 @@
 
 `.blend` 不在产品格式表内：无可靠公开网格解析器覆盖 Blender 3–4.x，也不捆绑 Blender。文件可入库，按未知类型显示。需要预览时从 Blender 导出 glTF 或 FBX。FBX / OBJ / glTF / GLB / STL 走查看器 WebGL。
 
+### RAW 的缩略图、查看图与色调
+
+- 缩略图优先尝试读取有界的内嵌 JPEG，不能读取时回退 OIIO / LibRaw。该快速路径不等于全尺寸 RAW 解码，也不保证覆盖所有 RAW 容器。
+- `viewer_image` 独立做全分辨率解码。RAW 当前输出质量 95 的 JPEG（`image/jpeg`），不再输出 PNG；源 RAW 不改写。读取端必须使用产物的 MIME 和文件类型，不能把 `viewer_image` 固定当作 `image/png`。
+- RAW 保留解码器默认 sRGB 显示路径，不应用其他专业图像使用的 OCIO 显示变换。ARW 查看图使用 PPG 去马赛克并关闭自动增亮；能读到相机内嵌 JPEG 时，用它估计共享的明暗曲线。其他 RAW 格式不使用这套 ARW 色调匹配。
+- 查看图缓存按生成器版本更新。测试须核对实际解码、全分辨率尺寸、MIME 与文件头；不能用已经显示缩略图证明 RAW 查看图完成，也不能把 ARW 的速度和明暗结果推广到所有 RAW。
+
+### 模型透明度与显示设置
+
+模型查看与离屏卡片预览都要保留贴图 Alpha，不能将透明区域烘成深色底。FBX 转换后的 base-color Alpha 处理位于 `src/renderer/3d-viewer/base-color-alpha.ts`，须与其他材质显示模式一并检查。「双面」选择影响材质、灰模和网格；双面与统计面板开关保存在查看器偏好中，不改写源模型。
+
 ## 4. 测试矩阵
 
 至少准备以下 fixture，路径使用临时目录，不提交个人绝对路径或真实用户素材：

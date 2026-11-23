@@ -33,7 +33,7 @@ import {
   workerResultSchema,
   type WorkerResult,
 } from '../shared/protocol/responses';
-import { pluginWidgetNodeSchema } from '../shared/plugin-widget-ir';
+import { pluginWidgetDialogWidthSchema, pluginWidgetNodeSchema } from '../shared/plugin-widget-ir';
 
 /**
  * The Automation API is intentionally versioned independently from the
@@ -546,6 +546,7 @@ export const automationCommandInputSchemas = {
       sessionId: z.string().uuid(),
       title: nonBlankString.max(160),
       submitLabel: z.string().min(1).max(64).optional(),
+      width: pluginWidgetDialogWidthSchema.optional(),
       tree: pluginWidgetNodeSchema,
     }),
   ]),
@@ -1137,6 +1138,7 @@ const mediaJobsWorkerResultSchema = z.strictObject({
   ok: z.literal(true),
   type: z.literal('media.jobs.listed'),
   libraryId: nonBlankString,
+  queuePaused: z.boolean().default(false),
   queued: z.number().int().nonnegative(),
   running: z.number().int().nonnegative(),
   succeeded: z.number().int().nonnegative(),
@@ -1359,6 +1361,7 @@ const assetSearchAutomationResultSchema = paginatedResultSchema(automationAssetS
 });
 
 const mediaJobsAutomationResultSchema = paginatedResultSchema(mediaJobSchema).extend({
+  queuePaused: z.boolean().default(false),
   queued: z.number().int().nonnegative(),
   running: z.number().int().nonnegative(),
   succeeded: z.number().int().nonnegative(),
@@ -3443,6 +3446,7 @@ export const automationCommandRegistry = [
         failed: parsed.data.failed,
         paused: parsed.data.paused,
         cancelled: parsed.data.cancelled,
+        queuePaused: parsed.data.queuePaused,
       };
     },
   }),

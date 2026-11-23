@@ -21,6 +21,7 @@ export const FBX_ERROR_I18N_KEYS: Readonly<Record<FbxConvertErrorCode, string>> 
   FBX_SOURCE_NOT_FOUND: 'viewer3d.error.fbx.sourceNotFound',
   FBX_NOT_FBX: 'viewer3d.error.fbx.notFbx',
   FBX_LIMIT_EXCEEDED: 'viewer3d.error.fbx.limitExceeded',
+  FBX_RESOURCE_EXHAUSTED: 'viewer3d.error.fbx.resourceExhausted',
   FBX_WASM_UNAVAILABLE: 'viewer3d.error.fbx.wasmUnavailable',
   FBX_NO_MESHES: 'viewer3d.error.fbx.noMeshes',
   FBX_CONVERSION_FAILED: 'viewer3d.error.fbx.conversionFailed',

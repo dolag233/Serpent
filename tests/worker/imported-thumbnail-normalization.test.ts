@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -244,7 +244,7 @@ async function assertNormalized(
   expect(after!.generatorVersion).toContain(IMPORTED_THUMBNAIL_GENERATOR_PREFIX);
   expect(after!.mimeType).toMatch(/^image\/(?:jpeg|webp)$/u);
   const outputPath = service.getArtifactAbsolutePath(libraryId, after!.artifactId, 'preview');
-  const outputMetadata = await sharp(outputPath).metadata();
+  const outputMetadata = await sharp(readFileSync(outputPath)).metadata();
   expect(outputMetadata.width).toBeLessThanOrEqual(512);
   expect(outputMetadata.height).toBeLessThanOrEqual(512);
   expect(after!.width).toBe(outputMetadata.width);
@@ -833,7 +833,7 @@ describe('imported thumbnail normalization', () => {
         && databasePath
         && assetId
         && revisionId
-        && typeof input === 'string'
+        && Buffer.isBuffer(input)
         && options?.page === undefined
       ) {
         const originalMetadata = instance.metadata.bind(instance);

@@ -1214,6 +1214,7 @@ export const zhCN = {
       updateAssetMissing: "此版本没有适用于当前构建的更新资产。",
       updateVerificationFailed: "下载的更新未通过完整性校验。",
       updateDownloadFailed: "更新下载失败，请重试。",
+      updateInsufficientSpace: "磁盘空间不足，请释放空间后重试更新。",
       updateOpenFailed: "无法打开安装器。",
       viewReleaseNotes: "查看更新日志",
       hideReleaseNotes: "收起更新日志",
@@ -2278,9 +2279,7 @@ export const zhCN = {
     zoomFit: "适应宽度",
     htmlPreview: "HTML 预览",
     htmlLoadFailed: "无法加载 HTML 文件。",
-    htmlLoading: "正在加载 HTML…",
     fontPreview: "字体预览",
-    fontPreviewLoading: "正在加载字体…",
     fontPreviewUnavailable: "无法预览这个字体文件。",
     fontPreviewText: "预览文字",
     fontPreviewSize: "字号 {size} px",
@@ -2314,7 +2313,6 @@ export const zhCN = {
   },
   viewer3d: {
     ariaLabel: "3D 模型预览",
-    loading: "正在加载 3D 模型…",
     errorTitle: "无法显示 3D 预览",
     retry: "重试",
     hdri: "环境光",
@@ -2346,6 +2344,7 @@ export const zhCN = {
         sourceNotFound: "找不到 FBX 源文件，无法转换。",
         notFbx: "该文件无法按 FBX 解析，可能格式不完整或版本过旧。",
         limitExceeded: "模型超出转换上限（三角面或输出体积过大）。",
+        resourceExhausted: "暂时没有足够资源加载此模型，请稍后重试。",
         wasmUnavailable: "转换组件不可用，请重新安装应用后重试。",
         noMeshes: "FBX 中不包含可渲染的网格。",
         conversionFailed: "FBX 转换失败。"

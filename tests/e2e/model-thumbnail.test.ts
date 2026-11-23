@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -167,6 +167,10 @@ async function assertDecodedModelThumbnail(input: {
         thumbnail.evaluate((element) => (element as HTMLImageElement).naturalWidth > 0),
       )
       .toBe(true);
+    if (/\.fbx$/iu.test(assetName)) {
+      expect(readdirSync(path.join(libraryPath, ".serpent", "artifacts")))
+        .not.toContainEqual(expect.stringMatching(/\.model_glb$/u));
+    }
     const computerUseHoldMs = Number(
       process.env.SERPENT_E2E_COMPUTER_USE_HOLD_MS ?? 0,
     );

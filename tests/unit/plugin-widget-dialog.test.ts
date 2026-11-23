@@ -14,6 +14,18 @@ import { createSerpentGuestApi } from '../../src/scripting/serpent-guest-api';
 import { PLUGIN_WIDGET_OPEN_DIALOG_WRAP_SOURCE } from '../../src/scripting/plugin-widget-guest-source';
 
 describe('plugin widget IR', () => {
+  it('preserves multiline text and rejects unbounded row counts', () => {
+    const ui = createPluginWidgetToolkit();
+    const field = ui.text({
+      id: 'prompt', label: 'Prompt', value: 'Line one\nLine two',
+      multiline: true, rows: 6, readOnly: true,
+    });
+    expect(parsePluginWidgetTree(field)).toMatchObject({
+      multiline: true, rows: 6, readOnly: true, value: 'Line one\nLine two',
+    });
+    expect(() => parsePluginWidgetTree({ ...field, rows: 13 })).toThrow();
+  });
+
   it('rejects oversized or duplicate-id trees', () => {
     expect(() => parsePluginWidgetTree({
       type: 'column',
@@ -226,6 +238,7 @@ describe('widget dialog session', () => {
       open: async (input) => {
         expect(input.title).toBe('媒体压缩');
         expect(input.submitLabel).toBe('开始处理');
+        expect(input.width).toBe('wide');
         expect(input.tree.type).toBe('column');
         expect(collectPluginWidgetValues(input.tree)).toMatchObject({ targetMode: 'percent', percent: 50 });
         return { result: { targetMode: 'percent', percent: 50 } };
@@ -236,6 +249,7 @@ describe('widget dialog session', () => {
     }, {
       title: '媒体压缩',
       submitLabel: '开始处理',
+      width: 'wide',
       render(ui) {
         const mode = ui.state('percent');
         return ui.column(

@@ -11,7 +11,26 @@ import {
 } from './plugin-iframe-view-host';
 import { useT } from './i18n';
 
-export type PluginInspectorViewDescriptor = PluginIframeViewDescriptor;
+export type PluginInspectorViewDescriptor = PluginIframeViewDescriptor & {
+  receivesInspectorSelection?: true;
+};
+
+const EMPTY_VIEWS: PluginInspectorViewDescriptor[] = [];
+
+export function buildPluginInspectorSelectionState(
+  assetIds: readonly string[],
+  primaryAssetId: string,
+) {
+  const limit = 64;
+  const validId = (id: string) => /^[a-zA-Z0-9_-]{1,128}$/.test(id);
+  const selectedAssetIds = assetIds.slice(0, limit).filter(validId);
+  const primary = validId(primaryAssetId) ? primaryAssetId : null;
+  if (primary !== null && !selectedAssetIds.includes(primary)) {
+    selectedAssetIds.splice(limit - 1, 1);
+    selectedAssetIds.push(primary);
+  }
+  return { selectedAssetIds, primaryAssetId: primary };
+}
 
 export function buildPluginInspectorViewDescriptors(
   contributions: readonly PluginManagerInspectorViewContribution[],
@@ -25,7 +44,11 @@ export function usePluginInspectorViews(
   enabled: boolean,
   refreshKey: string | null,
 ): PluginInspectorViewDescriptor[] {
-  const [items, setItems] = useState<PluginInspectorViewDescriptor[]>([]);
+  const [loaded, setLoaded] = useState<{
+    libraryId: string;
+    pluginApi: SerpentPluginManagerApi;
+    items: PluginInspectorViewDescriptor[];
+  }>();
   const shouldLoad = enabled && pluginApi !== undefined && libraryId !== undefined;
 
   useEffect(() => {
@@ -35,36 +58,47 @@ export function usePluginInspectorViews(
       libraryId,
       target: 'inspector.views',
     }).then((result) => {
-      if (cancelled || !('contributions' in result)) return;
-      const views = result.contributions.filter(
+      if (cancelled) return;
+      const views = 'contributions' in result ? result.contributions.filter(
         (contribution): contribution is PluginManagerInspectorViewContribution =>
           contribution.kind === 'view' && contribution.target === 'inspector.views',
-      );
-      setItems(buildPluginInspectorViewDescriptors(views));
+      ) : [];
+      setLoaded({ libraryId, pluginApi, items: buildPluginInspectorViewDescriptors(views) });
     }).catch(() => {
-      if (!cancelled) setItems([]);
+      if (!cancelled) setLoaded(undefined);
     });
     return () => {
       cancelled = true;
     };
   }, [libraryId, pluginApi, refreshKey, shouldLoad]);
 
-  return shouldLoad ? items : [];
+  return shouldLoad && loaded !== undefined &&
+    loaded.libraryId === libraryId && loaded.pluginApi === pluginApi
+    ? loaded.items
+    : EMPTY_VIEWS;
 }
 
 export function PluginInspectorViews({
   pluginApi,
   libraryId,
   disabled = false,
+  primaryAssetId,
   refreshKey,
+  selectedAssetIds,
 }: {
   pluginApi: SerpentPluginManagerApi | undefined;
   libraryId: string | undefined;
   disabled?: boolean;
+  primaryAssetId: string;
   refreshKey: string | null;
+  selectedAssetIds: readonly string[];
 }): ReactNode {
   const t = useT();
   const items = usePluginInspectorViews(pluginApi, libraryId, !disabled, refreshKey);
+  const state = useMemo(
+    () => buildPluginInspectorSelectionState(selectedAssetIds, primaryAssetId),
+    [primaryAssetId, selectedAssetIds],
+  );
   const [activeId, setActiveId] = useState<string | null>(null);
   const active = useMemo(() => {
     const selectedId = items.some((item) => item.id === activeId) ? activeId : null;
@@ -97,6 +131,7 @@ export function PluginInspectorViews({
           className="plugin-inspector-view-frame"
           libraryId={libraryId}
           pluginApi={pluginApi}
+          state={active.receivesInspectorSelection === true ? state : undefined}
           view={active}
         />
       )}

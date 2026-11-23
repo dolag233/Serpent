@@ -195,6 +195,7 @@ function PluginWidgetDialogBody({
       <DialogShell
         aria-label={request.title}
         className="create-dialog plugin-ui-dialog plugin-ui-dialog--widget"
+        data-widget-width={request.width}
         dialogId={dialogId}
         footer={(
           <div className="dialog-actions plugin-ui-dialog-actions">

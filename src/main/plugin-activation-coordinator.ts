@@ -1045,6 +1045,9 @@ export class PluginActivationCoordinator {
           pluginInstanceId: contribution.pluginInstanceId,
           title: contribution.title,
           target: 'inspector.views' as const,
+          ...(this.findActiveInstance(contribution.pluginInstanceId)?.permissions.includes('ui.inspector')
+            ? { receivesInspectorSelection: true as const }
+            : {}),
           ...this.#viewContributionAttachment(contribution, input.libraryId),
         }));
     }

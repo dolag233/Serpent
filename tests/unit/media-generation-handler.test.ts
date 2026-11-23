@@ -67,7 +67,7 @@ test('media.generate-thumbnail schedules a mutation scene for model assets witho
     type: 'media.thumbnail.generated',
     assetId: 'asset-1',
   });
-  expect(generationHooks.scheduleThumbnails).toHaveBeenCalledWith('lib-1', 'mutation', ['asset-1']);
+  expect(generationHooks.scheduleThumbnails).toHaveBeenCalledWith('lib-1', 'mutation', ['asset-1'], { explicit: true });
 });
 
 test('media.retry-artifact uses the urgent secondary queue for proxies', async () => {

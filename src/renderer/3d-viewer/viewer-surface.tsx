@@ -36,6 +36,7 @@ import type { FbxConvertErrorCode } from '../../shared/fbx-conversion';
 import type { SerpentLibraryApi } from '../../shared/library-api';
 import { useLocale } from '../i18n';
 import { useTheme } from '../theme';
+import { ViewerLoadingStatus } from '../viewer-loading-status';
 import {
   computeCameraPlacement,
   computeOrbitConstraints,
@@ -67,7 +68,7 @@ import {
 } from './loader-registry';
 import { countSceneStats, type ModelStats } from './model-stats';
 import { stlDefaultMaterial } from './pbr-mapping';
-import { createSceneComposer, type SceneComposer } from './scene-composer';
+import { createSceneComposer, disposeSceneTree, type SceneComposer } from './scene-composer';
 import {
   loadViewer3dPreferences,
   saveViewer3dPreferences,
@@ -223,7 +224,7 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
     setNotices([]);
     setStats(null);
 
-    const fail = (code: ModelViewerErrorCode) => {
+    const fail = (code: ModelViewerErrorCode | FbxConvertErrorCode) => {
       setPhase('error');
       setViewError({ code });
     };
@@ -336,28 +337,22 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
           sourceUrl: props.sourceUrl,
           libraryId: props.libraryId,
           companionMap,
-          convertFbx: async () => {
-            const result = await props.api.convertModelFbx({
-              libraryId: props.libraryId,
-              assetId: props.asset.assetId,
-            });
-            if (!result.ok) {
-              // A failed IPC call routes to the FBXLoader fallback like an
-              // explicit conversion failure.
-              return { status: 'failed', errorCode: 'FBX_CONVERSION_FAILED' };
-            }
-            return result.value;
-          },
           stlMaterial: stlDefaultMaterial(themeMode),
         });
       } catch {
-        if (!cancelled) fail('MODEL_LOAD_FAILED');
+        if (!cancelled) {
+          fail('MODEL_LOAD_FAILED');
+        }
         return;
       }
-      if (cancelled) return;
+      if (cancelled) {
+        disposeSceneTree(loaded.scene);
+        return;
+      }
 
       const bounds = new Box3().setFromObject(loaded.scene);
       if (bounds.isEmpty()) {
+        disposeSceneTree(loaded.scene);
         fail('MODEL_LOAD_FAILED');
         return;
       }
@@ -402,13 +397,6 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
       );
 
       const noticeMessages: string[] = [];
-      if (loaded.fallback) {
-        noticeMessages.push(
-          t('viewer3d.notice.fbxFallback', {
-            reason: t(fbxErrorI18nKey(loaded.fallback.errorCode)),
-          }),
-        );
-      }
       if (loaded.missingTextures.length > 0) {
         noticeMessages.push(
           t('viewer3d.notice.missingTextures', {
@@ -587,11 +575,8 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
       role="region"
       aria-label={t('viewer3d.ariaLabel')}
     >
-      {effectivePhase === 'loading' ? (
-        <div className="model-viewer-state" role="status">
-          <span className="model-viewer-spinner" aria-hidden="true" />
-          <span>{t('viewer3d.loading')}</span>
-        </div>
+      {effectivePhase === 'loading' && loadEpoch > 0 ? (
+        <ViewerLoadingStatus label={t('preview.resolving')} />
       ) : null}
       {effectivePhase === 'error' ? (
         <div className="model-viewer-state is-error" role="alert">

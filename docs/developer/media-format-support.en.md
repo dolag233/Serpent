@@ -39,6 +39,17 @@ Chromium native rendering is an optimization, not sufficient proof of product su
 
 `.blend` is not in the product format table: there is no reliable public mesh parser for Blender 3–4.x, and Serpent does not bundle Blender. Files can still be imported and show as an unknown type. Export glTF or FBX from Blender when a 3D preview is needed. FBX / OBJ / glTF / GLB / STL still use the WebGL viewer.
 
+### RAW thumbnails, viewer images, and tone
+
+- Thumbnails first try a bounded embedded JPEG, falling back to OIIO / LibRaw when it cannot be read. This fast path is not a full-size RAW decode and does not cover every RAW container.
+- `viewer_image` performs a separate full-resolution decode. RAW now produces quality-95 JPEG (`image/jpeg`) instead of PNG, without changing the RAW source. Consumers must honor the artifact MIME and file type rather than assuming `viewer_image` means `image/png`.
+- RAW keeps the decoder's default sRGB display path rather than applying the OCIO display transform used for other professional images. ARW viewer images use PPG demosaicing with automatic brightness disabled; a readable embedded camera JPEG guides a shared tone curve. Other RAW formats do not use this ARW tone matching.
+- Viewer-image caches update by generator version. Tests must check actual decoding, full-resolution dimensions, MIME, and file headers. A displayed thumbnail does not prove the RAW viewer image has finished, and ARW timing or tone results must not be generalized to all RAW formats.
+
+### Model transparency and display settings
+
+Both the model viewer and offscreen card previews must retain texture alpha rather than baking transparent regions onto a dark background. Base-color alpha handling after FBX conversion lives in `src/renderer/3d-viewer/base-color-alpha.ts` and needs checking alongside the other material display modes. **Double-sided** applies to material, flat, and wireframe modes. Double-sided and statistics-panel choices live in viewer preferences and do not alter the source model.
+
 ## 4. Test matrix
 
 Prepare fixtures in temporary directories; never commit personal absolute paths or real user data. Cover:

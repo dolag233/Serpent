@@ -99,6 +99,10 @@ export function executeVisibleWindowWorkerCommand(
   if (!bandSnapshotAccepted.accepted) {
     return { ok: true, type: 'asset.thumbnail.visible-window.acknowledged' };
   }
+  // The immediate union includes other consumers and focus-only changes, even
+  // when a legacy caller repeats its visible set without a viewport generation.
+  const immediateAssetIds = runtime.viewportPriorityOverlay.immediateAssetIds(libraryId);
+  runtime.enqueueVisibleWindowDimensionProbes(libraryId, immediateAssetIds);
   if (
     viewportGeneration === undefined
     && visibleWindowKey === runtime.lastVisibleWindowKeyByLibrary.get(libraryId)
@@ -128,7 +132,7 @@ export function executeVisibleWindowWorkerCommand(
   }
   runtime.setImmediateAssetIds(
     libraryId,
-    runtime.viewportPriorityOverlay.immediateAssetIds(libraryId),
+    immediateAssetIds,
   );
   const preemptVisible = shouldAbortRunningOutsideViewport({
     overlapShouldPreempt,
@@ -136,7 +140,7 @@ export function executeVisibleWindowWorkerCommand(
     viewportStableMs,
     lastPreemptAtMs: runtime.lastViewportPreemptAtMs.get(libraryId),
     nowMs,
-    p0OrP1Waiting: runtime.viewportPriorityOverlay.immediateAssetIds(libraryId).length > 0,
+    p0OrP1Waiting: immediateAssetIds.length > 0,
     lookaheadOnly: previousVisible !== undefined && !visibleSetChanged,
   });
   if (preemptVisible) {
@@ -156,11 +160,5 @@ export function executeVisibleWindowWorkerCommand(
   if (fastVisibleAssetIds.length > 0) {
     runtime.scheduleVisibleThumbnails(libraryId, fastVisibleAssetIds, preemptVisible);
   }
-  // Header probes used to run synchronously here, before the ACK. On a
-  // cold/remote volume that made a scroll report monopolize the Worker
-  // behind dozens of open/read/close calls and delayed the next page
-  // query. Keep the geometry correction, but drain it asynchronously after
-  // this command has returned and let it be cancelled on library close.
-  runtime.enqueueVisibleWindowDimensionProbes(libraryId, visibleAssetIds);
   return { ok: true, type: 'asset.thumbnail.visible-window.acknowledged' };
 }

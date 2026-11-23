@@ -52,6 +52,8 @@ import {
 } from "./asset-card-hover-preview";
 import { shouldShowThumbnailFailureBadge } from "./thumbnail-failure-badge";
 import { viewportPriorityReportKey } from "../shared/viewport-priority";
+import { createCoalescedFrame, VIEWPORT_REPORT_INTERVAL_MS } from "./coalesced-frame";
+import { CANVAS_LAYOUT_COMMITTED_EVENT } from "./canvas-layout-commit-signal";
 import {
   collectIntersectingCanvasAssetIds,
   composeBrowseViewportPriorityBands,
@@ -73,6 +75,8 @@ import { ConvertLinkedDialog } from "./ConvertLinkedDialog";
 import { LinkedRulesDialog } from "./LinkedRulesDialog";
 import { TagManagementWorkspace } from "./TagManagementWorkspace";
 import { useFolderDeleteActions } from "./use-folder-delete-actions";
+import { FolderMutationProjectionGate } from "./folder-mutation-projection";
+import { useFolderMutationBridge } from "./use-folder-mutation-bridge";
 import { canDeleteAssetFromDiskWithShortcut } from "./browse-key-command";
 import { filteredFolderBrowseEntries } from "./filtered-folder-visibility";
 import { useFilteredFolderCounts } from "./use-filtered-folder-counts";
@@ -100,10 +104,8 @@ import type { ShortcutEventLike } from "../shared/shortcut-resolution";
 import { ExportDialog } from "./ExportDialog";
 import { ImportDialog } from "./ImportDialog";
 import { ImportLibraryChooserDialog, OpenLibraryChooserDialog } from "./ImportLibraryChooserDialog";
-import {
-  NavigationSidebar,
-  type FolderTreeExpandActions,
-} from "./NavigationSidebar";
+import type { FolderTreeExpandActions } from "./NavigationSidebar";
+import { NavigationSidebarBoundary } from "./navigation-sidebar-boundary";
 import { LibrarySwitcher, buildRecentLibraryMenuEntries, type RecentLibraryMenuEntry } from "./LibrarySwitcher";
 import {
   LibraryLoadingOverlay,
@@ -156,6 +158,7 @@ import {
 import {
   resolveBrowseCanvasBodyLayout,
   resolveFolderBrowseParentId,
+  resolveBrowseCreateFolderParentId,
   shouldShowFolderBrowseCards,
 } from "./folder-browse-canvas";
 import { useFolderInspector } from "./folder-inspector";
@@ -312,6 +315,7 @@ import {
   shouldApplyLibraryLifecycleEvent,
   shouldDetachLibraryOnOpening,
 } from "./library-lifecycle-sync";
+import { createLibraryClosedHandler } from "./library-closed-view-ownership";
 import { shouldRefreshContentForLibraryChange } from "./library-change-refresh";
 import { AboutDialog } from "./AboutDialog";
 import { OpenSourceLicensesDialog } from "./OpenSourceLicensesDialog";
@@ -368,7 +372,7 @@ import {
   appendMediaJobListPage,
   applyMediaJobSummary,
   replaceMediaJobListPage,
-  type MediaJobSummaryCounts,
+  type MediaJobSummarySnapshot,
 } from "./media-job-status-state";
 import { MEDIA_JOB_LIST_PAGE_SIZE } from "../shared/media-jobs";
 import { useScrollbarActivity } from "./use-scrollbar-activity";
@@ -447,6 +451,7 @@ import {
   resolveDialogEscapeAction,
   type DialogEscapeSnapshot,
 } from "./dialog-escape-stack";
+import { beginInlineRenameTextSelection } from "./inline-rename-text-selection";
 import { splitAssetFileName, useAssetRename } from "./useAssetRename";
 import { useInlineFolderEdit } from "./use-inline-folder-edit";
 import { useInlineSmartCollectionEdit } from "./use-inline-smart-collection-edit";
@@ -662,9 +667,14 @@ import { JustifiedAssetRows } from "./justified-asset-rows";
 import { MasonryColumns } from "./masonry-columns";
 import {
   applyAssetThumbnailPatches,
-  mergeAssetThumbnailPatch,
+  AssetDimensionPublicationTracker,
   type AssetThumbnailPatch,
 } from "./asset-thumbnail-patches";
+import {
+  AssetThumbnailPatchQueue,
+  DeferredVersionedThumbnailPatches,
+  resolveQueuedAssetThumbnailPatches,
+} from "./asset-thumbnail-patch-queue";
 import {
   expandThumbnailCardEvents,
   shouldProjectThumbnailCompletion,
@@ -677,11 +687,13 @@ import {
   type CanvasAnchor,
 } from "./canvas-scroll-anchor";
 import {
+  cancelScheduledAnchorRestore,
   captureReflowAnchorFromCards,
   retainReflowAnchor,
   scheduleAnchorRestore,
   type ScrollOffsetSnapshot,
 } from "./canvas-reflow-restore";
+import { interruptPreviewReturnForReflow } from "./preview-return-interruption";
 import {
   captureBrowseViewSnapshot,
   type BrowseViewSnapshot,
@@ -954,6 +966,8 @@ function AppInner() {
     ids: Map<string, string>;
   }>({ libraryId: "", ids: new Map() });
   const [assetScope, setAssetScope] = useState<AssetScope>("all");
+  const assetScopeRef = useRef<AssetScope>(assetScope);
+  assetScopeRef.current = assetScope;
   // REQ-FOLDER-001/002/003/010: direct child folder cards shown above assets
   // when the current browse parent is a managed folder or the managed root.
   const [folderBrowseEntries, setFolderBrowseEntries] = useState<FolderBrowseEntry[]>([]);
@@ -1022,6 +1036,7 @@ function AppInner() {
   const libraryTransitionInlineOpeningRef = useRef<
     "open-eagle" | "open-billfish" | null
   >(null);
+  const libraryLocationOperationRef = useRef(false);
   const libraryWriteDepthRef = useRef(0);
   const libraryWriteInFlightRef = useRef(false);
   const [, forceLibraryWriteState] = useState(false);
@@ -1534,6 +1549,8 @@ function AppInner() {
     generation: 0,
   });
   const navigationHydrationAbortRef = useRef<AbortController | null>(null);
+  const folderMutationRefreshAbortRef = useRef<AbortController | null>(null);
+  const folderMutationProjectionGateRef = useRef(new FolderMutationProjectionGate());
   const pendingLibraryCloseFencesRef = useRef(new Map<string, Set<number>>());
   const localAssetRemovalGenerationRef = useRef(0);
 
@@ -1541,6 +1558,12 @@ function AppInner() {
     contentLoadGenerationRef.current += 1;
     navigationHydrationAbortRef.current?.abort();
     navigationHydrationAbortRef.current = null;
+    folderMutationRefreshAbortRef.current?.abort();
+    folderMutationRefreshAbortRef.current = null;
+  }, []);
+  useEffect(() => () => {
+    folderMutationRefreshAbortRef.current?.abort();
+    folderMutationRefreshAbortRef.current = null;
   }, []);
   const beginLibraryTransition = useCallback(() => {
     cancelPendingLibraryReads();
@@ -2413,6 +2436,7 @@ function AppInner() {
   // callback (which is created once and does not close over fresh state)
   // to skip the reflow-anchor logic while the viewer hides the canvas.
   const previewAssetRef = useRef<AssetSummary | null>(null);
+  const previewOpenedWithEnterRef = useRef(false);
   const previewRestoringRef = useRef(false);
   useLayoutEffect(() => {
     previewAssetRef.current = previewAsset;
@@ -2560,7 +2584,11 @@ function AppInner() {
     canvas.scrollTop = targetTop;
   });
   const reportedVisibleWindowKeyRef = useRef("");
+  const viewportReportCadenceRef = useRef({
+    libraryId: "", intervalMs: VIEWPORT_REPORT_INTERVAL_MS, lastPublishedAt: -Infinity,
+  });
   const visibleWindowAssetIdsRef = useRef<ReadonlySet<string>>(new Set());
+  const replayDeferredThumbnailPatchesRef = useRef<(() => void) | null>(null);
   const viewportScrollTopRef = useRef<number | undefined>(undefined);
   const viewportGenerationRef = useRef(0);
   const interactionGenerationRef = useRef(0);
@@ -2568,6 +2596,43 @@ function AppInner() {
   // through this ref — never through React state (per-frame state re-renders
   // the whole non-memoized grid).
   const marqueeBoxRef = useRef<HTMLDivElement>(null);
+  const previewFocusReturnRef = useRef<string | null>(null);
+  // REQ-VIEW-008: snapshot of the browse scroll position + the previewed
+  // card's on-screen anchor, captured when the viewer opens so the close
+  // path can correct for any reflow that happened while viewing (e.g. the
+  // inspector panel toggled and changed the grid's available width).
+  const previewScrollSnapshotRef = useRef<BrowseViewSnapshot | null>(null);
+  const closingPreviewRef = useRef<string | null>(null);
+  // Incremented whenever a viewer open/close supersedes a pending close. This
+  // prevents a stale rAF/API completion from clearing the restoring state or
+  // focusing the previous card after a rapid reopen of the same asset.
+  const previewCloseGenerationRef = useRef(0);
+  const previewRestoreFrameRef = useRef<number | null>(null);
+  const cancelPreviewViewRestoreRef = useRef<(() => void) | null>(null);
+
+  const beginUserCanvasReflow = useCallback(() => {
+    const allowed = interruptPreviewReturnForReflow({
+      canvas: workspaceCanvasRef.current,
+      viewerOpen: previewAssetRef.current !== null,
+      restoring: previewRestoringRef.current,
+      generationRef: previewCloseGenerationRef,
+      cancelRestoreRef: cancelPreviewViewRestoreRef,
+      focusFrameRef: previewRestoreFrameRef,
+      closingAssetRef: closingPreviewRef,
+      clearHold: clearPreviewScrollHold,
+      onInterrupted: () => flushSync(() => {
+        previewRestoringRef.current = false;
+        setPreviewRestoring(false);
+        setPreviewCanvasReady(false);
+      }),
+    });
+    if (!allowed) return false;
+    cancelWorkspaceViewportRestoreRef.current?.();
+    cancelWorkspaceViewportRestoreRef.current = null;
+    pendingViewportRestoreRef.current = null;
+    return true;
+  }, [clearPreviewScrollHold]);
+
   // REQ-CANVAS-019: rAF handle for the card-size-slider anchor restore.
   const cardSizeRestoreFrameRef = useRef<number | null>(null);
   // REQ-CANVAS-019: rAF handle for the container-width (sidebar/window
@@ -2587,6 +2652,9 @@ function AppInner() {
   }, [panelResizing]);
 
   const capturePanelResizeAnchor = useCallback((lock = true) => {
+    if (!beginUserCanvasReflow()) return;
+    cancelScheduledAnchorRestore(cardSizeRestoreFrameRef, { notify: true });
+    cancelScheduledAnchorRestore(reflowRestoreFrameRef, { notify: true });
     const canvas = workspaceCanvasRef.current;
     if (!canvas) return;
     canvas.classList.remove("is-reflow-restoring");
@@ -2611,7 +2679,7 @@ function AppInner() {
       `${panelReflowFrozenWidthRef.current}px`,
     );
     panelResizeLockRef.current = lock;
-  }, []);
+  }, [beginUserCanvasReflow]);
 
   const restorePanelAfterResize = useCallback(() => {
     panelResizeLockRef.current = false;
@@ -2708,10 +2776,10 @@ function AppInner() {
   useEffect(
     () => () => {
       if (cardSizeRestoreFrameRef.current !== null) {
-        window.cancelAnimationFrame(cardSizeRestoreFrameRef.current);
+        cancelScheduledAnchorRestore(cardSizeRestoreFrameRef, { notify: true });
       }
       if (reflowRestoreFrameRef.current !== null) {
-        window.cancelAnimationFrame(reflowRestoreFrameRef.current);
+        cancelScheduledAnchorRestore(reflowRestoreFrameRef, { notify: true });
       }
       reflowAnchorRef.current = null;
       reflowScrollSnapshotRef.current = null;
@@ -2733,19 +2801,7 @@ function AppInner() {
   const offerPostImportSequencesRef = useRef<
     (assets: readonly AssetSummary[]) => void
   >(() => undefined);
-  const previewFocusReturnRef = useRef<string | null>(null);
-  // REQ-VIEW-008: snapshot of the browse scroll position + the previewed
-  // card's on-screen anchor, captured when the viewer opens so the close
-  // path can correct for any reflow that happened while viewing (e.g. the
-  // inspector panel toggled and changed the grid's available width).
-  const previewScrollSnapshotRef = useRef<BrowseViewSnapshot | null>(null);
-  const closingPreviewRef = useRef<string | null>(null);
-  // Incremented whenever a viewer open/close supersedes a pending close. This
-  // prevents a stale rAF/API completion from clearing the restoring state or
-  // focusing the previous card after a rapid reopen of the same asset.
-  const previewCloseGenerationRef = useRef(0);
-  const previewRestoreFrameRef = useRef<number | null>(null);
-  const cancelPreviewViewRestoreRef = useRef<(() => void) | null>(null);
+
   useEffect(
     () => () => {
       cancelPreviewViewRestoreRef.current?.();
@@ -3182,10 +3238,7 @@ function AppInner() {
     reportedVisibleWindowKeyRef.current = "";
     interactionGenerationRef.current += 1;
     viewportScrollTopRef.current = undefined;
-    let frame: number | undefined;
-    let debounceTimer: number | undefined;
     const report = () => {
-      frame = undefined;
       const intersectingIds = collectIntersectingCanvasAssetIds(
         canvas,
         (assetId) => isGeometryPlaceholder({ assetId }),
@@ -3225,6 +3278,9 @@ function AppInner() {
       reportedVisibleWindowKeyRef.current = key;
       viewportGenerationRef.current += 1;
       visibleWindowAssetIdsRef.current = new Set(bands.visible);
+      if ((window as RendererWindow).serpent?.e2e) {
+        window.dispatchEvent(new CustomEvent("serpent:e2e-visible-window", { detail: bands }));
+      }
       void api.reportVisibleWindow({
         libraryId: library.libraryId,
         assetIds: bands.visible,
@@ -3238,22 +3294,30 @@ function AppInner() {
         scopeWarmAssetIds: bands.scopeWarm,
       });
     };
-    const schedule = () => {
-      if (frame !== undefined) window.cancelAnimationFrame(frame);
-      if (debounceTimer !== undefined) window.clearTimeout(debounceTimer);
-      debounceTimer = window.setTimeout(() => {
-        debounceTimer = undefined;
-        frame = window.requestAnimationFrame(report);
-      }, 50);
-    };
+    // A trailing timer is restarted by summary/dimension reflows, delaying the
+    // very work that fills this viewport. Publish on a fixed frame cadence;
+    // keep its deadline across reflows and bound reports during a long scroll.
+    if (viewportReportCadenceRef.current.libraryId !== library.libraryId) {
+      viewportReportCadenceRef.current = {
+        libraryId: library.libraryId,
+        intervalMs: VIEWPORT_REPORT_INTERVAL_MS,
+        lastPublishedAt: -Infinity,
+      };
+    }
+    const reportOwner = { libraryId: library.libraryId, generation: libraryViewSessionRef.current.generation };
+    const reporting = createCoalescedFrame(report, window, viewportReportCadenceRef.current, () =>
+      libraryRef.current?.libraryId === reportOwner.libraryId
+        && isCurrentLibraryViewSession(libraryViewSessionRef.current, reportOwner));
+    const schedule = () => reporting.request();
     canvas.addEventListener("scroll", schedule, { passive: true });
+    canvas.addEventListener(CANVAS_LAYOUT_COMMITTED_EVENT, schedule);
     schedule();
     return () => {
       canvas.removeEventListener("scroll", schedule);
-      if (frame !== undefined) window.cancelAnimationFrame(frame);
-      if (debounceTimer !== undefined) window.clearTimeout(debounceTimer);
+      canvas.removeEventListener(CANVAS_LAYOUT_COMMITTED_EVENT, schedule);
+      reporting.cancel();
     };
-  }, [api, library, assetViewMode, browseLayout, visibleVirtualBrowseLayout]);
+  }, [api, library, assetViewMode, visibleBrowseLayout, visibleVirtualBrowseLayout]);
 
   // Map the scrollbar to the compact real-asset index. One-frame coalescing
   // avoids request spam without spending 50ms of the 500ms loading budget.
@@ -4046,7 +4110,7 @@ function AppInner() {
         ),
         stops,
       );
-      if (!root || nextSize === assetCardSize) return;
+      if (!root || nextSize === assetCardSize || !beginUserCanvasReflow()) return;
 
       const rootRect = root.getBoundingClientRect();
       const anchorX = clientX ?? rootRect.left + rootRect.width / 2;
@@ -4101,7 +4165,7 @@ function AppInner() {
       // fight the pointer anchor. Cancel an in-flight width restore so its
       // completion callback cannot clear this zoom anchor.
       if (reflowRestoreFrameRef.current !== null) {
-        window.cancelAnimationFrame(reflowRestoreFrameRef.current);
+        cancelScheduledAnchorRestore(reflowRestoreFrameRef);
         reflowRestoreFrameRef.current = null;
       }
       reflowAnchorRef.current = null;
@@ -4125,7 +4189,7 @@ function AppInner() {
         cardResizeScrollSnapshotRef.current ?? undefined,
       );
     },
-    [assetCardSize],
+    [assetCardSize, beginUserCanvasReflow],
   );
 
   // REQ-CANVAS-019: dragging the sidebar or resizing the window changes the
@@ -4228,11 +4292,11 @@ function AppInner() {
   useLayoutEffect(() => {
     if (!previewAsset && !previewRestoring) return;
     if (cardSizeRestoreFrameRef.current !== null) {
-      window.cancelAnimationFrame(cardSizeRestoreFrameRef.current);
+      cancelScheduledAnchorRestore(cardSizeRestoreFrameRef, { notify: true });
       cardSizeRestoreFrameRef.current = null;
     }
     if (reflowRestoreFrameRef.current !== null) {
-      window.cancelAnimationFrame(reflowRestoreFrameRef.current);
+      cancelScheduledAnchorRestore(reflowRestoreFrameRef, { notify: true });
       reflowRestoreFrameRef.current = null;
     }
     cardResizeAnchorRef.current = null;
@@ -4359,9 +4423,10 @@ function AppInner() {
 
   const openAssetPreview = useCallback((
     asset: AssetSummary,
-    options?: { recordHistory?: boolean },
+    options?: { recordHistory?: boolean; openedWithEnter?: boolean },
   ) => {
     if (asset.availability !== "available" || asset.deletedAt) return;
+    previewOpenedWithEnterRef.current = options?.openedWithEnter === true;
     previewAssetRef.current = asset;
     pendingViewportRestoreRef.current = null;
     if (
@@ -4392,11 +4457,11 @@ function AppInner() {
     // queued when the user opens the viewer immediately after resizing. That
     // stale callback must not overwrite the viewer-close snapshot later.
     if (cardSizeRestoreFrameRef.current !== null) {
-      window.cancelAnimationFrame(cardSizeRestoreFrameRef.current);
+      cancelScheduledAnchorRestore(cardSizeRestoreFrameRef, { notify: true });
       cardSizeRestoreFrameRef.current = null;
     }
     if (reflowRestoreFrameRef.current !== null) {
-      window.cancelAnimationFrame(reflowRestoreFrameRef.current);
+      cancelScheduledAnchorRestore(reflowRestoreFrameRef, { notify: true });
       reflowRestoreFrameRef.current = null;
     }
     cardResizeAnchorRef.current = null;
@@ -4538,6 +4603,7 @@ function AppInner() {
     const closingAsset = previewAsset;
     if (!closingAsset) return;
     if (closingPreviewRef.current === closingAsset.assetId) return;
+    previewOpenedWithEnterRef.current = false;
     // Serpent-b7e173：查看器被关闭时（无论 X/Esc 显式关还是导航触发），若当前
     // 历史条目仍是 preview 则硬移除——否则「从预览导航到别处」会残留一个已关闭
     // 的 preview，导致 back 回到它。back()/forward() 已移 index（当前非 preview）
@@ -4748,6 +4814,9 @@ function AppInner() {
             ));
       const viewSession = ensureLibraryView(activeLibrary.libraryId);
       if (!viewSession) return [];
+      const navigationReadTicket = refreshSidebar
+        ? folderMutationProjectionGateRef.current.issueRead(viewSession)
+        : null;
       const libId = { libraryId: activeLibrary.libraryId };
       const generation = ++contentLoadGenerationRef.current;
       navigationHydrationAbortRef.current?.abort();
@@ -4789,13 +4858,25 @@ function AppInner() {
        * sidebar stayed permanently empty ("尚无托管或链接文件夹 / 尚无合集") behind
        * a loading overlay that never cleared.
        *
-       * Scope it to the library/view instead: a summary for the library still on
-       * screen is always safe to apply, and applying the newest one wins.
+       * Scope it to the library/view and the local folder-mutation epoch. This
+       * keeps useful summaries during background catalog activity while a
+       * pre-mutation response cannot erase an immediate folder projection.
        */
       const isCurrentLibraryNavigation = () =>
         isCurrentLibraryView(viewSession)
         && (opts?.navigationIsCurrent?.() ?? true);
+      let navigationSummaryApplied = false;
       const applyNavigationSummary = (summary: LibraryNavigationSummary) => {
+        if (
+          !navigationReadTicket
+          || navigationSummaryApplied
+          || !isCurrentLibraryNavigation()
+          || !folderMutationProjectionGateRef.current.mayApply(
+            navigationReadTicket,
+            viewSession,
+          )
+        ) return false;
+        navigationSummaryApplied = true;
         setAllAssetCount(summary.allAssetCount);
         setRootAssetCount(summary.rootAssetCount);
         setTrashedAssetCount(summary.trashedAssetCount);
@@ -4809,6 +4890,7 @@ function AppInner() {
         folderNavigationCoversRef.current = covers;
         setFolderNavigationCovers(covers);
         setFolderCustomCoverIds(new Set(covers.map((cover) => cover.folderId)));
+        return true;
       };
       const loadNavigationSummary = () => {
         if (!isCurrentLibraryView(viewSession)) return Promise.resolve(undefined);
@@ -4817,7 +4899,7 @@ function AppInner() {
           showIgnored: includeIgnored,
           includeTrashedFolders: trashMode,
         }).then((result) => {
-          if (result.ok && isCurrentLibraryNavigation()) {
+          if (result.ok) {
             applyNavigationSummary(result.value);
           }
           return result;
@@ -5122,6 +5204,17 @@ function AppInner() {
   // MCP events (plus the legacy script-preview bootstrap path) are applied.
   useEffect(() => {
     if (!api) return;
+    const handleLibraryClosed = createLibraryClosedHandler({
+      snapshot: () => ({ libraryId: libraryRef.current?.libraryId ?? null, view: libraryViewSessionRef.current }),
+      pendingCloseGenerations: (id) => pendingLibraryCloseFencesRef.current.get(id),
+      queue: (task) => libraryTransitionLock(task),
+      closePreview: () => closeAssetPreview(false),
+      applyClosedUi: applyClosedLibraryUi,
+      refreshRecentLibraries: () => refreshRecentLibraries(null),
+      setClosing: () => setUiState("closing"),
+      setIdle: () => setUiState("idle"),
+      reportFailure: (caught) => setError(toMessage(caught, t("toast.closeFailed"), locale)),
+    });
     return api.onLifecycle((event) => {
       if (event.type === 'worker.recovering') {
         workerRecoveryStateRef.current = 'recovering';
@@ -5191,42 +5284,7 @@ function AppInner() {
         return;
       }
       if (event.type === "library.closed") {
-        const closedLibraryId = event.libraryId;
-        const pendingGenerations =
-          pendingLibraryCloseFencesRef.current.get(closedLibraryId);
-        if (
-          event.source !== "mcp" &&
-          pendingGenerations !== undefined &&
-          !pendingGenerations.has(libraryViewSessionRef.current.generation)
-        ) {
-          // An ordinary renderer-initiated close has no lifecycle source tag.
-          // If the same library was reopened before its old close event was
-          // delivered, the id alone is ambiguous; the session generation is
-          // what distinguishes that stale event from a real close. Keep all
-          // pending generations until their own requests settle so two rapid
-          // closes of the same library cannot overwrite one another.
-          return;
-        }
-        const applyLibraryClosed = async () => {
-          if (libraryRef.current?.libraryId !== closedLibraryId) return;
-          setUiState("closing");
-          try {
-            await closeAssetPreview(false);
-            if (libraryRef.current?.libraryId !== closedLibraryId) return;
-            applyClosedLibraryUi();
-            await refreshRecentLibraries(null);
-          } catch (caught) {
-            if (libraryRef.current?.libraryId === closedLibraryId) {
-              setError(toMessage(caught, t("toast.closeFailed"), locale));
-            }
-          } finally {
-            if (libraryRef.current === null) setUiState("idle");
-          }
-        };
-        // Main can close the active library on behalf of MCP. Keep the same
-        // serialized boundary as renderer-triggered close; events for the
-        // previous library become no-ops after a replacement is committed.
-        void libraryTransitionLock(applyLibraryClosed);
+        handleLibraryClosed(event);
         return;
       }
       if (event.type !== "library.opened") return;
@@ -5288,8 +5346,10 @@ function AppInner() {
       : null;
     const isEffectLibraryCurrent = () =>
       effectViewSession !== null && isCurrentLibraryView(effectViewSession);
-    const pending = new Map<string, AssetThumbnailPatch>();
+    const pending = new AssetThumbnailPatchQueue();
+    const deferred = new DeferredVersionedThumbnailPatches();
     const pendingLayoutArtifactIds = new Map<string, string | null>();
+    const dimensionPublications = new AssetDimensionPublicationTracker();
     let frame = 0;
     const flush = () => {
       frame = 0;
@@ -5299,10 +5359,13 @@ function AppInner() {
         pendingLayoutArtifactIds.clear();
         return;
       }
-      const batch = new Map(pending);
-      pending.clear();
-      if (batch.size > 0) {
-        setAssets((current) => applyAssetThumbnailPatches(current, batch));
+      const queued = pending.drain();
+      if (queued.size > 0) {
+        const batch = resolveQueuedAssetThumbnailPatches(queued, assetsRef.current);
+        const dimensionsForMembership = dimensionPublications.collect(assetsRef.current, batch);
+        setAssets((current) => applyAssetThumbnailPatches(
+          current, resolveQueuedAssetThumbnailPatches(queued, current),
+        ));
         const geometryPatches = new Map<string, { width: number; height: number }>();
         const previewPatches = new Map<string, {
           previewKind: 'source' | null;
@@ -5332,28 +5395,12 @@ function AppInner() {
         }
         if (geometryPatches.size > 0) {
           applyBrowseGeometryPatchesRef.current(geometryPatches);
-          const measured: Array<{
-            assetId: string;
-            width: number;
-            height: number;
-            mediaType: AssetSummary["mediaType"];
-          }> = [];
-          for (const [assetId, size] of geometryPatches) {
-            const current = assetsRef.current.find((asset) => asset.assetId === assetId);
-            if (!current) continue;
-            measured.push({
-              assetId,
-              width: size.width,
-              height: size.height,
-              mediaType: current.mediaType,
-            });
-          }
-          if (measured.length > 0) {
-            syncBrowseFilterMembershipRef.current({
-              kind: "dimensions",
-              assets: measured,
-            });
-          }
+        }
+        if (dimensionsForMembership.length > 0) {
+          syncBrowseFilterMembershipRef.current({
+            kind: "dimensions",
+            assets: dimensionsForMembership,
+          });
         }
         if (previewPatches.size > 0) {
           applyBrowsePreviewPatchesRef.current(previewPatches);
@@ -5380,11 +5427,18 @@ function AppInner() {
         });
       }
     };
-    const queuePatch = (assetId: string, patch: AssetThumbnailPatch) => {
-      pending.set(assetId, mergeAssetThumbnailPatch(pending.get(assetId), patch));
+    const queuePatch = (assetId: string, patch: AssetThumbnailPatch, expectedRevisionId?: string) => {
+      pending.enqueue(assetId, patch, expectedRevisionId);
       if (frame !== 0) return;
       frame = window.requestAnimationFrame(flush);
     };
+    const replayDeferred = () => {
+      if (!isEffectLibraryCurrent()) return;
+      for (const item of deferred.takeFor(assetsRef.current)) {
+        queuePatch(item.assetId, item.patch, item.expectedRevisionId);
+      }
+    };
+    replayDeferredThumbnailPatchesRef.current = replayDeferred;
     const queueLayoutArtifactPatch = (
       assetId: string,
       artifactId: string | null,
@@ -5425,7 +5479,7 @@ function AppInner() {
           && currentAsset.currentRevisionId !== event.revisionId
         ) return;
         jobStatusCoordinatorRef.current?.noteActivity("media");
-        queuePatch(event.assetId, {
+        const patch: AssetThumbnailPatch = {
           width: event.width,
           height: event.height,
           ...(event.previewKind === undefined
@@ -5437,7 +5491,11 @@ function AppInner() {
           ...(event.durationMs === undefined
             ? {}
             : { durationMs: event.durationMs }),
-        });
+        };
+        if (!currentAsset && event.revisionId !== undefined) {
+          deferred.remember(event.assetId, patch, event.revisionId);
+        }
+        queuePatch(event.assetId, patch, event.revisionId);
         return;
       }
       if (event.type === "asset.derived.ready") {
@@ -5548,6 +5606,10 @@ function AppInner() {
     });
     return () => {
       unsubscribe();
+      deferred.clear();
+      if (replayDeferredThumbnailPatchesRef.current === replayDeferred) {
+        replayDeferredThumbnailPatchesRef.current = null;
+      }
       if (frame !== 0) window.cancelAnimationFrame(frame);
       if (folderBrowseRefreshFrame !== 0) {
         window.cancelAnimationFrame(folderBrowseRefreshFrame);
@@ -5562,6 +5624,7 @@ function AppInner() {
     library?.libraryId,
     t,
   ]);
+  useEffect(() => { replayDeferredThumbnailPatchesRef.current?.(); }, [assets]);
   useEffect(() => {
     if (!api || !library) return;
     const unsubscribeProgress = api.onAiProgress((event) => {
@@ -5701,6 +5764,8 @@ function AppInner() {
   function beginWorkspaceNavigationRequest(
     historyMode: WorkspaceNavigationHistoryMode,
   ): WorkspaceNavigationRequest {
+    folderMutationRefreshAbortRef.current?.abort();
+    folderMutationRefreshAbortRef.current = null;
     findSimilarTokenRef.current += 1;
     const token = beginWorkspaceTabNavigation(historyMode);
     const request: WorkspaceNavigationRequest = {
@@ -6261,28 +6326,55 @@ function AppInner() {
   async function runLibraryOperation(kind: "create" | "open") {
     if (!api) return;
     if (kind === "open") {
-      // Pick the location first (dialog only) so the loading overlay and its
-      // timer start with the actual load, never while the picker is open
-      // (Serpent-565785 feedback).
       const chosen = await api.chooseLibraryPath();
       if (!chosen.ok || chosen.value === null) return;
+      const libraryPath = chosen.value;
       await runLibraryOpenPipeline(
         "opening",
-        () => api.open({ libraryPath: chosen.value! }),
+        () => api.open({ libraryPath }),
         t("toast.libraryOpFailed"),
         undefined,
         null,
-        { selectedLibraryPath: chosen.value },
+        { selectedLibraryPath: libraryPath },
       );
       return;
     }
-    await runLibraryOpenPipeline(
-      "creating",
-      () => api.create({ displayName: dialogValue.trim() }),
-      t("toast.libraryOpFailed"),
-      undefined,
-      dialogValue.trim() || null,
-    );
+    if (libraryLocationOperationRef.current) return;
+    libraryLocationOperationRef.current = true;
+    const displayName = dialogValue.trim();
+    try {
+      // Choosing a location does not start a library transition. Keep the
+      // current view intact until the native dialog has actually succeeded.
+      const chosen = await api.chooseCreateLocation();
+      if (!chosen.ok) {
+        if (chosen.error.code !== "CANCELLED") {
+          showBlockingError(
+            t("dialog.blockingError.libraryCreateFailed"),
+            toMessage(chosen.error, t("toast.libraryOpFailed"), locale),
+          );
+        }
+        return;
+      }
+      if (chosen.value === null) return;
+      const selection = chosen.value;
+      await runLibraryOpenPipeline(
+        "creating",
+        () => {
+          setDialog(null);
+          return api.create({ displayName, selectionToken: selection });
+        },
+        t("toast.libraryOpFailed"),
+        undefined,
+        displayName || null,
+      );
+    } catch (caught) {
+      showBlockingError(
+        t("dialog.blockingError.libraryCreateFailed"),
+        toMessage(caught, t("toast.libraryOpFailed"), locale),
+      );
+    } finally {
+      libraryLocationOperationRef.current = false;
+    }
   }
 
   async function runInlineLibraryOpening<T>(
@@ -8965,6 +9057,22 @@ function AppInner() {
     setSelectedAssetIds,
   });
 
+  const folderMutationBridge = useFolderMutationBridge({
+    libraryRef, isLibraryViewCurrent: isCurrentLibraryView,
+    projectionGate: folderMutationProjectionGateRef.current,
+    refreshAbortRef: folderMutationRefreshAbortRef, reloadRef: reloadCurrentContentRef,
+    scopeRef: assetScopeRef, historyRef: navHistoryRef,
+    setFolders, setLinkedFolders, setSelectedFolderIds,
+    setFilteredCountRefreshToken: setFilteredFolderCountRefreshToken,
+    onScopeRemapped: (scope) => {
+      cancelPendingLibraryReads();
+      setAssetScope(scope);
+      managedImportTargetFolderIdRef.current = scope;
+      if (libraryRef.current) api?.setActiveContext(libraryRef.current.libraryId, scope);
+    },
+    onHistoryChanged: syncNavHistoryUi,
+  });
+
   const {
     inlineFolderEdit,
     openInlineFolderCreate,
@@ -8976,20 +9084,19 @@ function AppInner() {
     api: api ?? null,
     library,
     setNotice,
-    reloadCurrentContent,
+    captureLibraryViewToken: ensureLibraryView,
+    isLibraryViewCurrent: isCurrentLibraryView,
+    ...folderMutationBridge,
+    onPostCommitError: (caught, libraryViewToken) => {
+      if (
+        !isCurrentLibraryView(libraryViewToken)
+        || libraryRef.current?.libraryId !== libraryViewToken.libraryId
+      ) return;
+      setError(toMessage(caught, t("toast.readAssetsFailed"), locale));
+    },
     isLinkedFolderId: (folderId) =>
       parseLinkedVirtualFolderId(folderId) !== null ||
       linkedFolders.some((folder) => folder.folderId === folderId),
-    onRenameSuccess: async (newFolderId, previousFolderId) => {
-      if (assetScope !== previousFolderId) return false;
-      // Renaming the folder currently being browsed navigates to the same
-      // scope with the same id.  Folder navigation normally skips the sidebar
-      // query for performance, but here that would immediately put the old
-      // name back after the success notice.  Refresh the folder tree as part
-      // of this mutation so the sidebar settles in the same render cycle.
-      await chooseFolder(newFolderId, { refreshSidebar: true });
-      return true;
-    },
   });
 
   const reloadSmartCollections = useCallback(async () => {
@@ -9228,6 +9335,7 @@ function AppInner() {
       void handleOpenFolderInFileManager(folderId);
     },
     createSubfolder: (parentFolderId) => {
+      setLeftOpen(true);
       cancelInlineSmartCollectionEdit();
       openInlineFolderCreate(parentFolderId);
     },
@@ -10073,7 +10181,10 @@ function AppInner() {
 
   // --- Existing operations ---
 
-  async function importAssets(kind: "files" | "folder") {
+  async function importAssets(
+    kind: "files" | "folder",
+    targetFolderId: string | null | undefined = managedImportTargetFolderIdRef.current,
+  ) {
     if (!api || !library) return;
     const startedAt = Date.now();
     setUiState("importing");
@@ -10085,12 +10196,12 @@ function AppInner() {
         kind === "files"
           ? api.importFiles({
               libraryId: library.libraryId,
-              targetFolderId: managedImportTargetFolderIdRef.current,
+              targetFolderId: targetFolderId ?? undefined,
               ...sequenceFlags,
             })
           : api.importFolder({
               libraryId: library.libraryId,
-              targetFolderId: managedImportTargetFolderIdRef.current,
+              targetFolderId: targetFolderId ?? undefined,
               ...sequenceFlags,
             }),
       );
@@ -12682,6 +12793,9 @@ function AppInner() {
       collectionEditor
     )
       return;
+    const requestViewerClose = () => {
+      void (previewModalRef.current?.requestClose() ?? closeAssetPreview());
+    };
     const onShortcutInput = (shortcutInput: ShortcutEventLike, event: KeyboardEvent | MouseEvent) => {
       const target = event.target;
       const keyboard = shortcutInput.kind === "mouse" ? null : shortcutInput;
@@ -12689,13 +12803,7 @@ function AppInner() {
       if (previewAsset) {
         if (keyboard?.key === "Escape" && !document.fullscreenElement) {
           event.preventDefault();
-          void (async () => {
-            if (previewModalRef.current) {
-              await previewModalRef.current.requestClose();
-            } else {
-              await closeAssetPreview();
-            }
-          })();
+          requestViewerClose();
           return;
         }
         if (
@@ -12705,6 +12813,16 @@ function AppInner() {
           (target instanceof HTMLElement &&
             (target.isContentEditable || target.closest('[role="dialog"]')))
         ) {
+          return;
+        }
+        if (
+          keyboard?.key === "Enter" && previewOpenedWithEnterRef.current &&
+          !keyboard.repeat && !keyboard.ctrlKey && !keyboard.metaKey && !keyboard.altKey && !keyboard.shiftKey &&
+          !event.defaultPrevented && !isImeKeyboardEvent(keyboard) &&
+          !(target instanceof HTMLElement && target.closest('button, a, [role="button"], [role="menuitem"]'))
+        ) {
+          event.preventDefault();
+          requestViewerClose();
           return;
         }
         const previous = matchesRuntimeShortcut("viewer.previous", shortcutInput, SHORTCUT_PLATFORM);
@@ -12743,7 +12861,7 @@ function AppInner() {
       )
         return;
       event.preventDefault();
-      openAssetPreview(selectedAsset);
+      openAssetPreview(selectedAsset, { openedWithEnter: keyboard.key === "Enter" });
     };
     const removeShortcutInputs = listenForShortcutInputs(document, onShortcutInput);
     return removeShortcutInputs;
@@ -13680,7 +13798,7 @@ function AppInner() {
       },
       onResult: (kind, value) => {
         if (kind === "media") {
-          setMediaJobs((current) => applyMediaJobSummary(current, value as MediaJobSummaryCounts));
+          setMediaJobs((current) => applyMediaJobSummary(current, value as MediaJobSummarySnapshot));
         }
         else if (kind === "ai") setAiJobs(value as AiJobStatus);
         else setPluginJobs(value as PluginJobStatus);
@@ -14680,7 +14798,7 @@ function AppInner() {
           </>
         ) : null}
       </header>
-      <NavigationSidebar
+      <NavigationSidebarBoundary
         cutFolderIds={assetCutState.cutFolderIds}
         library={library}
         assetScope={assetScope}
@@ -15386,9 +15504,28 @@ function AppInner() {
             }
             if (!library || previewAsset || showTagManagement || showPluginSidebarView) return;
             event.preventDefault();
+            const createParentId = resolveBrowseCreateFolderParentId({
+              assetScope,
+              showTrash,
+              activeTagId,
+              activeCollectionId,
+              activeSmartCollectionId,
+              folders,
+              linkedFolders,
+              searchActive: Boolean(searchValue.trim() || findSimilarSource),
+              writable: library.readOnly !== true,
+              interactionBlocked: busy || workspaceNavigationPending || previewRestoring,
+            });
+            const folderName = createParentId === null
+              ? t("scope.rootFolder")
+              : folders.find(folder => folder.folderId === createParentId)?.name
+                ?? linkedFolders.find(folder => folder.folderId === createParentId)?.displayName;
             openContextMenu(
               {
                 type: "workspace",
+                ...(createParentId === undefined || folderName === undefined
+                  ? {}
+                  : { folder: { id: createParentId ?? LIBRARY_ROOT_FOLDER_ID, name: folderName } }),
                 ...(selectedAssetIds.length > 0
                   ? { assetIds: [...selectedAssetIds] }
                   : {}),
@@ -15613,6 +15750,14 @@ function AppInner() {
                         if (draggedMemberId) event.preventDefault();
                       }}
                       onDragStart={(event) => {
+                        // Text selection can emit dragstart even when the
+                        // card itself is not draggable. Never hand an editor
+                        // gesture to the native file or collection drag path.
+                        if (renamingThisAsset) {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          return;
+                        }
                         // Collection member reorder keeps its own drag path.
                         if (activeCollectionId && !collectionRecursive) {
                           setDraggedMemberId(asset.assetId);
@@ -16030,7 +16175,7 @@ function AppInner() {
                                         cancelAssetRename();
                                       }
                                     }}
-                                    onMouseDown={(event) => event.stopPropagation()}
+                                    onMouseDown={beginInlineRenameTextSelection}
                                     value={assetRenameDialog.value}
                                   />
                                   {assetRenameDialog.error ? (
@@ -16363,6 +16508,7 @@ function AppInner() {
         onFilterTag={(tagId) => void chooseTag(tagId)}
         onRenameTag={handleRenameTagInManagement}
         selectedAsset={selectedAsset}
+        selectedAssetIds={selectedAssetIds}
         selectedAssets={selectedAssets}
         multiEdit={multiEdit}
         versionConflict={versionConflict}
@@ -17000,7 +17146,6 @@ function AppInner() {
             void submitBillfishLibraryName();
             return;
           }
-          setDialog(null);
           void runLibraryOperation("create");
         }}
         onCancel={() => {
@@ -17219,6 +17364,7 @@ function AppInner() {
           requestDeleteCollection(id, name);
         }}
         onCreateSubfolder={(folderId) => {
+          setLeftOpen(true);
           cancelInlineSmartCollectionEdit();
           openInlineFolderCreate(isLibraryRootFolderId(folderId) ? null : folderId);
         }}
@@ -17255,6 +17401,9 @@ function AppInner() {
           // Serpent-316493 follow-up: the root sentinel means "the library
           // root", which paste/import APIs express as null.
           dispatchClipboardPaste(isLibraryRootFolderId(folderId) ? null : folderId);
+        }}
+        onImportIntoFolder={(kind, folderId) => {
+          void importAssets(kind, isLibraryRootFolderId(folderId) ? null : folderId);
         }}
         onCloneFolder={(folderId) => {
           void cloneFolder(folderId);

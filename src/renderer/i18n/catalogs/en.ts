@@ -1230,6 +1230,7 @@ export const en = {
       updateAssetMissing: "This release has no compatible update for this build.",
       updateVerificationFailed: "The downloaded update failed integrity verification.",
       updateDownloadFailed: "The update download failed. Try again.",
+      updateInsufficientSpace: "Free up disk space and try the update again.",
       updateOpenFailed: "The installer could not be opened.",
       viewReleaseNotes: "View release notes",
       hideReleaseNotes: "Hide release notes",
@@ -2295,9 +2296,7 @@ export const en = {
     pdfPages: "Loaded {loaded}/{count} pages",
     htmlPreview: "HTML preview",
     htmlLoadFailed: "Could not load the HTML file.",
-    htmlLoading: "Loading HTML…",
     fontPreview: "Font preview",
-    fontPreviewLoading: "Loading font…",
     fontPreviewUnavailable: "This font file cannot be previewed.",
     fontPreviewText: "Preview text",
     fontPreviewSize: "Size {size} px",
@@ -2331,7 +2330,6 @@ export const en = {
   },
   viewer3d: {
     ariaLabel: "3D model preview",
-    loading: "Loading 3D model…",
     errorTitle: "Could not show 3D preview",
     retry: "Retry",
     hdri: "Environment",
@@ -2363,6 +2361,7 @@ export const en = {
         sourceNotFound: "The FBX source file could not be found for conversion.",
         notFbx: "This file could not be parsed as FBX; it may be incomplete or from an unsupported version.",
         limitExceeded: "The model exceeds conversion limits (triangle count or output size).",
+        resourceExhausted: "There are not enough resources to load this model. Try again later.",
         wasmUnavailable: "The conversion component is unavailable. Reinstall the app and retry.",
         noMeshes: "This FBX contains no renderable meshes.",
         conversionFailed: "FBX conversion failed."

@@ -168,6 +168,29 @@ test('file-list paste takes precedence over a bitmap and keeps the complete cut 
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('the isolated clipboard image fixture does not read the system file clipboard', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'serpent-clipboard-fixture-'));
+  try {
+    const readClipboardFilePaths = vi.fn(() => ['system-clipboard-item']);
+    const deps = runtime({
+      isUnpackagedE2e: () => true,
+      e2eEnv: (key) => key === 'SERPENT_E2E_CLIPBOARD_IMAGE_PATH' ? 'fixture.png' : undefined,
+      readClipboardFilePaths,
+      readFileBuffer: () => Buffer.from('fixture'),
+      createImageFromBuffer: () => ({
+        isEmpty: () => false, toPNG: () => Buffer.from('fixture'),
+      }) as ReturnType<IngestionCommandRuntime['createImageFromBuffer']>,
+      tempPath: () => root,
+    });
+    expect(await tryBuildIngestionCommand({
+      type: 'asset.import-clipboard.request', libraryId: 'lib', targetFolderId: 'target',
+    }, deps)).toMatchObject({ kind: 'command', command: { targetFolderId: 'target' } });
+    expect(readClipboardFilePaths).not.toHaveBeenCalled();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('internal paste preserves asset ids and dispatches copy/move rather than an import', async () => {
   const snapshot = { paths: ['C:\\one.png', 'C:\\two.png'], operation: 'copy' as const, sequence: 234 };
   const deps = runtime({ readFileClipboard: () => snapshot });

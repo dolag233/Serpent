@@ -121,9 +121,7 @@ export function ZipArchiveViewer({
   return (
     <div className="zip-archive-viewer">
       <div className="zip-archive-list" role="listbox" aria-label={t("preview.zipFiles")}>
-        {status === "loading" ? (
-          <p className="zip-archive-note">{t("preview.zipLoading")}</p>
-        ) : status === "unreadable" ? (
+        {status === "loading" ? null : status === "unreadable" ? (
           <p className="zip-archive-note">{t("preview.zipUnreadable")}</p>
         ) : files.length === 0 ? (
           <p className="zip-archive-note">{t("preview.zipEmpty")}</p>

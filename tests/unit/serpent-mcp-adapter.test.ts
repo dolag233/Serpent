@@ -349,7 +349,11 @@ describe('Serpent MCP tools/call → Gateway', () => {
         type: 'asset.search',
         libraryId: 'library-1',
         query: {
-          clauses: [{ field: 'filename', values: ['sunny'], exclude: false }],
+          clauses: [],
+          expression: {
+            version: 1,
+            root: { kind: 'TERM', field: 'filename', value: 'sunny', match: 'contains', quoted: false },
+          },
         },
         limit: 50,
       }),
@@ -666,6 +670,7 @@ describe('Serpent MCP jobs, idempotency and reconnect (Serpent-8b5b.4)', () => {
       ok: true,
       type: 'media.jobs.listed',
       libraryId: 'library-1',
+      queuePaused: false,
       queued: 1,
       running: 0,
       succeeded: 3,

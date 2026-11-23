@@ -132,10 +132,15 @@ function emitE2eBrowseSessionResponse(
 export const library: SerpentLibraryApi = Object.freeze({
   async create({
     displayName,
+    selectionToken,
   }: {
     displayName: string;
+    selectionToken?: string;
   }): Promise<LibraryApiResult<RendererLibrarySummary>> {
-    const result = await request({ type: 'library.create.request', displayName });
+    const result = await request({
+      type: 'library.create.request', displayName,
+      ...(selectionToken === undefined ? {} : { selectionToken }),
+    });
     if (!result.ok) return failure(result);
     if (result.type !== 'library.opened') throw new Error('Unexpected create-library response.');
     return { ok: true as const, value: result.library };
@@ -162,6 +167,15 @@ export const library: SerpentLibraryApi = Object.freeze({
       throw new Error('Unexpected choose-library-path response.');
     }
     return { ok: true as const, value: result.path };
+  },
+
+  async chooseCreateLocation(): Promise<LibraryApiResult<string | null>> {
+    const result = await request({ type: 'library.choose-create-location.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.create-location-chosen') {
+      throw new Error('Unexpected choose-create-location response.');
+    }
+    return { ok: true as const, value: result.selectionToken };
   },
 
   async cancelOpen(): Promise<LibraryApiResult<void>> {
@@ -2619,6 +2633,7 @@ export const library: SerpentLibraryApi = Object.freeze({
     failed: number;
     paused: number;
     cancelled: number;
+    queuePaused?: boolean;
   }>> {
     const result = await request({
       type: 'media.job-summary.request',
@@ -2626,8 +2641,8 @@ export const library: SerpentLibraryApi = Object.freeze({
     });
     if (!result.ok) return failure(result);
     if (result.type !== 'media.job-summary.read') throw new Error('Unexpected media job-summary response.');
-    const { queued, running, succeeded, failed, paused, cancelled } = result;
-    return { ok: true, value: { queued, running, succeeded, failed, paused, cancelled } };
+    const { queued, running, succeeded, failed, paused, cancelled, queuePaused } = result;
+    return { ok: true, value: { queued, running, succeeded, failed, paused, cancelled, queuePaused } };
   },
 
   async setAudioPreviewPreference({
@@ -2694,10 +2709,10 @@ export const library: SerpentLibraryApi = Object.freeze({
     });
     if (!result.ok) return failure(result);
     if (result.type !== 'media.jobs.listed') throw new Error('Unexpected media list-jobs response.');
-    const { queued, running, succeeded, failed, paused, cancelled, jobs, nextCursor, hasMore } = result;
+    const { queued, running, succeeded, failed, paused, cancelled, queuePaused, jobs, nextCursor, hasMore } = result;
     return {
       ok: true,
-      value: { queued, running, succeeded, failed, paused, cancelled, jobs, nextCursor, hasMore },
+      value: { queued, running, succeeded, failed, paused, cancelled, queuePaused, jobs, nextCursor, hasMore },
     };
   },
 

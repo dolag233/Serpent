@@ -43,6 +43,24 @@ describe('PluginWidgetRenderer form synchronization', () => {
     container = undefined;
   });
 
+  it('renders a labelled, selectable readonly multiline value', async () => {
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    const tree: PluginWidgetNode = {
+      type: 'text', id: 'prompt', label: 'Prompt', value: 'Line one\nLine two',
+      multiline: true, rows: 6, readOnly: true, description: 'Generated prompt',
+    };
+    await act(async () => { root?.render(createElement(Harness, { tree })); });
+    const input = container.querySelector('textarea');
+    expect(input?.value).toBe(tree.value);
+    expect(input?.getAttribute('rows')).toBe('6');
+    expect(input?.readOnly).toBe(true);
+    expect(input?.labels?.[0]?.textContent).toBe('Prompt');
+    expect(document.getElementById(input?.getAttribute('aria-describedby') ?? '')?.textContent)
+      .toBe('Generated prompt');
+  });
+
   it('uses the shared settings card and an inline labelled switch for groups', async () => {
     container = document.createElement('div');
     document.body.append(container);

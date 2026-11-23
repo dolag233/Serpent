@@ -5,14 +5,10 @@
  * every external reference through the companion texture map
  * (`model.resolve-companions`, see url-remap.ts):
  *
- * - `.glb`              → GLTFLoader (embedded textures; also the FBX→GLB
- *                         conversion product from slice B);
- * - `.gltf`             → GLTFLoader with `images[].uri` / `buffers[].uri`
- *                         rewritten to serpent://preview URLs;
- * - `.fbx`              → `convertFbx()` first (ufbx → GLB, slice B); on
- *                         `failed` the FBXLoader fallback runs, materials are
- *                         upgraded Phong→Standard and failed texture loads are
- *                         re-pointed at remapped serpent://preview URLs;
+ * - `.glb`              → GLTFLoader with embedded textures;
+ * - `.gltf`             → GLTFLoader with companion image and buffer URLs;
+ * - `.fbx`              → FBXLoader on the source revision, with companion
+ *                         texture remapping and Phong→Standard materials;
  * - `.obj`              → MTL text fetched through the companion map and
  *                         rewritten (map_* refs), parsed by MTLLoader; meshes
  *                         upgraded Phong→Standard;
@@ -24,6 +20,7 @@
 
 import {
   Group,
+  LoadingManager,
   Mesh,
   MeshLambertMaterial,
   MeshPhongMaterial,
@@ -36,27 +33,23 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { TGALoader } from 'three/addons/loaders/TGALoader.js';
+import { TIFFLoader } from 'three/addons/loaders/TIFFLoader.js';
 
 import type { ModelCompanionAsset } from '../../shared/model-companions';
-import type {
-  FbxConversionResult,
-  FbxConvertErrorCode,
-} from '../../shared/fbx-conversion';
 import { applyBaseColorTextureAlpha } from './base-color-alpha';
-import { applyDecodedRgbaTextures } from './rgba-texture-chunk';
+import { MATERIAL_TEXTURE_SLOTS } from './model-stats';
 import {
   mapPhongToStandard,
   stlDefaultMaterial,
   type StandardMaterialParams,
 } from './pbr-mapping';
-import { MATERIAL_TEXTURE_SLOTS } from './model-stats';
 import {
   collectObjMtllibRefs,
   remapCompanionUrl,
   remapCompanionUrlByBasename,
   rewriteGltfUris,
   rewriteMtlTextureRefs,
-  serpentPreviewUrl,
   type GltfJsonLike,
 } from './url-remap';
 
@@ -86,10 +79,7 @@ export interface LoadedModelScene {
   readonly scene: Group;
   /** AnimationClips for slice F (AnimationMixer); empty for static formats. */
   readonly animations: AnimationClip[];
-  /** Missing companion textures reported by the FBX converter (slice B). */
   readonly missingTextures: readonly string[];
-  /** Present when the FBX→GLB conversion failed and the fallback ran. */
-  readonly fallback?: { readonly errorCode: FbxConvertErrorCode; readonly reason?: string };
 }
 
 export interface ModelLoaderDeps {
@@ -110,8 +100,6 @@ export interface LoadModelSceneInput {
   readonly libraryId: string;
   /** Companion index from `model.resolve-companions`. */
   readonly companionMap: ReadonlyMap<string, ModelCompanionAsset>;
-  /** FBX only: invokes the slice-B conversion pipeline before loading. */
-  readonly convertFbx?: () => Promise<FbxConversionResult>;
   /** STL default material params (theme-aware); defaults to the neutral value. */
   readonly stlMaterial?: StandardMaterialParams;
   readonly deps?: ModelLoaderDeps;
@@ -167,61 +155,63 @@ async function loadGltfText(input: LoadModelSceneInput): Promise<LoadedModelScen
 }
 
 async function loadFbx(input: LoadModelSceneInput): Promise<LoadedModelScene> {
-  // Serpent-a5ic: ufbx conversion is the primary path. The bridge now uses
-  // ufbx_triangulate_face (correct concave handling — the earlier fan
-  // workaround rendered textures fragmented on complex meshes). On conversion
-  // failure the FBXLoader fallback runs with companion-texture remapping.
-  if (input.convertFbx) {
-    try {
-      const result = await input.convertFbx();
-      if (result.status === 'ready') {
-        // The cached GLB carries embedded textures; point GLTFLoader at the
-        // artifact URL.
-        const loader = input.deps?.gltf ?? new GLTFLoader();
-        const artifactUrl = serpentPreviewUrl(input.libraryId, result.glbArtifactId);
-        const response = await fetch(artifactUrl);
-        if (!response.ok) {
-          throw new Error(`FBX scene fetch failed (${response.status})`);
-        }
-        const file = await response.arrayBuffer();
-        const gltf = await new Promise<{ scene?: Group; animations?: AnimationClip[] }>(
-          (resolve, reject) => {
-            loader.parse(file, '', resolve, reject);
-          },
-        );
-        const scene = gltf.scene ?? new Group();
-        applyDecodedRgbaTextures(scene, file);
-        enableShadowCasting(scene);
-        // Cached scenes keep alphaMode OPAQUE when the FBX factor is 1 and
-        // there is no separate opacity map. The basecolor image can still
-        // carry coverage.
-        applyBaseColorTextureAlpha(scene);
-        return {
-          scene,
-          animations: gltf.animations ?? [],
-          missingTextures: result.missingTextures ?? [],
-        };
-      }
-    } catch {
-      // A transport failure of the conversion request behaves like a
-      // conversion failure: fall through to the FBXLoader fallback.
-    }
-  }
-  // Fallback path: three's FBXLoader on the source file. Textures referenced
-  // by relative names fail to fetch against serpent://source; remap them
-  // through the companion index after load (3D-12 degradation).
-  const loader = input.deps?.fbx ?? new FBXLoader();
-  const root = await loader.loadAsync(input.sourceUrl);
+  const missingTextures = new Set<string>();
+  const root = input.deps?.fbx
+    ? await input.deps.fbx.loadAsync(input.sourceUrl)
+    : await loadFbxWithTextures(input, missingTextures);
   const animations =
     (root as Group & { animations?: AnimationClip[] }).animations ?? [];
-  upgradeFallbackMaterials(root, input);
+  upgradeSourceMaterials(root);
   applyBaseColorTextureAlpha(root);
   enableShadowCasting(root);
   return {
     scene: root,
     animations,
-    missingTextures: [],
+    missingTextures: [...missingTextures],
   };
+}
+
+async function loadFbxWithTextures(
+  input: LoadModelSceneInput,
+  missingTextures: Set<string>,
+): Promise<Group> {
+  const resourcePath = 'serpent-fbx-texture:/';
+  const manager = new LoadingManager();
+  const embeddedUrls = new Set<string>();
+  manager.addHandler(/\.tga$/iu, new TGALoader(manager));
+  manager.addHandler(/\.tiff?$/iu, new TIFFLoader(manager));
+  manager.setURLModifier((url) => {
+    if (url.startsWith('blob:') && url !== input.sourceUrl) embeddedUrls.add(url);
+    if (!url.startsWith(resourcePath)) return url;
+    const fileName = url.slice(resourcePath.length);
+    const companionUrl = remapCompanionUrlByBasename({
+      fileName,
+      libraryId: input.libraryId,
+      companionMap: input.companionMap,
+    });
+    if (companionUrl) return companionUrl;
+    missingTextures.add(fileName);
+    return url;
+  });
+  // FBXLoader resolves when geometry is parsed, while its images can still
+  // be loading. Include those loads before capturing an offscreen frame.
+  const settled = new Promise<void>((resolve) => { manager.onLoad = resolve; });
+  const loader = new FBXLoader(manager).setResourcePath(resourcePath);
+  // FileLoader can share an in-flight URL without registering it on this
+  // manager. Track our own load so onLoad also fires for a shared fetch.
+  manager.itemStart(input.sourceUrl);
+  try {
+    let root: Group;
+    try {
+      root = await loader.loadAsync(input.sourceUrl);
+    } finally {
+      manager.itemEnd(input.sourceUrl);
+    }
+    await settled;
+    return root;
+  } finally {
+    for (const url of embeddedUrls) URL.revokeObjectURL(url);
+  }
 }
 
 async function loadObj(input: LoadModelSceneInput): Promise<LoadedModelScene> {
@@ -246,7 +236,7 @@ async function loadObj(input: LoadModelSceneInput): Promise<LoadedModelScene> {
   }
 
   const root = objLoader.parse(objText);
-  upgradeFallbackMaterials(root, input);
+  upgradeSourceMaterials(root, input);
   enableShadowCasting(root);
   return { scene: root, animations: [], missingTextures: [] };
 }
@@ -288,19 +278,13 @@ function enableShadowCasting(root: Group): void {
 }
 
 /**
- * Upgrade fallback-path materials (FBXLoader / OBJ+MTL emit Phong/Lambert)
- * to MeshStandardMaterial via the slice-D mapping, and re-point texture
- * loads that failed against the flat serpent://source URL at their remapped
- * serpent://preview companions (3D-11 / 3D-12).
+ * Upgrade source-loader Phong/Lambert materials to MeshStandardMaterial.
  *
  * Shared materials are upgraded once; mesh material references (single or
  * array) are replaced afterwards.
  */
-function upgradeFallbackMaterials(
-  root: Group,
-  input: LoadModelSceneInput,
-): void {
-  const textureLoader = input.deps?.textureLoader ?? new TextureLoader();
+function upgradeSourceMaterials(root: Group, remapInput?: LoadModelSceneInput): void {
+  const textureLoader = remapInput && (remapInput.deps?.textureLoader ?? new TextureLoader());
   const upgraded = new Map<object, MeshStandardMaterial>();
 
   root.traverse((object) => {
@@ -316,7 +300,7 @@ function upgradeFallbackMaterials(
       }
       let standard = upgraded.get(current);
       if (!standard) {
-        remapFallbackTextureSlots(current, input, textureLoader);
+        if (remapInput && textureLoader) remapFallbackTextureSlots(current, remapInput, textureLoader);
         standard = toStandardMaterial(current);
         upgraded.set(current, standard);
       }

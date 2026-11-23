@@ -662,12 +662,14 @@ const assetOperationSuccessSchemas = [
     type: z.literal('media.job-summary.read'),
     libraryId: nonBlankString,
     ...mediaJobCountsShape,
+    queuePaused: z.boolean().default(false),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('media.jobs.listed'),
     libraryId: nonBlankString,
     ...mediaJobCountsShape,
+    queuePaused: z.boolean().default(false),
     nextCursor: z.strictObject({
       createdAt: nonBlankString,
       jobId: nonBlankString,
@@ -2427,6 +2429,11 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     /** null when the user cancelled the native picker. */
     path: nonBlankString.nullable(),
   }),
+    z.strictObject({
+      ok: z.literal(true),
+      type: z.literal('library.create-location-chosen'),
+      selectionToken: nonBlankString.nullable(),
+    }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('library.eagle-inspected'),

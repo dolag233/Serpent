@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -8,15 +9,17 @@ import {
 } from "react";
 
 import type { AssetSummary, BrowseLayoutEntry } from "../../shared/asset-types";
+import { notifyCanvasLayoutCommitted } from "../canvas-layout-commit-signal";
+import { buildJustifiedRowGeometry, type JustifiedRowGeometry } from "./justified-row-geometry";
+export { buildJustifiedGeometry } from "./justified-row-geometry";
+import { useJustifiedGeometrySnapshot } from "./use-justified-geometry-snapshot";
 import { virtualSlotAsset } from "../browse-window-slots";
 import {
   ASSET_GRID_GAP_PX,
   aspectRatioForAsset,
   countFittingColumns,
-  distributeIntegerRowWidths,
 } from "../asset-grid-layout";
 import {
-  resolveCaptionBandSource,
   type CaptionBandAsset,
   type CaptionBandSource,
 } from "../asset-caption-band";
@@ -30,6 +33,7 @@ import {
   itemIntersectsVisibleRange,
   readCanvasLocalViewportSnapshot,
   useCanvasLocalViewport,
+  type CanvasLocalViewportRange,
 } from "../viewport-window";
 import { canvasHasPreviewScrollHold, logBrowseScrollWrite } from "../browse-scroll-debug";
 import { isCanvasReflowRestorationPending } from "../canvas-reflow-restore";
@@ -67,6 +71,7 @@ export function virtualJustifiedSlotStyle(input: {
   id: string;
   width: number;
   height: number;
+  slotHeight: number;
   sourceAspect?: number;
 }): CSSProperties {
   void input.id;
@@ -81,6 +86,7 @@ export function virtualJustifiedSlotStyle(input: {
     Math.abs(height - width / aspect) <= 1;
   return {
     width,
+    height: Math.max(1, Math.round(input.slotHeight)),
     ["--justified-preview-height" as string]: `${height}px`,
     ["--justified-thumbnail-fit" as string]: roundingOnly ? "fill" : "contain",
   };
@@ -252,6 +258,22 @@ function variableWindowForSequence(
     spacerAfter: Math.max(0, sequence.totalHeight - cursor),
     totalHeight: sequence.totalHeight,
   };
+}
+
+/** Render only when mounted slots or exact visible-card membership changes.
+ * Coordinates still update in the hook's anchor snapshot on every scroll.
+ */
+export function virtualViewportRenderKey(
+  sequences: readonly GeometrySequence[], viewport: CanvasLocalViewportRange,
+): string {
+  return sequences.map(sequence => {
+    const mounted = variableWindowForSequence(sequence, viewport.start, viewport.end);
+    const visible = variableWindowForSequence(sequence, viewport.visibleStart, viewport.visibleEnd);
+    const active = (index: number) => sequence.count > 0 && itemIntersectsVisibleRange(
+      sequence.offsetAt(index), sequence.heightAt(index), viewport.visibleStart, viewport.visibleEnd,
+    );
+    return `${mounted.start}:${mounted.end}:${visible.start}:${visible.end}:${active(visible.start)}:${active(visible.end - 1)}`;
+  }).join('|');
 }
 
 function localBoxIntersects(
@@ -447,6 +469,7 @@ export function makeMasonryLayoutIndex(input: {
   };
   return {
     total,
+    assetRectAtIndex: rectAt,
     rectAtIndex: (index) => {
       const rect = rectAt(index);
       return rect ? { top: rect.y, height: rect.height } : null;
@@ -509,15 +532,6 @@ export function makeMasonryLayoutIndex(input: {
   };
 }
 
-type JustifiedRowGeometry = {
-  previewHeight: number;
-  bodyHeight: number;
-  /** Tallest caption band this row's own cards need (Serpent-b1b0f2). */
-  captionBand: number;
-  widths: number[];
-  offset: number;
-};
-
 type JustifiedGeometryModel = {
   count: number;
   totalHeight: number;
@@ -525,78 +539,6 @@ type JustifiedGeometryModel = {
   heightAt: (row: number) => number;
   offsetAt: (row: number) => number;
 };
-
-function buildJustifiedRowGeometry(input: {
-  row: number;
-  total: number;
-  itemsPerRow: number;
-  availableWidth: number;
-  targetHeight: number;
-  captionBand: CaptionBandSource;
-  entryAt: (index: number) => BrowseLayoutEntry;
-}): JustifiedRowGeometry {
-  const start = input.row * input.itemsPerRow;
-  const count = Math.min(input.itemsPerRow, input.total - start);
-  const width = Math.max(1, Math.round(input.availableWidth));
-  const targetHeight = Math.max(1, Math.round(input.targetHeight));
-  const entries = Array.from({ length: Math.max(0, count) }, (_, itemOffset) =>
-    input.entryAt(start + itemOffset));
-  let captionBand = 0;
-  for (const entry of entries) {
-    captionBand = Math.max(captionBand, resolveCaptionBandSource(input.captionBand, entry));
-  }
-  const ratios = entries.map((entry) =>
-    aspectRatioForAsset(entry.width, entry.height, entry.mediaType));
-  const usable = Math.max(1, width - Math.max(0, count - 1) * ASSET_GRID_GAP_PX);
-  const naturalWidth = ratios.reduce((sum, ratio) => sum + ratio, 0) * targetHeight;
-  let scale = naturalWidth > 0 ? usable / naturalWidth : 1;
-  const withholdStretch = count === 1 && start + count === input.total && scale > 1.18;
-  if (withholdStretch) scale = 1;
-  const previewHeight = Math.max(1, Math.round(targetHeight * scale));
-  const widths = withholdStretch
-    ? ratios.map((ratio) => Math.max(1, Math.round(ratio * previewHeight)))
-    : distributeIntegerRowWidths(ratios, previewHeight, usable);
-  return {
-    previewHeight,
-    bodyHeight: previewHeight + captionBand,
-    captionBand,
-    widths,
-    offset: 0,
-  };
-}
-
-export function buildJustifiedGeometry(input: {
-  total: number;
-  itemsPerRow: number;
-  availableWidth: number;
-  targetHeight: number;
-  captionBand: CaptionBandSource;
-  entryAt: (index: number) => BrowseLayoutEntry;
-}): JustifiedRowGeometry[] {
-  const total = Math.max(0, Math.trunc(input.total));
-  const itemsPerRow = Math.max(1, Math.trunc(input.itemsPerRow));
-  const width = Math.max(1, Math.round(input.availableWidth));
-  const targetHeight = Math.max(1, Math.round(input.targetHeight));
-  const rows: JustifiedRowGeometry[] = [];
-  let offset = 0;
-  for (let start = 0; start < total; start += itemsPerRow) {
-    const row = buildJustifiedRowGeometry({
-      row: rows.length,
-      total,
-      itemsPerRow,
-      availableWidth: width,
-      targetHeight,
-      captionBand: input.captionBand,
-      entryAt: input.entryAt,
-    });
-    rows.push({ ...row, offset });
-    offset += row.bodyHeight;
-    if (start + Math.min(itemsPerRow, total - start) < total) {
-      offset += ASSET_GRID_GAP_PX;
-    }
-  }
-  return rows;
-}
 
 function justifiedModelFromDenseRows(
   rows: readonly JustifiedRowGeometry[],
@@ -754,6 +696,7 @@ export function makeJustifiedLayoutIndex(input: {
   };
   return {
     total,
+    assetRectAtIndex: rectAt,
     rectAtIndex: (index) => {
       const rect = rectAt(index);
       return rect ? { top: rect.y, height: rect.height } : null;
@@ -885,7 +828,6 @@ export function VirtualMasonryColumns({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(0);
-  const viewport = useCanvasLocalViewport(containerRef, cardSize);
   const assetById = useMemo(
     () => new Map(assets.map((asset) => [asset.assetId, asset] as const)),
     [assets],
@@ -916,6 +858,9 @@ export function VirtualMasonryColumns({
         }),
     [captionBandForAsset, columnCount, columnWidth, layout.geometryEntries, layout.total, showCaption],
   );
+  const viewportKey = useCallback((range: CanvasLocalViewportRange) =>
+    virtualViewportRenderKey(geometry, range), [geometry]);
+  const viewport = useCanvasLocalViewport(containerRef, cardSize, viewportKey);
   const { total, assetIdsByIndex } = layout;
   const layoutIndex = useMemo(
     () => makeMasonryLayoutIndex({
@@ -934,6 +879,12 @@ export function VirtualMasonryColumns({
     if (!element) return;
     publishCanvasAssetLayoutIndex(element, layoutIndex);
   }, [layoutIndex]);
+
+  useLayoutEffect(() => {
+    const element = containerRef.current;
+    if (!element) return;
+    notifyCanvasLayoutCommitted(element);
+  }, [layoutIndex, viewport.start, viewport.end, viewport.visibleStart, viewport.visibleEnd]);
 
   useLayoutEffect(() => {
     const element = containerRef.current;
@@ -1038,7 +989,6 @@ export function VirtualJustifiedAssetRows({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(0);
-  const viewport = useCanvasLocalViewport(containerRef, cardSize);
   const assetById = useMemo(
     () => new Map(assets.map((asset) => [asset.assetId, asset] as const)),
     [assets],
@@ -1047,30 +997,35 @@ export function VirtualJustifiedAssetRows({
     1,
     Math.floor((Math.max(0, availableWidth) + ASSET_GRID_GAP_PX) / (Math.max(1, cardSize) + ASSET_GRID_GAP_PX)),
   );
+  const denseSnapshot = useJustifiedGeometrySnapshot(
+    layout.total > GEOMETRY_MATERIALIZATION_LIMIT ? null : {
+      total: layout.total,
+      itemsPerRow,
+      availableWidth,
+      targetHeight: cardSize,
+      captionBand: captionBandForAsset,
+      geometryEntries: layout.geometryEntries,
+    },
+  );
+  const denseRows = denseSnapshot?.rows;
+  const denseGeometry = useMemo(
+    () => denseRows ? justifiedModelFromDenseRows(denseRows) : null,
+    [denseRows],
+  );
   const geometry = useMemo(
-    () => layout.total > GEOMETRY_MATERIALIZATION_LIMIT
-      ? buildChunkedJustifiedGeometry({
+    () => denseGeometry ?? buildChunkedJustifiedGeometry({
           total: layout.total,
           itemsPerRow,
           availableWidth,
           targetHeight: cardSize,
           captionBand: captionBandForAsset,
           geometryEntries: layout.geometryEntries,
-        })
-      : justifiedModelFromDenseRows(buildJustifiedGeometry({
-          total: layout.total,
-          itemsPerRow,
-          availableWidth,
-          targetHeight: cardSize,
-          captionBand: captionBandForAsset,
-          entryAt: (index) => layout.geometryEntries.get(index) ?? {
-            assetId: `__geometry__:${index}`,
-            width: null,
-            height: null,
-          },
-        })),
-    [availableWidth, captionBandForAsset, cardSize, itemsPerRow, layout.geometryEntries, layout.total],
+        }),
+    [denseGeometry, availableWidth, captionBandForAsset, cardSize, itemsPerRow, layout.geometryEntries, layout.total],
   );
+  const viewportKey = useCallback((range: CanvasLocalViewportRange) =>
+    virtualViewportRenderKey([geometry], range), [geometry]);
+  const viewport = useCanvasLocalViewport(containerRef, cardSize, viewportKey);
   const { total, assetIdsByIndex } = layout;
   const layoutIndex = useMemo(
     () => makeJustifiedLayoutIndex({
@@ -1088,6 +1043,12 @@ export function VirtualJustifiedAssetRows({
     if (!element) return;
     publishCanvasAssetLayoutIndex(element, layoutIndex);
   }, [layoutIndex]);
+
+  useLayoutEffect(() => {
+    const element = containerRef.current;
+    if (!element) return;
+    notifyCanvasLayoutCommitted(element);
+  }, [layoutIndex, viewport.start, viewport.end, viewport.visibleStart, viewport.visibleEnd]);
 
   useLayoutEffect(() => {
     const element = containerRef.current;
@@ -1156,6 +1117,7 @@ export function VirtualJustifiedAssetRows({
                     id: entry.assetId,
                     width: rowGeometry?.widths[itemOffset] ?? 1,
                     height: rowGeometry?.previewHeight ?? 1,
+                    slotHeight: bodyHeight,
                     sourceAspect: entry.width && entry.height
                       ? aspectRatioForAsset(entry.width, entry.height, entry.mediaType)
                       : undefined,

@@ -8,6 +8,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -329,6 +330,27 @@ afterEach(() => {
 });
 
 describe('LibraryService lifecycle', () => {
+  it('reaps old thumbnail normalization stages on reopen and preserves fresh or unknown temporary files', async () => {
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Stage recovery', selectedParentPath: temporaryRoot() });
+    service.closeLibrary(created.libraryId);
+    const artifacts = path.join(created.libraryPath, '.serpent', 'artifacts');
+    mkdirSync(artifacts, { recursive: true });
+    const abandoned = path.join(artifacts, `${randomUUID()}.tmp`);
+    const recent = path.join(artifacts, `${randomUUID()}.tmp`);
+    const unknown = path.join(artifacts, 'unassigned.tmp');
+    for (const file of [abandoned, recent, unknown]) writeFileSync(file, 'unfinished');
+    const stale = new Date(Date.now() - 10 * 60_000);
+    utimesSync(abandoned, stale, stale);
+    utimesSync(unknown, stale, stale);
+    const reopened = newService();
+    const { libraryId } = reopened.openLibrary(created.libraryPath);
+    await reopened.runOpenBackgroundReconciliation(libraryId);
+    expect(existsSync(abandoned)).toBe(false);
+    expect(existsSync(recent)).toBe(true);
+    expect(existsSync(unknown)).toBe(true);
+  });
+
   it('creates a self-contained library and exposes it exactly once', () => {
     const root = temporaryRoot();
     const service = newService();
@@ -531,6 +553,13 @@ describe('LibraryService lifecycle', () => {
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
     removeLinkedDirectoryIndexFixture(database);
     database.exec(`
+      -- The historic jobs-table rebuild predates the queue-control columns.
+      DROP TRIGGER IF EXISTS media_pause_blocks_automatic_insert;
+      DROP TRIGGER IF EXISTS media_pause_blocks_automatic_requeue;
+      DROP TRIGGER IF EXISTS media_terminal_revokes_explicit_admission;
+      DROP INDEX IF EXISTS jobs_explicit_media_queue;
+      ALTER TABLE jobs DROP COLUMN media_admission_origin;
+      ALTER TABLE library DROP COLUMN media_queue_paused;
       DROP INDEX IF EXISTS revisions_size_fingerprint_idx;
       DROP TABLE explicit_ignored_paths;
       DROP TABLE gitignore_ignored_paths;

@@ -24,10 +24,7 @@ export function HtmlViewerSurface({
   const t = useT();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loaded, setLoaded] = useState(false);
-
   const handleLoad = () => {
-    setLoaded(true);
     onPresentationReady?.();
   };
 
@@ -45,9 +42,6 @@ export function HtmlViewerSurface({
   return (
     <div className="html-viewer" data-fullscreen={isFullscreen ? "true" : undefined}>
       {error ? <p className="html-viewer-error">{error}</p> : null}
-      {!loaded && !error ? (
-        <div className="html-viewer-loading">{t("viewer.htmlLoading")}</div>
-      ) : null}
       <iframe
         key={sourceUrl}
         className="html-viewer-iframe"

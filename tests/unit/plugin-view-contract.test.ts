@@ -6,6 +6,7 @@ import {
   type PluginViewLifecycleState,
 } from '../../src/renderer/plugin-iframe-view-host';
 import { shouldIgnoreInitialFrameLoad } from '../../src/renderer/plugin-ui-dialog-session';
+import { buildPluginInspectorSelectionState } from '../../src/renderer/plugin-inspector-views';
 import {
   parsePluginUiHostMessage,
   parsePluginUiIframeMessage,
@@ -70,6 +71,18 @@ describe('plugin view lifecycle state machine', () => {
  * ------------------------------------------------------------------ */
 
 describe('plugin view contract host messages', () => {
+  it('bounds Inspector selection state and preserves the primary selection', () => {
+    const ids = Array.from({ length: 80 }, (_, index) => `asset-${index}`);
+    const state = buildPluginInspectorSelectionState(ids, 'asset-79');
+    expect(state.selectedAssetIds).toEqual([...ids.slice(0, 63), 'asset-79']);
+    expect(parsePluginUiHostMessage({
+      type: 'plugin-ui.view-state-changed',
+      contributionId: 'probe-view',
+      instanceId: 'inst-1',
+      state,
+    })).toMatchObject({ state: { ...state, primaryAssetId: 'asset-79' } });
+  });
+
   it('announces mount with view type, scope, and optional library/state', () => {
     const mounted = parsePluginUiHostMessage({
       type: 'plugin-ui.view-mounted',

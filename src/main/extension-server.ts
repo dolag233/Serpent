@@ -1,6 +1,6 @@
 import * as http from 'node:http';
 import { createWriteStream } from 'node:fs';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
@@ -11,6 +11,8 @@ import {
   isValidExtensionUploadSourcePageUrl,
 } from '../shared/protocol/media-url';
 import { SEGMENTED_MEDIA_CHUNK_BYTES } from './segmented-media-transfer';
+import { isInsufficientSpaceError } from './disk-free-space';
+import { checkStagingSpace, reapTaskStaging, removeTaskStaging } from './task-staging';
 import type {
   CreateSegmentedMediaSessionInput,
   SegmentedMediaTransferManager,
@@ -118,7 +120,6 @@ export interface SaveUploadRequest {
   contentType: string;
   filename: string;
   stagedFilePath: string;
-  stagingDirectory: string;
   targetFolderId?: string | null;
   /** 设置后文件固定进资源库根目录，导入成功后再加入该合集。 */
   targetCollectionId?: string;
@@ -141,10 +142,11 @@ export interface ExtensionServerOptions {
   /** Starting port (default 19876). Falls back to port+1, port+2 on EADDRINUSE. */
   port?: number;
   /**
-   * Directory used to stage browser-uploaded media before Worker import.
-   * Typically `app.getPath('temp')`.
+   * Application-profile directory for browser upload staging before import.
+   * Main reaps abandoned tasks before opening the HTTP listener.
    */
   uploadStagingRoot: string;
+  probeUploadFreeBytes?: (root: string) => Promise<number | undefined>;
   /** Called with the validated save intent on POST /save. */
   onSaveIntent: (
     intent: SaveIntent,
@@ -201,6 +203,11 @@ const MAX_SEGMENTED_SESSION_JSON_BYTES = 512 * 1024;
 /** Same cap as Worker remote download (500 MB). */
 export const MAX_EXTENSION_UPLOAD_BYTES = 500 * 1024 * 1024;
 const UPLOAD_STAGE_PREFIX = 'serpent-ext-upload-';
+const UPLOAD_STAGE_NAME = /^serpent-(?:(?:ext-upload|extension-download)-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|extension-import-[A-Za-z0-9]{6})$/u;
+
+export function reapExtensionUploadStaging(root: string, onError: (error: unknown) => void) {
+  return reapTaskStaging(root, UPLOAD_STAGE_NAME, () => true, onError);
+}
 
 function jsonResponse(
   res: http.ServerResponse,
@@ -409,6 +416,7 @@ export async function createExtensionServer(
 ): Promise<ExtensionServer> {
   const startPort = options.port ?? 19876;
   const maxPort = startPort + 2;
+  let reservedUploadBytes = 0;
 
   const server = http.createServer((req, res) => {
     res.setHeader('Connection', 'close');
@@ -722,14 +730,27 @@ export async function createExtensionServer(
             '_',
           ) || 'download';
         const stagedFilePath = path.join(stagingDirectory, safeName);
+        const reservation = Number.isFinite(declaredLength) ? declaredLength : MAX_EXTENSION_UPLOAD_BYTES;
+        reservedUploadBytes += reservation;
+        let created = false;
+        const cleanup = async (): Promise<void> => {
+          if (!created) return;
+          created = false;
+          await removeTaskStaging(stagingDirectory).catch((error: unknown) => {
+            options.onError?.(error instanceof Error ? error : new Error(String(error)));
+          });
+        };
         try {
-          await mkdir(stagingDirectory, { recursive: true });
+          await checkStagingSpace(options.uploadStagingRoot, reservedUploadBytes, options.probeUploadFreeBytes);
+          await mkdir(options.uploadStagingRoot, { recursive: true, mode: 0o700 });
+          await mkdir(stagingDirectory, { mode: 0o700 });
+          created = true;
           const limit = sizeLimitTransform(MAX_EXTENSION_UPLOAD_BYTES);
           const writer = createWriteStream(stagedFilePath, { flags: 'wx', mode: 0o600 });
           await pipeline(req, limit.stream, writer);
           const byteLength = limit.getByteLength();
           if (byteLength === 0) {
-            await rm(stagingDirectory, { recursive: true, force: true });
+            await cleanup();
             jsonResponse(res, 400, { status: 'rejected', reason: 'empty body' });
             return;
           }
@@ -739,7 +760,6 @@ export async function createExtensionServer(
             contentType: metadata.contentType,
             filename: safeName,
             stagedFilePath,
-            stagingDirectory,
             targetFolderId: metadata.targetFolderId,
             ...(metadata.targetCollectionId
               ? { targetCollectionId: metadata.targetCollectionId }
@@ -754,6 +774,7 @@ export async function createExtensionServer(
             ...(metadata.mediaUrl === undefined ? {} : { mediaUrl: metadata.mediaUrl }),
           });
 
+          await cleanup();
           if (
             disposition &&
             typeof disposition === 'object' &&
@@ -773,12 +794,15 @@ export async function createExtensionServer(
             ...(disposition?.accepted && disposition.duplicate ? { duplicate: true } : {}),
           });
         } catch (error) {
-          try {
-            await rm(stagingDirectory, { recursive: true, force: true });
-          } catch {
-            // Best effort.
-          }
+          await cleanup();
           const normalized = error instanceof Error ? error : new Error(String(error));
+          if (isInsufficientSpaceError(normalized)) {
+            if (!res.headersSent && !res.destroyed) {
+              jsonResponse(res, 507, { status: 'rejected', reason: 'insufficient disk space' });
+              req.resume();
+            }
+            return;
+          }
           if ((normalized as NodeJS.ErrnoException).code === 'PAYLOAD_TOO_LARGE') {
             jsonResponse(res, 413, { status: 'rejected', reason: 'payload too large' });
             return;
@@ -787,6 +811,8 @@ export async function createExtensionServer(
           if (!res.headersSent) {
             jsonResponse(res, 500, { status: 'rejected', reason: 'internal error' });
           }
+        } finally {
+          reservedUploadBytes -= reservation;
         }
       })();
       return;

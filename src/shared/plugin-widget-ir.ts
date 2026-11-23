@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+export const pluginWidgetDialogWidthSchema = z.enum(['compact', 'medium', 'wide']);
+export type PluginWidgetDialogWidth = z.infer<typeof pluginWidgetDialogWidthSchema>;
+
 /**
  * Bounded widget IR for plugin-authored dialogs and pages.
  *
@@ -91,6 +94,9 @@ export type PluginWidgetNode =
   | PluginWidgetList
   | {
     readonly type: 'text';
+    readonly multiline?: boolean;
+    readonly rows?: number;
+    readonly readOnly?: boolean;
     readonly id: string;
     readonly label: string;
     readonly value: string;
@@ -191,6 +197,9 @@ export const pluginWidgetNodeSchema: z.ZodType<PluginWidgetNode> = z.lazy(() => 
     ...pluginWidgetFieldBase,
     type: z.literal('text'),
     value: z.string().max(8_192),
+    multiline: z.boolean().optional(),
+    rows: z.number().int().min(2).max(12).optional(),
+    readOnly: z.boolean().optional(),
   }),
   z.strictObject({
     ...pluginWidgetFieldBase,

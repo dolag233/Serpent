@@ -559,7 +559,10 @@ export async function executeAiWorkerCommand(
       // Lightweight probe — no vision / tool_use / json_schema (avoids
       // midstream "Expected tool_use but got text" false negatives).
       try {
-        await testAdapter.probeConnection(AbortSignal.timeout(15_000));
+        await hooks.runWithoutAdmission(
+          request.requestId,
+          () => testAdapter.probeConnection(AbortSignal.timeout(15_000)),
+        );
         return {
           ok: true,
           type: 'ai.test-connection.result' as const,
