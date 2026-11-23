@@ -26,7 +26,7 @@ import { AutomationLibraryWorkerAdapter } from '../../src/main/automation-worker
 import { automationScriptCommandIdSchema } from '../../src/shared/automation-script-api';
 import { createPublicError } from '../../src/shared/protocol/errors';
 import { parseWorkerRequest, type WorkerCommand } from '../../src/shared/protocol/requests';
-import type { WorkerResult } from '../../src/shared/protocol/responses';
+import { workerResultSchema, type WorkerResult } from '../../src/shared/protocol/responses';
 
 const allReadCapabilities = [
   'library.read',
@@ -37,6 +37,24 @@ const allReadCapabilities = [
   'collection.read',
   'job.read',
 ] as const;
+
+it('preserves library queue pause separately from numeric media counts in automation results', () => {
+  const descriptor = getAutomationCommandDescriptor('media.jobs.list');
+  if (!descriptor) throw new Error('Media jobs descriptor missing.');
+  const input = descriptor.inputSchema.parse({});
+  const result = {
+    ok: true as const,
+    type: 'media.jobs.listed' as const,
+    libraryId: 'library-1',
+    jobs: [],
+    nextCursor: null,
+    hasMore: false,
+    queued: 0, running: 0, succeeded: 0, failed: 0, paused: 0, cancelled: 0,
+  };
+  expect(descriptor.projectResult(workerResultSchema.parse({ ...result, queuePaused: true }), 'library-1', input))
+    .toMatchObject({ queuePaused: true, queued: 0, paused: 0 });
+  expect(descriptor.projectResult(workerResultSchema.parse(result), 'library-1', input)).toMatchObject({ queuePaused: false });
+});
 
 function request(
   commandId: string,

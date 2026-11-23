@@ -69,6 +69,7 @@ describe("media job panel state", () => {
       failed: 0,
       paused: 0,
       cancelled: 0,
+      queuePaused: true,
       jobs: [job("job-1", "2026-09-16T12:00:00.000Z")],
       nextCursor: { createdAt: "2026-09-16T12:00:00.000Z", jobId: "job-1" },
       hasMore: true,
@@ -88,6 +89,18 @@ describe("media job panel state", () => {
     expect(merged.jobs).toEqual(listed.jobs);
     expect(merged.nextCursor).toEqual(listed.nextCursor);
     expect(merged.hasMore).toBe(true);
+    expect(merged.queuePaused).toBe(true);
+
+    const resumed = applyMediaJobSummary(merged, {
+      queued: 1,
+      running: 0,
+      succeeded: 2,
+      failed: 0,
+      paused: 0,
+      cancelled: 0,
+      queuePaused: false,
+    });
+    expect(resumed.queuePaused).toBe(false);
   });
 
   it("appends the next page without duplicating job ids", () => {
@@ -98,6 +111,7 @@ describe("media job panel state", () => {
       failed: 0,
       paused: 0,
       cancelled: 0,
+      queuePaused: true,
       jobs: [job("job-1", "2026-09-16T12:00:02.000Z")],
       nextCursor: { createdAt: "2026-09-16T12:00:02.000Z", jobId: "job-1" },
       hasMore: true,
@@ -121,5 +135,23 @@ describe("media job panel state", () => {
     expect(merged.queued).toBe(2);
     expect(merged.hasMore).toBe(false);
     expect(merged.nextCursor).toBeNull();
+    expect(merged.queuePaused).toBe(true);
+  });
+
+  it("defaults a first page to unpaused and preserves the previous mode when an old page omits it", () => {
+    const firstPage: MediaJobStatus = {
+      queued: 0,
+      running: 0,
+      succeeded: 0,
+      failed: 0,
+      paused: 0,
+      cancelled: 0,
+      jobs: [],
+    };
+    expect(replaceMediaJobListPage(firstPage).queuePaused).toBe(false);
+
+    const previous: MediaJobStatus = { ...firstPage, queuePaused: true };
+    expect(replaceMediaJobListPage(firstPage, previous).queuePaused).toBe(true);
+    expect(appendMediaJobListPage(previous, firstPage).queuePaused).toBe(true);
   });
 });

@@ -77,21 +77,47 @@ export async function launchBenchmarkApp(options: {
 }): Promise<BenchmarkApp> {
   mkdirSync(options.userDataPath, { recursive: true });
   const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  const renderingMode = process.env.SERPENT_E2E_RENDERING_MODE;
+  const launchEnvironment: Record<string, string> = {
+    SERPENT_E2E: "1",
+    SERPENT_E2E_PERF_OFFSCREEN: "1",
+    SERPENT_E2E_RESTORE_RECENT: "1",
+    SERPENT_E2E_USER_DATA_PATH: options.userDataPath,
+    ...(options.openLibraryPath === undefined
+      ? {}
+      : { SERPENT_E2E_OPEN_LIBRARY_PATH: options.openLibraryPath }),
+    ...benchmarkLogEnv(path.join(options.userDataPath, "logs")),
+    ...(options.extraEnv ?? {}),
+    ...(renderingMode === undefined ? {} : { SERPENT_E2E_RENDERING_MODE: renderingMode }),
+  };
+  const nativeGpuRequested = launchEnvironment.SERPENT_E2E === "1"
+    && launchEnvironment.SERPENT_E2E_RENDERING_MODE === "native-gpu";
+  if (nativeGpuRequested) {
+    if (
+      options.extraEnv?.SERPENT_E2E_HIDE_WINDOW !== undefined
+      && options.extraEnv.SERPENT_E2E_HIDE_WINDOW !== "1"
+    ) {
+      throw new Error("native-gpu benchmarks require SERPENT_E2E_HIDE_WINDOW=1.");
+    }
+    const showInactive = options.extraEnv?.SERPENT_E2E_SHOW_INACTIVE
+      ?? process.env.SERPENT_E2E_SHOW_INACTIVE;
+    if (showInactive === "1") {
+      throw new Error("native-gpu benchmarks cannot use SERPENT_E2E_SHOW_INACTIVE=1.");
+    }
+    const swiftShader = options.extraEnv?.SERPENT_E2E_ENABLE_SWIFTSHADER
+      ?? process.env.SERPENT_E2E_ENABLE_SWIFTSHADER;
+    const softwareGl = options.extraEnv?.SERPENT_SOFTWARE_GL ?? process.env.SERPENT_SOFTWARE_GL;
+    if (swiftShader === "1" || softwareGl === "1") {
+      throw new Error("native-gpu benchmarks cannot use SwiftShader or SERPENT_SOFTWARE_GL=1.");
+    }
+    launchEnvironment.SERPENT_E2E_HIDE_WINDOW = "1";
+    launchEnvironment.SERPENT_E2E_SHOW_INACTIVE = "0";
+  }
   const application = await electron.launch({
     args: [applicationDirectory],
     cwd: applicationDirectory,
     executablePath: resolveElectronExecutablePath(),
-    env: electronLaunchEnv({
-      SERPENT_E2E: "1",
-      SERPENT_E2E_PERF_OFFSCREEN: "1",
-      SERPENT_E2E_RESTORE_RECENT: "1",
-      SERPENT_E2E_USER_DATA_PATH: options.userDataPath,
-      ...(options.openLibraryPath === undefined
-        ? {}
-        : { SERPENT_E2E_OPEN_LIBRARY_PATH: options.openLibraryPath }),
-      ...benchmarkLogEnv(path.join(options.userDataPath, "logs")),
-      ...(options.extraEnv ?? {}),
-    }),
+    env: electronLaunchEnv(launchEnvironment),
   });
   const window = await application.firstWindow();
   await window.waitForLoadState("domcontentloaded");
@@ -325,6 +351,7 @@ export async function readRendererProbe(window: Page): Promise<RendererProbe> {
 /** Reset the churn counters between benchmark phases without re-installing. */
 export async function resetRendererCounters(window: Page): Promise<void> {
   await window.evaluate(() => {
+    delete (globalThis as unknown as { __perfBenchLastFrame?: number }).__perfBenchLastFrame;
     const probe = (globalThis as unknown as {
       __perfBenchProbe: {
         longTasks: number[];
@@ -399,11 +426,30 @@ export async function visibleImageStats(window: Page): Promise<VisibleImageStats
       card.classList.contains("is-browse-placeholder")
       || card.dataset.assetId?.startsWith("__pending:"),
     ).length;
+    // Reuse the benchmark's existing geometry sample. These runtime-only IDs
+    // let a late-preview diagnostic distinguish a newly exposed row from a
+    // card that was already visible at the start of the jump.
+    const stageProbe = (globalThis as typeof globalThis & {
+      __browseJumpStageProbe?: {
+        started: number; firstVisibleAt: Map<string, number>; lastMissingAssetIds: string[];
+      };
+    }).__browseJumpStageProbe;
+    if (stageProbe?.started) {
+      const atMs = performance.now() - stageProbe.started;
+      for (const card of visible) {
+        const id = card.dataset.assetId;
+        if (id && !stageProbe.firstVisibleAt.has(id)) stageProbe.firstVisibleAt.set(id, atMs);
+      }
+    }
     const imageCards = visible.filter((card) => card.dataset.mediaType === "image");
+    const missingAssetIds: string[] = [];
     const decodedImages = imageCards.filter((card) => {
       const image = card.querySelector<HTMLImageElement>("img.asset-thumbnail");
-      return image?.complete === true && image.naturalWidth > 0 && image.naturalHeight > 0;
+      const decoded = image?.complete === true && image.naturalWidth > 0 && image.naturalHeight > 0;
+      if (!decoded && card.dataset.assetId) missingAssetIds.push(card.dataset.assetId);
+      return decoded;
     }).length;
+    if (stageProbe?.started) stageProbe.lastMissingAssetIds = missingAssetIds;
     const defaultIcons = visible.filter((card) =>
       !card.classList.contains("is-browse-placeholder")
       && !card.querySelector("img.asset-thumbnail"),

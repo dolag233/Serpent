@@ -1615,6 +1615,35 @@ describe('preview response protocol', () => {
     })).toMatchObject({ type: 'media.jobs.listed', queued: 1 });
   });
 
+  it('defaults queuePaused on legacy media summary and listing responses', () => {
+    const counts = {
+      ok: true,
+      libraryId: 'library-01',
+      queued: 0,
+      running: 0,
+      succeeded: 0,
+      failed: 0,
+      paused: 0,
+      cancelled: 0,
+    };
+    expect(parseRendererResult({
+      ...counts,
+      type: 'media.job-summary.read',
+    })).toMatchObject({ type: 'media.job-summary.read', queuePaused: false });
+    expect(parseRendererResult({
+      ...counts,
+      type: 'media.jobs.listed',
+      nextCursor: null,
+      hasMore: false,
+      jobs: [],
+    })).toMatchObject({ type: 'media.jobs.listed', queuePaused: false });
+    expect(parseRendererResult({
+      ...counts,
+      type: 'media.job-summary.read',
+      queuePaused: true,
+    })).toMatchObject({ queuePaused: true });
+  });
+
   it('validates automatic palette provenance without exposing artifact paths', () => {
     const result = parseRendererResult({
       ok: true,
@@ -3025,6 +3054,16 @@ describe('model convert-fbx protocol (slice B, Serpent-5ygi)', () => {
       libraryId: 'library-01',
       assetId: 'asset-01',
     });
+  });
+
+  it('preserves typed FBX host pressure across the worker response boundary', () => {
+    expect(parseWorkerResponse({
+      requestId: 'convert-resource',
+      result: {
+        ok: true, type: 'model.convert-fbx.done', assetId: 'asset-01',
+        status: 'failed', errorCode: 'FBX_RESOURCE_EXHAUSTED',
+      },
+    })).toMatchObject({ result: { errorCode: 'FBX_RESOURCE_EXHAUSTED' } });
   });
 
   it('validates ready and failed conversion results', () => {

@@ -45,7 +45,10 @@ import {
   type ImportFailurePoint,
   type ModelThumbnailRenderOutcome,
   type RawMetadataBackfillAdmissionState,
+  type VisibleImageDimensions,
+  type MediaQueueWakeRef,
 } from './library-service';
+import { VisibleDimensionProbeCoordinator } from './visible-dimension-probe-coordinator';
 import { publicErrorForWorkerFailure } from './public-error';
 import { AiJobAbortRegistry } from './ai/job-abort-registry';
 import { ProviderConcurrencyLimiter } from './ai/provider-concurrency-limiter';
@@ -65,7 +68,6 @@ import {
   type PluginMediaProviderRequest,
   type PluginMediaProviderResult,
 } from '../shared/plugin-media-protocol';
-import { handleFbxConvertCommand } from './fbx/convert-command';
 import {
   LatestSearchRequestCoordinator,
   searchRequestLaneKey,
@@ -131,6 +133,8 @@ const activeThumbnailQueues = new Set<string>();
 const rescheduledThumbnailQueues = new Set<string>();
 // Serpent-4bdd26 收编 codex/large-library-performance@15f3325c：视口抢占机制。
 const activeThumbnailQueueControllers = new Map<string, AbortController>();
+/** User-scoped primary work, excluding exact background reconciliation scopes. */
+const activeForegroundPrimaryWaves = new Map<string, AbortController>();
 /**
  * The active queue's claim scope is mutable because a visible-window report
  * can arrive while processThumbnailQueue is awaiting native work. Updating
@@ -139,6 +143,8 @@ const activeThumbnailQueueControllers = new Map<string, AbortController>();
  */
 const activeThumbnailQueueAssetScopes = new Map<string, {
   current: string[] | undefined;
+  wakeRef?: MediaQueueWakeRef;
+  wakePending?: NodeJS.Immediate;
 }>();
 const pendingThumbnailQueueAborts = new Set<string>();
 const deferredMediaResourceRetries = new Map<string, ReturnType<typeof setTimeout>>();
@@ -168,6 +174,8 @@ const pendingVisibleThumbnailWaves = new Map<string, {
 const THUMBNAIL_VISIBLE_PRIORITY = 350;
 /** Primary jobs invalidated by reconciliation, waiting for an idle exact pump. */
 const pendingReconciledPrimaryAssetIds = new Map<string, Set<string>>();
+/** Explicit resumes/retries wait here while an automatic primary wave aborts cooperatively. */
+const pendingExplicitPrimaryWakes = new Set<string>();
 type ReconciledPrimaryBatch = {
   assetIds: string[];
   superseded: boolean;
@@ -190,17 +198,12 @@ const lastViewportVisibleChangeAtMs = new Map<string, number>();
 const lastViewportPreemptAtMs = new Map<string, number>();
 const deferredStartupThumbnailGenerations = new Map<string, number>();
 const pendingStartupThumbnailAdmission = new DeferredThumbnailAdmission();
-type VisibleDimensionProbeState = {
-  assetIds: Set<string>;
-  controller: AbortController;
-  running: boolean;
-};
 /**
  * Header probes are useful for correcting masonry geometry, but they are not
- * part of the visible-window ACK. Keep them cancellable and drain them in
- * small async batches so a cold source volume cannot queue behind a scroll.
+ * part of the visible-window ACK. Replace unclaimed IDs on each accepted
+ * viewport union, while one cancellable drain finishes shared in-flight reads.
  */
-const visibleDimensionProbeStates = new Map<string, VisibleDimensionProbeState>();
+const visibleDimensionProbeStates = new Map<string, VisibleDimensionProbeCoordinator<VisibleImageDimensions>>();
 // Keep the startup backfill off the primary decoder lane until the renderer
 // has reported its first real viewport. A fixed delay is not sufficient on a
 // large library: opening the shell can take longer than the timer, so the
@@ -245,6 +248,7 @@ const e2eTerminateProcessAt = (() => {
 })();
 
 const libraryService = new LibraryService({
+  extensionStagingRoot: process.env.SERPENT_EXTENSION_STAGING_ROOT,
   backupSemanticIndex: backupSemanticIndexWorkerLibrary,
   onAssetsChanged: (event) => {
     lastVisibleWindowKeyByLibrary.delete(event.libraryId);
@@ -281,8 +285,12 @@ const libraryService = new LibraryService({
   },
 });
 
-function automaticMediaAdmissionAllowed(libraryId: string): boolean {
+function libraryAccessAllowed(libraryId: string): boolean {
   return !closingLibraryIds.has(libraryId) && libraryService.hasOpenLibrary(libraryId);
+}
+
+function automaticMediaAdmissionAllowed(libraryId: string): boolean {
+  return libraryAccessAllowed(libraryId) && !libraryService.isMediaQueuePaused(libraryId);
 }
 
 // Electron's ParentPort delivers IPC messages but does not provide a documented
@@ -488,9 +496,6 @@ function waitForAbortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise
 function modelSourceUrl(libraryId: string, assetId: string, revisionId: string): string {
   return `serpent://source/${libraryId}/${assetId}?revision=${encodeURIComponent(revisionId)}`;
 }
-function modelPreviewUrl(libraryId: string, artifactId: string): string {
-  return `serpent://preview/${libraryId}/${artifactId}`;
-}
 
 async function renderModelThumbnailViaMain(input: {
   libraryId: string;
@@ -542,10 +547,8 @@ async function renderModelAiViewsViaMain(input: {
 }
 
 /**
- * Offscreen render orchestration for one queued model job: format dispatch,
- * FBX→GLB conversion first (a conversion failure fails the job with the typed
- * FBX_* code — the renderer never sees the raw FBX), companion index, then
- * the Main render request.
+ * Offscreen render orchestration for one queued model job. Both thumbnails
+ * and AI views render the current source revision with its companions.
  */
 async function orchestrateRender(input: {
   libraryId: string;
@@ -560,26 +563,6 @@ async function orchestrateRender(input: {
     const format = modelThumbnailFormatForFileName(input.relativeFilePath);
     if (!format) {
       return { status: 'failed', errorCode: 'MODEL_LOAD_FAILED' };
-    }
-    let effectiveFormat: ModelThumbnailRenderRequest['format'] = format;
-    let renderUrl: string;
-    if (format === 'fbx') {
-      // Slice B single-flight conversion; only the cached GLB is rendered.
-      const conversion = await handleFbxConvertCommand(libraryService, {
-        libraryId: input.libraryId,
-        assetId: input.assetId,
-      }, input.signal);
-      if (conversion.status !== 'ready') {
-        return {
-          status: 'failed',
-          errorCode: conversion.errorCode,
-          ...(conversion.reason === undefined ? {} : { reason: conversion.reason }),
-        };
-      }
-      effectiveFormat = 'glb';
-      renderUrl = modelPreviewUrl(input.libraryId, conversion.glbArtifactId);
-    } else {
-      renderUrl = modelSourceUrl(input.libraryId, input.assetId, input.revisionId);
     }
     const companions = libraryService.resolveModelCompanions({
       libraryId: input.libraryId,
@@ -603,8 +586,8 @@ async function orchestrateRender(input: {
         libraryId: input.libraryId,
         assetId: input.assetId,
         revisionId: input.revisionId,
-        format: effectiveFormat,
-        renderUrl,
+        format,
+        renderUrl: modelSourceUrl(input.libraryId, input.assetId, input.revisionId),
         companionMap: companions.map((companion) => ({
           relativeFilePath: companion.relativeFilePath,
           assetId: companion.assetId,
@@ -713,13 +696,83 @@ async function withMediaSchedulingSuspended<T>(
   }
 }
 
+const PRIMARY_MEDIA_JOB_KINDS = [
+  'generate_thumbnail',
+  'generate_video_poster',
+] as const;
+const SECONDARY_MEDIA_JOB_KINDS = [
+  'extract_metadata',
+  'generate_contact_sheet',
+  'generate_webm_proxy',
+  'generate_audio_proxy',
+  'extract_palette',
+] as const;
+
+function wakeExplicitQueuedMediaJobs(libraryId: string): boolean {
+  if (!libraryAccessAllowed(libraryId)) return false;
+  let primaryPending: boolean;
+  let secondaryPending: boolean;
+  try {
+    primaryPending = libraryService.hasExplicitQueuedMediaJobs(
+      libraryId,
+      PRIMARY_MEDIA_JOB_KINDS,
+    );
+    secondaryPending = libraryService.hasExplicitQueuedMediaJobs(
+      libraryId,
+      SECONDARY_MEDIA_JOB_KINDS,
+    );
+  } catch (error) {
+    libraryService.reportDiagnostic('media-schedule.explicit-wake-check', error, { libraryId });
+    return false;
+  }
+  if (!primaryPending && !secondaryPending) return false;
+  if (primaryPending) {
+    try {
+      scheduleThumbnailQueue(libraryId, {
+        origin: 'explicit',
+        skipInitialEnqueue: true,
+        skipStaleRepair: true,
+        skipBackgroundRepair: true,
+        suppressSecondaryQueue: true,
+      });
+    } catch (error) {
+      libraryService.reportDiagnostic('thumbnail-schedule.explicit-wake', error, { libraryId });
+    }
+  }
+  if (secondaryPending) scheduleSecondaryMediaQueue(libraryId, { urgent: true });
+  return true;
+}
+
+function resumePendingExplicitPrimaryWake(libraryId: string): boolean {
+  if (!pendingExplicitPrimaryWakes.delete(libraryId)) return false;
+  if (!libraryAccessAllowed(libraryId)) return false;
+  try {
+    if (!libraryService.hasExplicitQueuedMediaJobs(libraryId, PRIMARY_MEDIA_JOB_KINDS)) return false;
+    scheduleThumbnailQueue(libraryId, {
+      origin: 'explicit',
+      skipInitialEnqueue: true,
+      skipStaleRepair: true,
+      skipBackgroundRepair: true,
+      suppressSecondaryQueue: true,
+    });
+    return true;
+  } catch (error) {
+    libraryService.reportDiagnostic('thumbnail-schedule.explicit-resume', error, { libraryId });
+    return false;
+  }
+}
+
 function scheduleMediaResourceRetry(libraryId: string): void {
   if (mediaResourceGuard.hasExternalHold() || !mediaResourceGuard.isCoolingDown()) return;
   if (deferredMediaResourceRetries.has(libraryId)) return;
   const delayMs = Math.max(1_000, mediaResourceGuard.remainingMs());
   const timer = setTimeout(() => {
     deferredMediaResourceRetries.delete(libraryId);
-    if (!automaticMediaAdmissionAllowed(libraryId)) return;
+    if (!libraryAccessAllowed(libraryId)) return;
+    if (!automaticMediaAdmissionAllowed(libraryId)) {
+      wakeExplicitQueuedMediaJobs(libraryId);
+      return;
+    }
     try {
       scheduleThumbnailQueue(libraryId);
     } catch (error) {
@@ -755,6 +808,11 @@ function scheduleThumbnailQueueFailureRetry(libraryId: string): void {
   );
   const timer = setTimeout(() => {
     pendingThumbnailQueueFailureRetries.delete(libraryId);
+    if (!libraryAccessAllowed(libraryId)) {
+      cancelThumbnailQueueFailureRetry(libraryId);
+      return;
+    }
+    if (wakeExplicitQueuedMediaJobs(libraryId)) return;
     if (!automaticMediaAdmissionAllowed(libraryId)) {
       cancelThumbnailQueueFailureRetry(libraryId);
       return;
@@ -816,9 +874,11 @@ function scheduleThumbnailQueue(
     preemptVisible?: boolean;
     /** Resume/retry existing durable jobs before admitting more catalogue work. */
     skipInitialEnqueue?: boolean;
+    /** Explicit user grants may run while the library's automatic queue is paused. */
+    origin?: 'automatic' | 'explicit';
     /** Consume only already-enqueued jobs; skip catalogue repair/backfill tails. */
     skipBackgroundRepair?: boolean;
-    /** Keep this bounded primary pump from handing off to secondary media work. */
+    /** Suppress terminal handoff; independent idle-gated derivatives may still share the Worker. */
     suppressSecondaryQueue?: boolean;
     /** Continue a bounded, exact-asset pump after this queue becomes idle. */
     onQueueIdle?: (outcome?: {
@@ -828,19 +888,34 @@ function scheduleThumbnailQueue(
     }) => void;
   } = {},
 ): number {
-  if (!automaticMediaAdmissionAllowed(libraryId)) return 0;
+  const origin = options.origin ?? 'automatic';
+  if (origin === 'explicit') {
+    if (!libraryAccessAllowed(libraryId)) return 0;
+  } else if (!automaticMediaAdmissionAllowed(libraryId)) {
+    return 0;
+  }
   let enqueued: number;
   try {
     const { skipInitialEnqueue, ...enqueueOptions } = options;
+    enqueueOptions.origin = origin;
     enqueued = skipInitialEnqueue
       ? 0
-      : libraryService.enqueueThumbnailJobs(libraryId, enqueueOptions);
+      : libraryService.enqueueThumbnailJobs(libraryId, { ...enqueueOptions, origin });
   } catch (error) {
     libraryService.reportDiagnostic('thumbnail-schedule.enqueue', error, { libraryId });
     throw error;
   }
 
   if (activeThumbnailQueues.has(libraryId)) {
+    if (origin === 'explicit') {
+      pendingExplicitPrimaryWakes.add(libraryId);
+      const activeController = activeThumbnailQueueControllers.get(libraryId);
+      if (activeController) activeController.abort();
+      else pendingThumbnailQueueAborts.add(libraryId);
+      // Explicit wakes have their own durable grant check. Do not mix them
+      // into the automatic reschedule marker or replace a visible scope.
+      return enqueued;
+    }
     const reconciledBatch = activeReconciledPrimaryBatches.get(libraryId);
     if (
       isHighPriorityThumbnailQueue(options)
@@ -871,6 +946,22 @@ function scheduleThumbnailQueue(
           viewportPriorityOverlay.rankedClaimIds(libraryId),
           options.assetIds,
         );
+        if (assetScope.wakeRef && !assetScope.wakePending) {
+          // Let retiring loops settle first, and coalesce geometry reports
+          // into one wake with the newest scope rather than one wave each.
+          const controller = activeThumbnailQueueControllers.get(libraryId);
+          assetScope.wakePending = setImmediate(() => {
+            delete assetScope.wakePending;
+            if (activeThumbnailQueueAssetScopes.get(libraryId) !== assetScope
+              || activeThumbnailQueueControllers.get(libraryId) !== controller
+              || controller?.signal.aborted || !automaticMediaAdmissionAllowed(libraryId)) return;
+            const pending = pendingVisibleThumbnailWaves.get(libraryId);
+            if (pending && controller && assetScope.wakeRef?.current?.(
+              Math.max(1, Math.min(100, pending.waveSize)),
+            )) activeForegroundPrimaryWaves.set(libraryId, controller);
+          });
+          assetScope.wakePending.unref();
+        }
       }
     }
     rescheduledThumbnailQueues.add(libraryId);
@@ -884,10 +975,15 @@ function scheduleThumbnailQueue(
     let queueWasAborted = false;
     let queueFailed = false;
     let completedViewportOnlyWave = false;
-    const pendingVisibleWave = pendingVisibleThumbnailWaves.get(libraryId);
+    let processedPrimaryJobs = 0;
+    const pendingVisibleWave = options.origin === 'explicit'
+      ? undefined
+      : pendingVisibleThumbnailWaves.get(libraryId);
     const queueController = new AbortController();
-    const assetScope = activeThumbnailQueueAssetScopes.get(libraryId)
-      ?? { current: undefined };
+    const assetScope: NonNullable<ReturnType<typeof activeThumbnailQueueAssetScopes.get>> = {
+      current: activeThumbnailQueueAssetScopes.get(libraryId)?.current,
+      ...(origin === 'explicit' ? {} : { wakeRef: {} }),
+    };
     activeThumbnailQueueControllers.set(libraryId, queueController);
     activeThumbnailQueueAssetScopes.set(libraryId, assetScope);
     if (pendingThumbnailQueueAborts.delete(libraryId)) {
@@ -924,7 +1020,8 @@ function scheduleThumbnailQueue(
     // reconciliation callback added exact IDs. Hand the queue off before its
     // next claim boundary, preserving the original options for resumption.
     if (
-      options.onQueueIdle === undefined
+      origin !== 'explicit'
+      && options.onQueueIdle === undefined
       && !isHighPriorityThumbnailQueue(options)
       && !pendingVisibleThumbnailWaves.has(libraryId)
       && hasPendingReconciledPrimaryAssetIds(libraryId)
@@ -936,6 +1033,7 @@ function scheduleThumbnailQueue(
         activeThumbnailQueueAssetScopes.delete(libraryId);
       }
       activeThumbnailQueues.delete(libraryId);
+      if (resumePendingExplicitPrimaryWake(libraryId)) return;
       rescheduledThumbnailQueues.delete(libraryId);
       if (drainPendingReconciledPrimaryQueue(libraryId, resumeOrdinaryQueue)) return;
       resumeOrdinaryQueue();
@@ -1004,11 +1102,16 @@ function scheduleThumbnailQueue(
       // and can starve browse/page messages in the Worker event loop. A
       // pending viewport wave keeps the same restriction even when it
       // arrived while a background queue was active.
-      const viewportOnlyWave = isViewportOnlyThumbnailWave({
-        skipStaleRepair: options.skipStaleRepair,
-        assetIds: options.assetIds,
-        pendingVisibleWindow: pendingVisibleWave !== undefined,
-      });
+      const viewportOnlyWave = options.origin !== 'explicit'
+        && isViewportOnlyThumbnailWave({
+          skipStaleRepair: options.skipStaleRepair,
+          assetIds: options.assetIds,
+          pendingVisibleWindow: pendingVisibleWave !== undefined,
+        });
+      if (origin === 'explicit' || (viewportOnlyWave
+        && (pendingVisibleWave !== undefined || options.onQueueIdle === undefined))) {
+        activeForegroundPrimaryWaves.set(libraryId, queueController);
+      }
       const visibleAssetIds = pendingVisibleWave?.assetIds
         ?? (options.skipStaleRepair && options.assetIds
           ? [...new Set(options.assetIds)].slice(0, 100)
@@ -1038,10 +1141,12 @@ function scheduleThumbnailQueue(
         () => libraryService.processThumbnailQueue(libraryId, {
           maxJobs: processWaveSize,
           jobKinds: ['generate_thumbnail', 'generate_video_poster'],
+          ...(options.origin === undefined ? {} : { origin: options.origin }),
           interactive: viewportOnlyWave,
           ...(visibleAssetIds === undefined ? {} : { assetIds: visibleAssetIds }),
           signal: queueController.signal,
           claimAssetIdsRef: assetScope,
+          ...(assetScope.wakeRef ? { wakeRef: assetScope.wakeRef } : {}),
           onResult,
           onAiInputReady: (event) => {
             parentPort?.postMessage({
@@ -1068,6 +1173,7 @@ function scheduleThumbnailQueue(
         }),
       );
       pendingVisibleWaveCompleted = true;
+      processedPrimaryJobs = processed;
       queueWasAborted = queueController.signal.aborted;
       completedViewportOnlyWave = viewportOnlyWave && !queueWasAborted;
       if (mediaResourceGuard.isCoolingDown()) scheduleMediaResourceRetry(libraryId);
@@ -1075,15 +1181,20 @@ function scheduleThumbnailQueue(
       // the requested window. Continuing the old closure here would skip the
       // cleanup below and let a background queue turn the next tick into a
       // whole-library fill before the latest visible ids are admitted.
+      const explicitPrimaryWorkRemains = options.origin === 'explicit'
+        && libraryService.hasExplicitQueuedMediaJobs(libraryId, PRIMARY_MEDIA_JOB_KINDS);
       continueImmediately = !queueWasAborted
         && !viewportOnlyWave
         && processed === processWaveSize
-        && !hasPendingReconciledPrimaryAssetIds(libraryId);
+        && !hasPendingReconciledPrimaryAssetIds(libraryId)
+        && (options.origin !== 'explicit' || explicitPrimaryWorkRemains);
       // A visible report can arrive while a startup/maintenance wave is
       // awaiting native work. Do not let that older closure launch its
       // whole-library repair tail before the pending viewport takes over.
       const visibleWavePending = pendingVisibleThumbnailWaves.has(libraryId);
-      const mayRunBackgroundRepair = () => !options.skipBackgroundRepair
+      const mayRunBackgroundRepair = () => options.origin !== 'explicit'
+        && automaticMediaAdmissionAllowed(libraryId)
+        && !options.skipBackgroundRepair
         && !hasPendingReconciledPrimaryAssetIds(libraryId)
         && shouldRunThumbnailBackgroundRepair({
           viewportOnlyWave,
@@ -1137,6 +1248,21 @@ function scheduleThumbnailQueue(
     } catch (error) {
       queueFailed = true;
       libraryService.reportDiagnostic('thumbnail-schedule.process', error, { libraryId });
+    } finally {
+      if (assetScope.wakePending) {
+        clearImmediate(assetScope.wakePending);
+        delete assetScope.wakePending;
+      }
+      if (activeForegroundPrimaryWaves.get(libraryId) === queueController) {
+        activeForegroundPrimaryWaves.delete(libraryId);
+      }
+    }
+    if (processedPrimaryJobs > 0 && !queueFailed
+      && !queueController.signal.aborted && automaticMediaAdmissionAllowed(libraryId)) {
+      // A full primary wave can continue for an entire import. Give the
+      // existing idle-gated secondary pump a wake without giving up primary
+      // ownership or waiting for that whole backlog to drain.
+      scheduleSecondaryMediaQueue(libraryId);
     }
     if (continueImmediately) {
       setTimeout(() => void runBatch(), 0);
@@ -1154,7 +1280,33 @@ function scheduleThumbnailQueue(
       && pendingVisibleWave !== undefined
       && pendingVisibleThumbnailWaves.get(libraryId) === pendingVisibleWave
       && !queueController.signal.aborted;
+    // Retain an automatic wake while handing off through another explicit
+    // owner. A full resume may have arrived before the old owner settled.
+    if (!options.onQueueIdle && resumePendingExplicitPrimaryWake(libraryId)) return;
     const queueWasRescheduled = rescheduledThumbnailQueues.delete(libraryId);
+    if (
+      options.origin === 'explicit'
+      && automaticMediaAdmissionAllowed(libraryId)
+      && pendingVisibleThumbnailWaves.has(libraryId)
+    ) {
+      const visibleWave = pendingVisibleThumbnailWaves.get(libraryId)!;
+      scheduleThumbnailQueue(libraryId, {
+        assetIds: visibleWave.assetIds,
+        limit: visibleWave.waveSize,
+        priority: THUMBNAIL_VISIBLE_PRIORITY,
+        skipInitialEnqueue: true,
+        skipStaleRepair: true,
+      });
+      return;
+    }
+    if (options.origin === 'explicit') {
+      if (queueFailed) scheduleThumbnailQueueFailureRetry(libraryId);
+      options.onQueueIdle?.({ aborted: queueWasAborted, failed: queueFailed });
+      if (queueWasRescheduled && automaticMediaAdmissionAllowed(libraryId)) {
+        resumeBackgroundPrimaryQueue();
+      }
+      return;
+    }
     if (queueFailed) {
       scheduleThumbnailQueueFailureRetry(libraryId);
     } else if (
@@ -1277,7 +1429,8 @@ const RECONCILED_PRIMARY_ASSET_BATCH_SIZE = 100;
  * Drain only the primary assets invalidated by this reconciliation pass.
  * Each queue owns one exact, bounded ID batch; completion schedules the next
  * batch, so a large Set never becomes a global catalogue claim or a dropped
- * tail. The queue is deliberately not allowed to hand off to secondary work.
+ * tail. Its callback keeps primary ownership; idle-gated derivatives may share
+ * the Worker independently without replacing this exact continuation.
  */
 function drainPendingReconciledPrimaryQueue(
   libraryId: string,
@@ -1327,6 +1480,7 @@ function drainPendingReconciledPrimaryQueue(
             rememberReconciledPrimaryAssetIds(libraryId, batchState.assetIds);
           }
         }
+        if (resumePendingExplicitPrimaryWake(libraryId)) return;
         continueReconciledPrimaryWork(libraryId);
       },
     });
@@ -1487,7 +1641,7 @@ function scheduleOpenBackgroundReconciliation(
   // registry still keeps all counts scoped to this library and generation.
   const token = startupBurstGates.open(libraryId, libraryGeneration);
   void startupBurstGates.waitForDrain(token).then(() => {
-    if (!automaticMediaAdmissionAllowed(libraryId)) return undefined;
+    if (!libraryAccessAllowed(libraryId)) return undefined;
     return interactiveScheduler.schedule(
       {
         requestId: `reconciliation:${libraryId}:${libraryGeneration}`,
@@ -1646,92 +1800,43 @@ function enqueueVisibleWindowDimensionProbes(
 ): void {
   let state = visibleDimensionProbeStates.get(libraryId);
   if (!state) {
-    state = {
-      assetIds: new Set(),
-      controller: new AbortController(),
-      running: false,
-    };
-    visibleDimensionProbeStates.set(libraryId, state);
-  }
-  for (const assetId of assetIds) state.assetIds.add(assetId);
-  if (state.running) return;
-  state.running = true;
-  void drainVisibleWindowDimensionProbes(libraryId, state);
-}
-
-async function drainVisibleWindowDimensionProbes(
-  libraryId: string,
-  state: VisibleDimensionProbeState,
-): Promise<void> {
-  try {
-    while (state.assetIds.size > 0 && !state.controller.signal.aborted) {
-      const batch: string[] = [];
-      for (const assetId of state.assetIds) {
-        state.assetIds.delete(assetId);
-        batch.push(assetId);
-        if (batch.length >= 16) break;
-      }
-      try {
-        const dimensions = await traceActivity(
-          `dimension-probes:${libraryId}`,
-          () => libraryService.persistVisibleWindowImageDimensionsAsync(
-            libraryId,
-            batch,
-            state.controller.signal,
-          ),
-        );
-        if (state.controller.signal.aborted) return;
-        for (const item of dimensions) {
-          if (state.controller.signal.aborted) return;
-          parentPort?.postMessage({
-            type: 'asset.dimensions.ready',
-            libraryId,
-            assetId: item.assetId,
-            width: item.width,
-            height: item.height,
-            revisionId: item.revisionId,
-            previewKind: item.previewKind,
-            previewRevisionId: item.previewRevisionId,
-          });
+    if (assetIds.length === 0) return;
+    const coordinator = new VisibleDimensionProbeCoordinator<VisibleImageDimensions>({
+      probeBatch: (batch, signal, onReady, isWanted) => traceActivity(
+        `dimension-probes:${libraryId}`,
+        () => libraryService.persistVisibleWindowImageDimensionsAsync(
+          libraryId, batch, signal, onReady, isWanted,
+        ),
+      ),
+      publish: (item) => {
+        if (visibleDimensionProbeStates.get(libraryId) !== coordinator) return;
+        parentPort?.postMessage({ type: 'asset.dimensions.ready', libraryId, ...item });
+      },
+      onError: (error) => libraryService.reportDiagnostic('visible-window.dimensions', error, { libraryId }),
+      onIdle: () => {
+        if (visibleDimensionProbeStates.get(libraryId) === coordinator) {
+          visibleDimensionProbeStates.delete(libraryId);
         }
-      } catch (error) {
-        if (!state.controller.signal.aborted) {
-          libraryService.reportDiagnostic('visible-window.dimensions', error, { libraryId });
+      },
+      yieldAfterBatch: async () => {
+        if (startupBurstGates.isBrowseServed(libraryId)) {
+          await new Promise<void>((resolve) => setImmediate(resolve));
         }
-        return;
-      }
-      // Let queued search/preview requests run before the next source batch.
-      // The first browse after open is different: it must claim the Worker
-      // before the sidebar/count burst can run. The per-library startup gate
-      // remains unserved until that response is posted, so the first page is
-      // serviced synchronously while later searches retain the coalescing
-      // yield.
-      if (startupBurstGates.isBrowseServed(libraryId)) {
-        await new Promise<void>((resolve) => setImmediate(resolve));
-      }
-    }
-  } finally {
-    if (visibleDimensionProbeStates.get(libraryId) === state) {
-      visibleDimensionProbeStates.delete(libraryId);
-    }
+      },
+    });
+    state = coordinator;
+    visibleDimensionProbeStates.set(libraryId, coordinator);
   }
+  state.update(assetIds);
 }
 
 function cancelVisibleWindowDimensionProbes(libraryId: string): void {
   const state = visibleDimensionProbeStates.get(libraryId);
   if (!state) return;
-  state.assetIds.clear();
-  state.controller.abort();
+  state.stop();
   visibleDimensionProbeStates.delete(libraryId);
 }
 
-const SECONDARY_MEDIA_JOB_KINDS = [
-  'extract_metadata',
-  'generate_contact_sheet',
-  'generate_webm_proxy',
-  'generate_audio_proxy',
-  'extract_palette',
-] as const;
 /**
  * Secondary derivatives used to claim exactly one job per turn and then wait a
  * fixed 50 ms before the next turn. Measured against 200 real images
@@ -1762,6 +1867,8 @@ const secondaryMediaIdleUntil = new Map<string, number>();
 const rescheduledSecondaryMediaQueues = new Set<string>();
 const urgentSecondaryMediaQueues = new Set<string>();
 const urgentSecondaryMediaAssetIds = new Map<string, Set<string>>();
+/** Normal admission retained across an urgent explicit owner. */
+const resumeNormalSecondaryAfterUrgent = new Set<string>();
 const secondaryMediaRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const secondaryMediaFairnessTurns = new Map<string, number>();
 const rawMetadataBackfillAdmissionGate = new RawMetadataBackfillAdmissionGate();
@@ -1777,7 +1884,12 @@ function scheduleSecondaryMediaRetry(libraryId: string, delayMs: number): void {
   if (secondaryMediaRetryTimers.has(libraryId)) return;
   const timer = setTimeout(() => {
     secondaryMediaRetryTimers.delete(libraryId);
-    if (automaticMediaAdmissionAllowed(libraryId)) scheduleSecondaryMediaQueue(libraryId);
+    if (!libraryAccessAllowed(libraryId)) return;
+    if (automaticMediaAdmissionAllowed(libraryId)) {
+      scheduleSecondaryMediaQueue(libraryId);
+    } else {
+      wakeExplicitQueuedMediaJobs(libraryId);
+    }
   }, Math.max(250, delayMs));
   timer.unref?.();
   secondaryMediaRetryTimers.set(libraryId, timer);
@@ -1851,15 +1963,19 @@ function cancelAutomaticMediaForLibrary(libraryId: string): void {
     pendingThumbnailQueueAborts.delete(libraryId);
   }
   rescheduledThumbnailQueues.delete(libraryId);
+  pendingExplicitPrimaryWakes.delete(libraryId);
+  pendingVisibleThumbnailWaves.delete(libraryId);
   pendingReconciledPrimaryAssetIds.delete(libraryId);
   activeReconciledPrimaryBatches.delete(libraryId);
   pendingReconciledPrimaryResumes.delete(libraryId);
   cancelReconciledPrimaryIdleRetry(libraryId);
   cancelThumbnailQueueFailureRetry(libraryId);
+  cancelMediaResourceRetry(libraryId);
   pendingStartupThumbnailAdmission.cancel(libraryId);
   const secondaryController = activeSecondaryMediaQueueControllers.get(libraryId);
   if (secondaryController) secondaryController.abort();
   rescheduledSecondaryMediaQueues.delete(libraryId);
+  resumeNormalSecondaryAfterUrgent.delete(libraryId);
   cancelSecondaryMediaRetry(libraryId);
   secondaryMediaFairnessTurns.delete(libraryId);
   rawMetadataBackfillAdmissionGate.cancel(libraryId);
@@ -1877,8 +1993,25 @@ function scheduleSecondaryMediaQueue(
   libraryId: string,
   options: { urgent?: boolean; assetId?: string } = {},
 ): void {
-  if (!automaticMediaAdmissionAllowed(libraryId)) return;
+  if (!libraryAccessAllowed(libraryId)) return;
+  const urgentExplicit = options.urgent === true
+    && libraryService.hasExplicitQueuedMediaJobs(libraryId, SECONDARY_MEDIA_JOB_KINDS);
+  if (!automaticMediaAdmissionAllowed(libraryId) && !urgentExplicit) return;
+  if (options.urgent && !urgentExplicit) return;
   cancelSecondaryMediaRetry(libraryId);
+  if (
+    options.urgent
+    && activeSecondaryMediaQueues.has(libraryId)
+    && !urgentSecondaryMediaQueues.has(libraryId)
+  ) {
+    resumeNormalSecondaryAfterUrgent.add(libraryId);
+  }
+  if (!options.urgent && activeSecondaryMediaQueues.has(libraryId)
+    && urgentSecondaryMediaQueues.has(libraryId)) {
+    // The final primary wave may finish while an explicit proxy owns this
+    // pump. Preserve its ordinary wake until that owner drains as well.
+    resumeNormalSecondaryAfterUrgent.add(libraryId);
+  }
   if (options.urgent) {
     // An explicit viewer fallback is a user-visible recovery path, not an
     // automatic derivative. Let it bypass the idle window so a queued proxy
@@ -1904,7 +2037,6 @@ function scheduleSecondaryMediaQueue(
   activeSecondaryMediaQueues.add(libraryId);
   const queueController = new AbortController();
   activeSecondaryMediaQueueControllers.set(libraryId, queueController);
-  let resumeNormalAfterUrgentDrain = false;
   const clearUrgentSecondaryAdmission = (): void => {
     urgentSecondaryMediaQueues.delete(libraryId);
     urgentSecondaryMediaAssetIds.delete(libraryId);
@@ -1914,13 +2046,20 @@ function scheduleSecondaryMediaQueue(
       activeSecondaryMediaQueueControllers.delete(libraryId);
       activeSecondaryMediaQueues.delete(libraryId);
       const shouldReschedule = rescheduledSecondaryMediaQueues.has(libraryId);
-      const shouldKeepOpen = automaticMediaAdmissionAllowed(libraryId);
-      const shouldResumeNormal = resumeNormalAfterUrgentDrain && shouldKeepOpen;
+      const explicitStillQueued = urgentSecondaryMediaQueues.has(libraryId)
+        && libraryAccessAllowed(libraryId)
+        && libraryService.hasExplicitQueuedMediaJobs(libraryId, SECONDARY_MEDIA_JOB_KINDS);
+      const shouldKeepAutomaticOpen = automaticMediaAdmissionAllowed(libraryId);
+      const shouldResumeNormal = resumeNormalSecondaryAfterUrgent.delete(libraryId)
+        && shouldKeepAutomaticOpen;
       // A viewer fallback may arrive while the previous secondary pump is
       // cooperatively aborting for an interactive request. Keep that urgent
       // admission alive across the old pump's final cleanup; otherwise the
       // viewer waits for a proxy that no queue will ever claim.
-      if ((urgentSecondaryMediaQueues.has(libraryId) || shouldReschedule) && shouldKeepOpen) {
+      if (
+        (urgentSecondaryMediaQueues.has(libraryId) && (shouldKeepAutomaticOpen || explicitStillQueued))
+        || (shouldReschedule && shouldKeepAutomaticOpen)
+      ) {
         const urgent = urgentSecondaryMediaQueues.has(libraryId);
         rescheduledSecondaryMediaQueues.delete(libraryId);
         setTimeout(() => scheduleSecondaryMediaQueue(
@@ -1936,12 +2075,25 @@ function scheduleSecondaryMediaQueue(
       }
     }
   };
+  const deferOrdinaryClaim = (): boolean => {
+    if (urgentSecondaryMediaQueues.has(libraryId)) return false;
+    if (!automaticMediaAdmissionAllowed(libraryId)
+      || activeForegroundPrimaryWaves.has(libraryId)
+      || pendingVisibleThumbnailWaves.has(libraryId)) {
+      finish();
+      return true;
+    }
+    const delayMs = interactiveThumbnailIdleDelayMs(libraryId);
+    if (delayMs <= 0) return false;
+    setTimeout(() => void runOne(), delayMs);
+    return true;
+  };
   const runOne = async (): Promise<void> => {
     if (queueController.signal.aborted) {
       finish();
       return;
     }
-    const urgent = urgentSecondaryMediaQueues.has(libraryId);
+    let urgent = urgentSecondaryMediaQueues.has(libraryId);
     if (mediaResourceGuard.isCoolingDown()) {
       scheduleMediaResourceRetry(libraryId);
       // The normal resource retry will re-admit this durable job after the
@@ -1949,20 +2101,12 @@ function scheduleSecondaryMediaQueue(
       // while the process-wide guard is deliberately refusing native work.
       if (urgent) {
         clearUrgentSecondaryAdmission();
-        resumeNormalAfterUrgentDrain = true;
       }
       finish();
       return;
     }
-    const waitMs = urgent
-      ? 0
-      : (secondaryMediaIdleUntil.get(libraryId) ?? 0) - Date.now();
-    if (waitMs > 0) {
-      setTimeout(() => void runOne(), waitMs);
-      return;
-    }
+    if (deferOrdinaryClaim()) return;
     try {
-      const urgentAssetIds = urgentSecondaryMediaAssetIds.get(libraryId);
       let admittedRawMetadata = 0;
       if (RAW_METADATA_EXHAUSTION_ENABLED && !rawMetadataBackfillAdmissionGate.hasState(libraryId)) {
         try {
@@ -2035,6 +2179,18 @@ function scheduleSecondaryMediaQueue(
           throw error;
         }
       }
+      // RAW admission awaited storage. Recheck the live viewport, pause and
+      // explicit grant before any claim rather than using pre-await state.
+      if (queueController.signal.aborted) {
+        finish();
+        return;
+      }
+      if (deferOrdinaryClaim()) return;
+      urgent = urgentSecondaryMediaQueues.has(libraryId);
+      const urgentAssetIds = urgentSecondaryMediaAssetIds.get(libraryId);
+      const secondaryBatchSize = !urgent && (activeThumbnailQueues.has(libraryId)
+        || libraryService.hasQueuedPrimaryPreviewJobs(libraryId))
+        ? 1 : SECONDARY_MEDIA_BATCH_SIZE;
       const fairnessTurn = (secondaryMediaFairnessTurns.get(libraryId) ?? 0) + 1;
       secondaryMediaFairnessTurns.set(libraryId, fairnessTurn);
       // Palette/proxy jobs can be numerous and have a higher historical
@@ -2048,8 +2204,9 @@ function scheduleSecondaryMediaQueue(
         traceActivity(
           `secondary-media:${libraryId}`,
           () => libraryService.processThumbnailQueue(libraryId, {
-            maxJobs: SECONDARY_MEDIA_BATCH_SIZE,
+            maxJobs: secondaryBatchSize,
             jobKinds,
+            ...(urgent ? { origin: 'explicit' as const } : {}),
             ...(urgentAssetIds && urgentAssetIds.size > 0
               ? { assetIds: [...urgentAssetIds] }
               : {}),
@@ -2095,7 +2252,6 @@ function scheduleSecondaryMediaQueue(
         scheduleMediaResourceRetry(libraryId);
         if (urgent) {
           clearUrgentSecondaryAdmission();
-          resumeNormalAfterUrgentDrain = true;
         }
         finish();
         return;
@@ -2104,7 +2260,7 @@ function scheduleSecondaryMediaQueue(
         // A full wave means the secondary queue still holds work, so pace the
         // backlog with a short yield instead of the idle cadence; a short wave
         // means it is draining and the 50 ms gap costs nothing.
-        const backlogged = !urgent && processed >= SECONDARY_MEDIA_BATCH_SIZE;
+        const backlogged = !urgent && processed >= secondaryBatchSize;
         setTimeout(
           () => void runOne(),
           backlogged ? SECONDARY_MEDIA_BACKLOG_YIELD_MS : SECONDARY_MEDIA_IDLE_TURN_MS,
@@ -2153,14 +2309,12 @@ function scheduleSecondaryMediaQueue(
         // result therefore means that set is drained; keeping the urgent bit
         // would reschedule an empty queue forever.
         clearUrgentSecondaryAdmission();
-        resumeNormalAfterUrgentDrain = true;
       }
     } catch (error) {
       if (!queueController.signal.aborted) {
         libraryService.reportDiagnostic('secondary-media-schedule.process', error, { libraryId });
         if (urgent) {
           clearUrgentSecondaryAdmission();
-          resumeNormalAfterUrgentDrain = true;
         }
       }
     }
@@ -2183,7 +2337,7 @@ function scheduleThumbnailScene(
   scene: ThumbnailScheduleScene,
   assetIds?: string[],
   maxIdsOverride?: number,
-  options: { light?: boolean; preemptVisible?: boolean } = {},
+  options: { light?: boolean; preemptVisible?: boolean; explicit?: boolean } = {},
 ): void {
   const configs: Record<ThumbnailScheduleScene, { limit?: number; priority: number; maxIds?: number; processMaxJobs?: number }> = {
     // Serpent-4bdd26 回归修正：processMaxJobs 1→2。用户报告 Windows 上缩略图
@@ -2229,12 +2383,14 @@ function scheduleThumbnailScene(
       ...(config.limit === undefined ? {} : { limit: config.limit }),
       priority: config.priority,
       ...(config.processMaxJobs === undefined ? {} : { processMaxJobs: config.processMaxJobs }),
-      repairFailed: !options.light,
+      origin: options.explicit ? 'explicit' : 'automatic',
+      repairFailed: options.explicit ? false : !options.light,
       // Serpent-5xbg: every browse/refresh wave re-opens retryable failed
       // artifacts (throttled) — generation failures are healed in the
       // background whenever the asset surfaces, no periodic scan needed.
-      retryFailed: true,
-      ...(options.light ? { skipStaleRepair: true } : {}),
+      retryFailed: !options.explicit,
+      ...(options.light || options.explicit ? { skipStaleRepair: true } : {}),
+      ...(options.explicit ? { skipBackgroundRepair: true, suppressSecondaryQueue: true } : {}),
       ...(options.preemptVisible === undefined ? {} : { preemptVisible: options.preemptVisible }),
     });
   } catch {
@@ -2848,8 +3004,8 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     case 'media.retry-artifact': {
       const result = await executeMediaGenerationWorkerCommand(libraryService, request, {
         writePluginMediaArtifact,
-        scheduleThumbnails: (libraryId, scene, assetIds) => {
-          scheduleThumbnailScene(libraryId, scene, assetIds);
+        scheduleThumbnails: (libraryId, scene, assetIds, options) => {
+          scheduleThumbnailScene(libraryId, scene, assetIds, undefined, options);
         },
         publishThumbnailReady: (event) => {
           thumbnailCompletionFanout.publishImmediate(event);
@@ -2928,6 +3084,8 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     case 'media.retry-jobs': {
       const result = await executeMediaJobWorkerCommand(libraryService, request, {
         scheduleThumbnailQueue,
+        scheduleSecondaryMediaQueue,
+        cancelAutomaticMediaForLibrary,
       });
       if (result === undefined) {
         throw new Error(`Unhandled media job command: ${request.command.type}`);
@@ -3154,6 +3312,7 @@ const handleLibraryWorkerMessage = async (event: { data: unknown }): Promise<voi
         ...activeSecondaryMediaQueueControllers.keys(),
         ...secondaryMediaRetryTimers.keys(),
         ...pendingThumbnailQueueAborts,
+        ...pendingExplicitPrimaryWakes,
         ...pendingThumbnailQueueFailureRetries.keys(),
         ...pendingThumbnailQueueFailureRecoveries,
       ])) {
@@ -3328,6 +3487,7 @@ const handleLibraryWorkerMessage = async (event: { data: unknown }): Promise<voi
         ) {
           closingLibraryIds.delete(result.library.libraryId);
           if (result.library.readOnly) return result;
+          wakeExplicitQueuedMediaJobs(result.library.libraryId);
           const generation = libraryGenerationRegistry.current(result.library.libraryId);
           if (generation !== undefined) {
             startupResponseGate = scheduleOpenBackgroundReconciliation(

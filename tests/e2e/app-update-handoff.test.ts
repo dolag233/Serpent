@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -25,6 +25,7 @@ test('Windows installed update hands off without a terminal and schedules hidden
 
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-update-handoff-e2e-'));
   const profilePath = path.join(temporaryRoot, 'profile');
+  const updateStagingPath = path.join(profilePath, 'update-staging');
   const downloadsPath = path.join(temporaryRoot, 'downloads');
   const tempPath = path.join(temporaryRoot, 'temp');
   const archivePath = path.join(temporaryRoot, 'setup.zip');
@@ -39,6 +40,18 @@ test('Windows installed update hands off without a terminal and schedules hidden
   const sha256 = createHash('sha256').update(archiveBytes).digest('hex');
 
   mkdirSync(profilePath, { recursive: true });
+  const abandonedInstaller = path.join(updateStagingPath, 'serpent-installer-AbCd12');
+  const recentInstaller = path.join(updateStagingPath, 'serpent-installer-CdEf34');
+  const interruptedDownload = path.join(updateStagingPath, 'serpent-installer-EfGh56');
+  mkdirSync(abandonedInstaller, { recursive: true });
+  mkdirSync(recentInstaller, { recursive: true });
+  mkdirSync(interruptedDownload, { recursive: true });
+  writeFileSync(path.join(abandonedInstaller, 'unfinished.zip'), 'partial');
+  writeFileSync(path.join(abandonedInstaller, '.installer-handoff'), '');
+  writeFileSync(path.join(recentInstaller, '.installer-handoff'), '');
+  writeFileSync(path.join(interruptedDownload, 'unfinished.zip'), 'partial');
+  const stale = new Date(Date.now() - 48 * 60 * 60_000);
+  utimesSync(abandonedInstaller, stale, stale);
   mkdirSync(downloadsPath, { recursive: true });
   mkdirSync(tempPath, { recursive: true });
   writeFileSync(archivePath, archiveBytes);
@@ -82,6 +95,9 @@ test('Windows installed update hands off without a terminal and schedules hidden
 
     const window = await application.firstWindow();
     await window.waitForLoadState('load');
+    await expect.poll(() => existsSync(abandonedInstaller)).toBe(false);
+    await expect.poll(() => existsSync(interruptedDownload)).toBe(false);
+    expect(existsSync(recentInstaller)).toBe(true);
     const check = await window.evaluate(async () => {
       const appUpdate = (window as unknown as {
         serpent?: { appUpdate?: { checkForUpdates: () => Promise<unknown> } };
@@ -125,11 +141,11 @@ test('Windows installed update hands off without a terminal and schedules hidden
           })
           .filter((entry) => entry.scope?.startsWith('app-update'))
           .map(({ scope, message, error }) => ({ scope, message, error }));
-      const installerDirectories = existsSync(tempPath)
-        ? readdirSync(tempPath).filter((name) => name.startsWith('serpent-installer-'))
+      const installerDirectories = existsSync(updateStagingPath)
+        ? readdirSync(updateStagingPath).filter((name) => name.startsWith('serpent-installer-'))
         : [];
       const installerEntries = installerDirectories.flatMap((directory) =>
-        readdirSync(path.join(tempPath, directory)));
+        readdirSync(path.join(updateStagingPath, directory)));
       throw new Error(
         `${error instanceof Error ? error.message : String(error)}; `
         + `updateEvents=${JSON.stringify(updateEvents)}; `
@@ -175,7 +191,7 @@ test('Windows installed update hands off without a terminal and schedules hidden
     const installerPath = cleanupSpawn?.installerPath;
     expect(installerPath).toBeTruthy();
     expect(path.win32.relative(
-      path.win32.resolve(tempPath),
+      path.win32.resolve(updateStagingPath),
       path.win32.resolve(path.win32.dirname(installerPath!)),
     ).startsWith('..')).toBe(false);
     expect(existsSync(downloadsPath) ? readdirSync(downloadsPath) : []).toEqual([]);

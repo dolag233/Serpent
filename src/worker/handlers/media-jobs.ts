@@ -5,8 +5,17 @@ import type { LibraryService } from '../library-service';
 export type MediaJobHooks = {
   scheduleThumbnailQueue: (
     libraryId: string,
-    options?: { limit?: number; skipInitialEnqueue?: boolean },
+    options?: {
+      limit?: number;
+      skipInitialEnqueue?: boolean;
+      origin?: 'automatic' | 'explicit';
+    },
   ) => number;
+  scheduleSecondaryMediaQueue: (
+    libraryId: string,
+    options?: { urgent?: boolean },
+  ) => void;
+  cancelAutomaticMediaForLibrary: (libraryId: string) => void;
 };
 
 export async function executeMediaJobWorkerCommand(
@@ -71,6 +80,7 @@ export async function executeMediaJobWorkerCommand(
         failed: status.failed,
         paused: status.paused,
         cancelled: status.cancelled,
+        queuePaused: status.queuePaused,
       };
     }
     case 'media.list-jobs': {
@@ -91,6 +101,9 @@ export async function executeMediaJobWorkerCommand(
         request.command.libraryId,
         request.command.jobIds,
       );
+      if (request.command.jobIds === undefined) {
+        hooks.cancelAutomaticMediaForLibrary(request.command.libraryId);
+      }
       return {
         ok: true,
         type: 'media.jobs.paused',
@@ -103,11 +116,21 @@ export async function executeMediaJobWorkerCommand(
         request.command.libraryId,
         request.command.jobIds,
       );
-      // Resuming persisted jobs must not synchronously rescan and insert the
-      // entire catalogue before the command can return. The queue pump below
-      // still admits missing thumbnails in its existing bounded 500-row
-      // continuation after active jobs make progress.
-      hooks.scheduleThumbnailQueue(request.command.libraryId, { skipInitialEnqueue: true });
+      if (request.command.jobIds === undefined) {
+        // Clearing the library mode wakes both ordinary pumps. The primary
+        // queue uses its bounded continuation for discovery after persisted
+        // work starts making progress; this command itself stays responsive.
+        hooks.scheduleThumbnailQueue(request.command.libraryId, { skipInitialEnqueue: true });
+        hooks.scheduleSecondaryMediaQueue(request.command.libraryId);
+      } else if (result.resumedCount > 0) {
+        // Selected rows carry explicit admission grants. Do not run catalogue
+        // discovery while waking them, even if the library remains paused.
+        hooks.scheduleThumbnailQueue(request.command.libraryId, {
+          skipInitialEnqueue: true,
+          origin: 'explicit',
+        });
+        hooks.scheduleSecondaryMediaQueue(request.command.libraryId, { urgent: true });
+      }
       return {
         ok: true,
         type: 'media.jobs.resumed',
@@ -132,7 +155,13 @@ export async function executeMediaJobWorkerCommand(
         request.command.libraryId,
         request.command.jobIds,
       );
-      hooks.scheduleThumbnailQueue(request.command.libraryId, { skipInitialEnqueue: true });
+      if (result.retriedCount > 0) {
+        hooks.scheduleThumbnailQueue(request.command.libraryId, {
+          skipInitialEnqueue: true,
+          origin: 'explicit',
+        });
+        hooks.scheduleSecondaryMediaQueue(request.command.libraryId, { urgent: true });
+      }
       return {
         ok: true,
         type: 'media.jobs.retried',

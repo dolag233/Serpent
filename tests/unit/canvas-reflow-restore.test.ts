@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { publishCanvasAssetLayoutIndex } from "../../src/renderer/canvas-asset-layout";
 import {
   captureReflowAnchorFromCards,
+  cancelScheduledAnchorRestore,
   isCanvasReflowRestorationPending,
   pickTopmostVisibleCard,
   retainReflowAnchor,
@@ -90,6 +91,141 @@ describe("isCanvasReflowRestorationPending", () => {
 });
 
 describe("scheduleAnchorRestore", () => {
+  it("settles a declined restore while the preview scroll hold owns the canvas", () => {
+    const canvas = {
+      dataset: { previewScrollHold: "1" },
+    } as unknown as HTMLElement;
+    const frameRef: { current: number | null } = { current: null };
+    let settled = 0;
+
+    scheduleAnchorRestore(
+      canvas,
+      {
+        assetId: "lead",
+        ratioX: 0.5,
+        ratioY: 0,
+        clientX: 100,
+        clientY: 80,
+      },
+      frameRef,
+      3,
+      () => { settled += 1; },
+    );
+
+    expect(settled).toBe(1);
+    expect(frameRef.current).toBeNull();
+  });
+
+  it("settles immediately when there is no anchor", () => {
+    const frames = installControlledFrames();
+    const canvas = {} as HTMLElement;
+    const frameRef: { current: number | null } = { current: 7 };
+    let settled = 0;
+
+    try {
+      scheduleAnchorRestore(canvas, null, frameRef, 3, () => { settled += 1; });
+      expect(settled).toBe(1);
+      expect(frameRef.current).toBeNull();
+      expect(frames.callbacks.size).toBe(0);
+    } finally {
+      frames.restore();
+    }
+  });
+
+  it("cancels the active session without notifying by default", () => {
+    const frames = installControlledFrames();
+    const { canvas, listeners } = createEmptyRestoreCanvas();
+    const frameRef: { current: number | null } = { current: null };
+    let settled = 0;
+    try {
+      scheduleAnchorRestore(canvas, testAnchor, frameRef, 3, () => { settled += 1; });
+      const staleFrame = frames.callbacks.get(frameRef.current!)!;
+
+      cancelScheduledAnchorRestore(frameRef);
+      staleFrame(0);
+
+      expect(settled).toBe(0);
+      expect(frameRef.current).toBeNull();
+      expect(frames.callbacks.size).toBe(0);
+      expect([...listeners.values()].every((set) => set.size === 0)).toBe(true);
+    } finally {
+      frames.restore();
+    }
+  });
+
+  it("notifies exactly once when explicitly cancelled with notify=true", () => {
+    const frames = installControlledFrames();
+    const { canvas, listeners } = createEmptyRestoreCanvas();
+    const frameRef: { current: number | null } = { current: null };
+    let settled = 0;
+    try {
+      scheduleAnchorRestore(canvas, testAnchor, frameRef, 3, () => { settled += 1; });
+      const staleFrame = frames.callbacks.get(frameRef.current!)!;
+
+      cancelScheduledAnchorRestore(frameRef, { notify: true });
+      staleFrame(0);
+      cancelScheduledAnchorRestore(frameRef, { notify: true });
+
+      expect(settled).toBe(1);
+      expect(frameRef.current).toBeNull();
+      expect(frames.callbacks.size).toBe(0);
+      expect([...listeners.values()].every((set) => set.size === 0)).toBe(true);
+    } finally {
+      frames.restore();
+    }
+  });
+
+  it("keeps a new session started by a notified cancel callback", () => {
+    const frames = installControlledFrames();
+    const { canvas, listeners } = createEmptyRestoreCanvas();
+    const frameRef: { current: number | null } = { current: null };
+    let newSettled = 0;
+    try {
+      scheduleAnchorRestore(canvas, testAnchor, frameRef, 3, () => {
+        scheduleAnchorRestore(canvas, testAnchor, frameRef, 3, () => { newSettled += 1; });
+      });
+      const oldFrameId = frameRef.current;
+
+      cancelScheduledAnchorRestore(frameRef, { notify: true });
+
+      expect(frameRef.current).not.toBeNull();
+      expect(frameRef.current).not.toBe(oldFrameId);
+      expect(frames.callbacks.has(frameRef.current!)).toBe(true);
+      frames.flush();
+      expect(newSettled).toBe(1);
+      expect(frameRef.current).toBeNull();
+      expect([...listeners.values()].every((set) => set.size === 0)).toBe(true);
+    } finally {
+      frames.restore();
+    }
+  });
+
+  it("does not let a replaced session finish or clear its new owner's frame", () => {
+    const frames = installControlledFrames();
+    const { canvas } = createEmptyRestoreCanvas();
+    const frameRef: { current: number | null } = { current: null };
+    let oldSettled = 0;
+    let newSettled = 0;
+    try {
+      scheduleAnchorRestore(canvas, testAnchor, frameRef, 3, () => { oldSettled += 1; });
+      const oldFrame = frames.callbacks.get(frameRef.current!)!;
+      scheduleAnchorRestore(canvas, testAnchor, frameRef, 3, () => { newSettled += 1; });
+      const newFrameId = frameRef.current;
+
+      oldFrame(0);
+
+      expect(oldSettled).toBe(0);
+      expect(newSettled).toBe(0);
+      expect(frameRef.current).toBe(newFrameId);
+      frames.flush();
+      expect(oldSettled).toBe(0);
+      expect(newSettled).toBe(1);
+      expect(frameRef.current).toBeNull();
+    } finally {
+      frames.restore();
+    }
+  });
+
   it("leaves a later scrollbar jump in control during a pending reflow restore", () => {
     const callbacks = new Map<number, FrameRequestCallback>();
     const listeners = new Map<string, Set<() => void>>();
@@ -384,3 +520,61 @@ describe("scheduleAnchorRestore", () => {
     globalThis.cancelAnimationFrame = originalCancel;
   });
 });
+
+const testAnchor = {
+  assetId: "lead",
+  ratioX: 0.5,
+  ratioY: 0,
+  clientX: 100,
+  clientY: 80,
+};
+
+function createEmptyRestoreCanvas() {
+  const listeners = new Map<string, Set<() => void>>();
+  const canvas = {
+    scrollLeft: 0,
+    scrollTop: 1_000,
+    scrollWidth: 800,
+    scrollHeight: 10_000,
+    clientWidth: 800,
+    clientHeight: 600,
+    addEventListener: (type: string, listener: () => void) => {
+      if (!listeners.has(type)) listeners.set(type, new Set());
+      listeners.get(type)!.add(listener);
+    },
+    removeEventListener: (type: string, listener: () => void) => {
+      listeners.get(type)?.delete(listener);
+    },
+    querySelectorAll: () => [],
+  } as unknown as HTMLElement;
+  return { canvas, listeners };
+}
+
+function installControlledFrames() {
+  const callbacks = new Map<number, FrameRequestCallback>();
+  const originalRequest = globalThis.requestAnimationFrame;
+  const originalCancel = globalThis.cancelAnimationFrame;
+  let nextId = 0;
+  globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+    nextId += 1;
+    callbacks.set(nextId, callback);
+    return nextId;
+  }) as typeof requestAnimationFrame;
+  globalThis.cancelAnimationFrame = ((id: number) => {
+    callbacks.delete(id);
+  }) as typeof cancelAnimationFrame;
+  return {
+    callbacks,
+    flush() {
+      while (callbacks.size > 0) {
+        const [id, callback] = callbacks.entries().next().value!;
+        callbacks.delete(id);
+        callback(0);
+      }
+    },
+    restore() {
+      globalThis.requestAnimationFrame = originalRequest;
+      globalThis.cancelAnimationFrame = originalCancel;
+    },
+  };
+}

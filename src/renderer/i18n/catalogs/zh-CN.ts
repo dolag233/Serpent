@@ -1214,6 +1214,7 @@ export const zhCN = {
       updateAssetMissing: "此版本没有适用于当前构建的更新资产。",
       updateVerificationFailed: "下载的更新未通过完整性校验。",
       updateDownloadFailed: "更新下载失败，请重试。",
+      updateInsufficientSpace: "磁盘空间不足，请释放空间后重试更新。",
       updateOpenFailed: "无法打开安装器。",
       viewReleaseNotes: "查看更新日志",
       hideReleaseNotes: "收起更新日志",
@@ -2343,6 +2344,7 @@ export const zhCN = {
         sourceNotFound: "找不到 FBX 源文件，无法转换。",
         notFbx: "该文件无法按 FBX 解析，可能格式不完整或版本过旧。",
         limitExceeded: "模型超出转换上限（三角面或输出体积过大）。",
+        resourceExhausted: "暂时没有足够资源加载此模型，请稍后重试。",
         wasmUnavailable: "转换组件不可用，请重新安装应用后重试。",
         noMeshes: "FBX 中不包含可渲染的网格。",
         conversionFailed: "FBX 转换失败。"

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import AdmZip from 'adm-zip';
@@ -312,15 +312,18 @@ describe('Serpent app update release contract', () => {
     });
   });
 
-  it('downloads, verifies, and reveals a portable update without replacing the running app', async () => {
+  it.each([false, true])('downloads a portable update and treats a late filename collision safely (%s)', async (collision) => {
     const portableBytes = Buffer.from('portable update bytes');
     const checksum = createHash('sha256').update(portableBytes).digest('hex');
     const root = await mkdtemp(path.join(tmpdir(), 'serpent-app-update-test-'));
     const revealed: string[] = [];
+    const downloadsDirectory = path.join(root, 'Downloads');
+    const assetName = 'Serpent-win-x86-64-0.1.3-portable.zip';
+    const downloadPath = path.join(downloadsDirectory, assetName);
     try {
       const payload = releasePayload({
         assets: [{
-          name: 'Serpent-win-x86-64-0.1.3-portable.zip',
+          name: assetName,
           browser_download_url: 'https://github.com/dolag233/Serpent/releases/download/v0.1.3/Serpent-win-x86-64-0.1.3-portable.zip',
           size: portableBytes.byteLength,
         }, {
@@ -336,17 +339,24 @@ describe('Serpent app update release contract', () => {
         arch: 'x64',
         executablePath: path.join(root, 'Serpent.exe'),
         tempDirectory: root,
-        downloadsDirectory: path.join(root, 'Downloads'),
+        downloadsDirectory,
         environment: { SERPENT_DISTRIBUTION: 'portable' },
         fetchImpl: async (url) => {
           if (url.endsWith('/releases/latest')) return new Response(JSON.stringify(payload));
           if (url.endsWith('.sha256')) return new Response(`${checksum}\n`);
+          if (collision) await writeFile(downloadPath, 'existing download', { flag: 'wx' });
           return new Response(portableBytes);
         },
         showItemInFolder: (filePath) => revealed.push(filePath),
       });
 
       const result = await service.downloadAndInstall();
+      if (collision) {
+        expect(result).toMatchObject({ ok: false, code: 'download-failed' });
+        expect(await readFile(downloadPath, 'utf8')).toBe('existing download');
+        expect(revealed).toEqual([]);
+        return;
+      }
       expect(result).toEqual({
         ok: true,
         status: 'completed',
@@ -683,7 +693,7 @@ describe('Serpent app update release contract', () => {
 
       const result = await service.downloadAndInstall();
       expect(result).toEqual({ ok: false, status: 'error', code: 'download-failed' });
-      expect((await readdir(path.join(root, 'Downloads')))).toEqual([]);
+      await expect(readdir(path.join(root, 'Downloads'))).rejects.toMatchObject({ code: 'ENOENT' });
       expect((await readdir(root)).filter((entry) => entry.startsWith('serpent-installer-')))
         .toEqual([]);
     } finally {
@@ -743,7 +753,7 @@ describe('Serpent app update release contract', () => {
       expect(launched).toHaveLength(1);
       expect(path.basename(launched[0]!)).toBe('SerpentSetup.exe');
       expect(launchedBytes).toEqual(installerBytes);
-      expect((await readdir(path.join(root, 'Downloads')))).toEqual([]);
+      await expect(readdir(path.join(root, 'Downloads'))).rejects.toMatchObject({ code: 'ENOENT' });
       expect(await readFile(launched[0]!)).toEqual(installerBytes);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -803,7 +813,7 @@ describe('Serpent app update release contract', () => {
       expect(opened).toHaveLength(1);
       expect(path.basename(opened[0]!)).toBe('SerpentSetup.exe');
       expect(openedBytes).toEqual(installerBytes);
-      expect((await readdir(path.join(root, 'Downloads')))).toEqual([]);
+      await expect(readdir(path.join(root, 'Downloads'))).rejects.toMatchObject({ code: 'ENOENT' });
       expect(await readFile(opened[0]!)).toEqual(installerBytes);
     } finally {
       await rm(root, { recursive: true, force: true });

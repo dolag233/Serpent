@@ -5,7 +5,9 @@ import {
   FBX_GLB_ARTIFACT_KIND,
   FBX_GLB_GENERATOR_VERSION,
   type FbxConversionStats,
+  type FbxConvertErrorCode,
 } from '../../shared/fbx-conversion';
+import { asMediaResourceExhaustedError } from '../media-resource-guard';
 import type {
   FbxBridgeError,
   FbxDescriptor,
@@ -29,8 +31,7 @@ export interface ConvertFbxOutput {
 }
 
 export interface ConvertFbxFailure {
-  errorCode: 'FBX_SOURCE_NOT_FOUND' | 'FBX_NOT_FBX' | 'FBX_LIMIT_EXCEEDED' |
-    'FBX_WASM_UNAVAILABLE' | 'FBX_NO_MESHES' | 'FBX_CONVERSION_FAILED';
+  errorCode: FbxConvertErrorCode;
   reason?: string;
 }
 
@@ -60,13 +61,7 @@ export async function convertFbxToGlb(
     if (isMissingFileError(error)) {
       return { ok: false, failure: { errorCode: 'FBX_SOURCE_NOT_FOUND' } };
     }
-    return {
-      ok: false,
-      failure: {
-        errorCode: 'FBX_CONVERSION_FAILED',
-        reason: error instanceof Error ? error.message : String(error),
-      },
-    };
+    return mapBridgeFailure(error);
   }
 }
 
@@ -81,6 +76,7 @@ export async function convertFbxBuffer(
     packed = await parseFbxBytes(fbxBytes, {
       filename: input.sourcePath,
       ...(input.maxTriangles === undefined ? {} : { maxTriangles: input.maxTriangles }),
+      signal: input.signal,
     });
     throwIfAborted(input.signal);
   } catch (error) {
@@ -138,16 +134,30 @@ function mapBridgeFailure(
   error: unknown,
 ): { ok: false; failure: ConvertFbxFailure } {
   const message = error instanceof Error ? error.message : String(error);
+  // A machine error code must survive even when its message is ambiguous.
+  // Bridge JSON `oom` remains an input-local WASM capacity failure below.
+  const codes = typeof error === 'object' && error !== null
+    ? error as { code?: unknown; errno?: unknown }
+    : {};
+  if (asMediaResourceExhaustedError({ code: codes.code, errno: codes.errno }, 'fbx')) {
+    return { ok: false, failure: { errorCode: 'FBX_RESOURCE_EXHAUSTED', reason: message } };
+  }
   let bridgeError: FbxBridgeError;
   try {
     bridgeError = JSON.parse(message) as FbxBridgeError;
   } catch {
+    if (message.startsWith('UFBX_WASM_OOM')) {
+      return { ok: false, failure: { errorCode: 'FBX_LIMIT_EXCEEDED', reason: message } };
+    }
     if (message.startsWith('UFBX_WASM_MISSING') || message.startsWith('UFBX_WASM')) {
       return { ok: false, failure: { errorCode: 'FBX_WASM_UNAVAILABLE', reason: message } };
     }
+    if (asMediaResourceExhaustedError(error, 'fbx')) {
+      return { ok: false, failure: { errorCode: 'FBX_RESOURCE_EXHAUSTED', reason: message } };
+    }
     return { ok: false, failure: { errorCode: 'FBX_CONVERSION_FAILED', reason: message } };
   }
-  if (bridgeError.code === 'limits') {
+  if (bridgeError.code === 'limits' || bridgeError.code === 'oom') {
     return {
       ok: false,
       failure: { errorCode: 'FBX_LIMIT_EXCEEDED', reason: bridgeError.message },
@@ -156,7 +166,7 @@ function mapBridgeFailure(
   return {
     ok: false,
     failure: {
-      errorCode: 'FBX_NOT_FBX',
+      errorCode: bridgeError.code === 'parse' ? 'FBX_NOT_FBX' : 'FBX_CONVERSION_FAILED',
       reason: bridgeError.message ?? `ufbx error type ${bridgeError.ufbxType ?? 'unknown'}`,
     },
   };

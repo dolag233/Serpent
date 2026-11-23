@@ -12,7 +12,18 @@ export interface MediaResourceFailureLike {
   cause?: unknown;
 }
 
+/** A single decoder's address-space limit is not host-wide resource pressure. */
+export class MediaInputCapacityError extends Error {
+  readonly code = 'MEDIA_INPUT_CAPACITY_EXCEEDED';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'MediaInputCapacityError';
+  }
+}
+
 function failureText(error: unknown): string {
+  if (error instanceof MediaInputCapacityError) return '';
   if (typeof error === 'string') return error;
   if (typeof error !== 'object' || error === null) return '';
   const candidate = error as MediaResourceFailureLike;
@@ -31,6 +42,7 @@ function failureText(error: unknown): string {
  * Concrete ENOMEM/status codes or allocator text are required.
  */
 export function isMediaResourceExhaustion(error: unknown): boolean {
+  if (error instanceof MediaInputCapacityError) return false;
   if (typeof error === 'string') {
     return RESOURCE_ERROR_PATTERN.test(error) || PROCESS_START_PRESSURE_PATTERN.test(error);
   }

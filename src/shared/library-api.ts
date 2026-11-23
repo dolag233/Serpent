@@ -210,6 +210,7 @@ export interface MediaJobStatus {
   failed: number;
   paused: number;
   cancelled: number;
+  queuePaused?: boolean;
   jobs: MediaJob[];
   nextCursor?: { createdAt: string; jobId: string } | null;
   hasMore?: boolean;
@@ -972,6 +973,7 @@ export interface SerpentLibraryApi {
     failed: number;
     paused: number;
     cancelled: number;
+    queuePaused?: boolean;
   }>>;
   pauseMediaJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ pausedCount: number }>>;
   resumeMediaJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ resumedCount: number }>>;

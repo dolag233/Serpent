@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { EntityAppearance } from "../shared/entity-appearance";
 import { APPEARANCE_ICON_PATHS } from "./appearance-icon-paths";
 import { Icon, type IconName } from "./Icons";
@@ -13,7 +14,7 @@ export function appearanceColorVar(colorId: string | null | undefined): string |
   return colorId ? `var(--appearance-color-${colorId})` : undefined;
 }
 
-export function AppearanceGlyph({
+export const AppearanceGlyph = memo(function AppearanceGlyph({
   appearance,
   fallback,
   size = 15,
@@ -68,4 +69,4 @@ export function AppearanceGlyph({
       ) : null}
     </span>
   );
-}
+});

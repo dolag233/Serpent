@@ -2481,6 +2481,18 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   gap: 2px;
 }
 
+/* Only ordinary fixed-height rows qualify. Keep editors and collection
+   branches outside this boundary, and let focus/drag ink overflow normally. */
+.nav-item-row {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto var(--shell-control-height);
+}
+
+.nav-item-row:focus-within,
+.nav-item-row[data-insert-edge] {
+  content-visibility: visible;
+}
+
 /* Custom folder order drag insertion line (folder "自定义" sort). */
 .nav-folder-insert-line {
   position: absolute;

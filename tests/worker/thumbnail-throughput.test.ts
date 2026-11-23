@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, statfsSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -287,6 +287,80 @@ describe('thumbnail queue DB-write batching (Serpent-xoaz)', () => {
     service.closeAll();
   });
 
+  it('uses the newest rank when an in-flight scope keeps the same asset members', async () => {
+    const disk = statfsSync(tmpdir());
+    if (disk.bavail * disk.bsize < 8 * 1024 * 1024) throw new Error('Insufficient fixture storage.');
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-thumb-rank-'));
+    const ownedRoot = realpathSync(root);
+    let releaseWrites!: () => void;
+    const blockedWrites = new Promise<void>(resolve => { releaseWrites = resolve; });
+    let writeCount = 0;
+    const createPipeline = instantSharp();
+    const service = new LibraryService({
+      sharpFn: () => {
+        const pipeline = createPipeline();
+        const write = pipeline.toFile;
+        pipeline.toFile = async outputPath => {
+          writeCount += 1;
+          await blockedWrites;
+          await write(outputPath);
+        };
+        return pipeline;
+      },
+    });
+    let processing: Promise<number> | undefined;
+    const failures: unknown[] = [];
+    try {
+      const library = service.createLibrary({ displayName: 'ReorderedViewport', selectedParentPath: root });
+      const sourceDir = path.join(root, 'sources');
+      createDistinctPngs(sourceDir, 6);
+      importFolderNoConflict(service, library.libraryId, sourceDir);
+      const assets = service.listAssets({ libraryId: library.libraryId, recursive: true });
+      const initial = assets.map(asset => asset.assetId);
+      expect(initial).toHaveLength(6);
+      expect(service.enqueueThumbnailJobs(library.libraryId, { assetIds: initial, priority: 350 })).toBe(6);
+      const scope = { current: initial };
+      processing = service.processThumbnailQueue(library.libraryId, {
+        maxJobs: 3, jobKinds: ['generate_thumbnail'], assetIds: initial, claimAssetIdsRef: scope,
+      });
+      void processing.catch(() => undefined);
+      await vi.waitFor(() => expect(writeCount).toBe(2));
+      const promoted = initial.at(-1)!;
+      scope.current = [promoted, ...initial.slice(0, -1)];
+      // Both original decodes were already admitted. Only the next claim may
+      // change: promote the newly focused/visible item without changing the set.
+      releaseWrites();
+      expect(await processing).toBe(3);
+      const jobs = service.listMediaJobs(library.libraryId).jobs
+        .filter(job => job.kind === 'generate_thumbnail');
+      expect(jobs.find(job => job.assetId === promoted)?.status).toBe('succeeded');
+      expect(jobs.find(job => job.assetId === initial[2])?.status).toBe('queued');
+    } catch (error) {
+      failures.push(error);
+    } finally {
+      releaseWrites();
+      await Promise.allSettled(processing ? [processing] : []);
+      let closed = false;
+      try {
+        service.closeAll();
+        closed = true;
+      } catch (error) {
+        failures.push(error);
+      }
+      if (closed) try {
+        if (realpathSync(root) !== ownedRoot || path.dirname(ownedRoot) !== realpathSync(tmpdir())) {
+          failures.push(new Error('Owned fixture cleanup boundary changed.'));
+        } else {
+          rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+        }
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, 'Rank regression and fixture cleanup failures.');
+  });
+
   it('claims jobs outside the overlay after foreground bands have no queued work', async () => {
     const root = temporaryRoot();
     const service = new LibraryService({ sharpFn: instantSharp() });
@@ -319,6 +393,148 @@ describe('thumbnail queue DB-write batching (Serpent-xoaz)', () => {
     expect(overlayIds.every((assetId) => statuses.includes(assetId))).toBe(true);
     expect(statuses.some((assetId) => outsideIds.has(assetId))).toBe(true);
     service.closeAll();
+  });
+});
+
+describe('thumbnail queue wakeable worker pool', () => {
+  it('uses an idle worker for a newly visible job before a slow prior job settles', async () => {
+    const disk = statfsSync(tmpdir());
+    if (disk.bavail * disk.bsize < 8 * 1024 * 1024) throw new Error('Insufficient fixture storage.');
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-thumb-wake-'));
+    const ownedRoot = realpathSync(root);
+    const failures: unknown[] = [];
+    let releaseSlowWrite!: () => void;
+    const slowWriteRelease = new Promise<void>(resolve => { releaseSlowWrite = resolve; });
+    let service: LibraryService | undefined;
+    let processing: Promise<number> | undefined;
+    let slowWriteStarted = false;
+    let slowWriteFinished = false;
+    let fastAssetReady = false;
+    let thirdAssetReady = false;
+    let writeCount = 0;
+    let activeWrites = 0;
+    let maxActiveWrites = 0;
+    let oldWake: ((maxJobs: number) => boolean) | undefined;
+
+    try {
+      expect(workerMediaDecodeConcurrency()).toBe(2);
+      const createPipeline = instantSharp();
+      service = new LibraryService({
+        sharpFn: () => {
+          const pipeline = createPipeline();
+          const write = pipeline.toFile;
+          pipeline.toFile = async function gatedToFile(outputPath: string) {
+            const writeNumber = ++writeCount;
+            activeWrites += 1;
+            maxActiveWrites = Math.max(maxActiveWrites, activeWrites);
+            try {
+              if (writeNumber === 1) {
+                slowWriteStarted = true;
+                await slowWriteRelease;
+                slowWriteFinished = true;
+              }
+              return await write.call(this, outputPath);
+            } finally {
+              activeWrites -= 1;
+            }
+          };
+          return pipeline;
+        },
+      });
+      const library = service.createLibrary({
+        displayName: 'WakeableWorkerPool',
+        selectedParentPath: root,
+      });
+      const sourceDir = path.join(root, 'sources');
+      createDistinctPngs(sourceDir, 3);
+      importFolderNoConflict(service, library.libraryId, sourceDir);
+      const assets = service.listAssets({ libraryId: library.libraryId, recursive: true });
+      expect(assets).toHaveLength(3);
+      const [slowAsset, fastAsset, thirdAsset] = assets;
+      if (!slowAsset || !fastAsset || !thirdAsset) throw new Error('Expected three fixture images.');
+
+      expect(service.enqueueThumbnailJobs(library.libraryId, {
+        assetIds: [slowAsset.assetId, fastAsset.assetId],
+        priority: 350,
+      })).toBe(2);
+
+      const scope = { current: [slowAsset.assetId, fastAsset.assetId] as readonly string[] | undefined };
+      const wakeRef: { current?: (maxJobs: number) => boolean } = {};
+      processing = service.processThumbnailQueue(library.libraryId, {
+        maxJobs: 2,
+        jobKinds: ['generate_thumbnail'],
+        assetIds: scope.current,
+        claimAssetIdsRef: scope,
+        wakeRef,
+        onResult: result => {
+          if (result.assetId === fastAsset.assetId && result.artifactId) fastAssetReady = true;
+          if (result.assetId === thirdAsset.assetId && result.artifactId) thirdAssetReady = true;
+        },
+      });
+      void processing.catch(() => undefined);
+
+      await vi.waitFor(() => {
+        expect(slowWriteStarted).toBe(true);
+        expect(fastAssetReady).toBe(true);
+      }, { timeout: 10_000, interval: 10 });
+      expect(slowWriteFinished).toBe(false);
+
+      oldWake = wakeRef.current;
+      if (!oldWake) throw new Error('The active media queue did not publish its wake callback.');
+      expect(service.enqueueThumbnailJobs(library.libraryId, {
+        assetIds: [thirdAsset.assetId],
+        priority: 350,
+      })).toBe(1);
+      scope.current = [thirdAsset.assetId];
+      expect(oldWake(1)).toBe(true);
+
+      await vi.waitFor(() => {
+        expect(thirdAssetReady).toBe(true);
+        const status = service!.listMediaJobs(library.libraryId).jobs.find(job =>
+          job.assetId === thirdAsset.assetId && job.kind === 'generate_thumbnail')?.status;
+        expect(status).toBe('succeeded');
+      }, { timeout: 10_000, interval: 10 });
+      expect(slowWriteFinished).toBe(false);
+      expect(maxActiveWrites).toBeLessThanOrEqual(4);
+
+      releaseSlowWrite();
+      expect(await processing).toBe(3);
+      expect(wakeRef.current).toBeUndefined();
+      expect(oldWake(1)).toBe(false);
+
+      const terminalJobs = service.listMediaJobs(library.libraryId).jobs
+        .filter(job => job.kind === 'generate_thumbnail'
+          && [slowAsset.assetId, fastAsset.assetId, thirdAsset.assetId].includes(job.assetId));
+      expect(terminalJobs).toHaveLength(3);
+      expect(terminalJobs.every(job => job.status === 'succeeded')).toBe(true);
+    } catch (error) {
+      failures.push(error);
+    } finally {
+      releaseSlowWrite();
+      await Promise.allSettled(processing ? [processing] : []);
+      let serviceClosed = false;
+      try {
+        service?.closeAll();
+        serviceClosed = true;
+      } catch (error) {
+        failures.push(error);
+      }
+      if (serviceClosed) {
+        try {
+          if (realpathSync(root) !== ownedRoot || path.dirname(ownedRoot) !== realpathSync(tmpdir())) {
+            failures.push(new Error('Owned wake fixture cleanup boundary changed.'));
+          } else {
+            rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+          }
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(failures, 'Wakeable thumbnail regression and fixture cleanup failures.');
+    }
   });
 });
 

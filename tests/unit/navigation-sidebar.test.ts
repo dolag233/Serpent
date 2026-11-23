@@ -12,6 +12,7 @@ import {
 import { MANAGED_FOLDERS_DRAG_TYPE } from "../../src/renderer/folder-drag-drop";
 import { LocaleProvider } from "../../src/renderer/i18n";
 import { NAV_TREE_PREF_KEY } from "../../src/renderer/nav-tree-preferences";
+import { NavigationSidebarBoundary } from "../../src/renderer/navigation-sidebar-boundary";
 import {
   collectionCustomOrderKey,
   customOrderKey,
@@ -161,6 +162,64 @@ function createNavigationProps(
     ...overrides,
   };
 }
+
+describe("NavigationSidebar committed event boundary", () => {
+  let root: Root;
+  let host: HTMLDivElement;
+  async function render(props: NavigationSidebarProps) {
+    await act(async () => root.render(createElement(LocaleProvider,
+      { children: null, initialPreference: "zh-CN" },
+      createElement(NavigationSidebarBoundary, props))));
+  }
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+    vi.unstubAllGlobals();
+    localStorage.removeItem(NAV_TREE_PREF_KEY);
+  });
+  function mount() {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  }
+  it("dispatches a real folder click through a replacement callback", async () => {
+    mount();
+    const oldChoose = vi.fn();
+    const newChoose = vi.fn();
+    const base = createNavigationProps({ folders: [{
+      folderId: "folder-alpha", parentFolderId: null, name: "Alpha", relativePath: "Alpha",
+      directAssetCount: 1, childFolderCount: 0,
+    }] });
+    await render({ ...base, onChooseFolder: oldChoose });
+    await render({ ...base, onChooseFolder: newChoose });
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-nav-folder-id="folder-alpha"]')!.click());
+    expect(newChoose).toHaveBeenCalledExactlyOnceWith("folder-alpha");
+    expect(oldChoose).not.toHaveBeenCalled();
+  });
+  it("does not deliver a delayed real trash drop after switching away and back", async () => {
+    mount();
+    let resolveIds!: (ids: string[]) => void;
+    const ids = new Promise<string[]>(resolve => { resolveIds = resolve; });
+    const oldTrash = vi.fn();
+    const currentTrash = vi.fn();
+    const base = createNavigationProps({
+      isInternalAssetDrag: () => true,
+      onResolveManagedAssetDrop: () => ids,
+      onAssetsDroppedOnTrash: oldTrash,
+    });
+    await render(base);
+    const trash = [...host.querySelectorAll<HTMLButtonElement>(".nav-row")]
+      .find(row => row.textContent?.includes("回收站"))!;
+    const files = [new File(["fixture"], "fixture.png", { type: "image/png" })];
+    await act(async () => { dispatchDropEvent(trash, createDragTransfer(["Files"], files)); });
+    await render({ ...base, library: { ...base.library!, libraryId: "library-beta" } });
+    await render({ ...base, onAssetsDroppedOnTrash: currentTrash });
+    await act(async () => { resolveIds(["asset-alpha"]); await ids; });
+    expect(oldTrash).not.toHaveBeenCalled();
+    expect(currentTrash).not.toHaveBeenCalled();
+  });
+});
 
 describe("NavigationSidebar virtual library root", () => {
   let root: Root | undefined;
@@ -1350,6 +1409,120 @@ describe("NavigationSidebar folder-section blank area", () => {
     expect(nav).not.toBeNull();
     return nav!;
   }
+
+  it("uses a replacement linked summary for row labels, availability, and actions", async () => {
+    const onChooseFolder = vi.fn();
+    const onRelinkFolder = vi.fn();
+    const onConvertLinkedDialog = vi.fn();
+    const linkedRoot = {
+      folderId: "linked-root-test",
+      displayName: "Linked Old",
+      status: "available" as const,
+      assetCount: 4,
+      absoluteRootPath: "source-root-old",
+      linkedFolderId: "linked-root-test",
+      relativePath: "",
+      parentFolderId: null,
+    };
+    await renderSidebar({
+      linkedFolders: [linkedRoot],
+      onChooseFolder,
+      onRelinkFolder,
+      onConvertLinkedDialog,
+    });
+    const firstRow = folderRow(
+      container!.querySelector<HTMLElement>(".navigation-scroll")!,
+      linkedRoot.folderId,
+    );
+
+    expect(firstRow.querySelector(".nav-row-label")?.textContent).toBe("Linked Old");
+    expect(firstRow.dataset.hoverTip).toContain("source-root-old");
+    await act(async () => {
+      firstRow.click();
+      firstRow.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        shiftKey: true,
+      }));
+    });
+    expect(onChooseFolder).toHaveBeenCalledWith(linkedRoot.folderId);
+    expect(onConvertLinkedDialog).toHaveBeenLastCalledWith({
+      folderId: linkedRoot.folderId,
+      name: "Linked Old",
+      targetFolderId: "",
+    });
+
+    const replacement = {
+      ...linkedRoot,
+      displayName: "Linked New",
+      status: "offline" as const,
+      absoluteRootPath: "source-root-new",
+    };
+    await act(async () => {
+      root?.render(createElement(
+        LocaleProvider,
+        { children: null, initialPreference: "zh-CN" },
+        createElement(NavigationSidebar, createNavigationProps({
+          folders: [parentFolder, childFolder, siblingFolder],
+          linkedFolders: [replacement],
+          onChooseFolder,
+          onRelinkFolder,
+          onConvertLinkedDialog,
+        })),
+      ));
+    });
+    const updatedRow = folderRow(
+      container!.querySelector<HTMLElement>(".navigation-scroll")!,
+      linkedRoot.folderId,
+    );
+    expect(updatedRow.querySelector(".nav-row-label")?.textContent).toBe("Linked New");
+    expect(updatedRow.dataset.hoverTip).toContain("source-root-new");
+    expect(updatedRow.dataset.hoverTip).not.toContain("source-root-old");
+
+    await act(async () => {
+      updatedRow.click();
+      updatedRow.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        shiftKey: true,
+      }));
+    });
+    expect(onRelinkFolder).toHaveBeenCalledWith(linkedRoot.folderId);
+    expect(onChooseFolder).toHaveBeenCalledTimes(1);
+    expect(onConvertLinkedDialog).toHaveBeenLastCalledWith({
+      folderId: linkedRoot.folderId,
+      name: "Linked New",
+      targetFolderId: "",
+    });
+  });
+
+  it("keeps linked summary folderId reads linear as the linked tree grows", async () => {
+    let folderIdReads = 0;
+    const linkedCount = 48;
+    const linkedFolders = Array.from({ length: linkedCount }, (_, index) => {
+      const folderId = "linked-folder-" + index;
+      return {
+        get folderId() {
+          folderIdReads += 1;
+          return folderId;
+        },
+        displayName: "Linked " + index,
+        status: "available" as const,
+        assetCount: index,
+        absoluteRootPath: "source-root-" + index,
+        linkedFolderId: "linked-root-" + index,
+        relativePath: "child-" + index,
+        parentFolderId: null,
+      } satisfies NavigationSidebarProps["linkedFolders"][number];
+    });
+
+    const nav = await renderSidebar({ linkedFolders });
+
+    expect(
+      nav.querySelectorAll('[data-nav-folder-kind="linked"]'),
+    ).toHaveLength(linkedCount);
+    expect(folderIdReads).toBeLessThanOrEqual(linkedCount * 3 + 8);
+  });
 
   function folderRow(nav: HTMLElement, folderId: string): HTMLButtonElement {
     const row = nav.querySelector<HTMLButtonElement>(

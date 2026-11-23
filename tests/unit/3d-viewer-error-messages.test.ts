@@ -45,6 +45,13 @@ describe('error-messages (Serpent-qvc6 / 3D-15)', () => {
     expect(toModelViewerErrorCode({})).toBe('MODEL_LOAD_FAILED');
   });
 
+  it('preserves the typed FBX capacity code for its existing viewer message', () => {
+    expect(toModelViewerErrorCode({ errorCode: 'FBX_LIMIT_EXCEEDED' })).toBe(
+      'FBX_LIMIT_EXCEEDED',
+    );
+    expect(fbxErrorI18nKey('FBX_LIMIT_EXCEEDED')).toBe('viewer3d.error.fbx.limitExceeded');
+  });
+
   it('maps retired size and timeout codes to the generic load failure', () => {
     expect(toModelViewerErrorCode({ errorCode: 'FBX_FILE_TOO_LARGE' })).toBe('MODEL_LOAD_FAILED');
     expect(toModelViewerErrorCode({ errorCode: 'FBX_CONVERSION_TIMEOUT' })).toBe('MODEL_LOAD_FAILED');

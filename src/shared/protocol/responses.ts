@@ -662,12 +662,14 @@ const assetOperationSuccessSchemas = [
     type: z.literal('media.job-summary.read'),
     libraryId: nonBlankString,
     ...mediaJobCountsShape,
+    queuePaused: z.boolean().default(false),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('media.jobs.listed'),
     libraryId: nonBlankString,
     ...mediaJobCountsShape,
+    queuePaused: z.boolean().default(false),
     nextCursor: z.strictObject({
       createdAt: nonBlankString,
       jobId: nonBlankString,

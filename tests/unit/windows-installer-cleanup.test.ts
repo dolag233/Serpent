@@ -61,6 +61,8 @@ describe('Windows installer cleanup helper', () => {
     try {
       await mkdir(installerDirectory);
       await writeFile(installerPath, 'test installer');
+      await writeFile(path.join(installerDirectory, '.installer-handoff'), '');
+      await writeFile(path.join(installerDirectory, 'download.zip'), 'test archive');
       const invocation = createWindowsInstallerCleanupInvocation({
         installerPath,
         installerPid: 730241,

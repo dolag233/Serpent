@@ -219,6 +219,24 @@ describe('offscreen thumbnail renderer (slice E, main side)', () => {
     renderer.dispose();
   });
 
+  it('releases the native FBX renderer before dispatching the next model', async () => {
+    const harness = makeHarness();
+    const renderer = createOffscreenThumbnailRenderer(harness.deps);
+    try {
+      const fbx = renderer.renderModelThumbnail(makeJob({ format: 'fbx' }));
+      const next = renderer.renderModelThumbnail(makeJob({ requestId: 'job-2' }));
+      await vi.waitFor(() => expect(harness.windows[0]?.webContents.sent).toHaveLength(1));
+      harness.emitFrame({ requestId: 'job-1', status: 'ok', pngBase64: TINY_PNG_BASE64 });
+      expect((await fbx).status).toBe('ok');
+      expect(harness.windows[0]?.isDestroyed()).toBe(true);
+      await vi.waitFor(() => expect(harness.windows[1]?.webContents.sent).toHaveLength(1));
+      harness.emitFrame({ requestId: 'job-2', status: 'ok', pngBase64: TINY_PNG_BASE64 });
+      expect((await next).status).toBe('ok');
+    } finally {
+      renderer.dispose();
+    }
+  });
+
   it('keeps waiting for a slow local render until it completes or is disposed', async () => {
     const harness = makeHarness();
     const renderer = createOffscreenThumbnailRenderer(harness.deps);

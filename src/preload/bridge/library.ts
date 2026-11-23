@@ -2633,6 +2633,7 @@ export const library: SerpentLibraryApi = Object.freeze({
     failed: number;
     paused: number;
     cancelled: number;
+    queuePaused?: boolean;
   }>> {
     const result = await request({
       type: 'media.job-summary.request',
@@ -2640,8 +2641,8 @@ export const library: SerpentLibraryApi = Object.freeze({
     });
     if (!result.ok) return failure(result);
     if (result.type !== 'media.job-summary.read') throw new Error('Unexpected media job-summary response.');
-    const { queued, running, succeeded, failed, paused, cancelled } = result;
-    return { ok: true, value: { queued, running, succeeded, failed, paused, cancelled } };
+    const { queued, running, succeeded, failed, paused, cancelled, queuePaused } = result;
+    return { ok: true, value: { queued, running, succeeded, failed, paused, cancelled, queuePaused } };
   },
 
   async setAudioPreviewPreference({
@@ -2708,10 +2709,10 @@ export const library: SerpentLibraryApi = Object.freeze({
     });
     if (!result.ok) return failure(result);
     if (result.type !== 'media.jobs.listed') throw new Error('Unexpected media list-jobs response.');
-    const { queued, running, succeeded, failed, paused, cancelled, jobs, nextCursor, hasMore } = result;
+    const { queued, running, succeeded, failed, paused, cancelled, queuePaused, jobs, nextCursor, hasMore } = result;
     return {
       ok: true,
-      value: { queued, running, succeeded, failed, paused, cancelled, jobs, nextCursor, hasMore },
+      value: { queued, running, succeeded, failed, paused, cancelled, queuePaused, jobs, nextCursor, hasMore },
     };
   },
 

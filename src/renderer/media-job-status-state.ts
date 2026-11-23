@@ -1,11 +1,16 @@
 import type { MediaJobStatus } from "../shared/library-api";
 
-export type MediaJobSummaryCounts = Pick<
+type NumericMediaJobCounts = Pick<
   MediaJobStatus,
   "queued" | "running" | "succeeded" | "failed" | "paused" | "cancelled"
 >;
 
-function countsFrom(status: MediaJobSummaryCounts): MediaJobSummaryCounts {
+export type MediaJobSummarySnapshot = Pick<
+  MediaJobStatus,
+  "queued" | "running" | "succeeded" | "failed" | "paused" | "cancelled" | "queuePaused"
+>;
+
+function countsFrom(status: NumericMediaJobCounts): NumericMediaJobCounts {
   return {
     queued: status.queued,
     running: status.running,
@@ -19,10 +24,11 @@ function countsFrom(status: MediaJobSummaryCounts): MediaJobSummaryCounts {
 /** Apply an O(1) summary snapshot without discarding an already loaded list page. */
 export function applyMediaJobSummary(
   previous: MediaJobStatus | null,
-  summary: MediaJobSummaryCounts,
+  summary: MediaJobSummarySnapshot,
 ): MediaJobStatus {
   return {
     ...countsFrom(summary),
+    queuePaused: summary.queuePaused ?? previous?.queuePaused ?? false,
     jobs: previous?.jobs ?? [],
     nextCursor: previous?.nextCursor ?? null,
     hasMore: previous?.hasMore === true,
@@ -30,9 +36,13 @@ export function applyMediaJobSummary(
 }
 
 /** Replace the visible list with a freshly fetched first page. */
-export function replaceMediaJobListPage(page: MediaJobStatus): MediaJobStatus {
+export function replaceMediaJobListPage(
+  page: MediaJobStatus,
+  previous?: MediaJobStatus | null,
+): MediaJobStatus {
   return {
     ...countsFrom(page),
+    queuePaused: page.queuePaused ?? previous?.queuePaused ?? false,
     jobs: page.jobs,
     nextCursor: page.nextCursor ?? null,
     hasMore: page.hasMore === true,
@@ -47,6 +57,7 @@ export function appendMediaJobListPage(
   const seen = new Set((current?.jobs ?? []).map((job) => job.jobId));
   return {
     ...countsFrom(page),
+    queuePaused: page.queuePaused ?? current?.queuePaused ?? false,
     jobs: [...(current?.jobs ?? []), ...page.jobs.filter((job) => !seen.has(job.jobId))],
     nextCursor: page.nextCursor ?? null,
     hasMore: page.hasMore === true,

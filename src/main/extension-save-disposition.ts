@@ -11,7 +11,7 @@ export function mapWorkerSaveFailure(
 } {
   return {
     accepted: false,
-    status: result.error.code === "LIBRARY_NOT_OPEN" ? 503 : 422,
+    status: result.error.code === "DISK_FULL" ? 507 : result.error.code === "LIBRARY_NOT_OPEN" ? 503 : 422,
     reason: result.error.reason ?? result.error.code,
     ...(result.errorCode === "SEGMENTED_SOURCE_VALIDATION"
       ? { failureKind: "source-invalid" as const }

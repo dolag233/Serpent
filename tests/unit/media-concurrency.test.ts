@@ -8,6 +8,8 @@ import {
 import { physicalCpuCountFromProcCpuInfo } from "../../src/worker/media-concurrency";
 import {
   MediaResourceGuard,
+  MediaInputCapacityError,
+  asMediaResourceExhaustedError,
   isMediaResourceExhaustion,
   MEDIA_RESOURCE_EXHAUSTED_ERROR_CODE,
 } from "../../src/worker/media-resource-guard";
@@ -75,6 +77,18 @@ describe("physical CPU topology parsing", () => {
 });
 
 describe("media resource pressure", () => {
+  it("keeps isolated decoder capacity failures local even through an error cause", () => {
+    const localFailure = new MediaInputCapacityError("out of memory packing result");
+    const wrapped = new Error("Media processing failed", { cause: localFailure });
+    expect(isMediaResourceExhaustion(localFailure)).toBe(false);
+    expect(isMediaResourceExhaustion(wrapped)).toBe(false);
+    expect(asMediaResourceExhaustedError(wrapped, "media-job")).toBeUndefined();
+    expect(isMediaResourceExhaustion(new Error("Media processing failed", {
+      cause: new Error("Cannot allocate memory"),
+    }))).toBe(true);
+    expect(isMediaResourceExhaustion({ code: "ENOMEM", cause: localFailure })).toBe(true);
+  });
+
   it("recognizes native allocation failures from spawn and FFmpeg", () => {
     expect(isMediaResourceExhaustion({ code: "ENOMEM" })).toBe(true);
     expect(isMediaResourceExhaustion({

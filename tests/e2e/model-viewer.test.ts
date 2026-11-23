@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -56,7 +56,7 @@ async function launchWithModels(modelFiles: string[]) {
     .getByRole("button", { name: "导入文件", exact: true })
     .first()
     .click();
-  return { application, window };
+  return { application, window, temporaryRoot, libraryPath };
 }
 
 function fixtureModels(name: string): string {
@@ -94,7 +94,7 @@ async function openModelViewer(
 async function revealStats(window: Page) {
   await window.locator(".workspace-viewer").hover();
   const button = window.getByRole("button", { name: "显示或隐藏统计" });
-  await button.click();
+  await button.press("Space");
   const stats = window.locator('dl[aria-label="模型统计"]');
   await expect(stats).toBeVisible();
   return stats;
@@ -124,8 +124,8 @@ test("opens an OBJ model with its MTL companion in the 3D viewer", async () => {
   }
 });
 
-test("opens an FBX model through the conversion pipeline", async () => {
-  const { application, window } = await launchWithModels([
+test("decodes source FBX geometry without a GLB artifact", async () => {
+  const { application, window, temporaryRoot, libraryPath } = await launchWithModels([
     path.join(
       process.cwd(),
       "tests",
@@ -140,20 +140,46 @@ test("opens an FBX model through the conversion pipeline", async () => {
       .filter({ hasText: "blender_272_cube_7400_binary.fbx" });
     await expect(assetCard).toBeVisible({ timeout: 15_000 });
     await assetCard.click();
-    await openModelViewer(window);
-
-    // Conversion succeeded: no fallback notice and real geometry stats.
-    // Non-blocking 3D notices now go through the workspace Info stack
-    // (MODEL-004 / Serpent-osr0), not a viewer-bottom hang banner.
-    const fallbackNotice = window.locator(".workspace-notice-stack");
-    if ((await fallbackNotice.count()) > 0) {
-      console.log(`[fbx-notice] ${await fallbackNotice.allInnerTexts()}`);
+    await window.evaluate(() => {
+      const originalFetch = globalThis.fetch;
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      globalThis.fetch = async function (...args) {
+        const input = args[0];
+        const url = input instanceof Request ? input.url : String(input);
+        if (url.startsWith("serpent://source/")) await held;
+        return originalFetch(...args);
+      };
+      Object.assign(globalThis, { releaseModelFetch: () => {
+        globalThis.fetch = originalFetch;
+        release();
+      } });
+    });
+    const status = window.locator(".viewer-loading-status");
+    try {
+      await window.keyboard.press("Space");
+      await expect(status).toHaveCSS("opacity", "1");
+      await expect(status).toHaveText("正在加载…");
+    } finally {
+      await window.evaluate(() => {
+        const pending = globalThis as typeof globalThis & { releaseModelFetch?: () => void };
+        pending.releaseModelFetch?.();
+        delete pending.releaseModelFetch;
+      });
     }
-    await expect(window.getByText(/兼容模式/)).toHaveCount(0);
+    await openModelViewer(window, { activate: false });
+    await expect(status).toHaveCount(0);
     const stats = await revealStats(window);
     await expect(stats).toContainText("三角面");
+    await expect(stats).toContainText("12");
+    expect(readdirSync(path.join(libraryPath, ".serpent", "artifacts")))
+      .not.toContainEqual(expect.stringMatching(/\.model_glb$/u));
   } finally {
-    await application.close();
+    try {
+      await application.close();
+    } finally {
+      rmSync(temporaryRoot, { recursive: true, force: true });
+    }
   }
 });
 

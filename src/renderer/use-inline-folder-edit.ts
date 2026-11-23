@@ -3,13 +3,17 @@ import { useCallback, useRef, useState } from "react";
 import type { SerpentLibraryApi } from "../shared/library-api";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
 import { parseLinkedVirtualFolderId } from "../shared/linked-folder-tree";
+import type { LibraryViewSessionToken } from "./library-view-session";
+import {
+  type FolderMutationProjection,
+  type FolderMutationResult,
+} from "./folder-mutation-projection";
 import { lookupMessage, useLocale, useT } from "./i18n";
 import { catalogs } from "./i18n/catalogs";
 import { PUBLIC_ERROR_MESSAGES_ZH, toMessage } from "./error-utils";
 import {
   changeInlineFolderEditValue,
   failInlineFolderEdit,
-  isSameInlineFolderEditSession,
   markInlineFolderEditSubmitting,
   resolveInlineFolderEditCommit,
   startInlineFolderCreate,
@@ -18,31 +22,37 @@ import {
 } from "./inline-folder-edit";
 
 /**
- * REQ-FOLDER-007: React owner of the in-tree inline folder edit session
- * (新建子文件夹 / 重命名… / 侧栏「+」), replacing the former create/rename
- * dialogs and their App.tsx dialog-state wiring (acceptance rule 8 — App only
- * wires menu entries and passes the session down to NavigationSidebar). The
- * state machine itself lives in inline-folder-edit.ts; this hook adds the
- * worker round-trip (command chain unchanged: folder.create / folder.rename),
- * typed error mapping through the shared error catalog, and
- * the notice + refresh convention after a successful operation.
- *
- * Unlike the dialogs, inline editing does not raise the global loading gate:
- * the per-session `submitting` flag blocks duplicate submits, and freezing the
- * whole shell would defeat the lightweight interaction. Keyboard isolation is
- * already guaranteed by the existing global handlers, which all bail out when
- * the event target is an editable element.
+ * REQ-FOLDER-007: React owner of the in-tree inline folder edit session. The
+ * worker round-trip remains unchanged; successful mutations are projected by
+ * the owning view before any background refresh is scheduled.
  */
 
 export interface UseInlineFolderEditParams {
   api: SerpentLibraryApi | null;
   library: RendererLibrarySummary | null;
   setNotice: (message: string, historyEntryId?: string) => void;
-  reloadCurrentContent: (options?: { navigationPriority?: "mutation" }) => Promise<void>;
+  captureLibraryViewToken: (libraryId: string) => LibraryViewSessionToken | null;
+  isLibraryViewCurrent: (token: LibraryViewSessionToken) => boolean;
+  onMutationCommitted: (
+    mutation: FolderMutationProjection,
+    libraryViewToken: LibraryViewSessionToken,
+  ) => void;
+  /** Starts the ordinary browse/nav reconciliation after a paint boundary. */
+  scheduleRefreshAfterMutation: (
+    libraryViewToken: LibraryViewSessionToken,
+  ) => Promise<void>;
+  onPostCommitError?: (
+    error: unknown,
+    libraryViewToken: LibraryViewSessionToken,
+  ) => void;
   /** Linked roots and virtual child ids use a separate physical-directory API. */
   isLinkedFolderId?: (folderId: string) => boolean;
-  /** Return true when the caller already navigated to a renamed linked id. */
-  onRenameSuccess?: (newFolderId: string, previousFolderId: string) => Promise<boolean> | boolean;
+  /** Return true only when the caller has also handled content reconciliation. */
+  onRenameSuccess?: (
+    result: FolderMutationResult,
+    previousFolderId: string,
+    libraryViewToken: LibraryViewSessionToken,
+  ) => Promise<boolean> | boolean;
 }
 
 export interface UseInlineFolderEditResult {
@@ -52,11 +62,7 @@ export interface UseInlineFolderEditResult {
   openInlineFolderRename: (folderId: string, currentName: string) => void;
   changeInlineFolderEdit: (value: string) => void;
   cancelInlineFolderEdit: () => void;
-  /**
-   * Enter and blur both route here; the state machine decides the outcome.
-   * The optional callback runs only after a create reaches the Worker and
-   * succeeds, before the inline row is removed.
-   */
+  /** Enter and blur share the same per-session single-submit guard. */
   commitInlineFolderEdit: (
     onCreateSuccess?: (
       folderId: string,
@@ -65,45 +71,93 @@ export interface UseInlineFolderEditResult {
   ) => Promise<void>;
 }
 
+interface InlineFolderEditSession {
+  readonly token: number;
+  readonly libraryViewToken: LibraryViewSessionToken;
+  readonly state: InlineFolderEditState;
+}
+
 export function useInlineFolderEdit({
   api,
   library,
   setNotice,
-  reloadCurrentContent,
+  captureLibraryViewToken,
+  isLibraryViewCurrent,
+  onMutationCommitted,
+  scheduleRefreshAfterMutation,
+  onPostCommitError,
   isLinkedFolderId,
   onRenameSuccess,
 }: UseInlineFolderEditParams): UseInlineFolderEditResult {
   const t = useT();
-  const committing = useRef<InlineFolderEditState | null>(null);
   const { locale } = useLocale();
-  const [inlineFolderEdit, setInlineFolderEdit] =
-    useState<InlineFolderEditState | null>(null);
+  const nextSessionToken = useRef(0);
+  const committingTokens = useRef(new Set<number>());
+  const [session, setSession] = useState<InlineFolderEditSession | null>(null);
+
+  const isCurrentSessionView = useCallback(
+    (value: InlineFolderEditSession) =>
+      isLibraryViewCurrent(value.libraryViewToken)
+      && library?.libraryId === value.libraryViewToken.libraryId,
+    [isLibraryViewCurrent, library?.libraryId],
+  );
+
+  const visibleSession = session && isCurrentSessionView(session) ? session : null;
+  const inlineFolderEdit = visibleSession?.state ?? null;
+
+  const beginSession = useCallback((state: InlineFolderEditState) => {
+    if (!library) return;
+    const libraryViewToken = captureLibraryViewToken(library.libraryId);
+    if (!libraryViewToken || !isLibraryViewCurrent(libraryViewToken)) return;
+    nextSessionToken.current += 1;
+    setSession({
+      token: nextSessionToken.current,
+      libraryViewToken,
+      state,
+    });
+  }, [captureLibraryViewToken, isLibraryViewCurrent, library]);
 
   const openInlineFolderCreate = useCallback(
     (parentFolderId: string | null) => {
-      setInlineFolderEdit(
-        startInlineFolderCreate(parentFolderId, t("folderEdit.newFolder")),
-      );
+      beginSession(startInlineFolderCreate(parentFolderId, t("folderEdit.newFolder")));
     },
-    [t],
+    [beginSession, t],
   );
 
   const openInlineFolderRename = useCallback(
     (folderId: string, currentName: string) => {
-      setInlineFolderEdit(startInlineFolderRename(folderId, currentName));
+      beginSession(startInlineFolderRename(folderId, currentName));
     },
-    [],
+    [beginSession],
   );
 
   const changeInlineFolderEdit = useCallback((value: string) => {
-    setInlineFolderEdit((current) =>
-      current ? changeInlineFolderEditValue(current, value) : current,
+    const token = visibleSession?.token;
+    if (token === undefined) return;
+    setSession((current) =>
+      current?.token === token
+        ? { ...current, state: changeInlineFolderEditValue(current.state, value) }
+        : current,
     );
-  }, []);
+  }, [visibleSession?.token]);
 
   const cancelInlineFolderEdit = useCallback(() => {
-    setInlineFolderEdit(null);
-  }, []);
+    const token = visibleSession?.token;
+    if (token === undefined) return;
+    setSession((current) => current?.token === token ? null : current);
+  }, [visibleSession?.token]);
+
+  const reportPostCommitError = useCallback((
+    error: unknown,
+    libraryViewToken: LibraryViewSessionToken,
+  ) => {
+    if (!isLibraryViewCurrent(libraryViewToken)) return;
+    try {
+      onPostCommitError?.(error, libraryViewToken);
+    } catch {
+      // A reporting callback must not turn a committed write into a failed edit.
+    }
+  }, [isLibraryViewCurrent, onPostCommitError]);
 
   const commitInlineFolderEdit = useCallback(async (
     onCreateSuccess?: (
@@ -111,123 +165,172 @@ export function useInlineFolderEdit({
       parentFolderId: string | null,
     ) => void,
   ) => {
-    const session = inlineFolderEdit;
-    if (!session) return;
-    const resolution = resolveInlineFolderEditCommit(session);
+    const activeSession = visibleSession;
+    if (!activeSession || !api || !library) return;
+    const sessionToken = activeSession.token;
+    const libraryViewToken = activeSession.libraryViewToken;
+    if (
+      committingTokens.current.has(sessionToken)
+      || !isCurrentSessionView(activeSession)
+    ) return;
+    const currentViewToken = captureLibraryViewToken(library.libraryId);
+    if (
+      !currentViewToken
+      || currentViewToken.libraryId !== libraryViewToken.libraryId
+      || currentViewToken.generation !== libraryViewToken.generation
+    ) return;
+
+    const resolution = resolveInlineFolderEditCommit(activeSession.state);
     if (resolution.action === "keep-editing") return;
     if (resolution.action === "cancel") {
-      setInlineFolderEdit(null);
+      setSession((current) => current?.token === sessionToken ? null : current);
       return;
     }
-    if (!api || !library || committing.current === session) return;
-    committing.current = session;
-    setInlineFolderEdit((current) =>
-      current && isSameInlineFolderEditSession(current, session)
-        ? markInlineFolderEditSubmitting(current)
-        : current,
-    );
-    const failureFallback =
-      session.kind === "create"
-        ? t("folderEdit.createFailed")
-        : t("folderEdit.renameFailed");
-    // Settles the session this commit started from; a newer session opened
-    // while the request was in flight is left untouched (the tree is
-    // non-modal, unlike the former dialogs).
-    const settleFailure = (message: string) => {
-      setInlineFolderEdit((current) =>
-        current && isSameInlineFolderEditSession(current, session)
-          ? failInlineFolderEdit(current, message)
+
+    const editState = activeSession.state;
+    const failureFallback = editState.kind === "create"
+      ? t("folderEdit.createFailed")
+      : t("folderEdit.renameFailed");
+    const updateSession = (update: (state: InlineFolderEditState) => InlineFolderEditState) => {
+      setSession((current) =>
+        current?.token === sessionToken
+          ? { ...current, state: update(current.state) }
           : current,
       );
     };
+    const settleWriteFailure = (message: string) => {
+      if (!isLibraryViewCurrent(libraryViewToken)) return;
+      updateSession((current) => failInlineFolderEdit(current, message));
+    };
+
+    committingTokens.current.add(sessionToken);
+    updateSession((current) => markInlineFolderEditSubmitting(current));
     try {
-      const createParent = session.kind === "create" ? session.parentFolderId : null;
+      const createParent = editState.kind === "create" ? editState.parentFolderId : null;
       const createParentVirtual = createParent ? parseLinkedVirtualFolderId(createParent) : null;
       const createParentIsLinked = Boolean(
-        createParent &&
-        (createParentVirtual || isLinkedFolderId?.(createParent)),
+        createParent
+        && (createParentVirtual || isLinkedFolderId?.(createParent)),
       );
-      const renameVirtual = session.kind === "rename"
-        ? parseLinkedVirtualFolderId(session.folderId)
+      const renameVirtual = editState.kind === "rename"
+        ? parseLinkedVirtualFolderId(editState.folderId)
         : null;
       const renameIsLinked = Boolean(
-        session.kind === "rename" &&
-        (renameVirtual || isLinkedFolderId?.(session.folderId)),
+        editState.kind === "rename"
+        && (renameVirtual || isLinkedFolderId?.(editState.folderId)),
       );
-      const result = session.kind === "create"
+      const result = editState.kind === "create"
         ? createParentIsLinked
           ? await api.createLinkedFolderDirectory({
-              libraryId: library.libraryId,
+              libraryId: libraryViewToken.libraryId,
               linkedFolderId: createParentVirtual?.linkedFolderId ?? createParent!,
               relativePath: createParentVirtual?.relativePath ?? "",
               name: resolution.name,
             })
           : await api.createFolder({
-              libraryId: library.libraryId,
-              parentFolderId: session.parentFolderId ?? undefined,
+              libraryId: libraryViewToken.libraryId,
+              parentFolderId: editState.parentFolderId ?? undefined,
               name: resolution.name,
             })
         : renameIsLinked
           ? await api.renameLinkedFolderDirectory({
-              libraryId: library.libraryId,
-              linkedFolderId: renameVirtual?.linkedFolderId ?? session.folderId,
+              libraryId: libraryViewToken.libraryId,
+              linkedFolderId: renameVirtual?.linkedFolderId ?? editState.folderId,
               relativePath: renameVirtual?.relativePath ?? "",
               newName: resolution.name,
             })
           : await api.renameFolder({
-              libraryId: library.libraryId,
-              folderId: session.folderId,
+              libraryId: libraryViewToken.libraryId,
+              folderId: editState.folderId,
               newName: resolution.name,
             });
+
       if (!result.ok) {
-        // Typed failures (invalid name, name conflict) surface inline so the
-        // user can fix the name and retry; the row deliberately stays open.
-        // Prefer the active-locale catalog, then the zh-CN table.
+        if (!isLibraryViewCurrent(libraryViewToken)) return;
         const codeMessage =
-          lookupMessage(catalogs[locale], `error.code.${result.error.code}`) ??
-          PUBLIC_ERROR_MESSAGES_ZH[result.error.code];
-        settleFailure(
+          lookupMessage(catalogs[locale], `error.code.${result.error.code}`)
+          ?? PUBLIC_ERROR_MESSAGES_ZH[result.error.code];
+        settleWriteFailure(
           codeMessage ?? toMessage(result.error, failureFallback, locale),
         );
         return;
       }
-      if (session.kind === "create") {
-        onCreateSuccess?.(result.value.folderId, session.parentFolderId);
+
+      if (!isLibraryViewCurrent(libraryViewToken)) return;
+      const mutation: FolderMutationProjection = {
+        kind: editState.kind,
+        folder: result.value,
+        ...(editState.kind === "rename"
+          ? { previousFolderId: editState.folderId }
+          : {}),
+      };
+
+      setSession((current) => current?.token === sessionToken ? null : current);
+      try {
+        onMutationCommitted(mutation, libraryViewToken);
+      } catch (caught) {
+        reportPostCommitError(caught, libraryViewToken);
       }
-      setInlineFolderEdit((current) =>
-        current && isSameInlineFolderEditSession(current, session)
-          ? null
-          : current,
-      );
-      setNotice(
-        session.kind === "create"
-          ? t("folderEdit.created", { name: result.value.name })
-          : t("folderEdit.renamed", { name: result.value.name }),
-        "historyEntryId" in result.value ? result.value.historyEntryId : undefined,
-      );
-      if (session.kind === "rename") {
-        const handled = await onRenameSuccess?.(result.value.folderId, session.folderId);
-        if (handled) return;
+      if (editState.kind === "create") {
+        try {
+          onCreateSuccess?.(result.value.folderId, editState.parentFolderId);
+        } catch (caught) {
+          reportPostCommitError(caught, libraryViewToken);
+        }
       }
-      // A rename keeps the folderId, so the current selection survives the
-      // refresh; a create lands under the already-selected parent. Neither
-      // needs a re-select.
-      await reloadCurrentContent({ navigationPriority: "mutation" });
+      try {
+        setNotice(
+          editState.kind === "create"
+            ? t("folderEdit.created", { name: result.value.name })
+            : t("folderEdit.renamed", { name: result.value.name }),
+          "historyEntryId" in result.value ? result.value.historyEntryId : undefined,
+        );
+      } catch (caught) {
+        reportPostCommitError(caught, libraryViewToken);
+      }
+
+      void (async () => {
+        let alreadyNavigated = false;
+        if (editState.kind === "rename") {
+          try {
+            alreadyNavigated = await onRenameSuccess?.(
+              result.value,
+              editState.folderId,
+              libraryViewToken,
+            ) ?? false;
+          } catch (caught) {
+            reportPostCommitError(caught, libraryViewToken);
+          }
+        }
+        if (alreadyNavigated || !isLibraryViewCurrent(libraryViewToken)) return;
+        try {
+          await scheduleRefreshAfterMutation(libraryViewToken);
+        } catch (caught) {
+          reportPostCommitError(caught, libraryViewToken);
+        }
+      })();
     } catch (caught) {
-      settleFailure(toMessage(caught, failureFallback, locale));
+      if (isLibraryViewCurrent(libraryViewToken)) {
+        settleWriteFailure(toMessage(caught, failureFallback, locale));
+      }
     } finally {
-      if (committing.current === session) committing.current = null;
+      committingTokens.current.delete(sessionToken);
     }
   }, [
     api,
-    library,
-    inlineFolderEdit,
-    locale,
-    reloadCurrentContent,
+    captureLibraryViewToken,
+    isCurrentSessionView,
+    isLibraryViewCurrent,
     isLinkedFolderId,
+    library,
+    locale,
+    onMutationCommitted,
     onRenameSuccess,
-    setNotice,
+    reportPostCommitError,
+    scheduleRefreshAfterMutation,
     t,
+    visibleSession,
+    setNotice,
   ]);
 
   return {

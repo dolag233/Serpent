@@ -4,7 +4,7 @@
  * Main owns the ONE shared offscreen BrowserWindow every model thumbnail is
  * rendered in (research §4.5/§4.7: Chromium caps live WebGL contexts at ~16,
  * so per-asset windows are not an option; the window is created lazily on the
- * first model job and reused). Jobs run strictly serially — one frame at a
+ * first model job and reused except after native FBX parsing). Jobs run serially — one frame at a
  * time — the page renders exactly one frame per job
  * (no rAF dependency, research §4.7 `backgroundThrottling` does not help
  * hidden windows).
@@ -283,6 +283,9 @@ export function createOffscreenThumbnailRenderer(
     current.settled = true;
     active = null;
     current.resolveCancelWait();
+    // Three's FBX parser retains its last parse tree at module scope. Recycle
+    // the offscreen document so a completed job releases that retained data.
+    if (current.job.format === 'fbx') destroyWindow(current.window);
     current.resolve(result);
     void drain();
   };

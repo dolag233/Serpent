@@ -20,7 +20,6 @@ import { convertFbxBuffer } from '../../src/worker/fbx/converter';
 import { buildGlb } from '../../src/worker/fbx/glb-builder';
 import type { FbxDescriptor } from '../../src/worker/fbx/descriptor';
 import { handleFbxConvertCommand } from '../../src/worker/fbx/convert-command';
-import { resetSerpentUfbxModuleForTest } from '../../src/worker/fbx/wasm-loader';
 import {
   buildAsciiFbx,
   ONE_PX_RED_PNG,
@@ -587,7 +586,6 @@ describe('fbx converter — typed failures', () => {
   it('reports FBX_WASM_UNAVAILABLE when the ufbx module is missing', async () => {
     const previousDir = process.env['SERPENT_UFBX_DIR'];
     try {
-      resetSerpentUfbxModuleForTest();
       process.env['SERPENT_UFBX_DIR'] = path.join(temporaryRoot(), 'no-ufbx');
       const result = await convertFbxBuffer(readFileSync(CUBE_FBX), {
         sourcePath: path.join(temporaryRoot(), 'cube.fbx'),
@@ -598,7 +596,6 @@ describe('fbx converter — typed failures', () => {
     } finally {
       if (previousDir === undefined) delete process.env['SERPENT_UFBX_DIR'];
       else process.env['SERPENT_UFBX_DIR'] = previousDir;
-      resetSerpentUfbxModuleForTest();
     }
   });
 });

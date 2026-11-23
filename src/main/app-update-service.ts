@@ -4,6 +4,7 @@ import {
   access,
   mkdir,
   mkdtemp,
+  open,
   rm,
   writeFile,
 } from 'node:fs/promises';
@@ -27,6 +28,8 @@ import type {
   AppUpdateReleaseMeta,
 } from '../shared/app-update';
 import { appUpdateReleaseMetaSchema } from '../shared/app-update';
+import { checkStagingSpace, reapTaskStaging, removeTaskStaging } from './task-staging';
+import { isInsufficientSpaceError } from './disk-free-space';
 
 export const SERPENT_GITHUB_REPOSITORY = 'dolag233/Serpent';
 export const SERPENT_GITHUB_RELEASES_URL =
@@ -41,6 +44,17 @@ const MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 const SAFE_ASSET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/u;
 const SHA256_PATTERN = /\b([a-f0-9]{64})\b/iu;
 const INSTALLED_MARKER_NAME = '.serpent-installed';
+const WINDOWS_INSTALLER_STAGE_PREFIX = 'serpent-installer-';
+const WINDOWS_INSTALLER_STAGE_NAME = /^serpent-installer-[A-Za-z0-9]{6}$/u;
+const INSTALLER_STAGING_GRACE_MS = 24 * 60 * 60 * 1_000;
+const INSTALLER_HANDOFF_MARKER = '.installer-handoff';
+
+export function reapWindowsInstallerStaging(root: string, onError: (error: unknown) => void) {
+  // The detached installer can outlive the calling Serpent process.
+  const cutoff = Date.now() - INSTALLER_STAGING_GRACE_MS;
+  return reapTaskStaging(root, WINDOWS_INSTALLER_STAGE_NAME, (directory, modifiedAt) =>
+    modifiedAt <= cutoff || !existsSync(path.join(directory, INSTALLER_HANDOFF_MARKER)), onError);
+}
 
 export type AppUpdatePlatform = 'darwin' | 'win32' | 'linux';
 
@@ -364,10 +378,11 @@ async function writeDownloadedResponse(
   response: Response,
   targetPath: string,
   options: {
+    onCreated: () => void;
     signal?: AbortSignal;
     totalBytes?: number;
     onProgress?: AppUpdateServiceOptions['onDownloadProgress'];
-  } = {},
+  },
 ): Promise<string> {
   const hash = createHash('sha256');
   await mkdir(path.dirname(targetPath), { recursive: true });
@@ -385,7 +400,13 @@ async function writeDownloadedResponse(
       throw new Error('The update response is too large.');
     }
     hash.update(bytes);
-    await writeFile(targetPath, bytes, { mode: 0o600, flag: 'wx' });
+    const file = await open(targetPath, 'wx', 0o600);
+    options.onCreated();
+    try {
+      await file.writeFile(bytes);
+    } finally {
+      await file.close();
+    }
     reportProgress(bytes.byteLength);
     return hash.digest('hex');
   }
@@ -406,17 +427,14 @@ async function writeDownloadedResponse(
       callback(null, chunk);
     },
   });
-  try {
-    await pipeline(
-      Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
-      hashingTransform,
-      createWriteStream(targetPath, { flags: 'wx', mode: 0o600 }),
-      { signal: options.signal },
-    );
-  } catch (error) {
-    await rm(targetPath, { force: true }).catch(() => undefined);
-    throw error;
-  }
+  const stream = createWriteStream(targetPath, { flags: 'wx', mode: 0o600 });
+  stream.once('open', options.onCreated);
+  await pipeline(
+    Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
+    hashingTransform,
+    stream,
+    { signal: options.signal },
+  );
   return hash.digest('hex');
 }
 
@@ -449,26 +467,19 @@ function safeInstallerEntryName(entryName: string): boolean {
 
 async function extractWindowsInstaller(
   archivePath: string,
-  tempDirectory: string,
-): Promise<{ installerPath: string; outputDirectory: string }> {
+  outputDirectory: string,
+): Promise<string> {
   const archive = new AdmZip(archivePath);
   const entry = archive.getEntries().find((candidate) =>
     !candidate.isDirectory && safeInstallerEntryName(candidate.entryName));
   if (entry === undefined) throw new Error('The Windows update archive has no SerpentSetup.exe.');
-  const outputDirectory = await mkdtemp(path.join(tempDirectory, 'serpent-installer-'));
-  try {
-    const installerPath = path.join(outputDirectory, 'SerpentSetup.exe');
-    await writeFile(installerPath, entry.getData(), { mode: 0o700, flag: 'wx' });
-    return { installerPath, outputDirectory };
-  } catch (error) {
-    await rm(outputDirectory, {
-      force: true,
-      recursive: true,
-      maxRetries: 3,
-      retryDelay: 100,
-    }).catch(() => undefined);
-    throw error;
+  if (!Number.isSafeInteger(entry.header.size) || entry.header.size <= 0 || entry.header.size > MAX_DOWNLOAD_BYTES) {
+    throw new Error('The Windows installer exceeds the size limit.');
   }
+  await checkStagingSpace(outputDirectory, entry.header.size);
+  const installerPath = path.join(outputDirectory, 'SerpentSetup.exe');
+  await writeFile(installerPath, entry.getData(), { mode: 0o700, flag: 'wx' });
+  return installerPath;
 }
 
 async function removeUpdateArtifact(filePath: string | undefined): Promise<void> {
@@ -662,6 +673,7 @@ export class AppUpdateService {
     this.#downloadAbort = new AbortController();
     const { signal } = this.#downloadAbort;
     let downloadPath: string | undefined;
+    let createdDownload = false;
     let extractedInstallerDirectory: string | undefined;
     let keepDownloadedUpdate = false;
     // A handed-off installer must stay on disk. Deleting a mounted DMG or the
@@ -715,10 +727,17 @@ export class AppUpdateService {
         return installResultError('verification-failed');
       }
 
-      downloadPath = await nextAvailableDownloadPath(
-        this.#options.downloadsDirectory,
-        asset.name,
-      );
+      const isWindowsInstaller = update.target.platform === 'win32' && update.target.distribution === 'installed';
+      const destination = isWindowsInstaller ? this.#options.tempDirectory : this.#options.downloadsDirectory;
+      const totalBytes = asset.size > 0 ? asset.size : undefined;
+      await checkStagingSpace(destination, totalBytes ?? MAX_DOWNLOAD_BYTES);
+      if (isWindowsInstaller) {
+        await mkdir(destination, { recursive: true, mode: 0o700 });
+        extractedInstallerDirectory = await mkdtemp(path.join(destination, WINDOWS_INSTALLER_STAGE_PREFIX));
+        downloadPath = path.join(extractedInstallerDirectory, asset.name);
+      } else {
+        downloadPath = await nextAvailableDownloadPath(destination, asset.name);
+      }
       const response = await this.#fetch(asset.browserDownloadUrl, {
         headers: { Accept: 'application/octet-stream', 'User-Agent': `Serpent/${this.#options.currentVersion}` },
         redirect: 'follow',
@@ -732,19 +751,18 @@ export class AppUpdateService {
         });
         return installResultError('download-failed');
       }
-      const totalBytes = asset.size > 0 ? asset.size : undefined;
       emitDownloadProgress(this.#options.onDownloadProgress, {
         phase: 'downloading',
         downloadedBytes: 0,
         totalBytes,
       });
       const actualSha256 = await writeDownloadedResponse(response, downloadPath, {
+        onCreated: () => { createdDownload = true; },
         signal,
         totalBytes,
         onProgress: this.#options.onDownloadProgress,
       });
       if (actualSha256 !== expectedSha256) {
-        await rm(downloadPath, { force: true }).catch(() => undefined);
         this.#options.logger?.info('app-update.verify', 'Downloaded update checksum mismatch.', {
           version: update.release.version,
           assetName: asset.name,
@@ -777,21 +795,22 @@ export class AppUpdateService {
       }
 
       let launchPath = downloadPath;
-      if (update.target.platform === 'win32') {
+      if (extractedInstallerDirectory !== undefined) {
         emitDownloadProgress(this.#options.onDownloadProgress, {
           phase: 'extracting',
           downloadedBytes: totalBytes ?? asset.size,
           totalBytes,
         });
-        const extracted = await extractWindowsInstaller(downloadPath, this.#options.tempDirectory);
-        launchPath = extracted.installerPath;
-        extractedInstallerDirectory = extracted.outputDirectory;
+        launchPath = await extractWindowsInstaller(downloadPath, extractedInstallerDirectory);
       }
       emitDownloadProgress(this.#options.onDownloadProgress, {
         phase: 'launching',
         downloadedBytes: totalBytes ?? asset.size,
         totalBytes,
       });
+      if (extractedInstallerDirectory !== undefined) {
+        await writeFile(path.join(extractedInstallerDirectory, INSTALLER_HANDOFF_MARKER), '', { flag: 'wx' });
+      }
       if (this.#options.launchInstaller !== undefined) {
         await this.#options.launchInstaller(launchPath);
       } else {
@@ -822,11 +841,12 @@ export class AppUpdateService {
         this.#options.logger?.info('app-update.download', 'Update download cancelled.');
         return installResultError('cancelled');
       }
-      this.#options.logger?.error('app-update.install', error, { code: 'download-failed' });
-      return installResultError('download-failed');
+      const code = isInsufficientSpaceError(error) ? 'insufficient-space' : 'download-failed';
+      this.#options.logger?.error('app-update.install', error, { code });
+      return installResultError(code);
     } finally {
       const retainOpenedDownload = retainOpenedInstaller && extractedInstallerDirectory === undefined;
-      if (!keepDownloadedUpdate && !retainOpenedDownload) {
+      if (createdDownload && !keepDownloadedUpdate && !retainOpenedDownload) {
         try {
           await removeUpdateArtifact(downloadPath);
         } catch (error) {
@@ -837,7 +857,7 @@ export class AppUpdateService {
       }
       if (!retainOpenedInstaller) {
         try {
-          await removeUpdateArtifact(extractedInstallerDirectory);
+          if (extractedInstallerDirectory !== undefined) await removeTaskStaging(extractedInstallerDirectory);
         } catch (error) {
           this.#options.logger?.error('app-update.cleanup', error, {
             artifactKind: 'extracted-installer',

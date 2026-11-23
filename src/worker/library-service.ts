@@ -20,6 +20,7 @@ import {
   rmdirSync,
   rmSync,
   statSync,
+  statfsSync,
   utimesSync,
   unlinkSync,
   watch,
@@ -34,6 +35,7 @@ import {
   open as openFileAsync,
   opendir as opendirAsync,
   realpath as realpathAsync,
+  readFile as readFileAsync,
   rm as rmAsync,
 } from 'node:fs/promises';
 import path from 'node:path';
@@ -96,12 +98,18 @@ import {
 import {
   readImageDimensions,
   readImageDimensionsSync,
+  type ImageDimensions,
 } from './image-dimensions';
 import {
   MediaJobStatusSummaryCache,
   mediaJobCountTotal,
   mediaJobCountsFromRows,
 } from './media-job-status-summary';
+import { ensureMediaQueueControlSchema, MEDIA_QUEUE_CONTROL_SCHEMA_SQL, MediaQueueControl } from './media-queue-control';
+import { WakeableWorkerPool } from './wakeable-worker-pool';
+
+/** Worker-internal admission handle; invalidated when its queue finishes. */
+export type MediaQueueWakeRef = { current?: (maxJobs: number) => boolean };
 import {
   clampMediaJobListLimit,
   type MediaJobListCursor,
@@ -116,6 +124,13 @@ export interface RawMetadataBackfillAdmissionState {
   /** Durable write time, exposed for diagnostics/tests without affecting admission. */
   updatedAt?: string;
 }
+
+export type VisibleImageDimensions = ImageDimensions & {
+  assetId: string;
+  revisionId: string;
+  previewKind: 'source' | null;
+  previewRevisionId: string | null;
+};
 import {
   countLinkedDirectoryAssets,
   collectLinkedDirectoryPrefixes,
@@ -175,6 +190,7 @@ import { rotateStillImageFile } from './rotate-still-image-file';
 import {
   asMediaResourceExhaustedError,
   MEDIA_RESOURCE_EXHAUSTED_ERROR_CODE,
+  MediaInputCapacityError,
   MediaResourceExhaustedError,
   mediaResourceGuard,
   mediaResourceFailureFromSpawnResult,
@@ -390,7 +406,7 @@ const SHARP_VERSION = '0.35.3';
 /** Bumped when GIF still-page selection changes so stale black page-0 thumbs requeue. */
 const SHARP_THUMBNAIL_GENERATOR = `sharp@${SHARP_VERSION}-gifstill1`;
 /** RAW cards may use a bounded embedded JPEG instead of demosaicing the sensor frame. */
-const RAW_EMBEDDED_THUMBNAIL_GENERATOR = `raw-embedded-jpeg@1;sharp@${SHARP_VERSION};max=512`;
+const RAW_EMBEDDED_THUMBNAIL_GENERATOR = `raw-embedded-jpeg@2;sharp@${SHARP_VERSION};max=512`;
 /** Eagle/Billfish imports publish a copy immediately, then normalize in the background. */
 const IMPORTED_THUMBNAIL_GENERATOR = `${IMPORTED_THUMBNAIL_GENERATOR_PREFIX};sharp@${SHARP_VERSION};max=512;still1`;
 /** Animated imported previews stay byte-for-byte intact but still need a durable completion marker. */
@@ -439,6 +455,8 @@ async function inspectMediaNativeInput(
 // media job cannot be mistaken for a crash orphan; the next reconciliation
 // will remove it if it never becomes referenced.
 const ORPHAN_ARTIFACT_GRACE_MS = 5 * 60_000;
+const NORMALIZATION_TEMP_NAME = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.tmp$/u;
+const NORMALIZATION_MEMORY_INPUT_MAX_BYTES = 16 * 1024 * 1024;
 /**
  * Serpent-x9xu / Serpent-87pd: the current browse/search page size
  * (BROWSE_PAGE_SIZE = 100). The `visible` thumbnail wave must cover the
@@ -711,6 +729,7 @@ import {
   extractRawImageMetadata,
   normalizeRawImageMetadata,
   resolvedExtractedPixelSize,
+  rawOrientationSwapsDimensions,
   type RawImageMetadata,
   type RawImageMetadataParser,
 } from './raw-image-metadata';
@@ -718,7 +737,7 @@ import {
   embeddedMetadataSearchText,
   normalizeProbeEmbeddedMetadata,
 } from './embedded-metadata';
-import { extractRawEmbeddedJpegThumbnail } from './raw-embedded-thumbnail';
+import { extractRawEmbeddedJpegThumbnail, extractRawEmbeddedThumbnail, jpegWithFallbackOrientation } from './raw-embedded-thumbnail';
 import {
   rawViewerLuminanceCdf,
   rawViewerProbeArgs,
@@ -3850,6 +3869,11 @@ export const MIGRATIONS = [
     sql: LINKED_DIRECTORY_INDEX_SQL,
     checksum: createHash('sha256').update(LINKED_DIRECTORY_INDEX_SQL).digest('hex'),
   },
+  {
+    version: 61,
+    sql: MEDIA_QUEUE_CONTROL_SCHEMA_SQL,
+    checksum: createHash('sha256').update(MEDIA_QUEUE_CONTROL_SCHEMA_SQL).digest('hex'),
+  },
 ] as const;
 export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -4851,7 +4875,11 @@ const MEDIA_INTERACTIVE_DECODE_CONCURRENCY = workerMediaInteractiveDecodeConcurr
 const sharpNativeDecoderSemaphore = new AsyncSemaphore(MEDIA_INTERACTIVE_DECODE_CONCURRENCY);
 const sharpDecoderSemaphore = new AsyncSemaphore(MEDIA_DECODE_CONCURRENCY);
 const interactiveSharpDecoderSemaphore = new AsyncSemaphore(MEDIA_INTERACTIVE_DECODE_CONCURRENCY);
-const oiioDecoderSemaphore = new AsyncSemaphore(1);
+// Header reads do not allocate decoded pixels. Bound their filesystem pressure
+// independently of Sharp, shared by visible geometry and primary admission.
+const IMAGE_HEADER_PROBE_CONCURRENCY = 2;
+const IMAGE_HEADER_LIBRARY_LIMIT = 3;
+const imageHeaderProbeSemaphore = new AsyncSemaphore(4);
 
 /** True when a visible/viewer Sharp job can start without aborting a running background decode. */
 export function hasIdleForegroundImageSlot(): boolean {
@@ -5035,6 +5063,8 @@ export type ModelThumbnailRenderer = (
 ) => Promise<ModelThumbnailRenderOutcome>;
 
 export interface LibraryServiceOptions {
+  /** Profile-owned staging for browser extension downloads and imports. */
+  extensionStagingRoot?: string | undefined;
   /** User-scoped local cache root for remote-library metadata snapshots. */
   networkMetadataCacheDirectory?: string;
   /** Test/diagnostic seam; events never contain absolute library/cache paths. */
@@ -6144,6 +6174,7 @@ function migrateLegacyPluginMigrationHistory(connection: DatabaseConnection): vo
   if (!columnsFor(connection, 'operation_history').has('redo_sequence')) {
     connection.exec(OPERATION_HISTORY_REDO_STACK_SCHEMA_SQL);
   }
+  ensureMediaQueueControlSchema(connection);
   connection.prepare('DELETE FROM schema_migrations WHERE version >= 24').run();
   const insert = connection.prepare(
     'INSERT INTO schema_migrations (version, checksum, applied_at) VALUES (?, ?, ?)',
@@ -6826,6 +6857,8 @@ function migrateDatabaseUnserialized(connection: DatabaseConnection, allowFresh:
           ensureEntityAppearanceSchema(connection);
         } else if (migration.version === 58) {
           ensureFolderCustomCoverAssetSchema(connection);
+        } else if (migration.version === 61) {
+          ensureMediaQueueControlSchema(connection);
         } else {
           connection.exec(migration.sql);
         }
@@ -7093,6 +7126,7 @@ export class LibraryService {
    * O(1) 读，不需要在每个任务写路径挂钩子。
    */
   private readonly mediaJobSummaryCache = new MediaJobStatusSummaryCache();
+  private readonly mediaQueueControls = new WeakMap<OpenLibrary, MediaQueueControl>();
   /**
    * The descriptor is tiny, but getPreviewArtifact/getExtractedMetadata can
    * ask for the same current row repeatedly while a card remounts. Entries
@@ -7132,6 +7166,10 @@ export class LibraryService {
   private artifactsDirReady = new WeakSet<OpenLibrary>();
   private readonly linkedDirectoryIndexes = new WeakMap<OpenLibrary, LinkedDirectoryIndex>();
   private readonly navigationBuilds = new WeakMap<OpenLibrary, SingleFlightRead<LibraryNavigationSummary>>();
+  private readonly imageHeaderReads = new WeakMap<OpenLibrary, {
+    reads: SingleFlightRead<ImageDimensions | null>;
+    admission: AsyncSemaphore;
+  }>();
   private readonly linkedAssetPaths = new WeakMap<OpenLibrary, Map<string, { key: string; paths: string[] }>>();
   private readonly linkedAssetCounts = new WeakMap<string[], ReturnType<typeof countLinkedDirectoryAssets>>();
   private readonly linkedRuleMatchers = new WeakMap<LinkedFolderRule[], (relativePath: string) => boolean>();
@@ -8013,21 +8051,19 @@ export class LibraryService {
     return mediaNativeMemoryBudget.run(
       spawnOptions.signal,
       memoryBytes,
-      () => oiioDecoderSemaphore.run(
-        spawnOptions.signal,
-        async () => {
-          try {
-            const result = await this.spawnFn(command, literalOiioArgs(args), spawnOptions);
-            if (mediaResourceFailureFromSpawnResult(result)) {
-              throw asMediaResourceExhaustedError(result, 'oiio')
-                ?? new Error('OpenImageIO reported native resource pressure.');
-            }
-            return result;
-          } catch (error) {
-            throw asMediaResourceExhaustedError(error, 'oiio') ?? error;
+      async () => {
+        try {
+          const result = await this.spawnFn(command, literalOiioArgs(args), spawnOptions);
+          if (mediaResourceFailureFromSpawnResult(result)) {
+            throw asMediaResourceExhaustedError(result, 'oiio')
+              ?? new Error('OpenImageIO reported native resource pressure.');
           }
-        },
-      ),
+          return result;
+        } catch (error) {
+          throw asMediaResourceExhaustedError(error, 'oiio') ?? error;
+        }
+      },
+      { key: 'oiio', limit: () => 1 },
     );
   }
 
@@ -19288,6 +19324,55 @@ export class LibraryService {
     return readImageDimensions(filePath);
   }
 
+  /** Share only in-flight reads; a later revision or reopened library never
+   * inherits a completed header or another consumer's cancellation signal.
+   */
+  private imageDimensionsForRevisionAsync(
+    openLibrary: OpenLibrary,
+    revisionId: string,
+    asset: {
+      relative_file_path: string;
+      location_kind: 'managed' | 'linked';
+      linked_folder_id: string | null;
+    },
+  ): Promise<ImageDimensions | null> {
+    let state = this.imageHeaderReads.get(openLibrary);
+    if (!state) {
+      state = {
+        reads: new SingleFlightRead<ImageDimensions | null>(),
+        admission: new AsyncSemaphore(IMAGE_HEADER_LIBRARY_LIMIT),
+      };
+      this.imageHeaderReads.set(openLibrary, state);
+    }
+    // One slow library may occupy three reads, leaving capacity for the next
+    // library. Neither consumer can abort another consumer's shared read.
+    const { reads, admission } = state;
+    const requestedAt = performance.now();
+    const load = () => imageHeaderProbeSemaphore.run(undefined, async () => {
+      if (this.openById.get(openLibrary.summary.libraryId) !== openLibrary) return null;
+      // Another consumer may have durably filled this revision while this
+      // request waited for admission. Reuse those facts before opening it again.
+      const known = openLibrary.connection.prepare(
+        `SELECT width, height FROM revision_artifacts
+          WHERE revision_id = ? AND kind = 'extracted_metadata' AND status = 'ready'
+            AND invalidated_at IS NULL AND width > 0 AND height > 0
+          ORDER BY generated_at DESC, artifact_id DESC LIMIT 1`,
+      ).get(revisionId) as ImageDimensions | undefined;
+      if (known) return known;
+      const startedAt = performance.now();
+      try {
+        return await this.imageDimensionsForAssetAsync(openLibrary, asset);
+      } finally {
+        logMediaQueueEvent('image-header-finish', {
+          libraryId: openLibrary.summary.libraryId, revisionId,
+          admissionMs: startedAt - requestedAt,
+          readMs: performance.now() - startedAt,
+        });
+      }
+    });
+    return reads.run(revisionId, () => admission.run(undefined, load));
+  }
+
   private withImageSequenceSummaries(
     openLibrary: OpenLibrary,
     assets: readonly AssetSummary[],
@@ -23523,6 +23608,7 @@ export class LibraryService {
     cursor?: MediaJobListCursor;
     limit?: number;
   } = {}): {
+    queuePaused: boolean;
     queued: number;
     running: number;
     succeeded: number;
@@ -23661,22 +23747,60 @@ export class LibraryService {
       : sliceMediaJobListPage(mapped, pageLimit);
     return {
       ...folded,
+      queuePaused: this.mediaQueueControl(openLibrary).isPaused(),
       nextCursor: paged.nextCursor,
       hasMore: paged.hasMore,
       jobs: paged.page,
     };
   }
 
+  private mediaQueueControl(openLibrary: OpenLibrary): MediaQueueControl {
+    let control = this.mediaQueueControls.get(openLibrary);
+    if (!control) {
+      control = new MediaQueueControl(
+        // Queue intent is writable truth, never a potentially stale NAS snapshot.
+        openLibrary.writeConnection,
+        openLibrary.summary.libraryId,
+        columnsFor(openLibrary.writeConnection, 'library').has('media_queue_paused')
+          && columnsFor(openLibrary.writeConnection, 'jobs').has('media_admission_origin'),
+      );
+      this.mediaQueueControls.set(openLibrary, control);
+    }
+    return control;
+  }
+
+  isMediaQueuePaused(libraryId: string): boolean {
+    return this.mediaQueueControl(this.requireOpenLibrary(libraryId)).isPaused();
+  }
+
+  hasExplicitQueuedMediaJobs(libraryId: string, jobKinds: readonly MediaJobKind[] = MEDIA_JOB_KINDS): boolean {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    if (jobKinds.length === 0 || !this.mediaQueueControl(openLibrary).supported) return false;
+    return openLibrary.writeConnection.prepare(
+      `SELECT 1 FROM jobs WHERE library_id = ? AND status = 'queued'
+        AND media_admission_origin = 'explicit'
+        AND kind IN (${jobKinds.map(() => '?').join(',')}) LIMIT 1`,
+    ).get(libraryId, ...jobKinds) !== undefined;
+  }
+
   pauseMediaJobs(libraryId: string, jobIds?: string[]): { pausedCount: number } {
-    const count = this.updateMediaJobStatus(libraryId, ['queued', 'running'], 'paused', jobIds);
-    if (count > 0) this.mediaJobSummaryCache.invalidate(libraryId);
+    if (jobIds?.length === 0) throw new TypeError('Media job ids must not be empty.');
+    const update = () => this.updateMediaJobStatus(libraryId, ['queued', 'running'], 'paused', jobIds, 'automatic');
+    const count = jobIds === undefined
+      ? this.mediaQueueControl(this.requireOpenLibrary(libraryId)).change(true, update)
+      : update();
+    this.mediaJobSummaryCache.invalidate(libraryId);
     this.abortActiveMediaJobs(libraryId, jobIds);
     return { pausedCount: count };
   }
 
   resumeMediaJobs(libraryId: string, jobIds?: string[]): { resumedCount: number } {
-    const count = this.updateMediaJobStatus(libraryId, ['paused'], 'queued', jobIds);
-    if (count > 0) this.mediaJobSummaryCache.invalidate(libraryId);
+    if (jobIds?.length === 0) throw new TypeError('Media job ids must not be empty.');
+    const control = this.mediaQueueControl(this.requireOpenLibrary(libraryId));
+    const count = jobIds === undefined
+      ? control.change(false, () => this.updateMediaJobStatus(libraryId, ['paused'], 'queued', undefined, 'automatic'))
+      : this.updateMediaJobStatus(libraryId, ['paused'], 'queued', jobIds, 'explicit');
+    this.mediaJobSummaryCache.invalidate(libraryId);
     return { resumedCount: count };
   }
 
@@ -23693,13 +23817,15 @@ export class LibraryService {
   }
 
   retryMediaJobs(libraryId: string, jobIds: string[]): { retriedCount: number } {
-    if (jobIds.length === 0) return { retriedCount: 0 };
+    if (jobIds.length === 0) throw new TypeError('Media job ids must not be empty.');
     const openLibrary = this.requireOpenLibrary(libraryId);
+    const explicitOriginSql = this.mediaQueueControl(openLibrary).supported
+      ? "media_admission_origin = 'explicit'," : '';
     const retriedCount = sqliteRunInChunks({
       connection: openLibrary.connection,
       values: jobIds,
       buildSql: (placeholders) =>
-        `UPDATE jobs SET status = 'queued', progress = 0.0, attempt_count = 0,
+        `UPDATE jobs SET status = 'queued', ${explicitOriginSql} progress = 0.0, attempt_count = 0,
                 error_code = CASE
                   WHEN error_code = '${IMPORTED_THUMBNAIL_NORMALIZATION_JOB}'
                   THEN '${IMPORTED_THUMBNAIL_NORMALIZATION_JOB}'
@@ -23726,17 +23852,22 @@ export class LibraryService {
     fromStatuses: string[],
     toStatus: 'paused' | 'queued' | 'cancelled',
     jobIds?: string[],
+    origin?: 'automatic' | 'explicit',
   ): number {
+    if (jobIds?.length === 0) throw new TypeError('Media job ids must not be empty.');
     const openLibrary = this.requireOpenLibrary(libraryId);
-    const selectedIds = jobIds && jobIds.length > 0 ? [...new Set(jobIds)] : undefined;
+    const selectedIds = jobIds === undefined ? undefined : [...new Set(jobIds)];
+    const updateOrigin = origin !== undefined && this.mediaQueueControl(openLibrary).supported;
+    const originSql = updateOrigin ? 'media_admission_origin = ?,' : '';
     if (selectedIds === undefined) {
       return openLibrary.connection.prepare(
-        `UPDATE jobs SET status = ?, progress = 0.0, updated_at = ?
+        `UPDATE jobs SET status = ?, ${originSql} progress = 0.0, updated_at = ?
           WHERE library_id = ?
             AND kind IN (${MEDIA_JOB_KINDS.map(() => '?').join(',')})
             AND status IN (${fromStatuses.map(() => '?').join(',')})`,
       ).run(
         toStatus,
+        ...(updateOrigin ? [origin] : []),
         new Date().toISOString(),
         openLibrary.summary.libraryId,
         ...MEDIA_JOB_KINDS,
@@ -23747,13 +23878,14 @@ export class LibraryService {
       connection: openLibrary.connection,
       values: selectedIds,
       buildSql: (placeholders) =>
-        `UPDATE jobs SET status = ?, progress = 0.0, updated_at = ?
+        `UPDATE jobs SET status = ?, ${originSql} progress = 0.0, updated_at = ?
           WHERE library_id = ?
             AND kind IN (${MEDIA_JOB_KINDS.map(() => '?').join(',')})
             AND status IN (${fromStatuses.map(() => '?').join(',')})
             AND job_id IN (${placeholders})`,
       bind: (chunk) => [
         toStatus,
+        ...(updateOrigin ? [origin] : []),
         new Date().toISOString(),
         openLibrary.summary.libraryId,
         ...MEDIA_JOB_KINDS,
@@ -24617,12 +24749,21 @@ export class LibraryService {
       throw new DOMException('Model thumbnail cancelled during render.', 'AbortError');
     }
     if (outcome.status === 'failed') {
+      if (outcome.errorCode === 'FBX_RESOURCE_EXHAUSTED') {
+        throw new MediaResourceExhaustedError(
+          'FBX conversion stopped because of host resource pressure.',
+          'fbx',
+          outcome.reason === undefined ? undefined : new Error(outcome.reason),
+        );
+      }
       this.writeModelThumbnailFailure(openLibrary, input.revisionId, outcome.errorCode);
       // The typed code lives on the failed artifact (the job's error_code);
       // the throw only routes into the queue's failure path.
       throw new LibraryServiceError('INTERNAL_ERROR', {
         reason: 'MEDIA_PROCESSING_FAILED',
-        ...(outcome.reason === undefined ? {} : { cause: new Error(outcome.reason) }),
+        ...(outcome.errorCode === 'FBX_LIMIT_EXCEEDED'
+          ? { cause: new MediaInputCapacityError(outcome.reason ?? outcome.errorCode) }
+          : outcome.reason === undefined ? {} : { cause: new Error(outcome.reason) }),
       });
     }
     if ('frames' in outcome) {
@@ -25274,7 +25415,14 @@ export class LibraryService {
         execution.lane,
         async () => {
           const sharp = this.options.sharpFn ?? requireSharp();
-          const probe = sharp(oldArtifactPath, {
+          // Buffer ordinary thumbnails so libvips cannot retain a Windows
+          // source handle after committing the replacement. Large legacy
+          // previews still use its file-backed path to bound memory use.
+          const oldSize = statSync(oldArtifactPath).size;
+          const source = oldSize <= NORMALIZATION_MEMORY_INPUT_MAX_BYTES
+            ? await readFileAsync(oldArtifactPath, { signal: execution.signal })
+            : oldArtifactPath;
+          const probe = sharp(source, {
             failOn: 'error',
             sequentialRead: true,
             // This is a user-provided media artifact. Do not impose a
@@ -25282,7 +25430,7 @@ export class LibraryService {
             // controlled stop condition.
             limitInputPixels: false,
           });
-          const metadata = await probe.metadata();
+          const metadata = await probe.metadata().finally(() => probe.destroy?.());
           throwIfCancelled();
           const inputWidth = metadata.width ?? 0;
           const inputHeight = metadata.height ?? 0;
@@ -25306,7 +25454,7 @@ export class LibraryService {
             // animation frames in one native buffer.
             for (let page = 0; page < pages; page += 1) {
               throwIfCancelled();
-              const pageDecoder = sharp(oldArtifactPath, {
+              const pageDecoder = sharp(source, {
                 animated: pages > 1,
                 failOn: 'error',
                 page,
@@ -25318,7 +25466,7 @@ export class LibraryService {
               if (!rawDecoder?.toBuffer) {
                 throw new Error('Sharp cannot validate imported thumbnail pixels.');
               }
-              await rawDecoder.toBuffer();
+              await rawDecoder.toBuffer().finally(() => rawDecoder.destroy?.());
               throwIfCancelled();
             }
           };
@@ -25357,8 +25505,6 @@ export class LibraryService {
           const tempRelativePath = `${newArtifactId}.tmp`;
           const outputPath = path.join(artifactsDir, relativePath);
           const tempPath = path.join(artifactsDir, tempRelativePath);
-          temporaryPath = tempPath;
-          finalPath = outputPath;
           const qualityLevels = hasAlpha ? [80, 60, 40, 25] : [72, 56, 40, 28];
           const outputEdges = [
             IMPORTED_THUMBNAIL_MAX_EDGE,
@@ -25367,12 +25513,13 @@ export class LibraryService {
             320,
             256,
           ];
-          let outputByteSize = 0;
+          let data: Buffer | undefined;
+          const byteBudget = IMPORTED_THUMBNAIL_MAX_BYTES;
           for (const outputEdge of outputEdges) {
             throwIfCancelled();
             for (const quality of qualityLevels) {
               throwIfCancelled();
-              const pipeline = sharp(oldArtifactPath, {
+              const pipeline = sharp(source, {
                 failOn: 'error',
                 sequentialRead: true,
                 limitInputPixels: false,
@@ -25385,30 +25532,20 @@ export class LibraryService {
                   fit: 'inside',
                   withoutEnlargement: true,
                 });
-              if (hasAlpha) {
-                await pipeline.webp({ quality }).toFile(tempPath);
-              } else {
-                await pipeline.jpeg({ quality }).toFile(tempPath);
-              }
+              const encoder = hasAlpha ? pipeline.webp({ quality }) : pipeline.jpeg({ quality });
+              if (!encoder.toBuffer) throw new Error('Sharp cannot encode an imported thumbnail in memory.');
+              data = await encoder.toBuffer().finally(() => encoder.destroy?.());
               throwIfCancelled();
-              outputByteSize = statSync(tempPath).size;
-              if (outputByteSize <= IMPORTED_THUMBNAIL_MAX_BYTES) break;
+              if (data.length <= byteBudget) break;
             }
-            if (outputByteSize <= IMPORTED_THUMBNAIL_MAX_BYTES) break;
+            if (data && data.length <= byteBudget) break;
           }
-          if (outputByteSize <= 0) throw new Error('Normalized imported thumbnail is empty.');
-          if (outputByteSize > IMPORTED_THUMBNAIL_MAX_BYTES) {
+          if (!data || data.length <= 0) throw new Error('Normalized imported thumbnail is empty.');
+          if (data.length > byteBudget) {
             throw new Error('Normalized imported thumbnail exceeded the byte budget.');
           }
+          const { width: outputWidth = 0, height: outputHeight = 0 } = await sharp(data).metadata();
           throwIfCancelled();
-          const outputMetadata = await sharp(tempPath, {
-            failOn: 'none',
-            sequentialRead: true,
-            limitInputPixels: false,
-          }).metadata();
-          throwIfCancelled();
-          const outputWidth = outputMetadata.width ?? 0;
-          const outputHeight = outputMetadata.height ?? 0;
           if (
             !Number.isSafeInteger(outputWidth)
             || !Number.isSafeInteger(outputHeight)
@@ -25419,17 +25556,16 @@ export class LibraryService {
           ) {
             throw new Error('Normalized imported thumbnail exceeded the edge budget.');
           }
-          const outputStat = statSync(tempPath);
-          if (outputStat.size <= 0 || outputStat.size > IMPORTED_THUMBNAIL_MAX_BYTES) {
-            throw new Error('Normalized imported thumbnail exceeded the byte budget.');
-          }
           return {
-            byteSize: outputStat.size,
+            byteSize: data.length,
+            data,
             height: outputHeight,
             mimeType: hasAlpha ? 'image/webp' : 'image/jpeg',
             outputHeight,
             outputWidth,
             relativePath,
+            outputPath,
+            tempPath,
             width: outputWidth,
           };
         },
@@ -25437,9 +25573,15 @@ export class LibraryService {
 
       if (output === null) return null;
 
-      if (!temporaryPath || !finalPath) throw new Error('Normalized thumbnail output path is missing.');
       throwIfCancelled();
-      renameSync(temporaryPath, finalPath);
+      const space = statfsSync(artifactsDir);
+      if (space.bavail * space.bsize < output.byteSize) {
+        throw new Error('Insufficient space to normalize the imported thumbnail.');
+      }
+      temporaryPath = output.tempPath;
+      writeFileSync(temporaryPath, output.data, { flag: 'wx', mode: 0o600 });
+      renameSync(temporaryPath, output.outputPath);
+      finalPath = output.outputPath;
       temporaryPath = undefined;
 
       const now = new Date().toISOString();
@@ -25500,7 +25642,7 @@ export class LibraryService {
       // Removal is best-effort: the reconciliation pass can clean an orphan
       // after a process crash between the transaction and this unlink.
       try {
-        rmSync(oldArtifactPath, { force: true });
+        removePathWithSyncRetry(oldArtifactPath, { retryLimit: 2 });
       } catch (error) {
         this.diagnose('imported-thumbnail.normalize-cleanup', error, {
           assetId: input.assetId,
@@ -25510,8 +25652,18 @@ export class LibraryService {
       }
       return { artifactId: newArtifactId };
     } catch (error) {
-      if (temporaryPath) rmSync(temporaryPath, { force: true });
-      if (finalPath && !replacementCommitted) rmSync(finalPath, { force: true });
+      for (const candidate of [temporaryPath, replacementCommitted ? undefined : finalPath]) {
+        if (!candidate) continue;
+        try {
+          removePathWithSyncRetry(candidate, { retryLimit: 2 });
+        } catch (cleanupError) {
+          this.diagnose('imported-thumbnail.normalize-cleanup', cleanupError, {
+            assetId: input.assetId,
+            revisionId: input.revisionId,
+            artifactId: newArtifactId,
+          });
+        }
+      }
       this.diagnose('imported-thumbnail.normalize', error, {
         assetId: input.assetId,
         revisionId: input.revisionId,
@@ -25936,6 +26088,7 @@ export class LibraryService {
     previewRevisionId: string | null;
   }> {
     const openLibrary = this.requireOpenLibrary(libraryId);
+    if (this.mediaQueueControl(openLibrary).isPaused()) return [];
     const imageSql = IMAGE_EXTENSIONS
       .map(() => 'LOWER(a.relative_file_path) LIKE ?')
       .join(' OR ');
@@ -26095,22 +26248,19 @@ export class LibraryService {
    * but a scroll report must not hold the single Worker event loop while it
    * opens source files on a cold disk or a network-backed linked folder.
    *
-   * The query and metadata writes remain owned by this service; only source
-   * header I/O is moved to fs/promises. Awaiting each probe lets pending
-   * search/preview messages run between files.
+   * Only source header I/O is concurrent; SQLite and artifact publication stay
+   * owned by this service. Two consumers bound queued work after cancellation,
+   * and onReady lets fast images publish without waiting for the slowest one.
+   * Relevance is checked around each claimed read, without cancelling another
+   * consumer's shared I/O when this viewport moves away.
    */
   async persistVisibleWindowImageDimensionsAsync(
     libraryId: string,
     assetIds: string[],
     signal?: AbortSignal,
-  ): Promise<Array<{
-    assetId: string;
-    width: number;
-    height: number;
-    revisionId: string;
-    previewKind: 'source' | null;
-    previewRevisionId: string | null;
-  }>> {
+    onReady?: (item: VisibleImageDimensions) => void,
+    isWanted?: (assetId: string) => boolean,
+  ): Promise<VisibleImageDimensions[]> {
     const openLibrary = this.requireOpenLibrary(libraryId);
     if (assetIds.length === 0) return [];
     const capped = assetIds.slice(0, 64);
@@ -26124,6 +26274,12 @@ export class LibraryService {
            JOIN revisions source_revision
              ON source_revision.revision_id = assets.current_revision_id
           WHERE assets.asset_id IN (${placeholders})
+            AND assets.deleted_at IS NULL
+            AND assets.availability = 'available'
+            AND (assets.location_kind != 'linked' OR EXISTS (
+              SELECT 1 FROM linked_folders root
+               WHERE root.folder_id = assets.linked_folder_id AND root.status = 'available'
+            ))
             AND NOT EXISTS (
               SELECT 1 FROM revision_artifacts ra
                WHERE ra.revision_id = assets.current_revision_id
@@ -26140,42 +26296,57 @@ export class LibraryService {
         current_revision_id: string | null;
         source_byte_size: number;
       }>;
-    const out: Array<{
-      assetId: string;
-      width: number;
-      height: number;
-      revisionId: string;
-      previewKind: 'source' | null;
-      previewRevisionId: string | null;
-    }> = [];
-    for (const row of rows) {
-      if (signal?.aborted) {
-        throw new DOMException('Visible-window probe aborted.', 'AbortError');
+    const order = new Map(capped.map((assetId, index) => [assetId, index]));
+    const candidates = rows.filter(row =>
+      row.current_revision_id !== null && LibraryService.detectMediaType(row.relative_file_path) === 'image')
+      .sort((left, right) => order.get(left.asset_id)! - order.get(right.asset_id)!);
+    const out: Array<VisibleImageDimensions | null> = new Array(candidates.length).fill(null);
+    let nextIndex = 0;
+    const run = async () => {
+      while (nextIndex < candidates.length) {
+        if (signal?.aborted) throw new DOMException('Visible-window probe aborted.', 'AbortError');
+        const index = nextIndex++;
+        const row = candidates[index]!;
+        if (isWanted?.(row.asset_id) === false) continue;
+        const revisionId = row.current_revision_id!;
+        const size = await this.imageDimensionsForRevisionAsync(openLibrary, revisionId, row);
+        if (signal?.aborted) throw new DOMException('Visible-window probe aborted.', 'AbortError');
+        if (!size || this.openById.get(libraryId) !== openLibrary
+          || isWanted?.(row.asset_id) === false) continue;
+        const current = openLibrary.connection.prepare(
+          `SELECT current_revision_id FROM assets
+            WHERE asset_id = ? AND deleted_at IS NULL AND availability = 'available'
+              AND (location_kind != 'linked' OR EXISTS (
+                SELECT 1 FROM linked_folders root
+                 WHERE root.folder_id = assets.linked_folder_id AND root.status = 'available'
+              ))`,
+        ).get(row.asset_id) as { current_revision_id: string | null } | undefined;
+        if (current?.current_revision_id !== revisionId) continue;
+        if (this.filterIgnoredAssetIds(libraryId, [row.asset_id]).length === 0) continue;
+        if (!this.persistExtractedImageDimensions(openLibrary, revisionId, size)) continue;
+        const sourceDirect = isSourceDirectPreview({
+          fileName: row.relative_file_path,
+          mediaType: 'image', byteSize: row.source_byte_size,
+          width: size.width, height: size.height,
+        });
+        const item: VisibleImageDimensions = {
+          assetId: row.asset_id, ...size, revisionId,
+          previewKind: sourceDirect ? 'source' : null,
+          previewRevisionId: sourceDirect ? revisionId : null,
+        };
+        out[index] = item;
+        onReady?.(item);
       }
-      if (!row.current_revision_id) continue;
-      const size = await this.imageDimensionsForAssetAsync(openLibrary, row);
-      if (signal?.aborted) {
-        throw new DOMException('Visible-window probe aborted.', 'AbortError');
-      }
-      if (!size) continue;
-      this.persistExtractedImageDimensions(openLibrary, row.current_revision_id, size);
-      const sourceDirect = isSourceDirectPreview({
-        fileName: row.relative_file_path,
-        mediaType: 'image',
-        byteSize: row.source_byte_size,
-        width: size.width,
-        height: size.height,
-      });
-      out.push({
-        assetId: row.asset_id,
-        width: size.width,
-        height: size.height,
-        revisionId: row.current_revision_id,
-        previewKind: sourceDirect ? 'source' : null,
-        previewRevisionId: sourceDirect ? row.current_revision_id : null,
-      });
+    };
+    const completed = await Promise.allSettled(Array.from(
+      { length: Math.min(IMAGE_HEADER_PROBE_CONCURRENCY, candidates.length) }, run,
+    ));
+    // Join both consumers before propagating failure; no callbacks remain
+    // detached after the caller observes cancellation or an error.
+    for (const result of completed) {
+      if (result.status === 'rejected') throw result.reason;
     }
-    return out;
+    return out.filter((item): item is VisibleImageDimensions => item !== null);
   }
 
   private persistSourceImageDimensionsForAssets(
@@ -27064,26 +27235,27 @@ export class LibraryService {
     openLibrary: OpenLibrary,
     revisionId: string,
     size: { width: number; height: number },
-  ): void {
+  ): boolean {
     if (
       !Number.isInteger(size.width)
       || !Number.isInteger(size.height)
       || size.width <= 0
       || size.height <= 0
     ) {
-      return;
+      return false;
     }
     const existing = openLibrary.connection
       .prepare(
-        `SELECT artifact_id
+        `SELECT artifact_id, width, height, status
            FROM revision_artifacts
           WHERE revision_id = ?
             AND kind = 'extracted_metadata'
             AND invalidated_at IS NULL`,
       )
-      .get(revisionId) as { artifact_id: string } | undefined;
-    if (existing) return;
+      .get(revisionId) as { artifact_id: string; width: number | null; height: number | null; status: string } | undefined;
+    if (existing) return existing.status === 'ready' && existing.width === size.width && existing.height === size.height;
     const artifactId = randomUUID();
+    const startedAt = performance.now();
     const artifactsDir = this.artifactsDir(openLibrary);
     mkdirSync(artifactsDir, { recursive: true });
     const artifactRelPath = `${artifactId}.json`;
@@ -27095,6 +27267,7 @@ export class LibraryService {
         'utf-8',
       );
       const outputStat = statSync(artifactAbsPath);
+      const databaseStartedAt = performance.now();
       openLibrary.connection
         .prepare(
           `INSERT INTO revision_artifacts
@@ -27112,9 +27285,16 @@ export class LibraryService {
           `image-header@${SHARP_VERSION}`,
           new Date().toISOString(),
         );
+      logMediaQueueEvent('image-dimensions-persisted', {
+        libraryId: openLibrary.summary.libraryId, revisionId,
+        fileMs: databaseStartedAt - startedAt,
+        databaseMs: performance.now() - databaseStartedAt,
+      });
+      return true;
     } catch (error) {
       rmSync(artifactAbsPath, { force: true });
       this.diagnose('image.extracted-dimensions', error, { revisionId });
+      return false;
     }
   }
 
@@ -27659,6 +27839,7 @@ export class LibraryService {
     revisionId: string,
     priority: number,
   ): void {
+    if (this.mediaQueueControl(openLibrary).isPaused()) return;
     const asset = openLibrary.connection
       .prepare(
         `SELECT location_kind, linked_folder_id, relative_file_path,
@@ -27800,6 +27981,7 @@ export class LibraryService {
   /** Requeue only due RAW failures; this path never probes the catalog cursor. */
   requeueRawImageMetadataBackfillRetries(libraryId: string, limit = 256): number {
     const openLibrary = this.requireOpenLibrary(libraryId);
+    if (this.mediaQueueControl(openLibrary).isPaused()) return 0;
     if (!columnsFor(openLibrary.connection, 'revision_artifacts').has('status')) return 0;
     const pending = Number((openLibrary.connection
       .prepare(
@@ -27889,6 +28071,7 @@ export class LibraryService {
       extensions?: 'raw' | 'embedded';
     } = {},
   ): RawMetadataBackfillProbeOutcome {
+    if (this.mediaQueueControl(openLibrary).isPaused()) return { admitted: 0, probed: 0, budgetCapped: true };
     const targeted = options.assetIds !== undefined;
     const isBackfill = options.extensions !== 'embedded' && !targeted;
     const selectedIds = [...new Set(options.assetIds ?? [])].slice(0, 500);
@@ -28205,6 +28388,7 @@ export class LibraryService {
     revisionId: string,
     priority: number,
   ): boolean {
+    if (this.mediaQueueControl(openLibrary).isPaused()) return false;
     const artifactColumns = columnsFor(openLibrary.connection, 'revision_artifacts');
     const sourceDimensionColumns = artifactColumns.has('width') && artifactColumns.has('height')
       ? `,
@@ -29500,8 +29684,9 @@ export class LibraryService {
     revisionId: string,
     execution: MediaExecutionContext,
   ): Promise<{ artifactId: string } | null> {
-    const embeddedJpeg = extractRawEmbeddedJpegThumbnail(assetPath);
-    if (!embeddedJpeg) return null;
+    const embedded = extractRawEmbeddedThumbnail(assetPath);
+    if (!embedded) return null;
+    const embeddedJpeg = embedded.jpeg;
 
     const artifactId = randomUUID();
     const artifactsDir = this.artifactsDir(openLibrary);
@@ -29515,7 +29700,7 @@ export class LibraryService {
         execution.lane,
         async () => {
           const sharp = this.options.sharpFn ?? requireSharp();
-          const pipeline = sharp(embeddedJpeg, {
+          let pipeline = sharp(embeddedJpeg, {
             failOn: 'none',
             sequentialRead: true,
             limitInputPixels: false,
@@ -29526,9 +29711,16 @@ export class LibraryService {
           if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) {
             throw new Error('Embedded RAW JPEG dimensions are invalid.');
           }
-          const swapsDimensions = metadata.orientation !== undefined
-            && metadata.orientation >= 5
-            && metadata.orientation <= 8;
+          const ownOrientation = metadata.orientation && metadata.orientation >= 1 && metadata.orientation <= 8
+            ? metadata.orientation : null;
+          const orientation = ownOrientation ?? embedded.orientation ?? 1;
+          if (ownOrientation === null && embedded.orientation !== null) {
+            pipeline.destroy?.();
+            pipeline = sharp(jpegWithFallbackOrientation(embeddedJpeg, orientation), {
+              failOn: 'none', sequentialRead: true, limitInputPixels: false,
+            });
+          }
+          const swapsDimensions = orientation >= 5 && orientation <= 8;
           const orientedWidth = swapsDimensions ? height : width;
           const orientedHeight = swapsDimensions ? width : height;
           await pipeline
@@ -29542,7 +29734,7 @@ export class LibraryService {
             })
             .jpeg({ quality: 72 })
             .toFile(artifactAbsPath);
-          return { width: orientedWidth, height: orientedHeight };
+          return { width: orientedWidth, height: orientedHeight, orientation };
         },
       );
       if (execution.signal?.aborted) {
@@ -29555,12 +29747,22 @@ export class LibraryService {
           assetPath,
           this.options.rawImageMetadataParser,
         );
-      const sourceWidth = rawMetadata?.width
-        ?? execution.sourceWidth
-        ?? embeddedDimensions.width;
-      const sourceHeight = rawMetadata?.height
-        ?? execution.sourceHeight
-        ?? embeddedDimensions.height;
+      const sensor = resolvedExtractedPixelSize(rawMetadata ?? {}, {
+        width: execution.sourceWidth, height: execution.sourceHeight,
+      });
+      const sourceOrientation = embedded.orientation ?? embeddedDimensions.orientation;
+      // Fresh camera metadata describes sensor pixels. Cached source sizes may
+      // already be oriented by an earlier generation, so align those to the
+      // decoded preview instead of blindly swapping them a second time.
+      const freshSensor = resolvedExtractedPixelSize(rawMetadata ?? {}, null);
+      const sourceRotated = freshSensor.width !== null
+        ? sourceOrientation >= 5 && sourceOrientation <= 8
+        : sensor.width !== null && sensor.height !== null
+          && (sensor.width > sensor.height) !== (embeddedDimensions.width > embeddedDimensions.height);
+      const sourceWidth = sensor.width === null ? embeddedDimensions.width
+        : sourceRotated ? sensor.height! : sensor.width;
+      const sourceHeight = sensor.height === null ? embeddedDimensions.height
+        : sourceRotated ? sensor.width! : sensor.height;
       const outputStat = statSync(artifactAbsPath);
       openLibrary.connection
         .prepare(
@@ -29867,7 +30069,10 @@ export class LibraryService {
       const headerSize = hasKnownDimensions
         ? { width: knownDimensions!.width!, height: knownDimensions!.height! }
         : await readImageDimensions(assetPath);
-      const pixelSize = resolvedExtractedPixelSize(metadata, headerSize);
+      const sensorSize = resolvedExtractedPixelSize(metadata, headerSize);
+      const hasSensorMetadata = resolvedExtractedPixelSize(metadata, null).width !== null;
+      const pixelSize = hasSensorMetadata && rawOrientationSwapsDimensions(metadata.orientation)
+        ? { width: sensorSize.height, height: sensorSize.width } : sensorSize;
       const stored = { ...metadata, width: pixelSize.width, height: pixelSize.height };
       writeFileSync(artifactAbsPath, JSON.stringify(stored, null, 2), 'utf-8');
       const outputStat = statSync(artifactAbsPath);
@@ -31251,12 +31456,20 @@ export class LibraryService {
              FROM jobs
             WHERE asset_id = ?
               AND kind = ?
+              AND revision_id = ?
               AND status IN ('queued', 'running', 'paused')
             ORDER BY updated_at DESC
             LIMIT 1`,
         )
-        .get(input.assetId, jobKind) as { job_id: string } | undefined;
+        .get(input.assetId, jobKind, asset.current_revision_id) as { job_id: string } | undefined;
       if (active) {
+        if (this.mediaQueueControl(openLibrary).supported) {
+          openLibrary.connection.prepare(
+            `UPDATE jobs SET media_admission_origin = 'explicit',
+               status = CASE WHEN status = 'paused' THEN 'queued' ELSE status END
+              WHERE job_id = ?`,
+          ).run(active.job_id);
+        }
         if (explicitProxyFallback) {
           openLibrary.connection.prepare(
             'UPDATE jobs SET priority = MAX(priority, 300), error_code = ?, updated_at = ? WHERE job_id = ?',
@@ -31290,8 +31503,8 @@ export class LibraryService {
         .prepare(
           `INSERT INTO jobs
              (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
-              attempt_count, error_code, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, 'queued', 300, 0.0, 0, ?, ?, ?)`,
+              attempt_count, error_code, created_at, updated_at${this.mediaQueueControl(openLibrary).supported ? ', media_admission_origin' : ''})
+           VALUES (?, ?, ?, ?, ?, 'queued', 300, 0.0, 0, ?, ?, ?${this.mediaQueueControl(openLibrary).supported ? ", 'explicit'" : ''})`,
         )
         .run(
           jobId,
@@ -31771,6 +31984,7 @@ export class LibraryService {
     openLibrary: OpenLibrary,
     options: { assetIds?: string[]; limit?: number; priority?: number },
   ): number {
+    if (this.mediaQueueControl(openLibrary).isPaused()) return 0;
     const selectedIds = [...new Set(options.assetIds ?? [])].slice(0, 500);
     if (options.assetIds && selectedIds.length === 0) return 0;
     const selectedSql = selectedIds.length > 0
@@ -32087,9 +32301,9 @@ export class LibraryService {
         const entry = await directory.read();
         if (entry === null) break;
         enumerated += 1;
-        // Normalization writes `<uuid>.tmp` before its atomic final rename;
-        // leave temporary files to the existing job cleanup path.
-        if (entry.name.startsWith('.') || entry.name.endsWith('.tmp')) continue;
+        // Only normalization owns this exact legacy staging name. Other
+        // temporary names may belong to operation recovery or another writer.
+        if (entry.name.startsWith('.') || (entry.name.endsWith('.tmp') && !NORMALIZATION_TEMP_NAME.test(entry.name))) continue;
         const candidatePath = path.join(artifactsRoot, entry.name);
         // Serpent-26f22b: consult the reference set *before* the filesystem.
         // This directory holds tens of thousands of artifacts and nearly every
@@ -33310,6 +33524,7 @@ export class LibraryService {
       assetIds?: string[];
       limit?: number;
       priority?: number;
+      origin?: 'automatic' | 'explicit';
       repairFailed?: boolean;
       /** Serpent-5xbg: also re-open retryable failed artifacts (throttled). */
       retryFailed?: boolean;
@@ -33318,6 +33533,11 @@ export class LibraryService {
     } = {},
   ): number {
     const openLibrary = this.requireOpenLibrary(libraryId);
+    const control = this.mediaQueueControl(openLibrary);
+    if (options.origin === 'explicit' && !options.assetIds?.length) {
+      throw new TypeError('Explicit media admission requires asset ids.');
+    }
+    if (control.isPaused() && options.origin !== 'explicit') return 0;
     // Serpent-verg.2 — lenient open (0031 §1): libraries predating
     // revision_artifacts.status have no artifact state to queue against;
     // thumbnail generation degrades to off instead of failing to open.
@@ -33331,6 +33551,15 @@ export class LibraryService {
       ? undefined
       : Math.max(0, Math.min(500, Math.trunc(options.limit)));
     if (limit === 0 || (options.assetIds && selectedIds.length === 0)) return 0;
+    const promoted = options.origin === 'explicit' && control.supported
+      ? openLibrary.connection.prepare(
+        `UPDATE jobs SET status = 'queued', media_admission_origin = 'explicit', updated_at = ?
+          WHERE library_id = ? AND asset_id IN (${selectedIds.map(() => '?').join(',')})
+            AND kind IN ('generate_thumbnail', 'generate_video_poster')
+            AND status IN ('queued', 'paused')
+            AND revision_id = (SELECT current_revision_id FROM assets
+              WHERE assets.asset_id = jobs.asset_id)`,
+      ).run(new Date().toISOString(), libraryId, ...selectedIds).changes : 0;
     if (options.retryFailed) {
       // Serpent-5xbg: failures (transient decode errors, killed processes,
       // cancelled imports) must not permanently block regeneration. Invalidate
@@ -33394,7 +33623,7 @@ export class LibraryService {
         ...(options.assetIds === undefined ? {} : { assetIds: selectedIds }),
         limit,
       });
-    let enqueued = repairEnqueued + legacyPathRepairEnqueued + legacyRawRepairEnqueued + importedNormalizationEnqueued;
+    let enqueued = promoted + repairEnqueued + legacyPathRepairEnqueued + legacyRawRepairEnqueued + importedNormalizationEnqueued;
     // Model extensions join the queue (slice E, Serpent-hnmg): the offscreen
     // GPU renderer in Main produces model thumbnails, stored as the standard
     // `thumbnail` artifact. The dedupe below (terminal artifact / active job)
@@ -33759,8 +33988,8 @@ export class LibraryService {
     const insert = openLibrary.connection.prepare(
       `INSERT OR IGNORE INTO jobs
          (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
-          attempt_count, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', ?, 0.0, 0, ?, ?)`,
+          attempt_count, created_at, updated_at${control.supported ? ', media_admission_origin' : ''})
+       VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', ?, 0.0, 0, ?, ?${control.supported ? ', ?' : ''})`,
     );
 
     for (const row of rows) {
@@ -33792,6 +34021,7 @@ export class LibraryService {
       const inserted = insert.run(
         randomUUID(), libraryId, row.asset_id, row.current_revision_id,
         options.priority ?? 0, now, now,
+        ...(control.supported ? [options.origin ?? 'automatic'] : []),
       );
       enqueued += inserted.changes;
     }
@@ -33965,12 +34195,17 @@ export class LibraryService {
       jobKinds?: readonly MediaJobKind[];
       /** Current viewport image cards may use the bounded interactive lane. */
       interactive?: boolean;
+      /** An explicit pump consumes only durable grants, never ordinary backlog. */
+      origin?: 'automatic' | 'explicit';
       /**
        * Mutable claim scope updated by the Worker when a newer visible window
-       * arrives while this queue is awaiting native media work. Undefined
-       * keeps the original queue-wide scope; an array limits future claims.
+       * arrives while this queue is awaiting native media work. Array order
+       * carries the latest viewport rank, even when its members do not change.
+       * Undefined keeps the original queue-wide scope.
        */
       claimAssetIdsRef?: { current: readonly string[] | undefined };
+      /** Reuse free automatic queue workers for a newer visible window. */
+      wakeRef?: MediaQueueWakeRef;
       /**
        * Restrict a visible-window pump to the latest viewport asset ids.
        * Background pumps omit this so overlay `IN (...)` can fall back to the
@@ -34025,8 +34260,16 @@ export class LibraryService {
       this.modelAiViewsRenderer = options.modelAiViewsRenderer;
     }
     const openLibrary = this.requireOpenLibrary(libraryId);
-    this.cancelQueuedHiddenSequenceMemberJobs(openLibrary);
-    this.repairUndisplayablePngThumbnails(openLibrary);
+    const mediaControl = this.mediaQueueControl(openLibrary);
+    if (!mediaControl.isPaused()) {
+      this.cancelQueuedHiddenSequenceMemberJobs(openLibrary);
+      this.repairUndisplayablePngThumbnails(openLibrary);
+    }
+    const pauseClaimSql = mediaControl.supported
+      ? `AND (jobs.media_admission_origin = 'explicit'
+          OR (SELECT media_queue_paused FROM library WHERE library_id = ?) = 0)` : '';
+    const explicitClaimSql = mediaControl.supported && options.origin === 'explicit'
+      ? "AND jobs.media_admission_origin = 'explicit'" : '';
     const jobKinds = options.jobKinds ?? MEDIA_JOB_KINDS;
     if (jobKinds.length === 0) return 0;
     if (options.signal?.aborted) return 0;
@@ -34338,26 +34581,23 @@ export class LibraryService {
     // it first consumes one of the interactive workers without improving the
     // image-card gate. Keep image jobs ahead of other primary media only for
     // the visible wave; background/import ordering remains unchanged.
-    const interactiveImageFirstOrder = options.interactive
-      ? `CASE WHEN jobs.kind = 'generate_thumbnail' AND EXISTS (
+    let interactiveMode = options.interactive === true;
+    const interactiveImageFirstOrder = `CASE WHEN jobs.kind = 'generate_thumbnail' AND EXISTS (
              SELECT 1
                FROM assets visible_asset
               WHERE visible_asset.asset_id = jobs.asset_id
                 AND (${IMAGE_EXTENSIONS
                   .map((extension) => `LOWER(visible_asset.relative_file_path) LIKE '%${extension}'`)
                   .join(' OR ')})
-           ) THEN 1 ELSE 0 END DESC, `
-      : '';
+           ) THEN 1 ELSE 0 END DESC, `;
     // Imported previews are already ready copies. Their low-priority
     // normalization must never consume a visible-wave slot just because the
     // visible asset has no missing primary job; leave it to the background
     // queue after the interaction window yields.
-    const interactiveImportedNormalizationGuard = options.interactive
-      ? `AND NOT (
+    const interactiveImportedNormalizationGuard = `AND NOT (
           jobs.kind = 'generate_thumbnail'
           AND COALESCE(jobs.error_code, '') = '${IMPORTED_THUMBNAIL_NORMALIZATION_JOB}'
-        )`
-      : '';
+        )`;
     const hiddenSequenceClaimGuard = hasTable(openLibrary.connection, 'asset_sequence_frames')
       ? `AND NOT EXISTS (
             SELECT 1
@@ -34374,9 +34614,11 @@ export class LibraryService {
         WHERE library_id = ?
           AND kind IN (${jobKinds.map(() => '?').join(',')})
           AND status = 'queued'
+          ${pauseClaimSql}
+          ${explicitClaimSql}
           ${buildAssetClause(claimAssetIds)}
           ${primaryPreviewClaimGuard}
-          ${interactiveImportedNormalizationGuard}
+          ${interactiveMode ? interactiveImportedNormalizationGuard : ''}
           ${hiddenSequenceClaimGuard}
           ${deferSecondaryAfterPrimarySql}
           AND (
@@ -34384,14 +34626,14 @@ export class LibraryService {
             OR error_code NOT IN ('JOB_LEASE_LOST', '${MEDIA_RESOURCE_EXHAUSTED_ERROR_CODE}')
             OR updated_at <= ?
           )
-        ORDER BY ${interactiveImageFirstOrder}${rankOrder.sql}priority DESC, created_at
+        ORDER BY ${interactiveMode ? interactiveImageFirstOrder : ''}${rankOrder.sql}priority DESC, created_at
         LIMIT 1`,
     );
     };
     const normalizedClaimAssetIds = (assetIds: readonly string[] | undefined): string[] | undefined =>
       assetIds === undefined ? undefined : uniqueAssetIdsInOrder(assetIds, VIEWPORT_CLAIM_ID_LIMIT);
     const claimAssetIdsKey = (assetIds: readonly string[] | undefined): string | undefined =>
-      assetIds === undefined ? undefined : [...assetIds].toSorted().join('\u0000');
+      assetIds === undefined ? undefined : assetIds.join('\u0000');
     let nextJobAssetIds: readonly string[] | undefined = pumpAssetIds;
     let nextJobAssetKey = claimAssetIdsKey(nextJobAssetIds);
     let nextJob = nextJobQuery(nextJobAssetIds);
@@ -34400,6 +34642,7 @@ export class LibraryService {
       return nextJob.get(
         libraryId,
         ...jobKinds,
+        ...(mediaControl.supported ? [libraryId] : []),
         ...(nextJobAssetIds ?? []),
         ...(deferSecondaryAfterPrimarySql === '' ? [] : [waveStartedAtIso]),
         new Date(Date.now() - MEDIA_RESOURCE_RETRY_DELAY_MS).toISOString(),
@@ -34407,9 +34650,14 @@ export class LibraryService {
       );
     };
     const adoptClaimAssetIds = (assetIds: readonly string[] | undefined): void => {
+      // IN placeholders and CASE rank slots depend only on the count. A new
+      // viewport can reorder the same candidates; refresh its parameters
+      // without recompiling an identical statement on each rank change.
+      if (assetIds?.length !== nextJobAssetIds?.length) {
+        nextJob = nextJobQuery(assetIds);
+      }
       nextJobAssetIds = assetIds;
       nextJobAssetKey = claimAssetIdsKey(assetIds);
-      nextJob = nextJobQuery(nextJobAssetIds);
     };
     const claimNextJob = (): unknown => {
       const requestedAssetIds = options.claimAssetIdsRef?.current ?? pumpAssetIds;
@@ -34422,7 +34670,7 @@ export class LibraryService {
       if (
         scoped !== undefined
         || !shouldFallbackViewportClaimToPersistentQueue({
-          interactive: options.interactive === true,
+          interactive: interactiveMode,
           restrictedByAssetIds: options.assetIds !== undefined,
           scopedClaimIds: nextJobAssetIds,
         })
@@ -34529,6 +34777,8 @@ export class LibraryService {
         )
         .run(job.attempt_count + 1, now, job.job_id);
       if (claimed.changes === 0) continue;
+      // A later visible wake must not change the lane of an already claimed job.
+      const interactiveClaim = interactiveMode;
       claimedJobIds.add(job.job_id);
       const jobStartedAt = performance.now();
       logMediaQueueEvent('job-start', {
@@ -34837,28 +35087,38 @@ export class LibraryService {
               byteSize: claimAsset.source_byte_size ?? 0,
             })) {
             try {
-              probedSourceSize = await readImageDimensions(this.resolveAssetPath(libraryId, job.asset_id));
+              probedSourceSize = await this.imageDimensionsForRevisionAsync(openLibrary, job.revision_id, claimAsset);
             } catch {
               // Preserve the decoder's existing missing/corrupt-source path.
             }
-            if (controller.signal.aborted || this.mediaJobState(libraryId, job.job_id) !== 'running') {
+            if (controller.signal.aborted || this.openById.get(libraryId) !== openLibrary
+              || this.mediaJobState(libraryId, job.job_id) !== 'running') {
+              processed += 1;
+              continue;
+            }
+            const latest = openLibrary.connection.prepare(
+              `SELECT a.current_revision_id, a.availability, a.deleted_at,
+                      CASE WHEN a.location_kind = 'linked' THEN root.status ELSE 'available' END AS root_status
+                 FROM assets a LEFT JOIN linked_folders root ON root.folder_id = a.linked_folder_id
+                WHERE a.asset_id = ?`,
+            ).get(job.asset_id) as {
+              current_revision_id: string | null; availability: string; deleted_at: string | null; root_status: string | null;
+            } | undefined;
+            const lateRejection = latest?.current_revision_id !== job.revision_id ? 'STALE_REVISION'
+              : latest.deleted_at !== null ? 'ASSET_DELETED'
+                : latest.availability !== 'available' || latest.root_status !== 'available' ? 'SOURCE_NOT_FOUND'
+                  : this.filterIgnoredAssetIds(libraryId, [job.asset_id]).length === 0 ? 'ASSET_IGNORED' : null;
+            if (lateRejection) {
+              openLibrary.connection.prepare(
+                "UPDATE jobs SET status = 'cancelled', error_code = ?, updated_at = ? WHERE job_id = ? AND status = 'running'",
+              ).run(lateRejection, new Date().toISOString(), job.job_id);
               processed += 1;
               continue;
             }
             if (probedSourceSize) {
-              const latest = openLibrary.connection.prepare(
-                'SELECT current_revision_id FROM assets WHERE asset_id = ?',
-              ).get(job.asset_id) as { current_revision_id: string | null } | undefined;
-              if (latest?.current_revision_id !== job.revision_id) {
-                openLibrary.connection.prepare(
-                  "UPDATE jobs SET status = 'cancelled', error_code = 'STALE_REVISION', updated_at = ? WHERE job_id = ? AND status = 'running'",
-                ).run(new Date().toISOString(), job.job_id);
-                processed += 1;
-                continue;
-              }
               jobLease.assertCurrent();
-              this.persistExtractedImageDimensions(openLibrary, job.revision_id, probedSourceSize);
-              if (isSourceDirectPreview({
+              const dimensionsPersisted = this.persistExtractedImageDimensions(openLibrary, job.revision_id, probedSourceSize);
+              if (dimensionsPersisted && isSourceDirectPreview({
                 fileName: claimAsset.relative_file_path,
                 mediaType: LibraryService.toSummaryMediaType(claimMediaType),
                 byteSize: claimAsset.source_byte_size ?? 0,
@@ -34937,7 +35197,7 @@ export class LibraryService {
                     // Only image jobs use the interactive image lane. The
                     // lane is selected by user intent, never by source size,
                     // dimensions, or detected machine capacity.
-                    lane: options.interactive
+                    lane: interactiveClaim
                       && claimMediaType === 'image'
                       ? 'interactive'
                       : 'background',
@@ -35352,7 +35612,6 @@ export class LibraryService {
         settleActiveJob();
       }
       processed += 1;
-      if (processed >= maxJobs) return;
       }
       } finally {
         // Flush this worker's completed jobs before the wave returns so
@@ -35360,9 +35619,31 @@ export class LibraryService {
         flushCompletedJobs();
       }
     };
+    let acceptingWakes = true;
+    const pool = new WakeableWorkerPool({
+      maxWorkers: workerMediaInteractiveDecodeConcurrency(),
+      runWorker,
+      onError: () => { budget = 0; acceptingWakes = false; },
+    });
+    const wake = (requestedMaxJobs: number): boolean => {
+      if (!acceptingWakes || options.signal?.aborted || options.origin === 'explicit'
+        || mediaControl.isPaused() || mediaResourceGuard.isCoolingDown()
+        || !Number.isSafeInteger(requestedMaxJobs) || requestedMaxJobs < 1) return false;
+      // Repeated viewport reports replenish a bounded remaining budget rather
+      // than adding one wave for every report. Native decoder limits still apply.
+      budget = Math.max(budget, Math.min(100, requestedMaxJobs));
+      if (!interactiveMode) {
+        interactiveMode = true;
+        nextJob = nextJobQuery(nextJobAssetIds);
+      }
+      return pool.wake(workerMediaInteractiveDecodeConcurrency());
+    };
+    if (options.wakeRef && options.origin !== 'explicit') options.wakeRef.current = wake;
     try {
-      await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+      await pool.start(workerCount);
     } finally {
+      acceptingWakes = false;
+      if (options.wakeRef?.current === wake) delete options.wakeRef.current;
       options.signal?.removeEventListener('abort', pauseClaimedMediaJobs);
     }
 
@@ -49560,17 +49841,16 @@ export class LibraryService {
       throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'PERMISSION_DENIED' });
     }
 
+    const extensionStagingRoot = this.options.extensionStagingRoot ?? tmpdir();
     const downloadDirectory = path.join(
-      tmpdir(),
+      extensionStagingRoot,
       `serpent-extension-download-${randomUUID()}`,
     );
-    const downloadedFilePath = path.join(downloadDirectory, 'download');
+    let createdDownloadDirectory = false;
     let downloadTimer: ReturnType<typeof setTimeout> | undefined;
     let response: Awaited<ReturnType<PinnedHttpTransport>> | undefined;
     let importDelegated = false;
     try {
-      mkdirSync(downloadDirectory, { recursive: true });
-
       // Download the media URL. The deadline covers DNS, redirects, headers,
       // and the complete response body rather than only the initial fetch.
       const controller = new AbortController();
@@ -49635,14 +49915,12 @@ export class LibraryService {
       }
 
       const declaredLengthText = response.headers.get('content-length');
-      if (declaredLengthText !== null) {
-        const declaredLength = Number(declaredLengthText);
-        if (!Number.isSafeInteger(declaredLength) || declaredLength < 0 || declaredLength > MAX_DOWNLOAD_BYTES) {
-          throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
-            reason: 'UNSUPPORTED_FILE_ENTRY',
-            cause: new Error('Invalid or oversized Content-Length.'),
-          });
-        }
+      const declaredLength = declaredLengthText === null ? MAX_DOWNLOAD_BYTES : Number(declaredLengthText);
+      if (!Number.isSafeInteger(declaredLength) || declaredLength < 0 || declaredLength > MAX_DOWNLOAD_BYTES) {
+        throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+          reason: 'UNSUPPORTED_FILE_ENTRY',
+          cause: new Error('Invalid or oversized Content-Length.'),
+        });
       }
 
       // Determine filename.
@@ -49672,11 +49950,17 @@ export class LibraryService {
       }
 
       // Stream directly to the stage file with a running size limit.
-      const stageFilePath = downloadedFilePath;
       if (!response.body) {
         throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'IO_ERROR' });
       }
-      const writer = createWriteStream(stageFilePath, { flags: 'wx' });
+      assertNameWithinFsLimit(filename);
+      mkdirSync(extensionStagingRoot, { recursive: true, mode: 0o700 });
+      const available = statfsSync(extensionStagingRoot);
+      if (available.bavail * available.bsize < declaredLength) throw new LibraryServiceError('DISK_FULL');
+      mkdirSync(downloadDirectory, { mode: 0o700 });
+      createdDownloadDirectory = true;
+      const stageFilePath = path.join(downloadDirectory, filename);
+      const writer = createWriteStream(stageFilePath, { flags: 'wx', mode: 0o600 });
       let writerFailure: Error | undefined;
       writer.on('error', (error) => { writerFailure = error; });
       const waitForWriter = (event: 'drain' | 'finish'): Promise<void> =>
@@ -49731,7 +50015,12 @@ export class LibraryService {
         if (writerFailure) throw writerFailure;
       } finally {
         try { response.cancel(); } catch { /* Already released. */ }
-        if (!writer.closed) writer.destroy();
+        if (!writer.closed) {
+          await new Promise<void>((resolve) => {
+            writer.once('close', resolve);
+            writer.destroy();
+          });
+        }
         if (downloadTimer) clearTimeout(downloadTimer);
         downloadTimer = undefined;
       }
@@ -49764,7 +50053,13 @@ export class LibraryService {
       }
       throw serviceError(error, 'INVALID_IMPORT_SOURCE');
     } finally {
-      rmSync(downloadDirectory, { recursive: true, force: true });
+      if (createdDownloadDirectory) {
+        try {
+          removePathWithSyncRetry(downloadDirectory);
+        } catch (error) {
+          this.diagnose('extension-save.download-cleanup', error, { libraryId: input.libraryId });
+        }
+      }
     }
   }
 
@@ -49862,11 +50157,18 @@ export class LibraryService {
     // itself); assert before copying so both platforms surface the same
     // PATH_LIMIT_EXCEEDED instead of an OS error misread as a missing source.
     assertNameWithinFsLimit(filename);
-    const sourceDirectory = path.join(tmpdir(), `serpent-extension-import-${randomUUID()}`);
-    const sourcePath = path.join(sourceDirectory, filename);
+    const extensionStagingRoot = this.options.extensionStagingRoot ?? tmpdir();
+    let sourceDirectory: string | undefined;
     try {
-      mkdirSync(sourceDirectory, { recursive: true });
-      copyFileSync(stagedAbsolute, sourcePath);
+      let sourcePath = stagedAbsolute;
+      if (path.basename(stagedAbsolute) !== filename) {
+        mkdirSync(extensionStagingRoot, { recursive: true, mode: 0o700 });
+        const available = statfsSync(extensionStagingRoot);
+        if (available.bavail * available.bsize < stagedStat.size) throw new LibraryServiceError('DISK_FULL');
+        sourceDirectory = mkdtempSync(path.join(extensionStagingRoot, 'serpent-extension-import-'));
+        sourcePath = path.join(sourceDirectory, filename);
+        copyFileExclusive(stagedAbsolute, sourcePath);
+      }
 
       const prepared = this.prepareOrExecuteImport({
         libraryId: input.libraryId,
@@ -49905,7 +50207,13 @@ export class LibraryService {
       });
       throw serviceError(error, 'INVALID_IMPORT_SOURCE');
     } finally {
-      rmSync(sourceDirectory, { recursive: true, force: true });
+      if (sourceDirectory !== undefined) {
+        try {
+          removePathWithSyncRetry(sourceDirectory);
+        } catch (error) {
+          this.diagnose('extension-save.import-cleanup', error, { libraryId: input.libraryId });
+        }
+      }
     }
   }
 

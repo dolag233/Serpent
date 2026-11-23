@@ -12,6 +12,7 @@ export type MediaGenerationHooks = {
     libraryId: string,
     scene: 'mutation',
     assetIds: string[],
+    options?: { explicit?: boolean },
   ) => void;
   publishThumbnailReady: (event: {
     type: 'asset.thumbnail.ready';
@@ -50,6 +51,7 @@ export async function executeMediaGenerationWorkerCommand(
           request.command.libraryId,
           'mutation',
           [request.command.assetId],
+          { explicit: true },
         );
       }
       if (generated) {
@@ -78,7 +80,7 @@ export async function executeMediaGenerationWorkerCommand(
         // active, but the proxy gets its own bounded FFmpeg lane immediately.
         hooks.scheduleSecondaryMediaQueue(libraryId, { assetId, urgent: true });
       } else {
-        hooks.scheduleThumbnails(libraryId, 'mutation', [assetId]);
+        hooks.scheduleThumbnails(libraryId, 'mutation', [assetId], { explicit: true });
       }
       return {
         ok: true,

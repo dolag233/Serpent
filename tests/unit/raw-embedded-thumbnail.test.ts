@@ -6,10 +6,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   extractRawEmbeddedJpegThumbnail,
+  extractRawEmbeddedThumbnail,
   RAW_EMBEDDED_THUMBNAIL_MAX_BYTES,
 } from '../../src/worker/raw-embedded-thumbnail';
 import {
   extractRawImageMetadataDetailed,
+  rawOrientationSwapsDimensions,
 } from '../../src/worker/raw-image-metadata';
 
 const temporaryRoots: string[] = [];
@@ -24,11 +26,12 @@ function buildTiffRaw(
   jpeg: Buffer,
   byteOrder: 'little' | 'big',
   prefix = Buffer.alloc(0),
+  orientation?: number,
 ): Buffer {
   const littleEndian = byteOrder === 'little';
   const tiffBase = prefix.length;
   const firstIfdOffset = 8;
-  const secondIfdOffset = 16;
+  const secondIfdOffset = orientation === undefined ? 16 : 32;
   const secondIfdLength = 2 + 2 * 12 + 4;
   const jpegOffset = secondIfdOffset + secondIfdLength;
   const output = Buffer.alloc(jpegOffset + jpeg.length + prefix.length);
@@ -65,6 +68,16 @@ function buildTiffRaw(
     output.writeUInt32BE(jpeg.length, tiffBase + secondIfdOffset + 22);
     output.writeUInt32BE(0, tiffBase + secondIfdOffset + 26);
   }
+  if (orientation !== undefined) {
+    const write16 = (v: number, offset: number) => littleEndian ? output.writeUInt16LE(v, offset) : output.writeUInt16BE(v, offset);
+    const write32 = (v: number, offset: number) => littleEndian ? output.writeUInt32LE(v, offset) : output.writeUInt32BE(v, offset);
+    write16(1, tiffBase + firstIfdOffset);
+    write16(0x0112, tiffBase + firstIfdOffset + 2);
+    write16(3, tiffBase + firstIfdOffset + 4);
+    write32(1, tiffBase + firstIfdOffset + 6);
+    write16(orientation, tiffBase + firstIfdOffset + 10);
+    write32(secondIfdOffset, tiffBase + firstIfdOffset + 14);
+  }
   jpeg.copy(output, tiffBase + jpegOffset);
   return output;
 }
@@ -80,6 +93,20 @@ function temporaryFile(bytes: Buffer): string {
 }
 
 describe('extractRawEmbeddedJpegThumbnail', () => {
+  it('recognizes numeric and translated camera orientation without treating 180 degrees as portrait', () => {
+    for (const value of [5, 6, 7, 8, '6', 'Rotate 90 CW', 'Rotate 270 CW', 'Mirror horizontal and rotate 270 CW']) {
+      expect(rawOrientationSwapsDimensions(value)).toBe(true);
+    }
+    for (const value of [null, 0, 1, 2, 3, 4, 'Rotate 180', 'Horizontal (normal)', '90', '9']) {
+      expect(rawOrientationSwapsDimensions(value)).toBe(false);
+    }
+  });
+  it.each(['little', 'big'] as const)('retains outer orientation in %s endian containers', order => {
+    const file = temporaryFile(buildTiffRaw(JPEG, order, Buffer.alloc(0), 6));
+    expect(extractRawEmbeddedThumbnail(file)).toEqual({ jpeg: JPEG, orientation: 6 });
+    const invalid = temporaryFile(buildTiffRaw(JPEG, order, Buffer.alloc(0), 9));
+    expect(extractRawEmbeddedThumbnail(invalid)).toEqual({ jpeg: JPEG, orientation: null });
+  });
   it('reads the standard IFD1 JPEG preview in little-endian RAW/TIFF files', () => {
     const filePath = temporaryFile(buildTiffRaw(JPEG, 'little'));
 

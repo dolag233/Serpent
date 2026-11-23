@@ -75,13 +75,31 @@ test("imports a real RAW file, renders its metadata, and opens its preview", asy
       )
       .toBe(true);
 
+    if (process.env.SERPENT_REAL_RAW_EXPECT_PORTRAIT === "1") {
+      await expect.poll(() => assetCard.locator("img").evaluate(image =>
+        image instanceof HTMLImageElement && image.complete
+        && image.naturalHeight > image.naturalWidth,
+      )).toBe(true);
+    }
+
     await assetCard.click();
     const details = window.getByLabel("技术元数据");
     await expect(details).toBeVisible({ timeout: 30_000 });
     await expect(details).toContainText("ILCE-7RM3");
     await expect(details).toContainText("SONY");
-    await expect(details).toContainText("ISO-800");
-    await expect(window.getByRole("textbox", { name: "作者" })).not.toHaveValue("");
+    await expect(details).toContainText(`ISO-${process.env.SERPENT_REAL_RAW_EXPECT_ISO ?? "800"}`);
+    const author = window.getByRole("textbox", { name: "作者" });
+    if (process.env.SERPENT_REAL_RAW_EXPECT_AUTHOR !== undefined) {
+      await expect(author).toHaveValue(process.env.SERPENT_REAL_RAW_EXPECT_AUTHOR);
+    } else {
+      await expect(author).not.toHaveValue("");
+    }
+    if (process.env.SERPENT_REAL_RAW_EXPECT_PORTRAIT === "1") {
+      await expect.poll(async () => {
+        const size = (await details.innerText()).match(/分辨率\s*(\d+)\s*×\s*(\d+)/);
+        return size !== null && Number(size[1]) < Number(size[2]);
+      }).toBe(true);
+    }
 
     await window.keyboard.press("Space");
     const viewer = window.getByRole("region", {

@@ -52,6 +52,8 @@ import {
 } from "./asset-card-hover-preview";
 import { shouldShowThumbnailFailureBadge } from "./thumbnail-failure-badge";
 import { viewportPriorityReportKey } from "../shared/viewport-priority";
+import { createCoalescedFrame, VIEWPORT_REPORT_INTERVAL_MS } from "./coalesced-frame";
+import { CANVAS_LAYOUT_COMMITTED_EVENT } from "./canvas-layout-commit-signal";
 import {
   collectIntersectingCanvasAssetIds,
   composeBrowseViewportPriorityBands,
@@ -73,6 +75,8 @@ import { ConvertLinkedDialog } from "./ConvertLinkedDialog";
 import { LinkedRulesDialog } from "./LinkedRulesDialog";
 import { TagManagementWorkspace } from "./TagManagementWorkspace";
 import { useFolderDeleteActions } from "./use-folder-delete-actions";
+import { FolderMutationProjectionGate } from "./folder-mutation-projection";
+import { useFolderMutationBridge } from "./use-folder-mutation-bridge";
 import { canDeleteAssetFromDiskWithShortcut } from "./browse-key-command";
 import { filteredFolderBrowseEntries } from "./filtered-folder-visibility";
 import { useFilteredFolderCounts } from "./use-filtered-folder-counts";
@@ -100,10 +104,8 @@ import type { ShortcutEventLike } from "../shared/shortcut-resolution";
 import { ExportDialog } from "./ExportDialog";
 import { ImportDialog } from "./ImportDialog";
 import { ImportLibraryChooserDialog, OpenLibraryChooserDialog } from "./ImportLibraryChooserDialog";
-import {
-  NavigationSidebar,
-  type FolderTreeExpandActions,
-} from "./NavigationSidebar";
+import type { FolderTreeExpandActions } from "./NavigationSidebar";
+import { NavigationSidebarBoundary } from "./navigation-sidebar-boundary";
 import { LibrarySwitcher, buildRecentLibraryMenuEntries, type RecentLibraryMenuEntry } from "./LibrarySwitcher";
 import {
   LibraryLoadingOverlay,
@@ -313,6 +315,7 @@ import {
   shouldApplyLibraryLifecycleEvent,
   shouldDetachLibraryOnOpening,
 } from "./library-lifecycle-sync";
+import { createLibraryClosedHandler } from "./library-closed-view-ownership";
 import { shouldRefreshContentForLibraryChange } from "./library-change-refresh";
 import { AboutDialog } from "./AboutDialog";
 import { OpenSourceLicensesDialog } from "./OpenSourceLicensesDialog";
@@ -369,7 +372,7 @@ import {
   appendMediaJobListPage,
   applyMediaJobSummary,
   replaceMediaJobListPage,
-  type MediaJobSummaryCounts,
+  type MediaJobSummarySnapshot,
 } from "./media-job-status-state";
 import { MEDIA_JOB_LIST_PAGE_SIZE } from "../shared/media-jobs";
 import { useScrollbarActivity } from "./use-scrollbar-activity";
@@ -664,9 +667,14 @@ import { JustifiedAssetRows } from "./justified-asset-rows";
 import { MasonryColumns } from "./masonry-columns";
 import {
   applyAssetThumbnailPatches,
-  mergeAssetThumbnailPatch,
+  AssetDimensionPublicationTracker,
   type AssetThumbnailPatch,
 } from "./asset-thumbnail-patches";
+import {
+  AssetThumbnailPatchQueue,
+  DeferredVersionedThumbnailPatches,
+  resolveQueuedAssetThumbnailPatches,
+} from "./asset-thumbnail-patch-queue";
 import {
   expandThumbnailCardEvents,
   shouldProjectThumbnailCompletion,
@@ -679,11 +687,13 @@ import {
   type CanvasAnchor,
 } from "./canvas-scroll-anchor";
 import {
+  cancelScheduledAnchorRestore,
   captureReflowAnchorFromCards,
   retainReflowAnchor,
   scheduleAnchorRestore,
   type ScrollOffsetSnapshot,
 } from "./canvas-reflow-restore";
+import { interruptPreviewReturnForReflow } from "./preview-return-interruption";
 import {
   captureBrowseViewSnapshot,
   type BrowseViewSnapshot,
@@ -956,6 +966,8 @@ function AppInner() {
     ids: Map<string, string>;
   }>({ libraryId: "", ids: new Map() });
   const [assetScope, setAssetScope] = useState<AssetScope>("all");
+  const assetScopeRef = useRef<AssetScope>(assetScope);
+  assetScopeRef.current = assetScope;
   // REQ-FOLDER-001/002/003/010: direct child folder cards shown above assets
   // when the current browse parent is a managed folder or the managed root.
   const [folderBrowseEntries, setFolderBrowseEntries] = useState<FolderBrowseEntry[]>([]);
@@ -1537,6 +1549,8 @@ function AppInner() {
     generation: 0,
   });
   const navigationHydrationAbortRef = useRef<AbortController | null>(null);
+  const folderMutationRefreshAbortRef = useRef<AbortController | null>(null);
+  const folderMutationProjectionGateRef = useRef(new FolderMutationProjectionGate());
   const pendingLibraryCloseFencesRef = useRef(new Map<string, Set<number>>());
   const localAssetRemovalGenerationRef = useRef(0);
 
@@ -1544,6 +1558,12 @@ function AppInner() {
     contentLoadGenerationRef.current += 1;
     navigationHydrationAbortRef.current?.abort();
     navigationHydrationAbortRef.current = null;
+    folderMutationRefreshAbortRef.current?.abort();
+    folderMutationRefreshAbortRef.current = null;
+  }, []);
+  useEffect(() => () => {
+    folderMutationRefreshAbortRef.current?.abort();
+    folderMutationRefreshAbortRef.current = null;
   }, []);
   const beginLibraryTransition = useCallback(() => {
     cancelPendingLibraryReads();
@@ -2564,7 +2584,11 @@ function AppInner() {
     canvas.scrollTop = targetTop;
   });
   const reportedVisibleWindowKeyRef = useRef("");
+  const viewportReportCadenceRef = useRef({
+    libraryId: "", intervalMs: VIEWPORT_REPORT_INTERVAL_MS, lastPublishedAt: -Infinity,
+  });
   const visibleWindowAssetIdsRef = useRef<ReadonlySet<string>>(new Set());
+  const replayDeferredThumbnailPatchesRef = useRef<(() => void) | null>(null);
   const viewportScrollTopRef = useRef<number | undefined>(undefined);
   const viewportGenerationRef = useRef(0);
   const interactionGenerationRef = useRef(0);
@@ -2572,6 +2596,43 @@ function AppInner() {
   // through this ref — never through React state (per-frame state re-renders
   // the whole non-memoized grid).
   const marqueeBoxRef = useRef<HTMLDivElement>(null);
+  const previewFocusReturnRef = useRef<string | null>(null);
+  // REQ-VIEW-008: snapshot of the browse scroll position + the previewed
+  // card's on-screen anchor, captured when the viewer opens so the close
+  // path can correct for any reflow that happened while viewing (e.g. the
+  // inspector panel toggled and changed the grid's available width).
+  const previewScrollSnapshotRef = useRef<BrowseViewSnapshot | null>(null);
+  const closingPreviewRef = useRef<string | null>(null);
+  // Incremented whenever a viewer open/close supersedes a pending close. This
+  // prevents a stale rAF/API completion from clearing the restoring state or
+  // focusing the previous card after a rapid reopen of the same asset.
+  const previewCloseGenerationRef = useRef(0);
+  const previewRestoreFrameRef = useRef<number | null>(null);
+  const cancelPreviewViewRestoreRef = useRef<(() => void) | null>(null);
+
+  const beginUserCanvasReflow = useCallback(() => {
+    const allowed = interruptPreviewReturnForReflow({
+      canvas: workspaceCanvasRef.current,
+      viewerOpen: previewAssetRef.current !== null,
+      restoring: previewRestoringRef.current,
+      generationRef: previewCloseGenerationRef,
+      cancelRestoreRef: cancelPreviewViewRestoreRef,
+      focusFrameRef: previewRestoreFrameRef,
+      closingAssetRef: closingPreviewRef,
+      clearHold: clearPreviewScrollHold,
+      onInterrupted: () => flushSync(() => {
+        previewRestoringRef.current = false;
+        setPreviewRestoring(false);
+        setPreviewCanvasReady(false);
+      }),
+    });
+    if (!allowed) return false;
+    cancelWorkspaceViewportRestoreRef.current?.();
+    cancelWorkspaceViewportRestoreRef.current = null;
+    pendingViewportRestoreRef.current = null;
+    return true;
+  }, [clearPreviewScrollHold]);
+
   // REQ-CANVAS-019: rAF handle for the card-size-slider anchor restore.
   const cardSizeRestoreFrameRef = useRef<number | null>(null);
   // REQ-CANVAS-019: rAF handle for the container-width (sidebar/window
@@ -2591,6 +2652,9 @@ function AppInner() {
   }, [panelResizing]);
 
   const capturePanelResizeAnchor = useCallback((lock = true) => {
+    if (!beginUserCanvasReflow()) return;
+    cancelScheduledAnchorRestore(cardSizeRestoreFrameRef, { notify: true });
+    cancelScheduledAnchorRestore(reflowRestoreFrameRef, { notify: true });
     const canvas = workspaceCanvasRef.current;
     if (!canvas) return;
     canvas.classList.remove("is-reflow-restoring");
@@ -2615,7 +2679,7 @@ function AppInner() {
       `${panelReflowFrozenWidthRef.current}px`,
     );
     panelResizeLockRef.current = lock;
-  }, []);
+  }, [beginUserCanvasReflow]);
 
   const restorePanelAfterResize = useCallback(() => {
     panelResizeLockRef.current = false;
@@ -2712,10 +2776,10 @@ function AppInner() {
   useEffect(
     () => () => {
       if (cardSizeRestoreFrameRef.current !== null) {
-        window.cancelAnimationFrame(cardSizeRestoreFrameRef.current);
+        cancelScheduledAnchorRestore(cardSizeRestoreFrameRef, { notify: true });
       }
       if (reflowRestoreFrameRef.current !== null) {
-        window.cancelAnimationFrame(reflowRestoreFrameRef.current);
+        cancelScheduledAnchorRestore(reflowRestoreFrameRef, { notify: true });
       }
       reflowAnchorRef.current = null;
       reflowScrollSnapshotRef.current = null;
@@ -2737,19 +2801,7 @@ function AppInner() {
   const offerPostImportSequencesRef = useRef<
     (assets: readonly AssetSummary[]) => void
   >(() => undefined);
-  const previewFocusReturnRef = useRef<string | null>(null);
-  // REQ-VIEW-008: snapshot of the browse scroll position + the previewed
-  // card's on-screen anchor, captured when the viewer opens so the close
-  // path can correct for any reflow that happened while viewing (e.g. the
-  // inspector panel toggled and changed the grid's available width).
-  const previewScrollSnapshotRef = useRef<BrowseViewSnapshot | null>(null);
-  const closingPreviewRef = useRef<string | null>(null);
-  // Incremented whenever a viewer open/close supersedes a pending close. This
-  // prevents a stale rAF/API completion from clearing the restoring state or
-  // focusing the previous card after a rapid reopen of the same asset.
-  const previewCloseGenerationRef = useRef(0);
-  const previewRestoreFrameRef = useRef<number | null>(null);
-  const cancelPreviewViewRestoreRef = useRef<(() => void) | null>(null);
+
   useEffect(
     () => () => {
       cancelPreviewViewRestoreRef.current?.();
@@ -3186,10 +3238,7 @@ function AppInner() {
     reportedVisibleWindowKeyRef.current = "";
     interactionGenerationRef.current += 1;
     viewportScrollTopRef.current = undefined;
-    let frame: number | undefined;
-    let debounceTimer: number | undefined;
     const report = () => {
-      frame = undefined;
       const intersectingIds = collectIntersectingCanvasAssetIds(
         canvas,
         (assetId) => isGeometryPlaceholder({ assetId }),
@@ -3229,6 +3278,9 @@ function AppInner() {
       reportedVisibleWindowKeyRef.current = key;
       viewportGenerationRef.current += 1;
       visibleWindowAssetIdsRef.current = new Set(bands.visible);
+      if ((window as RendererWindow).serpent?.e2e) {
+        window.dispatchEvent(new CustomEvent("serpent:e2e-visible-window", { detail: bands }));
+      }
       void api.reportVisibleWindow({
         libraryId: library.libraryId,
         assetIds: bands.visible,
@@ -3242,22 +3294,30 @@ function AppInner() {
         scopeWarmAssetIds: bands.scopeWarm,
       });
     };
-    const schedule = () => {
-      if (frame !== undefined) window.cancelAnimationFrame(frame);
-      if (debounceTimer !== undefined) window.clearTimeout(debounceTimer);
-      debounceTimer = window.setTimeout(() => {
-        debounceTimer = undefined;
-        frame = window.requestAnimationFrame(report);
-      }, 50);
-    };
+    // A trailing timer is restarted by summary/dimension reflows, delaying the
+    // very work that fills this viewport. Publish on a fixed frame cadence;
+    // keep its deadline across reflows and bound reports during a long scroll.
+    if (viewportReportCadenceRef.current.libraryId !== library.libraryId) {
+      viewportReportCadenceRef.current = {
+        libraryId: library.libraryId,
+        intervalMs: VIEWPORT_REPORT_INTERVAL_MS,
+        lastPublishedAt: -Infinity,
+      };
+    }
+    const reportOwner = { libraryId: library.libraryId, generation: libraryViewSessionRef.current.generation };
+    const reporting = createCoalescedFrame(report, window, viewportReportCadenceRef.current, () =>
+      libraryRef.current?.libraryId === reportOwner.libraryId
+        && isCurrentLibraryViewSession(libraryViewSessionRef.current, reportOwner));
+    const schedule = () => reporting.request();
     canvas.addEventListener("scroll", schedule, { passive: true });
+    canvas.addEventListener(CANVAS_LAYOUT_COMMITTED_EVENT, schedule);
     schedule();
     return () => {
       canvas.removeEventListener("scroll", schedule);
-      if (frame !== undefined) window.cancelAnimationFrame(frame);
-      if (debounceTimer !== undefined) window.clearTimeout(debounceTimer);
+      canvas.removeEventListener(CANVAS_LAYOUT_COMMITTED_EVENT, schedule);
+      reporting.cancel();
     };
-  }, [api, library, assetViewMode, browseLayout, visibleVirtualBrowseLayout]);
+  }, [api, library, assetViewMode, visibleBrowseLayout, visibleVirtualBrowseLayout]);
 
   // Map the scrollbar to the compact real-asset index. One-frame coalescing
   // avoids request spam without spending 50ms of the 500ms loading budget.
@@ -4050,7 +4110,7 @@ function AppInner() {
         ),
         stops,
       );
-      if (!root || nextSize === assetCardSize) return;
+      if (!root || nextSize === assetCardSize || !beginUserCanvasReflow()) return;
 
       const rootRect = root.getBoundingClientRect();
       const anchorX = clientX ?? rootRect.left + rootRect.width / 2;
@@ -4105,7 +4165,7 @@ function AppInner() {
       // fight the pointer anchor. Cancel an in-flight width restore so its
       // completion callback cannot clear this zoom anchor.
       if (reflowRestoreFrameRef.current !== null) {
-        window.cancelAnimationFrame(reflowRestoreFrameRef.current);
+        cancelScheduledAnchorRestore(reflowRestoreFrameRef);
         reflowRestoreFrameRef.current = null;
       }
       reflowAnchorRef.current = null;
@@ -4129,7 +4189,7 @@ function AppInner() {
         cardResizeScrollSnapshotRef.current ?? undefined,
       );
     },
-    [assetCardSize],
+    [assetCardSize, beginUserCanvasReflow],
   );
 
   // REQ-CANVAS-019: dragging the sidebar or resizing the window changes the
@@ -4232,11 +4292,11 @@ function AppInner() {
   useLayoutEffect(() => {
     if (!previewAsset && !previewRestoring) return;
     if (cardSizeRestoreFrameRef.current !== null) {
-      window.cancelAnimationFrame(cardSizeRestoreFrameRef.current);
+      cancelScheduledAnchorRestore(cardSizeRestoreFrameRef, { notify: true });
       cardSizeRestoreFrameRef.current = null;
     }
     if (reflowRestoreFrameRef.current !== null) {
-      window.cancelAnimationFrame(reflowRestoreFrameRef.current);
+      cancelScheduledAnchorRestore(reflowRestoreFrameRef, { notify: true });
       reflowRestoreFrameRef.current = null;
     }
     cardResizeAnchorRef.current = null;
@@ -4397,11 +4457,11 @@ function AppInner() {
     // queued when the user opens the viewer immediately after resizing. That
     // stale callback must not overwrite the viewer-close snapshot later.
     if (cardSizeRestoreFrameRef.current !== null) {
-      window.cancelAnimationFrame(cardSizeRestoreFrameRef.current);
+      cancelScheduledAnchorRestore(cardSizeRestoreFrameRef, { notify: true });
       cardSizeRestoreFrameRef.current = null;
     }
     if (reflowRestoreFrameRef.current !== null) {
-      window.cancelAnimationFrame(reflowRestoreFrameRef.current);
+      cancelScheduledAnchorRestore(reflowRestoreFrameRef, { notify: true });
       reflowRestoreFrameRef.current = null;
     }
     cardResizeAnchorRef.current = null;
@@ -4754,6 +4814,9 @@ function AppInner() {
             ));
       const viewSession = ensureLibraryView(activeLibrary.libraryId);
       if (!viewSession) return [];
+      const navigationReadTicket = refreshSidebar
+        ? folderMutationProjectionGateRef.current.issueRead(viewSession)
+        : null;
       const libId = { libraryId: activeLibrary.libraryId };
       const generation = ++contentLoadGenerationRef.current;
       navigationHydrationAbortRef.current?.abort();
@@ -4795,13 +4858,25 @@ function AppInner() {
        * sidebar stayed permanently empty ("尚无托管或链接文件夹 / 尚无合集") behind
        * a loading overlay that never cleared.
        *
-       * Scope it to the library/view instead: a summary for the library still on
-       * screen is always safe to apply, and applying the newest one wins.
+       * Scope it to the library/view and the local folder-mutation epoch. This
+       * keeps useful summaries during background catalog activity while a
+       * pre-mutation response cannot erase an immediate folder projection.
        */
       const isCurrentLibraryNavigation = () =>
         isCurrentLibraryView(viewSession)
         && (opts?.navigationIsCurrent?.() ?? true);
+      let navigationSummaryApplied = false;
       const applyNavigationSummary = (summary: LibraryNavigationSummary) => {
+        if (
+          !navigationReadTicket
+          || navigationSummaryApplied
+          || !isCurrentLibraryNavigation()
+          || !folderMutationProjectionGateRef.current.mayApply(
+            navigationReadTicket,
+            viewSession,
+          )
+        ) return false;
+        navigationSummaryApplied = true;
         setAllAssetCount(summary.allAssetCount);
         setRootAssetCount(summary.rootAssetCount);
         setTrashedAssetCount(summary.trashedAssetCount);
@@ -4815,6 +4890,7 @@ function AppInner() {
         folderNavigationCoversRef.current = covers;
         setFolderNavigationCovers(covers);
         setFolderCustomCoverIds(new Set(covers.map((cover) => cover.folderId)));
+        return true;
       };
       const loadNavigationSummary = () => {
         if (!isCurrentLibraryView(viewSession)) return Promise.resolve(undefined);
@@ -4823,7 +4899,7 @@ function AppInner() {
           showIgnored: includeIgnored,
           includeTrashedFolders: trashMode,
         }).then((result) => {
-          if (result.ok && isCurrentLibraryNavigation()) {
+          if (result.ok) {
             applyNavigationSummary(result.value);
           }
           return result;
@@ -5128,6 +5204,17 @@ function AppInner() {
   // MCP events (plus the legacy script-preview bootstrap path) are applied.
   useEffect(() => {
     if (!api) return;
+    const handleLibraryClosed = createLibraryClosedHandler({
+      snapshot: () => ({ libraryId: libraryRef.current?.libraryId ?? null, view: libraryViewSessionRef.current }),
+      pendingCloseGenerations: (id) => pendingLibraryCloseFencesRef.current.get(id),
+      queue: (task) => libraryTransitionLock(task),
+      closePreview: () => closeAssetPreview(false),
+      applyClosedUi: applyClosedLibraryUi,
+      refreshRecentLibraries: () => refreshRecentLibraries(null),
+      setClosing: () => setUiState("closing"),
+      setIdle: () => setUiState("idle"),
+      reportFailure: (caught) => setError(toMessage(caught, t("toast.closeFailed"), locale)),
+    });
     return api.onLifecycle((event) => {
       if (event.type === 'worker.recovering') {
         workerRecoveryStateRef.current = 'recovering';
@@ -5197,42 +5284,7 @@ function AppInner() {
         return;
       }
       if (event.type === "library.closed") {
-        const closedLibraryId = event.libraryId;
-        const pendingGenerations =
-          pendingLibraryCloseFencesRef.current.get(closedLibraryId);
-        if (
-          event.source !== "mcp" &&
-          pendingGenerations !== undefined &&
-          !pendingGenerations.has(libraryViewSessionRef.current.generation)
-        ) {
-          // An ordinary renderer-initiated close has no lifecycle source tag.
-          // If the same library was reopened before its old close event was
-          // delivered, the id alone is ambiguous; the session generation is
-          // what distinguishes that stale event from a real close. Keep all
-          // pending generations until their own requests settle so two rapid
-          // closes of the same library cannot overwrite one another.
-          return;
-        }
-        const applyLibraryClosed = async () => {
-          if (libraryRef.current?.libraryId !== closedLibraryId) return;
-          setUiState("closing");
-          try {
-            await closeAssetPreview(false);
-            if (libraryRef.current?.libraryId !== closedLibraryId) return;
-            applyClosedLibraryUi();
-            await refreshRecentLibraries(null);
-          } catch (caught) {
-            if (libraryRef.current?.libraryId === closedLibraryId) {
-              setError(toMessage(caught, t("toast.closeFailed"), locale));
-            }
-          } finally {
-            if (libraryRef.current === null) setUiState("idle");
-          }
-        };
-        // Main can close the active library on behalf of MCP. Keep the same
-        // serialized boundary as renderer-triggered close; events for the
-        // previous library become no-ops after a replacement is committed.
-        void libraryTransitionLock(applyLibraryClosed);
+        handleLibraryClosed(event);
         return;
       }
       if (event.type !== "library.opened") return;
@@ -5294,8 +5346,10 @@ function AppInner() {
       : null;
     const isEffectLibraryCurrent = () =>
       effectViewSession !== null && isCurrentLibraryView(effectViewSession);
-    const pending = new Map<string, AssetThumbnailPatch>();
+    const pending = new AssetThumbnailPatchQueue();
+    const deferred = new DeferredVersionedThumbnailPatches();
     const pendingLayoutArtifactIds = new Map<string, string | null>();
+    const dimensionPublications = new AssetDimensionPublicationTracker();
     let frame = 0;
     const flush = () => {
       frame = 0;
@@ -5305,10 +5359,13 @@ function AppInner() {
         pendingLayoutArtifactIds.clear();
         return;
       }
-      const batch = new Map(pending);
-      pending.clear();
-      if (batch.size > 0) {
-        setAssets((current) => applyAssetThumbnailPatches(current, batch));
+      const queued = pending.drain();
+      if (queued.size > 0) {
+        const batch = resolveQueuedAssetThumbnailPatches(queued, assetsRef.current);
+        const dimensionsForMembership = dimensionPublications.collect(assetsRef.current, batch);
+        setAssets((current) => applyAssetThumbnailPatches(
+          current, resolveQueuedAssetThumbnailPatches(queued, current),
+        ));
         const geometryPatches = new Map<string, { width: number; height: number }>();
         const previewPatches = new Map<string, {
           previewKind: 'source' | null;
@@ -5338,28 +5395,12 @@ function AppInner() {
         }
         if (geometryPatches.size > 0) {
           applyBrowseGeometryPatchesRef.current(geometryPatches);
-          const measured: Array<{
-            assetId: string;
-            width: number;
-            height: number;
-            mediaType: AssetSummary["mediaType"];
-          }> = [];
-          for (const [assetId, size] of geometryPatches) {
-            const current = assetsRef.current.find((asset) => asset.assetId === assetId);
-            if (!current) continue;
-            measured.push({
-              assetId,
-              width: size.width,
-              height: size.height,
-              mediaType: current.mediaType,
-            });
-          }
-          if (measured.length > 0) {
-            syncBrowseFilterMembershipRef.current({
-              kind: "dimensions",
-              assets: measured,
-            });
-          }
+        }
+        if (dimensionsForMembership.length > 0) {
+          syncBrowseFilterMembershipRef.current({
+            kind: "dimensions",
+            assets: dimensionsForMembership,
+          });
         }
         if (previewPatches.size > 0) {
           applyBrowsePreviewPatchesRef.current(previewPatches);
@@ -5386,11 +5427,18 @@ function AppInner() {
         });
       }
     };
-    const queuePatch = (assetId: string, patch: AssetThumbnailPatch) => {
-      pending.set(assetId, mergeAssetThumbnailPatch(pending.get(assetId), patch));
+    const queuePatch = (assetId: string, patch: AssetThumbnailPatch, expectedRevisionId?: string) => {
+      pending.enqueue(assetId, patch, expectedRevisionId);
       if (frame !== 0) return;
       frame = window.requestAnimationFrame(flush);
     };
+    const replayDeferred = () => {
+      if (!isEffectLibraryCurrent()) return;
+      for (const item of deferred.takeFor(assetsRef.current)) {
+        queuePatch(item.assetId, item.patch, item.expectedRevisionId);
+      }
+    };
+    replayDeferredThumbnailPatchesRef.current = replayDeferred;
     const queueLayoutArtifactPatch = (
       assetId: string,
       artifactId: string | null,
@@ -5431,7 +5479,7 @@ function AppInner() {
           && currentAsset.currentRevisionId !== event.revisionId
         ) return;
         jobStatusCoordinatorRef.current?.noteActivity("media");
-        queuePatch(event.assetId, {
+        const patch: AssetThumbnailPatch = {
           width: event.width,
           height: event.height,
           ...(event.previewKind === undefined
@@ -5443,7 +5491,11 @@ function AppInner() {
           ...(event.durationMs === undefined
             ? {}
             : { durationMs: event.durationMs }),
-        });
+        };
+        if (!currentAsset && event.revisionId !== undefined) {
+          deferred.remember(event.assetId, patch, event.revisionId);
+        }
+        queuePatch(event.assetId, patch, event.revisionId);
         return;
       }
       if (event.type === "asset.derived.ready") {
@@ -5554,6 +5606,10 @@ function AppInner() {
     });
     return () => {
       unsubscribe();
+      deferred.clear();
+      if (replayDeferredThumbnailPatchesRef.current === replayDeferred) {
+        replayDeferredThumbnailPatchesRef.current = null;
+      }
       if (frame !== 0) window.cancelAnimationFrame(frame);
       if (folderBrowseRefreshFrame !== 0) {
         window.cancelAnimationFrame(folderBrowseRefreshFrame);
@@ -5568,6 +5624,7 @@ function AppInner() {
     library?.libraryId,
     t,
   ]);
+  useEffect(() => { replayDeferredThumbnailPatchesRef.current?.(); }, [assets]);
   useEffect(() => {
     if (!api || !library) return;
     const unsubscribeProgress = api.onAiProgress((event) => {
@@ -5707,6 +5764,8 @@ function AppInner() {
   function beginWorkspaceNavigationRequest(
     historyMode: WorkspaceNavigationHistoryMode,
   ): WorkspaceNavigationRequest {
+    folderMutationRefreshAbortRef.current?.abort();
+    folderMutationRefreshAbortRef.current = null;
     findSimilarTokenRef.current += 1;
     const token = beginWorkspaceTabNavigation(historyMode);
     const request: WorkspaceNavigationRequest = {
@@ -8998,6 +9057,22 @@ function AppInner() {
     setSelectedAssetIds,
   });
 
+  const folderMutationBridge = useFolderMutationBridge({
+    libraryRef, isLibraryViewCurrent: isCurrentLibraryView,
+    projectionGate: folderMutationProjectionGateRef.current,
+    refreshAbortRef: folderMutationRefreshAbortRef, reloadRef: reloadCurrentContentRef,
+    scopeRef: assetScopeRef, historyRef: navHistoryRef,
+    setFolders, setLinkedFolders, setSelectedFolderIds,
+    setFilteredCountRefreshToken: setFilteredFolderCountRefreshToken,
+    onScopeRemapped: (scope) => {
+      cancelPendingLibraryReads();
+      setAssetScope(scope);
+      managedImportTargetFolderIdRef.current = scope;
+      if (libraryRef.current) api?.setActiveContext(libraryRef.current.libraryId, scope);
+    },
+    onHistoryChanged: syncNavHistoryUi,
+  });
+
   const {
     inlineFolderEdit,
     openInlineFolderCreate,
@@ -9009,20 +9084,19 @@ function AppInner() {
     api: api ?? null,
     library,
     setNotice,
-    reloadCurrentContent,
+    captureLibraryViewToken: ensureLibraryView,
+    isLibraryViewCurrent: isCurrentLibraryView,
+    ...folderMutationBridge,
+    onPostCommitError: (caught, libraryViewToken) => {
+      if (
+        !isCurrentLibraryView(libraryViewToken)
+        || libraryRef.current?.libraryId !== libraryViewToken.libraryId
+      ) return;
+      setError(toMessage(caught, t("toast.readAssetsFailed"), locale));
+    },
     isLinkedFolderId: (folderId) =>
       parseLinkedVirtualFolderId(folderId) !== null ||
       linkedFolders.some((folder) => folder.folderId === folderId),
-    onRenameSuccess: async (newFolderId, previousFolderId) => {
-      if (assetScope !== previousFolderId) return false;
-      // Renaming the folder currently being browsed navigates to the same
-      // scope with the same id.  Folder navigation normally skips the sidebar
-      // query for performance, but here that would immediately put the old
-      // name back after the success notice.  Refresh the folder tree as part
-      // of this mutation so the sidebar settles in the same render cycle.
-      await chooseFolder(newFolderId, { refreshSidebar: true });
-      return true;
-    },
   });
 
   const reloadSmartCollections = useCallback(async () => {
@@ -13724,7 +13798,7 @@ function AppInner() {
       },
       onResult: (kind, value) => {
         if (kind === "media") {
-          setMediaJobs((current) => applyMediaJobSummary(current, value as MediaJobSummaryCounts));
+          setMediaJobs((current) => applyMediaJobSummary(current, value as MediaJobSummarySnapshot));
         }
         else if (kind === "ai") setAiJobs(value as AiJobStatus);
         else setPluginJobs(value as PluginJobStatus);
@@ -14724,7 +14798,7 @@ function AppInner() {
           </>
         ) : null}
       </header>
-      <NavigationSidebar
+      <NavigationSidebarBoundary
         cutFolderIds={assetCutState.cutFolderIds}
         library={library}
         assetScope={assetScope}

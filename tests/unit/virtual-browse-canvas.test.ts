@@ -17,20 +17,87 @@ import {
   variableWindow,
   virtualJustifiedRowStyle,
   virtualJustifiedSlotStyle,
+  virtualViewportRenderKey,
 } from "../../src/renderer/browse/virtual-browse-canvas";
+import { itemIntersectsVisibleRange } from "../../src/renderer/viewport-window";
+
+describe("virtual viewport render membership", () => {
+  const columns = buildMasonryGeometry({
+    total: 30,
+    columnCount: 3,
+    columnWidth: 200,
+    showCaption: false,
+    captionBand: 0,
+    entryAt: (index) => ({ assetId: `asset-${index}`, width: 200, height: [80, 170, 300][index % 3]! }),
+  });
+  const range = (top: number) => ({
+    start: top - 350, end: top + 600,
+    visibleStart: top, visibleEnd: top + 250,
+  });
+
+  it("suppresses pixel movement only when all mounted and visible memberships match", () => {
+    const memberships = new Map<string, string>();
+    let stableSteps = 0;
+    let previousKey: string | undefined;
+    // Uneven columns, gaps, both ends and direction reversal are included.
+    const positions = Array.from({ length: 4000 }, (_, index) => index - 300);
+    for (const top of [...positions, ...positions.reverse()]) {
+      const viewport = range(top);
+      const key = virtualViewportRenderKey(columns, viewport);
+      const actual = JSON.stringify(columns.map(column => {
+        const mounted = variableWindow({
+          heights: column.heights, offsets: column.offsets, totalHeight: column.totalHeight,
+          viewStart: Math.max(0, viewport.start), viewEnd: viewport.end,
+        });
+        return {
+          start: mounted.start, end: mounted.end,
+          visible: column.heights.flatMap((height, index) =>
+            itemIntersectsVisibleRange(column.offsets[index]!, height, viewport.visibleStart, viewport.visibleEnd)
+              ? [index] : []),
+        };
+      }));
+      if (memberships.has(key)) expect(actual).toBe(memberships.get(key));
+      memberships.set(key, actual);
+      if (key === previousKey) stableSteps += 1;
+      previousKey = key;
+    }
+    expect(stableSteps).toBeGreaterThan(7000);
+  });
+
+  it("distinguishes entering and leaving the last card from an empty gap", () => {
+    const last = columns[0]!;
+    const end = last.offsetAt(last.count - 1) + last.heightAt(last.count - 1);
+    expect(virtualViewportRenderKey([last], range(end - 1)))
+      .not.toBe(virtualViewportRenderKey([last], range(end)));
+    expect(virtualViewportRenderKey([], range(0))).toBe(virtualViewportRenderKey([], range(400)));
+  });
+});
 
 describe("justified thumbnail rounding", () => {
   it("fills a one-pixel rounding band without cropping the source", () => {
     for (const width of [193, 194, 195]) {
-      expect(virtualJustifiedSlotStyle({ id: "square", width, height: 194, sourceAspect: 1 }))
+      expect(virtualJustifiedSlotStyle({
+        id: "square", width, height: 194, slotHeight: 220, sourceAspect: 1,
+      }))
         .toHaveProperty("--justified-thumbnail-fit", "fill");
     }
   });
   it("preserves genuine letterboxing and unknown source ratios", () => {
     for (const sourceAspect of [0.25, 2, undefined]) {
-      expect(virtualJustifiedSlotStyle({ id: "portrait", width: 194, height: 194, sourceAspect }))
+      expect(virtualJustifiedSlotStyle({
+        id: "portrait", width: 194, height: 194, slotHeight: 220, sourceAspect,
+      }))
         .toHaveProperty("--justified-thumbnail-fit", "contain");
     }
+  });
+
+  it("sets the outer justified slot height independently of its preview height", () => {
+    expect(virtualJustifiedSlotStyle({
+      id: "asset",
+      width: 194,
+      height: 180,
+      slotHeight: 221,
+    })).toMatchObject({ width: 194, height: 221, "--justified-preview-height": "180px" });
   });
 });
 
@@ -101,6 +168,11 @@ describe("virtual browse canvas geometry", () => {
     });
     expect(index.firstVisibleIndex(rows[1]!.offset)).toBe(2);
     expect(index.rectAtIndex(2)?.top).toBe(rows[1]!.offset);
+    expect(index.assetRectAtIndex?.(2)).toMatchObject({
+      id: "asset-2",
+      y: rows[1]!.offset,
+      height: rows[1]!.bodyHeight,
+    });
   });
 
   it("uses sparse real dimensions to correct masonry offsets", () => {

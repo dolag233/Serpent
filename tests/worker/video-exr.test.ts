@@ -59,16 +59,22 @@ const VALID_1X1_PNG = Buffer.from(
   'base64',
 );
 
-function buildRawWithEmbeddedJpeg(jpeg: Buffer): Buffer {
+function buildRawWithEmbeddedJpeg(jpeg: Buffer, orientation?: number): Buffer {
   const firstIfdOffset = 8;
-  const secondIfdOffset = 16;
+  const secondIfdOffset = orientation === undefined ? 16 : 32;
   const jpegOffset = secondIfdOffset + 2 + 2 * 12 + 4;
   const output = Buffer.alloc(jpegOffset + jpeg.length);
   output.write('II', 0, 'ascii');
   output.writeUInt16LE(42, 2);
   output.writeUInt32LE(firstIfdOffset, 4);
-  output.writeUInt16LE(0, firstIfdOffset);
-  output.writeUInt32LE(secondIfdOffset, firstIfdOffset + 2);
+  output.writeUInt16LE(orientation === undefined ? 0 : 1, firstIfdOffset);
+  if (orientation !== undefined) {
+    output.writeUInt16LE(0x0112, firstIfdOffset + 2);
+    output.writeUInt16LE(3, firstIfdOffset + 4);
+    output.writeUInt32LE(1, firstIfdOffset + 6);
+    output.writeUInt16LE(orientation, firstIfdOffset + 10);
+  }
+  output.writeUInt32LE(secondIfdOffset, firstIfdOffset + 2 + (orientation === undefined ? 0 : 12));
   output.writeUInt16LE(2, secondIfdOffset);
   output.writeUInt16LE(0x0201, secondIfdOffset + 2);
   output.writeUInt16LE(4, secondIfdOffset + 4);
@@ -2492,6 +2498,73 @@ describe('EXR/TGA (oiiotool)', () => {
     service.closeAll();
   });
 
+  it.each([1, 2, 3, 4, 5, 6, 7, 8])('orients embedded RAW thumbnails from outer TIFF orientation %i', async (orientation) => {
+    const root = temporaryRoot();
+    const service = new LibraryService({ rawImageMetadataParser: { parse: async () => ({
+      ExifImageWidth: 64, ExifImageHeight: 32, Orientation: orientation,
+    }) } });
+    try {
+      const library = service.createLibrary({ displayName: 'OrientationFixture', selectedParentPath: root });
+      const pixels = Buffer.alloc(64 * 32 * 3);
+      for (let y = 0; y < 32; y++) for (let x = 0; x < 64; x++) {
+        const offset = (y * 64 + x) * 3;
+        pixels[offset] = x < 32 ? 220 : 30;
+        pixels[offset + 1] = y < 16 ? 210 : 20;
+        pixels[offset + 2] = 60;
+      }
+      const jpeg = await sharp(pixels, { raw: { width: 64, height: 32, channels: 3 } }).jpeg().toBuffer();
+      const source = path.join(root, 'orientation.ARW');
+      writeFileSync(source, buildRawWithEmbeddedJpeg(jpeg, orientation));
+      importNoConflict(service, library.libraryId, source);
+      const asset = service.listAssets({ libraryId: library.libraryId, recursive: true })[0]!;
+      await service.generateThumbnail({ libraryId: library.libraryId, assetId: asset.assetId });
+      const artifact = service.getCurrentArtifact(library.libraryId, asset.assetId, 'thumbnail')!;
+      expect(artifact).toMatchObject({ width: orientation >= 5 ? 32 : 64, height: orientation >= 5 ? 64 : 32 });
+      expect(service.getCurrentArtifact(library.libraryId, asset.assetId, 'extracted_metadata'))
+        .toMatchObject({ width: orientation >= 5 ? 32 : 64, height: orientation >= 5 ? 64 : 32 });
+      const actual = await sharp(path.join(library.libraryPath, '.serpent', 'artifacts', artifact.filePath)).raw().toBuffer({ resolveWithObject: true });
+      const tagged = await sharp(jpeg).withMetadata({ orientation }).jpeg().toBuffer();
+      const expected = await sharp(tagged).rotate().raw().toBuffer({ resolveWithObject: true });
+      expect(actual.info.width).toBe(expected.info.width);
+      expect(actual.info.height).toBe(expected.info.height);
+      // Interior quadrant samples verify mirrors as well as portrait dimensions.
+      for (const y of [8, actual.info.height - 9]) for (const x of [8, actual.info.width - 9]) {
+        for (let c = 0; c < 3; c++) {
+          const index = (y * actual.info.width + x) * 3 + c;
+          expect(Math.abs(actual.data[index]! - expected.data[index]!)).toBeLessThan(18);
+        }
+      }
+    } finally { service.closeAll(); }
+  });
+
+  it('keeps an already oriented camera JPEG upright and refreshes old RAW thumbnail generators', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService({ rawImageMetadataParser: { parse: async () => ({
+      ExifImageWidth: 64, ExifImageHeight: 32, Orientation: 6,
+    }) } });
+    try {
+      const library = service.createLibrary({ displayName: 'UprightFixture', selectedParentPath: root });
+      const jpeg = await sharp({ create: { width: 32, height: 64, channels: 3, background: 'red' } })
+        .withMetadata({ orientation: 1 }).jpeg().toBuffer();
+      const source = path.join(root, 'upright.ARW');
+      writeFileSync(source, buildRawWithEmbeddedJpeg(jpeg, 6));
+      importNoConflict(service, library.libraryId, source);
+      const asset = service.listAssets({ libraryId: library.libraryId, recursive: true })[0]!;
+      await service.generateThumbnail({ libraryId: library.libraryId, assetId: asset.assetId });
+      const artifact = service.getCurrentArtifact(library.libraryId, asset.assetId, 'thumbnail')!;
+      const output = await sharp(path.join(library.libraryPath, '.serpent', 'artifacts', artifact.filePath)).metadata();
+      expect(output).toMatchObject({ width: 32, height: 64 });
+      expect(output.orientation).toBeUndefined();
+      const db = assertDb(library.libraryPath);
+      db.prepare("UPDATE revision_artifacts SET generator_version = 'raw-embedded-jpeg@1' WHERE artifact_id = ?").run(artifact.artifactId);
+      db.close();
+      expect(service.enqueueThumbnailJobs(library.libraryId, { assetIds: [asset.assetId] })).toBeGreaterThan(0);
+      await service.processThumbnailQueue(library.libraryId);
+      expect(service.getCurrentArtifact(library.libraryId, asset.assetId, 'thumbnail'))
+        .toMatchObject({ status: 'ready', generatorVersion: expect.stringContaining('raw-embedded-jpeg@2') });
+    } finally { service.closeAll(); }
+  });
+
   it('uses the embedded RAW JPEG for the card and matches the full viewer to its tones', async () => {
     process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
     const root = temporaryRoot();
@@ -2545,7 +2618,7 @@ describe('EXR/TGA (oiiotool)', () => {
     expect(artifact).toMatchObject({
       status: 'ready',
       mimeType: 'image/jpeg',
-      generatorVersion: expect.stringContaining('raw-embedded-jpeg@1'),
+      generatorVersion: expect.stringContaining('raw-embedded-jpeg@2'),
       width: 6000,
       height: 4000,
     });

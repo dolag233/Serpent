@@ -11,6 +11,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { Icon, type IconName } from "./Icons";
+import { NavTreeDisclosure } from "./nav-tree-disclosure";
 import { beginInlineRenameTextSelection } from "./inline-rename-text-selection";
 import { AppearanceGlyph } from "./AppearanceGlyph";
 import type { EntityAppearance } from "../shared/entity-appearance";
@@ -190,7 +191,7 @@ function NavRow({
     title && title !== label ? `${label} — ${title}` : label;
   return (
     <div
-      className="nav-tree-row"
+      className="nav-tree-row nav-item-row"
       data-insert-edge={insertEdge ?? undefined}
       style={{ paddingLeft: depth * 14 }}
     >
@@ -1320,6 +1321,14 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
       ? entries
       : hideOfflineLinkedDirectoryEntries(entries);
   }, [folders, linkedFolders, showMissingLinkedFiles]);
+  const linkedFoldersById = useMemo(() => {
+    const byId = new Map<string, LinkedFolderSummary>();
+    for (const folder of linkedFolders) {
+      // Array.find returned the first summary when duplicate IDs were present.
+      if (!byId.has(folder.folderId)) byId.set(folder.folderId, folder);
+    }
+    return byId;
+  }, [linkedFolders]);
   const sortedDirectoryEntries = useMemo(() => sortManagedTreeEntries(
     unifiedDirectoryEntries,
     folderSortPrefs.mode,
@@ -1357,8 +1366,9 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
   });
 
   // Serpent-c42eb1: collection subtree collapse, mirroring folder collapse.
-  const persistedCollapsedCollectionIds = new Set(
-    navTreePrefs.collapsedCollectionIds ?? [],
+  const persistedCollapsedCollectionIds = useMemo(
+    () => new Set(navTreePrefs.collapsedCollectionIds ?? []),
+    [navTreePrefs.collapsedCollectionIds],
   );
   // Creating a sub-collection under a collapsed parent must reveal the inline
   // create row; keep this derived so opening/cancelling an editor never
@@ -1372,7 +1382,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     collapsedCollectionIds.delete(newCollectionParentId);
   }
 
-  function toggleCollectionCollapsed(collectionId: string) {
+  const toggleCollectionCollapsed = useCallback((collectionId: string) => {
     const current = navTreePrefs.collapsedCollectionIds ?? [];
     const nextIds = persistedCollapsedCollectionIds.has(collectionId)
       ? current.filter((id) => id !== collectionId)
@@ -1380,7 +1390,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     const next = withCollapsedCollectionIds(navTreePrefs, nextIds);
     setNavTreePrefs(next);
     saveNavTreePreferences(next);
-  }
+  }, [persistedCollapsedCollectionIds, navTreePrefs]);
 
   useEffect(() => {
     if (!revealTarget) return;
@@ -2129,22 +2139,16 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             depth={entry.depth}
             disclosure={
               hasChildren ? (
-                <button
-                  aria-expanded={expanded}
-                  aria-label={
+                <NavTreeDisclosure
+                  entityId={entry.folderId}
+                  expanded={expanded}
+                  label={
                     expanded
                       ? t("nav.collapseFolder", { name: entry.name })
                       : t("nav.expandFolder", { name: entry.name })
                   }
-                  className={`nav-disclosure${expanded ? " is-expanded" : ""}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    toggleFolderCollapsed(entry.folderId);
-                  }}
-                  type="button"
-                >
-                  <Icon name="chevron-right" size={12} />
-                </button>
+                  onToggle={toggleFolderCollapsed}
+                />
               ) : undefined
             }
             icon="folder"
@@ -2218,9 +2222,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         );
       }
 
-      const lf = linkedFolders.find(
-        (folder) => folder.folderId === entry.folderId,
-      );
+      const lf = linkedFoldersById.get(entry.folderId);
       if (!lf) return null;
       // Linked directories are physical folders with virtual ids in the
       // library index.  Keep the same inline rename affordance as managed
@@ -2252,22 +2254,16 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           depth={entry.depth}
           disclosure={
             hasChildren ? (
-              <button
-                aria-expanded={expanded}
-                aria-label={
+              <NavTreeDisclosure
+                entityId={entry.folderId}
+                expanded={expanded}
+                label={
                   expanded
                     ? t("nav.collapseFolder", { name: entry.name })
                     : t("nav.expandFolder", { name: entry.name })
                 }
-                className={`nav-disclosure${expanded ? " is-expanded" : ""}`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  toggleFolderCollapsed(entry.folderId);
-                }}
-                type="button"
-              >
-                <Icon name="chevron-right" size={12} />
-              </button>
+                onToggle={toggleFolderCollapsed}
+              />
             ) : undefined
           }
           icon={hasCustomLinkedGlyph ? "folder" : linkedAffordance.icon}
@@ -2628,24 +2624,16 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           <NavRow
             disclosure={
               (visibleCollectionTree.get(c.collectionId) ?? []).length > 0 ? (
-                <button
-                  aria-expanded={!collectionRowCollapsed(c.collectionId)}
-                  aria-label={
+                <NavTreeDisclosure
+                  entityId={c.collectionId}
+                  expanded={!collectionRowCollapsed(c.collectionId)}
+                  label={
                     collectionRowCollapsed(c.collectionId)
                       ? t("nav.expandCollection", { name: c.name })
                       : t("nav.collapseCollection", { name: c.name })
                   }
-                  className={`nav-disclosure${
-                    collectionRowCollapsed(c.collectionId) ? "" : " is-expanded"
-                  }`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    toggleCollectionCollapsed(c.collectionId);
-                  }}
-                  type="button"
-                >
-                  <Icon name="chevron-right" size={12} />
-                </button>
+                  onToggle={toggleCollectionCollapsed}
+                />
               ) : undefined
             }
             icon="collection"

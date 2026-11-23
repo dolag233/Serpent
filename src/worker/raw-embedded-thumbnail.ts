@@ -23,7 +23,13 @@ const TIFF_HEADER_SCAN_BYTES = 64 * 1024;
 
 type TiffByteOrder = 'little' | 'big';
 
+export interface RawEmbeddedThumbnail {
+  jpeg: Buffer;
+  orientation: number | null;
+}
+
 interface ParsedIfd {
+  orientation: number | null;
   jpegOffset: number | null;
   jpegLength: number | null;
   nextOffset: number;
@@ -112,6 +118,7 @@ function parseIfd(
   const table = readExact(handle, fileSize, absoluteOffset, tableLength);
   if (!table) return null;
 
+  let orientation: number | null = null;
   let jpegOffset: number | null = null;
   let jpegLength: number | null = null;
   for (let index = 0; index < entryCount; index += 1) {
@@ -120,19 +127,22 @@ function parseIfd(
     const type = readUInt16(table, entryOffset + 2, byteOrder);
     const count = readUInt32(table, entryOffset + 4, byteOrder);
     if (tag === null || type === null || count === null) return null;
-    if (tag !== 0x0201 && tag !== 0x0202) continue;
+    if (tag !== 0x0201 && tag !== 0x0202 && tag !== 0x0112) continue;
     const value = readInlineScalar(
       table.subarray(entryOffset, entryOffset + TIFF_ENTRY_BYTES),
       type,
       count,
       byteOrder,
     );
-    if (tag === 0x0201) jpegOffset = value;
+    if (tag === 0x0112) {
+      if (value !== null && value >= 1 && value <= 8) orientation = value;
+    } else if (tag === 0x0201) jpegOffset = value;
     else jpegLength = value;
   }
 
   const nextOffset = readUInt32(table, table.length - 4, byteOrder);
   return {
+    orientation,
     jpegOffset,
     jpegLength,
     nextOffset: nextOffset ?? 0,
@@ -143,7 +153,7 @@ function extractFromTiffBase(
   handle: number,
   fileSize: number,
   baseOffset: number,
-): Buffer | null {
+): RawEmbeddedThumbnail | null {
   const header = readExact(handle, fileSize, baseOffset, TIFF_HEADER_BYTES);
   if (!header) return null;
   const byteOrder = header[0] === 0x49 && header[1] === 0x49
@@ -156,9 +166,11 @@ function extractFromTiffBase(
   if (firstIfdOffset === null) return null;
 
   let currentOffset = firstIfdOffset;
+  let sourceOrientation: number | null = null;
   for (let depth = 0; depth < MAX_IFD_CHAIN && currentOffset > 0; depth += 1) {
     const ifd = parseIfd(handle, fileSize, baseOffset, currentOffset, byteOrder);
     if (!ifd) return null;
+    if (depth === 0) sourceOrientation = ifd.orientation;
     if (ifd.jpegOffset !== null && ifd.jpegLength !== null) {
       const absoluteJpegOffset = safeAdd(baseOffset, ifd.jpegOffset);
       if (
@@ -174,7 +186,7 @@ function extractFromTiffBase(
           && jpeg[1] === 0xd8
           && jpeg[2] === 0xff
         ) {
-          return jpeg;
+          return { jpeg, orientation: ifd.orientation ?? sourceOrientation };
         }
       }
     }
@@ -203,7 +215,7 @@ function tiffSignatureAt(buffer: Buffer, offset: number): boolean {
  * CR3/ISO-BMFF and maker-specific previews that do not use IFD JPEG tags
  * intentionally return null and continue through the OIIO/LibRaw fallback.
  */
-export function extractRawEmbeddedJpegThumbnail(absoluteFilePath: string): Buffer | null {
+export function extractRawEmbeddedThumbnail(absoluteFilePath: string): RawEmbeddedThumbnail | null {
   let handle: number | undefined;
   try {
     handle = openSync(absoluteFilePath, 'r');
@@ -227,4 +239,28 @@ export function extractRawEmbeddedJpegThumbnail(absoluteFilePath: string): Buffe
   } finally {
     if (handle !== undefined) closeSync(handle);
   }
+}
+
+/** Keep tone probing on the original camera JPEG bytes. */
+export function extractRawEmbeddedJpegThumbnail(filePath: string): Buffer | null {
+  return extractRawEmbeddedThumbnail(filePath)?.jpeg ?? null;
+}
+
+/** Add a minimal EXIF block without decoding/re-encoding camera colours.
+ * Call only after confirming the JPEG has no valid orientation of its own.
+ */
+export function jpegWithFallbackOrientation(jpeg: Buffer, orientation: number): Buffer {
+  const segment = Buffer.alloc(36);
+  segment.writeUInt16BE(0xffe1, 0);
+  segment.writeUInt16BE(34, 2);
+  segment.write('Exif\0\0', 4, 'binary');
+  segment.write('II', 10, 'ascii');
+  segment.writeUInt16LE(42, 12);
+  segment.writeUInt32LE(8, 14);
+  segment.writeUInt16LE(1, 18);
+  segment.writeUInt16LE(0x0112, 20);
+  segment.writeUInt16LE(3, 22);
+  segment.writeUInt32LE(1, 24);
+  segment.writeUInt16LE(orientation, 28);
+  return Buffer.concat([jpeg.subarray(0, 2), segment, jpeg.subarray(2)]);
 }

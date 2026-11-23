@@ -1138,6 +1138,7 @@ const mediaJobsWorkerResultSchema = z.strictObject({
   ok: z.literal(true),
   type: z.literal('media.jobs.listed'),
   libraryId: nonBlankString,
+  queuePaused: z.boolean().default(false),
   queued: z.number().int().nonnegative(),
   running: z.number().int().nonnegative(),
   succeeded: z.number().int().nonnegative(),
@@ -1360,6 +1361,7 @@ const assetSearchAutomationResultSchema = paginatedResultSchema(automationAssetS
 });
 
 const mediaJobsAutomationResultSchema = paginatedResultSchema(mediaJobSchema).extend({
+  queuePaused: z.boolean().default(false),
   queued: z.number().int().nonnegative(),
   running: z.number().int().nonnegative(),
   succeeded: z.number().int().nonnegative(),
@@ -3444,6 +3446,7 @@ export const automationCommandRegistry = [
         failed: parsed.data.failed,
         paused: parsed.data.paused,
         cancelled: parsed.data.cancelled,
+        queuePaused: parsed.data.queuePaused,
       };
     },
   }),

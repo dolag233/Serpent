@@ -30,7 +30,11 @@ export interface ScrollOffsetSnapshot {
   readonly top: number;
 }
 
-const anchorRestoreCleanup = new WeakMap<object, () => void>();
+type AnchorRestoreSession = {
+  cancel(notify: boolean): void;
+};
+
+const anchorRestoreSessions = new WeakMap<object, AnchorRestoreSession>();
 
 /**
  * The outer canvas owns scroll restoration while a panel/window reflow is in
@@ -178,6 +182,8 @@ export function retainReflowAnchor(
  * Layout drift can reset scrollTop during the wait; keep the anchor in that
  * case. A new user scroll owns the viewport, however, and must cancel this
  * older reflow snapshot before the delayed frame can overwrite it.
+ * `onRestored` is the terminal notification: it runs once after completion or
+ * when the attempt is declined because no anchor/scroll ownership is available.
  */
 export function scheduleAnchorRestore(
   canvas: HTMLElement,
@@ -188,8 +194,11 @@ export function scheduleAnchorRestore(
   initialScroll?: ScrollOffsetSnapshot,
 ): void {
   cancelScheduledAnchorRestore(frameRef);
-  if (!anchor) return;
-  if (canvasHasPreviewScrollHold(canvas)) return;
+  frameRef.current = null;
+  if (!anchor || canvasHasPreviewScrollHold(canvas)) {
+    onRestored?.();
+    return;
+  }
 
   let finished = false;
   let lastRestoreTop = canvas.scrollTop;
@@ -199,20 +208,29 @@ export function scheduleAnchorRestore(
     canvas.removeEventListener?.('pointerdown', stopForUserInput);
     canvas.removeEventListener?.('touchstart', stopForUserInput);
     canvas.removeEventListener?.('scroll', stopForLargeScroll);
-    if (anchorRestoreCleanup.get(frameRef) === cleanup) {
-      anchorRestoreCleanup.delete(frameRef);
+    if (anchorRestoreSessions.get(frameRef) === session) {
+      anchorRestoreSessions.delete(frameRef);
     }
   };
-  const finish = () => {
+  const finish = (notify: boolean) => {
     if (finished) return;
     finished = true;
     frameRef.current = null;
     cleanup();
-    onRestored?.();
+    if (notify) onRestored?.();
   };
+  const session: AnchorRestoreSession = {
+    cancel(notify) {
+      if (finished) return;
+      if (frameRef.current !== null) {
+        globalThis.cancelAnimationFrame(frameRef.current);
+      }
+      finish(notify);
+    },
+  };
+  anchorRestoreSessions.set(frameRef, session);
   const stopForUserInput = () => {
-    if (frameRef.current !== null) globalThis.cancelAnimationFrame(frameRef.current);
-    finish();
+    session.cancel(true);
   };
   const stopForLargeScroll = () => {
     const heightDrifted = Math.abs(canvas.scrollHeight - lastRestoreHeight)
@@ -236,9 +254,9 @@ export function scheduleAnchorRestore(
   canvas.addEventListener?.('pointerdown', stopForUserInput);
   canvas.addEventListener?.('touchstart', stopForUserInput, { passive: true });
   canvas.addEventListener?.('scroll', stopForLargeScroll, { passive: true });
-  anchorRestoreCleanup.set(frameRef, cleanup);
 
   const runAfterFrames = (remaining: number): void => {
+    if (finished) return;
     if (remaining <= 0) {
       if (initialScroll) {
         canvas.scrollLeft = clampScrollOffset(
@@ -255,6 +273,7 @@ export function scheduleAnchorRestore(
         lastRestoreHeight = canvas.scrollHeight;
       }
       const settle = (passesRemaining: number, stableFrames = 0): void => {
+        if (finished) return;
         const restored = findMountedAnchor(canvas, anchor.assetId);
         if (!restored) {
           // A zoom reflow can drop the anchor card out of the virtual
@@ -271,7 +290,7 @@ export function scheduleAnchorRestore(
             );
             return;
           }
-          finish();
+          finish(true);
           return;
         }
         const rect = restored.getBoundingClientRect();
@@ -296,7 +315,7 @@ export function scheduleAnchorRestore(
         }
         const nextStableFrames = aligned ? stableFrames + 1 : 0;
         if (nextStableFrames >= 2 || passesRemaining <= 0) {
-          finish();
+          finish(true);
           return;
         }
         if (passesRemaining > 0) {
@@ -305,7 +324,7 @@ export function scheduleAnchorRestore(
           );
           return;
         }
-        finish();
+        finish(true);
       };
       // Apply the raw snapshot once, then converge on the captured client
       // point. Re-applying the snapshot on every pass undid the previous
@@ -323,11 +342,19 @@ export function scheduleAnchorRestore(
   runAfterFrames(frameCount);
 }
 
-/** Cancel a previously scheduled restore (used by App unmount/effects). */
+/** Cancel a previously scheduled restore and release its frame/listeners.
+ * Notifications are suppressed by default so replacing a session cannot
+ * finish work owned by the new session; explicit owners may request one.
+ */
 export function cancelScheduledAnchorRestore(
   frameRef: { current: number | null },
+  options: { notify?: boolean } = {},
 ): void {
-  anchorRestoreCleanup.get(frameRef)?.();
+  const session = anchorRestoreSessions.get(frameRef);
+  if (session) {
+    session.cancel(options.notify ?? false);
+    return;
+  }
   if (frameRef.current !== null) {
     globalThis.cancelAnimationFrame(frameRef.current);
     frameRef.current = null;
