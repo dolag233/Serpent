@@ -2278,9 +2278,7 @@ export const zhCN = {
     zoomFit: "适应宽度",
     htmlPreview: "HTML 预览",
     htmlLoadFailed: "无法加载 HTML 文件。",
-    htmlLoading: "正在加载 HTML…",
     fontPreview: "字体预览",
-    fontPreviewLoading: "正在加载字体…",
     fontPreviewUnavailable: "无法预览这个字体文件。",
     fontPreviewText: "预览文字",
     fontPreviewSize: "字号 {size} px",
@@ -2314,7 +2312,6 @@ export const zhCN = {
   },
   viewer3d: {
     ariaLabel: "3D 模型预览",
-    loading: "正在加载 3D 模型…",
     errorTitle: "无法显示 3D 预览",
     retry: "重试",
     hdri: "环境光",

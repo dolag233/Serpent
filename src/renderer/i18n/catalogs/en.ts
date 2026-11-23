@@ -2295,9 +2295,7 @@ export const en = {
     pdfPages: "Loaded {loaded}/{count} pages",
     htmlPreview: "HTML preview",
     htmlLoadFailed: "Could not load the HTML file.",
-    htmlLoading: "Loading HTML…",
     fontPreview: "Font preview",
-    fontPreviewLoading: "Loading font…",
     fontPreviewUnavailable: "This font file cannot be previewed.",
     fontPreviewText: "Preview text",
     fontPreviewSize: "Size {size} px",
@@ -2331,7 +2329,6 @@ export const en = {
   },
   viewer3d: {
     ariaLabel: "3D model preview",
-    loading: "Loading 3D model…",
     errorTitle: "Could not show 3D preview",
     retry: "Retry",
     hdri: "Environment",

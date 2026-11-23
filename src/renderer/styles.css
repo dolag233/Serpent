@@ -6280,17 +6280,6 @@ body.serpent-modal-open .app-shell {
   text-decoration: underline;
 }
 
-.html-viewer-loading {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--viewer-stage);
-  color: var(--tertiary);
-  font-size: calc(13px * var(--ui-font-scale));
-}
-
 .html-viewer-error {
   padding: 16px;
   color: var(--warning);
@@ -7008,6 +6997,18 @@ body.serpent-modal-open .app-shell {
   color: var(--secondary);
   font-size: calc(12px * var(--ui-font-scale));
   transform: translateX(-50%);
+}
+
+.viewer-loading-status {
+  z-index: var(--ui-layer-popover);
+  pointer-events: none;
+  will-change: opacity;
+  animation: viewer-loading-reveal var(--viewer-loading-delay) step-end both;
+}
+
+@keyframes viewer-loading-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .create-dialog {
@@ -13584,16 +13585,6 @@ select.ai-config-input.ai-config-languages {
 .inspector-hero-compact.is-multi .inspector-hero-title .inspector-multi-count {
   flex: 0 0 auto;
   white-space: nowrap;
-}
-
-.preview-state.is-silent {
-  max-width: none;
-  min-height: 0;
-  padding: 0;
-  gap: 0;
-  /* Serpent-xkzf: no pulse, no copy — silent wait only. */
-  background: transparent;
-  color: transparent;
 }
 
 /* Compact info line (INSPECT-003) — 与文件名同一左缘的摘要行。 */

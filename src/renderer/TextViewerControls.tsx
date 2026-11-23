@@ -287,11 +287,7 @@ export const TextViewerControls = forwardRef<
   );
 
   if (loading) {
-    return (
-      <div className="preview-text-stage" role="status">
-        {t("preview.textLoading")}
-      </div>
-    );
+    return null;
   }
 
   return (

@@ -231,21 +231,6 @@
   background: var(--ui-surface-hover);
 }
 
-.model-viewer-spinner {
-  width: 22px;
-  height: 22px;
-  border: 2px solid var(--ui-border-divider);
-  border-top-color: var(--ui-action-accent);
-  border-radius: 50%;
-  animation: model-viewer-spin 0.9s linear infinite;
-}
-
-@keyframes model-viewer-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 /* HDRI picker: the trigger stays compact and text-only; the popover gives
    each bundled environment enough preview area to compare the presets. */
 .model-viewer-hdri-trigger {

@@ -11,6 +11,8 @@ test.describe.configure({ timeout: 120_000 });
 const libraryName = "Browse Feedback";
 const parentName = "Reference Folder";
 const fileName = "sample-art.png";
+const textName = "slow-notes.txt";
+const textContents = "Preview fixture with a gated source read.";
 const validPng = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
   "base64",
@@ -20,12 +22,18 @@ async function withApp(run: (context: {
   application: Awaited<ReturnType<typeof electron.launch>>;
   window: Page;
   root: string;
-}) => Promise<void>) {
+}) => Promise<void>, includeText = false) {
   const root = mkdtempSync(path.join(tmpdir(), "serpent-browse-feedback-"));
   let application: Awaited<ReturnType<typeof electron.launch>> | undefined;
   try {
     const source = path.join(root, fileName);
     writeFileSync(source, validPng);
+    const sources = [source];
+    if (includeText) {
+      const notes = path.join(root, textName);
+      writeFileSync(notes, textContents);
+      sources.push(notes);
+    }
     const folderSource = path.join(root, "Import Source");
     mkdirSync(folderSource);
     writeFileSync(path.join(folderSource, "sample.txt"), "Folder import fixture");
@@ -44,7 +52,7 @@ async function withApp(run: (context: {
         SERPENT_E2E: "1",
         SERPENT_E2E_HIDE_WINDOW: "1",
         SERPENT_E2E_CREATE_PARENT_PATH: root,
-        SERPENT_E2E_IMPORT_FILES: source,
+        SERPENT_E2E_IMPORT_FILES: sources.join(path.delimiter),
         SERPENT_E2E_IMPORT_FOLDER: folderSource,
         SERPENT_E2E_CLIPBOARD_IMAGE_PATH: clipboardSource,
         SERPENT_E2E_USER_DATA_PATH: path.join(root, "user-data"),
@@ -255,6 +263,64 @@ test("Enter closes only an Enter-opened viewer and restores the browse selection
     await window.keyboard.press("Enter");
     await expect(viewer).toBeVisible();
   });
+});
+
+test("shows delayed viewer feedback while retaining the previous decoded image", async () => {
+  await withApp(async ({ application, window }) => {
+    await submitLibraryName(window);
+    await expect(rootRow(window)).toBeVisible();
+    await rootRow(window).click();
+    await importFilesThroughBridge(window);
+
+    const imageCard = window.locator(`[data-asset-name="${fileName}"]`);
+    const textCard = window.locator(`[data-asset-name="${textName}"]`);
+    await expect(textCard).toBeVisible();
+    const textAssetId = await textCard.getAttribute("data-asset-id");
+    expect(textAssetId).toBeTruthy();
+
+    await application.evaluate(({ ipcMain }, assetId) => {
+      type Request = { type?: string; assetId?: string };
+      type Handler = (event: Electron.IpcMainInvokeEvent, input: Request) => unknown;
+      const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, Handler> })._invokeHandlers;
+      const channel = "serpent:library:request";
+      const original = handlers.get(channel);
+      if (!original) throw new Error("Expected the library request handler.");
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      handlers.set(channel, async (event, input) => {
+        if (input.type === "asset.text.read.request" && input.assetId === assetId) await held;
+        return original(event, input);
+      });
+      Object.assign(globalThis, { releaseViewerTextRead: () => {
+        handlers.set(channel, original);
+        release();
+      } });
+    }, textAssetId);
+
+    const status = window.locator(".viewer-loading-status");
+    try {
+      await imageCard.dblclick();
+      const image = window.locator(".workspace-viewer img.preview-image:not(.is-hidden)").first();
+      await expect.poll(() => image.evaluate((el: HTMLImageElement) =>
+        el.complete && el.naturalWidth > 0,
+      )).toBe(true);
+      await expect(status).toHaveCount(0);
+
+      const next = window.locator(".workspace-viewer .preview-nav.is-next");
+      await window.keyboard.press(await next.isEnabled() ? "ArrowRight" : "ArrowLeft");
+      await expect(status).toHaveCSS("opacity", "1");
+      await expect(status).toHaveText("正在加载…");
+      await expect(image).toBeVisible();
+    } finally {
+      await application.evaluate(() => {
+        const pending = globalThis as typeof globalThis & { releaseViewerTextRead?: () => void };
+        pending.releaseViewerTextRead?.();
+        delete pending.releaseViewerTextRead;
+      });
+    }
+    await expect(window.locator(".workspace-viewer textarea.preview-text-input")).toHaveValue(textContents);
+    await expect(status).toHaveCount(0);
+  }, true);
 });
 
 test("keeps the library overlay hidden while the native location picker is pending", async () => {

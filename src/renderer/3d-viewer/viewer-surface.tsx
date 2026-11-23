@@ -36,6 +36,7 @@ import type { FbxConvertErrorCode } from '../../shared/fbx-conversion';
 import type { SerpentLibraryApi } from '../../shared/library-api';
 import { useLocale } from '../i18n';
 import { useTheme } from '../theme';
+import { ViewerLoadingStatus } from '../viewer-loading-status';
 import {
   computeCameraPlacement,
   computeOrbitConstraints,
@@ -587,11 +588,8 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
       role="region"
       aria-label={t('viewer3d.ariaLabel')}
     >
-      {effectivePhase === 'loading' ? (
-        <div className="model-viewer-state" role="status">
-          <span className="model-viewer-spinner" aria-hidden="true" />
-          <span>{t('viewer3d.loading')}</span>
-        </div>
+      {effectivePhase === 'loading' && loadEpoch > 0 ? (
+        <ViewerLoadingStatus label={t('preview.resolving')} />
       ) : null}
       {effectivePhase === 'error' ? (
         <div className="model-viewer-state is-error" role="alert">

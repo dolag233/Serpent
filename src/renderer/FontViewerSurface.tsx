@@ -86,10 +86,7 @@ export function FontViewerSurface({
   );
   const [variableWeights, setVariableWeights] = useState<readonly number[]>([]);
   const [languageTouched, setLanguageTouched] = useState(false);
-  // The loaded/failed URL is part of the state (instead of a synchronous
-  // "loading" reset inside the effect) so a source change simply falls back to
-  // the loading state without an extra render cascade.
-  const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
+  // A failure belongs to its source URL so a new source can load normally.
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const readyCallbackRef = useRef(onPresentationReady);
@@ -111,11 +108,12 @@ export function FontViewerSurface({
         if (cancelled) return;
         document.fonts.add(loadedFace);
         added = loadedFace;
-        setLoadedUrl(sourceUrl);
         readyCallbackRef.current?.();
       })
       .catch(() => {
-        if (!cancelled) setFailedUrl(sourceUrl);
+        if (cancelled) return;
+        setFailedUrl(sourceUrl);
+        readyCallbackRef.current?.();
       });
     return () => {
       cancelled = true;
@@ -189,7 +187,6 @@ export function FontViewerSurface({
     );
   }
 
-  const isReady = loadedUrl === sourceUrl;
   const specimenSizes = fontViewerSpecimenSizes(settings.size);
   const customText = customTexts[settings.language];
   const previewText = customText ?? defaultFontViewerText(settings.language);
@@ -208,9 +205,6 @@ export function FontViewerSurface({
       data-fullscreen={isFullscreen ? "true" : undefined}
     >
       <div className="font-viewer-stage" ref={stageRef}>
-        {!isReady ? (
-          <div className="html-viewer-loading">{t("viewer.fontPreviewLoading")}</div>
-        ) : null}
         <div className="font-viewer-specimen">
           {specimenSizes.map((size, index) => (
             <div
