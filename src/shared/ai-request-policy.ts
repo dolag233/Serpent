@@ -203,10 +203,18 @@ export async function fetchAiWithPolicyRetry(
   }
   // Read a clone so a caller can still inspect the original body when this
   // status does not match a retry phrase. A timeout while reading that body
-  // stays a timeout instead of being replaced by a reconstructed response.
-  const text = typeof first.clone === 'function'
-    ? await first.clone().text()
-    : await first.text();
+  // stays a timeout. An ordinary read failure must not throw: callers map
+  // every throw from this helper as a network error and then never reach
+  // their invalid-response handling.
+  let text: string;
+  try {
+    text = typeof first.clone === 'function'
+      ? await first.clone().text()
+      : await first.text();
+  } catch (error: unknown) {
+    if (isAbortOrTimeoutReadError(error)) throw error;
+    return { response: first, action: 'none' };
+  }
   const action = classifyAiRequestRetry(first.status, text);
   if (action === 'none') {
     if (typeof first.clone === 'function') return { response: first, action };
@@ -223,6 +231,12 @@ export async function fetchAiWithPolicyRetry(
     response: await send(applyAiRequestRetry(body, action)),
     action,
   };
+}
+
+function isAbortOrTimeoutReadError(error: unknown): boolean {
+  if (!error || typeof error !== 'object' || !('name' in error)) return false;
+  const name = (error as { name?: unknown }).name;
+  return name === 'AbortError' || name === 'TimeoutError';
 }
 
 function anthropicPolicy(

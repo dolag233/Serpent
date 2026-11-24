@@ -223,6 +223,63 @@ describe('AI request retry', () => {
     expect(next.temperature).toBe(0.2);
   });
 
+  it('returns the original response when the error body cannot be read', async () => {
+    const response = {
+      status: 400,
+      clone: () => ({ text: async () => { throw new Error('broken body'); } }),
+    };
+    const fetchImpl = vi.fn<typeof fetch>(async () => response as unknown as Response);
+    const result = await fetchAiWithPolicyRetry(
+      fetchImpl,
+      'https://example.test',
+      { method: 'POST' },
+      { thinking: { type: 'disabled' } },
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(result.action).toBe('none');
+    expect(result.response).toBe(response);
+  });
+
+  it('keeps an abort while reading the error body as an abort', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => ({
+      status: 422,
+      clone: () => ({
+        text: async () => {
+          const error = new Error('The operation was aborted');
+          error.name = 'AbortError';
+          throw error;
+        },
+      }),
+    }) as unknown as Response);
+    await expect(fetchAiWithPolicyRetry(
+      fetchImpl,
+      'https://example.test',
+      { method: 'POST' },
+      { thinking: { type: 'disabled' } },
+    )).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a timeout while reading the error body as a timeout', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => ({
+      status: 400,
+      clone: () => ({
+        text: async () => {
+          const error = new Error('The operation timed out');
+          error.name = 'TimeoutError';
+          throw error;
+        },
+      }),
+    }) as unknown as Response);
+    await expect(fetchAiWithPolicyRetry(
+      fetchImpl,
+      'https://example.test',
+      { method: 'POST' },
+      { thinking: { type: 'disabled' } },
+    )).rejects.toMatchObject({ name: 'TimeoutError' });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it('posts a second request only for a recorded phrase', async () => {
     const noRetry = vi.fn<typeof fetch>().mockResolvedValue(new Response('model not found', { status: 400 }));
     const first = await fetchAiWithPolicyRetry(
@@ -393,5 +450,39 @@ describe('adapters apply the shared request policy', () => {
     const adapter = new DashScopeVendorAdapter('key', 'qwen3-vl-plus', fetchStub);
     await expect(adapter.analyze(request)).rejects.toMatchObject({ kind: 'invalid_response' });
     expect(fetchStub).toHaveBeenCalledTimes(1);
+  });
+
+  it('classifies an unreadable OpenAI error body as a retryable invalid response', async () => {
+    let calls = 0;
+    const mockFetch: typeof fetch = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          ok: false,
+          status: 400,
+          clone: () => ({ text: async () => { throw new Error('broken body'); } }),
+        } as unknown as Response;
+      }
+      return new Response(JSON.stringify({
+        model: 'compatible-vision',
+        output_text: JSON.stringify({ tags: ['recovered'] }),
+      }), { status: 200 });
+    };
+    const endpoint = 'https://broken-probe.example/v1';
+    const imageRequest: AiAnalysisRequest = {
+      ...request,
+      language: 'zh-CN',
+      imageBase64: 'fakebase64',
+    };
+    await expect(new OpenAIVendorAdapter(
+      'test-key', 'compatible-vision', mockFetch, endpoint, 'openai_responses',
+    ).analyze(imageRequest)).rejects.toMatchObject({
+      kind: 'invalid_response',
+      retryable: true,
+    });
+    await expect(new OpenAIVendorAdapter(
+      'test-key', 'compatible-vision', mockFetch, endpoint, 'openai_responses',
+    ).analyze(imageRequest)).resolves.toMatchObject({ tags: ['recovered'] });
+    expect(calls).toBe(2);
   });
 });
