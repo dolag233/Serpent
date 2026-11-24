@@ -3,10 +3,10 @@
   "bundles": {
     "darwin-arm64": {
       "status": "ready",
-      "url": "https://github.com/dolag233/Serpent-Build/releases/download/media-v0.1.2/serpent-media-darwin-arm64.zip",
-      "sha256": "e13e392d555797229e3dbe32857c7dd0f0f30df820b379eb6f7c436ecd09b774",
-      "size": 32647951,
-      "manifestSha256": "92bf182a2cc7dbf855b038ea92098fb153d799c24edcb1c09cf63f1c0d641472"
+      "url": "https://github.com/dolag233/Serpent-Build/releases/download/media-v0.1.4/serpent-media-darwin-arm64.zip",
+      "sha256": "5f347fcba8be7aab552f3c7a210030bc551952c12bbf7fc04affd3c62dc845aa",
+      "size": 32646891,
+      "manifestSha256": "7f62fc9bce7bc8f727bfadaf5341cf12dd3337ecb2362d0bc75c8e7fa6014d0f"
     },
     "win32-x64": {
       "status": "ready",
